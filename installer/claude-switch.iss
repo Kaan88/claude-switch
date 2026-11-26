@@ -13,6 +13,8 @@ AppPublisher=Kaan
 AppPublisherURL=https://github.com/Kaan88/claude-switch
 DefaultDirName={localappdata}\Programs\Claude Switch
 PrivilegesRequired=lowest
+; Quit through the app so it can ask about running terminal tabs.
+CloseApplications=no
 DisableProgramGroupPage=yes
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\icon.ico

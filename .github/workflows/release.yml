@@ -44,7 +44,38 @@ jobs:
           "ISCC=$iscc" >> $env:GITHUB_ENV
       - name: Build and package
         run: .\tools\package.ps1 -AppVersion $env:GITHUB_REF_NAME.Substring(1) -Iscc $env:ISCC
-      - name: Publish installer and bare executable
+      - name: Write hub.txt
+        shell: pwsh
+        run: |
+          $v = $env:GITHUB_REF_NAME.Substring(1)
+          $exe = 'target/release/claude-switch.exe'
+          $fileVersion = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
+          if ($fileVersion -cne $v) { throw "Tag version $v does not match the executable version '$fileVersion'." }
+
+          $version = [regex]::Escape($v)
+          $heading = "^##\s+(?:$version|\[$version\])(?:\s|$)"
+          $inSection = $false
+          $line = $null
+          foreach ($text in Get-Content -LiteralPath CHANGELOG.md) {
+            if ($inSection) {
+              if ($text -match '^#{1,2}\s') { break }
+              if ($text -match '^\s*-\s+(\S.*)$') { $line = $Matches[1]; break }
+            } elseif ($text -cmatch $heading) {
+              $inSection = $true
+            }
+          }
+          if (-not $inSection) { throw "CHANGELOG.md has no section for $v." }
+          if (-not $line) { throw "CHANGELOG.md has no notes bullet for $v." }
+
+          $setup = 'claude-switch-setup.exe'
+          $manifest = Join-Path $PWD 'dist/hub.txt'
+          .\tools\write-hub-txt.ps1 -App claude-switch -Repo claude-switch -Version $v `
+            -Notes $line -Kind setup -Exe claude-switch.exe `
+            -Uninstall '{4F2C369B-84AF-4A46-AE8B-D22103025F78}_is1' `
+            -Files @{ Name = $setup; Role = 'setup'; Path = "dist/$setup"; Silent = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART'; Scope = 'user' } `
+            -Out $manifest
+          Get-Content -LiteralPath $manifest
+      - name: Publish installer, bare executable and Hub manifest
         uses: softprops/action-gh-release@v3
         with:
           fail_on_unmatched_files: true
@@ -52,3 +83,4 @@ jobs:
           files: |
             dist/claude-switch-setup.exe
             target/release/claude-switch.exe
+            dist/hub.txt
