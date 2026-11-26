@@ -464,3 +464,10 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     (`compact_open.rs` `open_handover_tab`); a new window only when Switch is not running, and then the Switch window,
     not a bare console. Find what `--open` launches today (`compact_cli.rs`, `compact_runner.rs`, `run.rs`
     `CREATE_NEW_CONSOLE`) and how a second process can hand the request to the running one.
+41. **"Could not save session marks: marks.json changed on disk. Restart before saving marks."** (owner, 2026-11-27,
+    screenshot). Cause seen: two Claude Switch processes ran at once, the owner's window and the one
+    `compact --open` started (`--compact-open-window`, item 40); each holds its own copy of the marks and the second
+    save is refused (`crates/core/src/marks.rs` `save`). Item 40 removes the usual cause; also make the save hold
+    with two writers: under the existing lock, re-read the file and apply only this process's own changes (per
+    session and field) onto it, refusing only a true conflict (both changed the same field) with a plain message; never
+    ask for a restart. Same check for settings (`config.rs`: "Settings changed on disk").
