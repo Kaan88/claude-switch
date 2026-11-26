@@ -222,3 +222,8 @@ and in the README, not committed, and not copied to the installed clone
     Copy, Paste, Select all. The fields are the toolkit's `mdshared_ui::textfield::TextField` (and the
     composer's own editor), so the fix belongs in the toolkit where possible and then benefits every
     app; tell the toolkit session before building it here.
+15. **The Details panel's Files list (and its Tasks and Agents rows) cannot be clicked** (owner,
+    2026-11-26, screenshot): the rows have a ▸ but nothing expands or opens. A file row should open
+    the file (Markdown in the viewer panel of item 12, other files with the system's default app,
+    only files the transcript names), ▸ should expand its edits, and Tasks and Agents rows should
+    expand to their detail.
