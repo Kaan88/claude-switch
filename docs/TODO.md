@@ -203,3 +203,8 @@ and in the README, not committed, and not copied to the installed clone
       target, duration), expandable, indented under the answer they belong to.
     - The composer per item 11: picture thumbnail inside the box, the waiting notice kept as a bar with
       "Send now" and "Cancel", and Send becoming "Queue" during a turn.
+    - Today every item is the same grey card with a small name label (screenshot, owner, same day):
+      the user's own messages go right-aligned in a tinted bubble, Claude's answers without a card,
+      tool calls as the rows above. The path highlighting also marks words that are not files (seen:
+      "enter/leave" inside a Bash command); only paths that exist under the session's folder should
+      become links.
