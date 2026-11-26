@@ -588,3 +588,14 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     pull request (repo and number), saved output file, Markdown file (opens the side panel), audio or other binary
     (kind and size). Where a cheap preview exists (a picture, the first page of a PDF if the toolkit can render it),
     show it as the thumbnail; otherwise the icon. The Details panel's Outputs uses the same labels.
+59. **Maybe, idea only: OpenCode as a tab type, and as a handover target** (owner, 2026-11-27: "opencode makes more
+    sense as a tab ... leave this as a maybe idea"). A "New OpenCode tab" entry with the folder picker, running the
+    owner's normal OpenCode (Magic Context enabled, unlike the bridge's jobs), and "Continue in OpenCode" sending the
+    handover text as its first prompt, e.g. when a Claude account hits its limit. Codex CLI support was considered
+    and not chosen: every layer of the app is Claude Code specific (accounts, transcripts, live records, the send
+    gate's screen rules). Not started; decide before building.
+60. **Clearer names for the two archives** (owner, 2026-11-27: yes). Settings › Sessions "Show archived sessions"
+    becomes "Show sessions archived in the desktop app" (help: "Claude Desktop's own archive. Switch's Archive is
+    separate."); the Archived chip becomes "Archived here"; the details row "Archived: yes, in the desktop app"
+    becomes "Desktop archive: yes", so "Archived" alone always means Switch's archive. Update README, DESIGN and
+    the wiki's Sessions and Settings pages.
