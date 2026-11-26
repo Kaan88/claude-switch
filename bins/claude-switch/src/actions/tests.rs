@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn terminal_palette_uses_the_visible_verified_tab_not_the_identically_named_selected_session() {
+    let mut app = AppState::new(crate::source::Source::Demo, None, Default::default());
+    app.apply_scan(crate::demo::scan(&app.config));
+    app.sessions[1].title = app.sessions[0].title.clone();
+    let selected = app.sessions[0].id.clone();
+    let visible = app.sessions[1].id.clone();
+    app.select(&selected);
+    let tab = app.tabs.open(
+        crate::tabs::NewTab {
+            label: app.sessions[1].title.clone(),
+            color: app.account_color("main"),
+            session: Some(visible.clone()),
+            account: Some("main".into()),
+        },
+        crate::term::Term::empty((80, 24)),
+    );
+    app.show_tab(tab);
+    assert_eq!(app.selected.as_deref(), Some(selected.as_str()));
+    assert_eq!(app.tabs.shown().unwrap().id, tab);
+    app.command(Instant::now(), crate::compact_dialog::COMMAND, None);
+    assert_eq!(app.compact_source(), Some((visible.as_str(), Some(tab))));
+    app.dialog = None;
+    app.tabs.get_mut(tab).unwrap().resume_id = None;
+    app.command(Instant::now(), crate::compact_dialog::COMMAND, None);
+    assert_eq!(app.compact_source(), None);
+}
+
+#[test]
 fn ambiguous_desktop_delivery_does_not_claim_an_account() {
     assert_eq!(resume_status(App::Desktop, "Session", "Work"), "“Session” handed to the desktop app");
 }

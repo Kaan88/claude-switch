@@ -16,9 +16,10 @@ fn main() {
         ["service", "status"] if mode == "down" => println!("OpenCode service is not running"),
         ["service", "status"] => println!("http://127.0.0.1:12345"),
         ["api", "session.active"] if mode == "malformed" => println!(r#"{{"data":[]}}"#),
+        ["api", "session.active"] if mode == "unknown" => println!(r#"{{"data":{{"a":{{"type":"future"}}}}}}"#),
         ["api", "session.active"] if mode == "idle" => println!(r#"{{"data":{{}}}}"#),
         ["api", "session.active"] => println!(
-            r#"{{"data":{{"a":{{"type":"running"}},"b":{{"type":"idle"}},"c":null,"d":{{"type":"running"}}}}}}"#
+            r#"{{"data":{{"a":{{"type":"running"}},"b":{{"type":"idle"}},"c":{{"type":"retry"}},"d":{{"type":"running"}}}}}}"#
         ),
         ["service", "restart"] if matches!(mode.as_str(), "fallback" | "failed-stop") => process::exit(1),
         ["service", "stop"] if mode == "failed-stop" => process::exit(1),

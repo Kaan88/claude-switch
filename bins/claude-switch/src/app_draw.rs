@@ -10,6 +10,7 @@ use crate::topbar::{self, Bar};
 use crate::{details, list, windowlook};
 
 pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
+    st.sync_usage_setting();
     let pal = *st.pal();
     let (w, h) = cx.size();
     let window = Rect::new(0.0, 0.0, w, h);

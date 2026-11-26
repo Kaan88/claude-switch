@@ -89,7 +89,13 @@ impl AppState {
     pub fn command(&mut self, now: Instant, id: u32, anchor: Option<Rect>) {
         match id {
             NEW_SESSION => self.ask_new_session(),
-            crate::compact_dialog::COMMAND => self.ask_compact(false),
+            crate::compact_dialog::COMMAND => {
+                if let Some(tab) = self.tabs.shown() {
+                    self.ask_tab_compact(tab.id, None);
+                } else {
+                    self.ask_compact(false);
+                }
+            }
             NEW_DESKTOP => {
                 let folder = self.start_folder();
                 let account = self.folder_open(&folder, App::Desktop).0.to_owned();
@@ -425,7 +431,13 @@ impl AppState {
 
     pub fn new_session_now(&mut self, now: Instant, app: App, account: &str, cwd: &Path) {
         match self.source.new_session(&self.config, account, app, cwd) {
-            Ok(l) => {
+            Ok(mut l) => {
+                if app == App::Cli && !self.config.embedded_terminal && !self.source.is_demo() {
+                    match crate::compact_open::session_id() {
+                        Ok(id) => l.args.extend(["--session-id".into(), id]),
+                        Err(error) => return self.error("Not started", error),
+                    }
+                }
                 let folder = cwd.file_name().map_or_else(|| cwd.display().to_string(), |n| n.to_string_lossy().into());
                 let where_ = crate::folder_defaults::app_label(app);
                 let done = format!("Started a new session in {folder} as {} in {where_}", self.account_name(account));

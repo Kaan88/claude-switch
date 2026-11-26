@@ -23,25 +23,39 @@ pub(super) fn spawn(exe: &Path, id: &str, account: &str, file: &str) -> Result<(
     let result = (|| {
         let arguments = format!("{} {key}", words(id, account, file)?);
         let until = Instant::now() + Duration::from_secs(30);
-        spawn_window(exe, &arguments, until).map_err(|_| "Could not start the handover window.")?;
-        while Instant::now() < until {
-            match std::fs::File::open(dir.join("result")) {
-                Ok(file) => {
-                    use std::io::Read as _;
-                    let mut bytes = Vec::new();
-                    file.take(7).read_to_end(&mut bytes).map_err(|_| "Could not read the handover acknowledgement.")?;
-                    return ack_result(&bytes);
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => return Err("Could not read the handover acknowledgement.".into()),
+        spawn_window(exe, &arguments, until).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                unknown_outcome()
+            } else {
+                "Could not start the handover window.".into()
             }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Err("Timed out waiting for the new window to confirm the Claude tab.".into())
+        })?;
+        await_ack(&dir, until)
     })();
     let _ = std::fs::remove_file(dir.join("result"));
     let _ = std::fs::remove_dir(dir);
     result
+}
+
+fn await_ack(dir: &Path, until: Instant) -> Result<(), String> {
+    while Instant::now() < until {
+        match std::fs::File::open(dir.join("result")) {
+            Ok(file) => {
+                use std::io::Read as _;
+                let mut bytes = Vec::new();
+                file.take(7).read_to_end(&mut bytes).map_err(|_| "Could not read the handover acknowledgement.")?;
+                return ack_result(&bytes);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("Could not read the handover acknowledgement.".into()),
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(unknown_outcome())
+}
+
+fn unknown_outcome() -> String {
+    "Timed out waiting for the handover window. The outcome is unknown; check for the tab before retrying.".into()
 }
 
 fn ack_dir(key: &str) -> Option<std::path::PathBuf> {
@@ -144,6 +158,12 @@ fn spawn_window(exe: &Path, arguments: &str, _: Instant) -> std::io::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn handover_timeout_reports_unknown_and_warns_before_retry() {
+        let error = await_ack(Path::new("unused-after-deadline"), Instant::now()).unwrap_err();
+        assert!(error.contains("outcome is unknown") && error.contains("check for the tab before retrying"));
+    }
 
     #[test]
     fn handoff_accepts_only_four_fixed_native_words_and_no_path_syntax() {

@@ -114,10 +114,11 @@ pub fn load(path: Option<&Path>) -> WindowFile {
     path.and_then(|p| settings::read(p).ok().flatten()).map_or_else(WindowFile::default, |t| parse(&t))
 }
 
-pub fn save(path: Option<&Path>, f: &WindowFile) {
+pub fn save(path: Option<&Path>, f: &WindowFile) -> Result<(), claude_switch_core::Refusal> {
     if let Some(p) = path {
-        let _ = claude_switch_core::write_app_file(p, to_text(f).as_bytes());
+        claude_switch_core::write_app_file(p, to_text(f).as_bytes())?;
     }
+    Ok(())
 }
 
 pub fn apply(window: &Window, saved: &WindowState) {
@@ -199,6 +200,12 @@ fn restore_rect(saved: &WindowState, monitors: &[Monitor]) -> Option<ScreenRect>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn window_ini_save_reports_a_refused_destination() {
+        assert!(save(Some(std::env::temp_dir().as_path()), &WindowFile::default()).is_err());
+        assert!(save(None, &WindowFile::default()).is_ok());
+    }
 
     #[test]
     fn the_text_reads_back_as_what_was_written() {

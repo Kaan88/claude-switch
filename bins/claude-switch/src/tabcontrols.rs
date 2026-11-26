@@ -90,7 +90,7 @@ impl AppState {
             })
             .collect();
         items.extend([
-            Item::new(COMPACT, "Compact and open as…").enabled(can_copy),
+            Item::new(COMPACT, "Compact and open as…").enabled(tab.resume_id.is_some()),
             Item::new(RENAME, "Rename tab…").sep(),
             Item::new(CLOSE, "Close"),
             Item::new(CLOSE_OTHERS, "Close others").enabled(self.tabs.list.len() > 1),

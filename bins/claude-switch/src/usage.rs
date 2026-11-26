@@ -24,6 +24,9 @@ pub struct Usage {
     cache_write: CacheWrite,
     pub popup: Popup,
     pub repaint_at: Option<Instant>,
+    pub demo_echo: bool,
+    #[cfg(test)]
+    pub(crate) demo_keys: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -32,6 +35,12 @@ pub struct Popup {
     pinned: bool,
     pub due: Option<Instant>,
     pub scroll: f32,
+}
+
+impl Popup {
+    pub fn takes_keyboard(&self) -> bool {
+        self.open && self.pinned
+    }
 }
 
 #[derive(Default)]
@@ -150,6 +159,31 @@ impl Usage {
 }
 
 impl AppState {
+    pub fn start_usage_hover_demo(&mut self, now: Instant) {
+        if !self.source.is_demo() || !self.usage.demo_echo {
+            return;
+        }
+        let Some(tab) = self.tabs.shown_mut() else { return };
+        if let Some(pane) = &mut tab.pane {
+            pane.chat.enabled = false;
+        }
+        tab.term.feed(b"\r\nType here while the usage preview is open:\r\n> \x1b[?25h");
+        self.open_usage(now, false);
+    }
+
+    pub fn sync_usage_setting(&mut self) -> bool {
+        let Source::Real(roots) = &self.source else { return false };
+        let enabled = claude_switch_core::config::usage_enabled(roots);
+        let changed = enabled != self.config.show_usage;
+        self.apply_committed_usage(enabled);
+        changed
+    }
+
+    pub fn disable_usage(&mut self) {
+        self.usage.disable();
+        self.clear_usage_notices();
+    }
+
     pub fn request_usage(&mut self, now: Instant, demand: Demand, only: Option<&str>) {
         if !usage_allowed(self.config.show_usage, &self.source) {
             return;
@@ -174,26 +208,26 @@ impl AppState {
                 Ok(job) => {
                     usage.jobs.insert(a.slug.clone(), job);
                 }
-                Err(_) => attempt.finish(now, Err(Error::Network)),
+                Err(_) => attempt.finish(now, Err(Error::SettingsUnavailable)),
             }
         }
     }
 
     pub fn take_usage_jobs(&mut self, now: Instant) -> bool {
+        let mut changed = self.sync_usage_setting();
         let wake = self.wake_fn();
         let usage = &mut self.usage;
-        let mut changed = false;
         let mut accepted = Vec::new();
         usage.jobs.retain(|slug, job| {
             if job.running() {
                 return true;
             }
-            let result = job.take().unwrap_or(Err(Error::Network));
+            let result = job.take().unwrap_or(Err(Error::SettingsUnavailable));
             let attempt = usage.attempts.entry(slug.clone()).or_default();
             // An opt-out also prevents a late result from changing the displayed or saved data.
             attempt.finish(now, result.as_ref().map(|_| ()).map_err(|e| *e));
             changed = true;
-            if job.cancelled() {
+            if job.cancelled() || !self.config.show_usage {
                 return false;
             }
             if let Ok(reading) = result
@@ -362,12 +396,59 @@ mod tests {
         app.usage_hover(now, app.hover);
         assert!(!app.usage_hover_due(due - Duration::from_millis(1)));
         assert!(app.usage_hover_due(due));
+        assert!(!app.usage.popup.takes_keyboard());
+        assert!(app.nothing_over(), "hover is not a keyboard overlay");
         assert!(!app.usage_hover(due, Some(Target::UsagePopup)));
         assert!(app.usage_hover(due, Some(Target::ListBlank)));
         app.open_usage(due, true);
         assert!(!app.usage_hover(due, None));
         assert!(app.usage.popup.open);
+        assert!(app.usage.popup.takes_keyboard());
         app.open_usage(due, true);
         assert!(!app.usage.popup.open);
+    }
+
+    #[test]
+    fn hovering_usage_keeps_terminal_text_and_enter_in_the_terminal() {
+        use mdshared_ui::host::KeyPress;
+        use mdshared_ui::keys::{KeyName, Mods};
+        let mut app = AppState::new(Source::Demo, Some(true), WindowFile::default());
+        app.start_demo_session();
+        app.usage.demo_echo = true;
+        app.window_focused = true;
+        let now = Instant::now();
+        app.start_usage_hover_demo(now);
+        assert!(app.terminal_focused());
+        for (name, text) in [(KeyName::Char('x'), Some("x".into())), (KeyName::Enter, None)] {
+            app.term_key(now, &KeyPress { name: Some(name), mods: Mods::default(), text, repeat: false });
+        }
+        assert_eq!(app.usage.demo_keys, b"x\r");
+        assert!(app.usage.popup.open && !app.usage.popup.takes_keyboard());
+    }
+
+    #[test]
+    fn other_windows_opt_out_drops_a_completed_but_unaccepted_reading() {
+        let folder = std::env::temp_dir().join(format!("cs-w3-optout-{}", std::process::id()));
+        let roots = claude_switch_core::Roots { home: folder.clone(), appdata: folder.clone() };
+        let mut second = AppState::new(Source::Demo, None, WindowFile::default());
+        second.source = Source::Real(roots.clone());
+        second.usage.readings.clear();
+        second.usage.popup = Popup { open: true, pinned: true, ..Popup::default() };
+        let (wake, completed) = std::sync::mpsc::channel();
+        let job = Job::start(
+            move || {
+                let _ = wake.send(());
+            },
+            |_, _| Ok(Reading { read_at: 42, limits: vec![], breakdown: vec![] }),
+        )
+        .unwrap();
+        completed.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!job.running());
+        second.usage.jobs.insert("main".into(), job);
+        claude_switch_core::config::set_usage(&roots, false).unwrap();
+        assert!(second.take_usage_jobs(Instant::now()));
+        assert!(!second.config.show_usage && !second.usage.popup.open);
+        assert!(second.usage.reading("main").is_none());
+        assert!(second.usage.jobs.is_empty());
     }
 }

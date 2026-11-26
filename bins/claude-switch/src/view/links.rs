@@ -72,6 +72,12 @@ pub fn detect(text: &str) -> Vec<(Range<usize>, String)> {
 }
 
 pub fn open(s: &str, cwd: &Path, reveal: bool) {
+    open_with(s, cwd, reveal, |file| {
+        let _ = crate::run::reveal(file);
+    });
+}
+
+fn open_with(s: &str, cwd: &Path, reveal: bool, reveal_file: impl FnOnce(&Path)) {
     if url(s) {
         platform::open_url(s);
     } else if local(s) {
@@ -81,7 +87,7 @@ pub fn open(s: &str, cwd: &Path, reveal: bool) {
             return;
         }
         if reveal {
-            platform::reveal_in_file_manager(&file);
+            reveal_file(&file);
         } else {
             platform::open_file(&file, DOCUMENT_TYPES);
         }
@@ -91,6 +97,15 @@ pub fn open(s: &str, cwd: &Path, reveal: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reveal_passes_an_existing_relative_file_to_the_app_launcher() {
+        let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut revealed = None;
+        open_with("Cargo.toml", cwd, true, |file| revealed = Some(file.to_owned()));
+        assert_eq!(revealed, Some(cwd.join("Cargo.toml")));
+        open_with("not-a-real-transcript.jsonl", cwd, true, |_| panic!("missing path must not launch"));
+    }
 
     #[test]
     fn finds_url_and_local_files_with_source_byte_ranges() {

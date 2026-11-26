@@ -93,6 +93,15 @@ fn account_folders(roots: &Roots) -> Result<Vec<String>, Refusal> {
 /// `<accounts_dir>/<slug>/cli` and `…/desktop`, sets up the shared links ([`crate::share::apply`]) and
 /// pushes it onto `config.accounts`. Does not save the config. An empty name is [`Refusal::Invalid`].
 pub fn add(roots: &Roots, config: &mut Config, name: &str) -> Result<Account, Refusal> {
+    add_with_claim(roots, config, name, |path| std::fs::create_dir(path))
+}
+
+fn add_with_claim(
+    roots: &Roots,
+    config: &mut Config,
+    name: &str,
+    claim: impl Fn(&std::path::Path) -> std::io::Result<()>,
+) -> Result<Account, Refusal> {
     let name = name.trim();
     if name.is_empty() {
         return Err(Refusal::Invalid("An account needs a name.".into()));
@@ -105,8 +114,19 @@ pub fn add(roots: &Roots, config: &mut Config, name: &str) -> Result<Account, Re
         .chain(folders.iter().map(String::as_str))
         .chain(["main"])
         .collect();
-    let slug = slug_for(name, &taken);
-    let base = roots.accounts_dir().join(&slug);
+    let parent = roots.accounts_dir();
+    std::fs::create_dir_all(&parent).map_err(|e| io_refusal("create the folder", &parent, &e))?;
+    let mut collisions: Vec<String> = Vec::new();
+    let (slug, base) = loop {
+        let unavailable: Vec<_> = taken.iter().copied().chain(collisions.iter().map(String::as_str)).collect();
+        let slug = slug_for(name, &unavailable);
+        let base = parent.join(&slug);
+        match claim(&base) {
+            Ok(()) => break (slug, base),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => collisions.push(slug),
+            Err(e) => return Err(io_refusal("claim the folder", &base, &e)),
+        }
+    };
     let account = Account {
         slug,
         name: name.to_string(),
@@ -116,7 +136,7 @@ pub fn add(roots: &Roots, config: &mut Config, name: &str) -> Result<Account, Re
         desktop_dir: base.join("desktop"),
     };
     for dir in [&account.cli_dir, &account.desktop_dir] {
-        std::fs::create_dir_all(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
+        std::fs::create_dir(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
     }
     // A link that cannot be made now is tried again before every launch; it does not stop the add.
     let _ = crate::share::apply(roots, &account);
@@ -277,6 +297,43 @@ mod tests {
         assert_eq!(config.accounts.len(), 3);
         let projects = crate::share::status(&roots, &a).into_iter().find(|s| s.name == "projects").unwrap();
         assert_eq!(projects.state, crate::share::LinkState::Linked);
+    }
+
+    #[test]
+    fn account_slug_claim_skips_occupied_entries_not_in_the_folder_listing() {
+        let t = TempDir::new("acc-claim");
+        let roots = t.roots();
+        put(&roots.accounts_dir().join("work"), "existing");
+        put(&roots.accounts_dir().join("work-2"), "also existing");
+        let mut config = crate::config::load(&roots);
+        assert_eq!(add(&roots, &mut config, "Work").unwrap().slug, "work-3");
+        assert_eq!(std::fs::read_to_string(roots.accounts_dir().join("work")).unwrap(), "existing");
+    }
+
+    #[test]
+    fn simultaneous_same_name_adds_cannot_share_a_login_directory() {
+        let t = TempDir::new("acc-concurrent-claim");
+        let roots = t.roots();
+        let barrier = std::sync::Barrier::new(2);
+        let add = || {
+            let mut config = crate::config::load(&roots);
+            add_with_claim(&roots, &mut config, "Work", |path| {
+                if path.ends_with("work") {
+                    barrier.wait();
+                }
+                std::fs::create_dir(path)
+            })
+            .unwrap()
+        };
+        let mut accounts = std::thread::scope(|scope| {
+            let a = scope.spawn(add);
+            let b = scope.spawn(add);
+            [a.join().unwrap(), b.join().unwrap()]
+        });
+        accounts.sort_by(|a, b| a.slug.cmp(&b.slug));
+        assert_eq!(accounts.each_ref().map(|a| a.slug.as_str()), ["work", "work-2"]);
+        assert_ne!(accounts[0].cli_dir, accounts[1].cli_dir);
+        assert!(accounts.iter().all(|a| a.cli_dir.is_dir()));
     }
 
     #[test]

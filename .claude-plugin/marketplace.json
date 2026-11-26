@@ -1,0 +1,12 @@
+{
+  "name": "kaan88-claude-switch",
+  "description": "The Claude Switch handover plugin.",
+  "owner": { "name": "Kaan" },
+  "plugins": [
+    {
+      "name": "switch-handover",
+      "source": "./plugin",
+      "description": "Hand off the current Claude Code session to Claude Switch."
+    }
+  ]
+}

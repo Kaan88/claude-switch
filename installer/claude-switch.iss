@@ -4,6 +4,9 @@
 #ifndef Exe
   #define Exe "..\target\release\claude-switch.exe"
 #endif
+#ifndef Notices
+  #define Notices "..\THIRD-PARTY-NOTICES"
+#endif
 
 [Setup]
 AppId={{4F2C369B-84AF-4A46-AE8B-D22103025F78}
@@ -30,6 +33,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Source: "{#Exe}"; DestDir: "{app}"; DestName: "claude-switch.exe"; Flags: ignoreversion
 Source: "..\assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Notices}"; DestDir: "{app}"; DestName: "THIRD-PARTY-NOTICES"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Claude Switch"; Filename: "{app}\claude-switch.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"

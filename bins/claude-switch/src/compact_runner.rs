@@ -95,16 +95,15 @@ pub fn list(program: &Path, cancelled: impl Fn() -> bool) -> Result<Vec<String>,
 }
 
 pub fn make(
+    roots: &claude_switch_core::Roots,
     program: &Path,
     model: &str,
     data: &compact::Handover,
     focus: &str,
     cancelled: impl Fn() -> bool,
 ) -> Result<String, String> {
-    if compact::provider(model).is_none() {
-        return Err("Choose a valid OpenCode provider/model.".into());
-    }
-    data.make(focus, compact::PART_CHARS, |request| {
+    let provider = compact::provider(model).ok_or("Choose a valid OpenCode provider/model.")?;
+    make_consented(roots, provider, data, focus, compact::PART_CHARS, |request| {
         let scratch = Scratch::new()?;
         let events = opencode_cli::run_prompt(
             command(program, &scratch.0, true),
@@ -126,6 +125,23 @@ pub fn make(
             &cancelled,
         )?;
         answer(&events)
+    })
+}
+
+fn make_consented(
+    roots: &claude_switch_core::Roots,
+    provider: &str,
+    data: &compact::Handover,
+    focus: &str,
+    budget: usize,
+    mut submit: impl FnMut(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    data.make(focus, budget, |request| {
+        let (config, damaged) = claude_switch_core::config::load_checked(roots);
+        if damaged || !config.compact.consents.contains(provider) {
+            return Err("Provider consent is no longer recorded. No further handover requests were sent.".into());
+        }
+        submit(request)
     })
 }
 

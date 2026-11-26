@@ -74,7 +74,7 @@ fn valid_entry(entry: &Value) -> bool {
 
 fn read_entries(path: &Path) -> Result<Map<String, Value>, Refusal> {
     crate::util::regular_target(path)?;
-    let entries: Map<String, Value> = match std::fs::read(path) {
+    let entries: Map<String, Value> = match crate::read_bounded(path, crate::APP_FILE_LIMIT) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| io_refusal("read launch history", path, &e))?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => Map::new(),
         Err(e) => return Err(io_refusal("read launch history", path, &e)),
@@ -83,6 +83,28 @@ fn read_entries(path: &Path) -> Result<Map<String, Value>, Refusal> {
         return Err(Refusal::Invalid("Launch history contains an invalid reservation.".into()));
     }
     Ok(entries)
+}
+
+/// Record the owner after a caller verifies the live CLI PID, account, cwd and session UUID.
+/// A recorded owner alone is not a launch reservation.
+pub fn record_verified_owner(roots: &Roots, id: &str, account: &str) -> Result<(), Refusal> {
+    validate_session_id(id)?;
+    let path = history_file(roots);
+    let _lock = lock_beside(&path)?;
+    let mut entries = read_entries(&path)?;
+    let key = entries.keys().find(|key| key.eq_ignore_ascii_case(id)).cloned().unwrap_or_else(|| id.into());
+    if let Some(entry) = entries.get(&key) {
+        if previous(entry).get("account").and_then(Value::as_str) == Some(account)
+            || previous(entry).as_str() == Some(account)
+        {
+            return Ok(());
+        }
+        if recent(entry) == Some(true) {
+            return Err(Refusal::Invalid("A launch reservation is still active for the verified session.".into()));
+        }
+    }
+    entries.insert(key, json!({"account": account}));
+    write_json(&path, &Value::Object(entries))
 }
 
 /// Recheck activity while preventing Claude Switch from reserving a concurrent start.

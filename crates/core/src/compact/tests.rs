@@ -7,6 +7,35 @@ fn message(kind: &str, content: Value) -> Value {
         "gitBranch":"feature", "message":{"role":kind,"content":content}})
 }
 
+#[test]
+fn split_assistant_reminders_never_reach_provider_and_inline_user_reminders_never_reach_markdown() {
+    let t = TempDir::new("compact-split-reminder");
+    let (session, _) = fixture(
+        &t,
+        &[
+            message("user", json!("KEEP_USER <system-reminder>HIDDEN_USER</system-reminder> end")),
+            message(
+                "assistant",
+                json!([
+                    {"type":"text","text":"KEEP_START <system-rem"},
+                    {"type":"text","text":"inder>HIDDEN_ASSISTANT</system-"},
+                    {"type":"text","text":"reminder> KEEP_END"}
+                ]),
+            ),
+        ],
+    );
+    let markdown = Handover::read(session, "fixture".into())
+        .unwrap()
+        .make("", PART_CHARS, |body| {
+            assert!(body.contains("KEEP_START") && body.contains("KEEP_END"));
+            assert!(!body.contains("HIDDEN_ASSISTANT") && !body.contains("KEEP_USER"));
+            Ok::<_, ()>("{}".into())
+        })
+        .unwrap();
+    assert!(markdown.contains("KEEP_USER") && markdown.contains("KEEP_END"));
+    assert!(!markdown.contains("HIDDEN_USER") && !markdown.contains("HIDDEN_ASSISTANT"));
+}
+
 fn tool(name: &str, id: &str, input: Value) -> Value {
     json!({"type":"tool_use","id":id,"name":name,"input":input})
 }

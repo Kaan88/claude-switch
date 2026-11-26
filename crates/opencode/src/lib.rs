@@ -101,7 +101,11 @@ fn active(command: Command, timeout: Duration) -> Result<usize, String> {
     let text = run(command, &["api", "session.active"], timeout)?;
     let value: Value = serde_json::from_str(&text).map_err(|_| "Invalid OpenCode session response.")?;
     let data = value["data"].as_object().ok_or("Invalid OpenCode session response.")?;
-    Ok(data.values().filter(|session| session["type"] == "running").count())
+    data.values().try_fold(0, |count, session| match session["type"].as_str() {
+        Some("running") => Ok(count + 1),
+        Some("idle" | "retry") => Ok(count),
+        _ => Err("Unrecognized OpenCode active-session entry.".into()),
+    })
 }
 
 /// Restarts the service, falling back to stop/start, and returns the verified running count.

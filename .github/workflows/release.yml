@@ -13,14 +13,23 @@ jobs:
     permissions:
       contents: write
     runs-on: windows-latest
+    env:
+      CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Rust stable
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
+      # Test the checked-out tag itself before producing any release artifacts.
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Run tests
+        run: .\tools\test-release-workspace.ps1
       - name: Find or install Inno Setup 7
         run: |
           $candidates = @(
@@ -42,16 +51,12 @@ jobs:
           }
           if (-not $iscc) { throw 'Could not locate ISCC.exe.' }
           "ISCC=$iscc" >> $env:GITHUB_ENV
-      - name: Build and package
+      - name: Build, generate notices and package
         run: .\tools\package.ps1 -AppVersion $env:GITHUB_REF_NAME.Substring(1) -Iscc $env:ISCC
       - name: Write hub.txt
         shell: pwsh
         run: |
           $v = $env:GITHUB_REF_NAME.Substring(1)
-          $exe = 'target/release/claude-switch.exe'
-          $fileVersion = (Get-Item -LiteralPath $exe).VersionInfo.FileVersion
-          if ($fileVersion -cne $v) { throw "Tag version $v does not match the executable version '$fileVersion'." }
-
           $version = [regex]::Escape($v)
           $heading = "^##\s+(?:$version|\[$version\])(?:\s|$)"
           $inSection = $false
@@ -75,12 +80,16 @@ jobs:
             -Files @{ Name = $setup; Role = 'setup'; Path = "dist/$setup"; Silent = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART'; Scope = 'user' } `
             -Out $manifest
           Get-Content -LiteralPath $manifest
-      - name: Publish installer, bare executable and Hub manifest
+      - name: Smoke-test the staged installer
+        timeout-minutes: 5
+        run: .\tools\test-release-installer.ps1 -AppVersion $env:GITHUB_REF_NAME.Substring(1)
+      - name: Publish installer, bare executable, notices and Hub manifest
         uses: softprops/action-gh-release@v3
         with:
           fail_on_unmatched_files: true
           generate_release_notes: true
           files: |
             dist/claude-switch-setup.exe
-            target/release/claude-switch.exe
+            dist/claude-switch.exe
+            dist/THIRD-PARTY-NOTICES
             dist/hub.txt

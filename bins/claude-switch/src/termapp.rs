@@ -55,7 +55,7 @@ impl AppState {
             && self.palette.is_none()
             && self.menu.is_none()
             && !self.accounts_dd.is_open()
-            && !self.usage.popup.open
+            && !self.usage.popup.takes_keyboard()
     }
 
     /// Whether the terminal shown has the keyboard: the window has it and nothing is over it.
@@ -84,6 +84,7 @@ impl AppState {
             tab.cwd = pane.as_ref().and(l.cwd.clone());
             tab.pane = pane;
         }
+        self.see_shown();
         Ok(id)
     }
 
@@ -101,7 +102,6 @@ impl AppState {
         let before = self.tabs.active;
         let id = self.tabs.open(new, t);
         self.report_switch(before);
-        self.see_shown();
         Ok(id)
     }
 
@@ -269,10 +269,17 @@ impl AppState {
             }
             KeyAction::Send(bytes) if !ended => {
                 self.note_chat_terminal_input();
+                let demo_echo = self.source.is_demo() && self.usage.demo_echo;
                 if let Some(tab) = self.tabs.shown_mut() {
                     tab.term.scroll = 0;
                     tab.term.selection = None;
-                    tab.term.write(&bytes);
+                    if demo_echo && tab.term.pty.is_none() {
+                        #[cfg(test)]
+                        self.usage.demo_keys.extend_from_slice(&bytes);
+                        tab.term.feed(if k.name == Some(KeyName::Enter) { b"\r\n" } else { &bytes });
+                    } else {
+                        tab.term.write(&bytes);
+                    }
                 }
             }
             _ => {}
@@ -283,9 +290,14 @@ impl AppState {
     pub fn term_text(&mut self, text: &str) {
         self.flush_drop_before_input();
         self.note_chat_terminal_input();
+        let demo_echo = self.source.is_demo() && self.usage.demo_echo;
         if let Some(tab) = self.tabs.shown_mut() {
             tab.term.scroll = 0;
-            tab.term.write(text.as_bytes());
+            if demo_echo && tab.term.pty.is_none() {
+                tab.term.feed(text.as_bytes());
+            } else {
+                tab.term.write(text.as_bytes());
+            }
         }
     }
 

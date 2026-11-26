@@ -1,0 +1,28 @@
+{
+  "packs": [
+    { "file": "default_metadata.packdump", "sha256": "B1DF0402DFDB84B9826B206BFFAFB35553C46530AFCBB3C929147760056766F3" },
+    { "file": "default_newlines.packdump", "sha256": "D740B20C12E40B678B9F1012401E1969AAA5CD55F1AB329FFEB94D746B06A5C0" },
+    { "file": "default_nonewlines.packdump", "sha256": "B61623FF9B5C36E60666D637076697AD8234116B2D53AD2EE9E3908DF1C2461D" },
+    { "file": "default.themedump", "sha256": "8B57A2118224993360B6FC5FC2FA2E9872A827F00F9C57D43DA08FA42C892399" }
+  ],
+  "notices": [
+    {
+      "name": "Sublime Text Packages default syntax definitions",
+      "license": "LicenseRef-Sublime-Text-Packages",
+      "source": "https://github.com/sublimehq/Packages/blob/fa6b8629c95041bf262d4c1dab95c456a0530122/LICENSE",
+      "file": "sublime-packages.txt"
+    },
+    {
+      "name": "Sublime Text Packages Rust, C# and YAML syntax notices",
+      "license": "MIT",
+      "source": "https://github.com/sublimehq/Packages/tree/fa6b8629c95041bf262d4c1dab95c456a0530122",
+      "file": "sublime-syntax-mit.txt"
+    },
+    {
+      "name": "Syntect default themes (InspiredGitHub, Solarized and Spacegray/Base16)",
+      "license": "MIT",
+      "source": "Upstream theme notices (sources listed in the text)",
+      "file": "syntect-themes-mit.txt"
+    }
+  ]
+}

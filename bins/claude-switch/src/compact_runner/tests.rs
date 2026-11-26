@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn forgetting_consent_after_first_part_prevents_further_submission() {
+    let temp = Scratch::new().unwrap();
+    let roots = claude_switch_core::Roots { home: temp.0.clone(), appdata: temp.0.clone() };
+    let file = temp.0.join("session-1.jsonl");
+    fs::write(
+        &file,
+        format!("{}\n", json!({"type":"assistant","cwd":"C:/fixture","message":{"content":"part ".repeat(100)}})),
+    )
+    .unwrap();
+    let session = claude_switch_core::sessions::read_transcript(&file).unwrap();
+    let data = compact::Handover::read(session, "fixture".into()).unwrap();
+    let update = claude_switch_core::config::update_compact;
+    update(&roots, |p: &mut compact::Preferences| {
+        p.consents.insert("test".into());
+        Ok(())
+    })
+    .unwrap();
+    let mut submitted = 0;
+    let result = make_consented(&roots, "test", &data, "", 30, |_| {
+        submitted += 1;
+        claude_switch_core::config::update_compact(&roots, |p| {
+            p.consents.clear();
+            Ok(())
+        })
+        .unwrap();
+        Ok("{}".into())
+    });
+    assert_eq!(submitted, 1);
+    assert!(result.unwrap_err().contains("consent is no longer recorded"));
+}
+
+#[test]
 fn summarizer_config_has_one_step_no_tool_permissions_and_no_warming() {
     let spec = spec_config();
     assert_eq!(spec["agents"][AGENT]["steps"], 1);

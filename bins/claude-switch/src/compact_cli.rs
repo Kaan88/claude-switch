@@ -7,7 +7,7 @@ use std::path::Path;
 mod window;
 
 const USAGE: &str = "Usage: claude-switch compact --session <id|latest> [--cwd <folder>] \
-    [--model <provider/model>] [--as <account>] [--focus-file <file>] [--print | --open]";
+    [--model <provider/model>] [--as <account>] [--focus-file <file>] [--print | --open] [--save]";
 
 #[derive(Default, Debug)]
 struct Options {
@@ -17,6 +17,7 @@ struct Options {
     account: Option<String>,
     focus_file: Option<String>,
     open: bool,
+    save: bool,
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -30,6 +31,10 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
             "--model" => &mut options.model,
             "--as" => &mut options.account,
             "--focus-file" => &mut options.focus_file,
+            "--save" if !options.save => {
+                options.save = true;
+                continue;
+            }
             "--print" | "--open" if mode.is_none() => {
                 mode = Some(flag == "--open");
                 continue;
@@ -106,20 +111,31 @@ fn run(options: Options) -> Result<(), String> {
     let data = compact::Handover::read(session.clone(), name_of(&roots, session))
         .map_err(|_| "Could not read the transcript.")?;
     let focus = options.focus_file.as_deref().map(Path::new).map(focus_from_file).transpose()?;
-    let text =
-        compact_runner::make(&program, model, &data, focus.as_deref().or_else(|| data.focus()).unwrap_or(""), || {
-            false
-        })?;
-    let file = compact::save(&roots, &session.id, &text).map_err(|e| format!("Could not keep the handover: {e}"))?;
+    let text = compact_runner::make(
+        &roots,
+        &program,
+        model,
+        &data,
+        focus.as_deref().or_else(|| data.focus()).unwrap_or(""),
+        || false,
+    )?;
     if !options.open {
-        return io::stdout().lock().write_all(text.as_bytes()).map_err(|e| format!("Could not write stdout: {e}"));
+        return print(&roots, &session.id, &text, options.save, io::stdout().lock());
     }
     compact_open::validate_prompt(&text)?;
+    let file = compact::save(&roots, &session.id, &text).map_err(|e| format!("Could not keep the handover: {e}"))?;
     let exe = std::env::current_exe().map_err(|_| "Could not locate Claude Switch.")?;
     let name = file.file_name().and_then(|n| n.to_str()).ok_or("Invalid saved handover path.")?;
     window::spawn(&exe, &session.id, account, name)?;
     eprintln!("Claude Switch: opened the handover tab in a new window.");
     Ok(())
+}
+
+fn print(roots: &Roots, id: &str, text: &str, save: bool, mut out: impl Write) -> Result<(), String> {
+    if save {
+        compact::save(roots, id, text).map_err(|e| format!("Could not keep the handover: {e}"))?;
+    }
+    out.write_all(text.as_bytes()).map_err(|e| format!("Could not write stdout: {e}"))
 }
 
 pub fn entry(args: impl Iterator<Item = String>) -> i32 {
@@ -165,6 +181,24 @@ pub(crate) fn acknowledge(key: &str, opened: bool) {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn print_writes_only_stdout_unless_save_is_explicit() {
+        let root = std::env::temp_dir().join(format!("cs-review3-print-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let roots = Roots { home: root.clone(), appdata: root.clone() };
+        let mut out = Vec::new();
+        let options = parse("--session session-1 --print".split_whitespace().map(str::to_owned)).unwrap();
+        print(&roots, &options.session, "edited output", options.save, &mut out).unwrap();
+        assert_eq!(out, b"edited output");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        let options = parse("--session session-1 --print --save".split_whitespace().map(str::to_owned)).unwrap();
+        print(&roots, &options.session, "edited output", options.save, io::sink()).unwrap();
+        let files = compact::list(&roots, &options.session).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(std::fs::read_to_string(&files[0]).unwrap(), "edited output");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn rejects_ambiguous_modes_and_missing_values() {

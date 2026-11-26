@@ -15,6 +15,25 @@ fn compact(st: &AppState) -> &Compact {
 }
 
 #[test]
+fn real_source_preview_and_cancel_leave_no_handover_history() {
+    let root = std::env::temp_dir().join(format!("cs-preview-cancel-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let roots = claude_switch_core::Roots { home: root.clone(), appdata: root.clone() };
+    let mut st = app();
+    let Some(Dialog::Compact(mut dialog)) = st.dialog.take() else { panic!("expected handover dialog") };
+    let id = dialog.session.id.clone();
+    st.source = Source::Real(roots.clone());
+    dialog.apply(&mut st, Ok(Update::Preview("private unedited preview".into())));
+    assert!(dialog.saved.is_none());
+    dialog.preview.set("redacted".into());
+    st.dialog = Some(Dialog::Compact(dialog));
+    dialogs::click(&mut st, Instant::now(), CANCEL, 0.0);
+    assert!(st.dialog.is_none());
+    assert!(compact::list(&roots, &id).unwrap().is_empty());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn demo_requires_provider_consent_and_preview_before_the_open_action() {
     let mut st = app();
     let now = Instant::now();

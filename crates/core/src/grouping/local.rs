@@ -45,11 +45,15 @@ fn normalize(path: &Path) -> Option<PathBuf> {
                 #[cfg(windows)]
                 {
                     let name = name.to_str()?;
-                    let device = name.split('.').next()?.to_ascii_uppercase();
+                    let device = name.split('.').next()?.trim_end_matches(' ').to_ascii_uppercase();
+                    let serial_device =
+                        device.strip_prefix("COM").or_else(|| device.strip_prefix("LPT")).is_some_and(|suffix| {
+                            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³")
+                        });
                     if name.ends_with([' ', '.'])
                         || name.contains([':', '\0'])
                         || matches!(device.as_str(), "CON" | "AUX" | "PRN" | "NUL" | "CONIN$" | "CONOUT$")
-                        || (device.starts_with("COM") || device.starts_with("LPT")) && device.chars().count() == 4
+                        || serial_device
                     {
                         return None;
                     }
@@ -189,5 +193,15 @@ mod tests {
         }
         assert!(normalize(Path::new(r"C:\..\repo")).is_none());
         assert_eq!(normalize(Path::new(r"C:\repo\.git\worktrees\foo\..\..")).unwrap(), Path::new(r"C:\repo\.git"));
+    }
+
+    #[test]
+    fn only_reserved_serial_and_parallel_device_suffixes_are_refused() {
+        for name in ["COM1", "lpt9.txt", "COM¹", "LPT³ .txt", "CON .txt"] {
+            assert!(normalize(&Path::new(r"C:\work").join(name)).is_none(), "{name}");
+        }
+        for name in ["comp", "lptx", "COM10", "COMP.txt"] {
+            assert!(normalize(&Path::new(r"C:\work").join(name)).is_some(), "{name}");
+        }
     }
 }

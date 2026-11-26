@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use claude_switch_core::{App, Launch, Refusal, Running, Session, sessions::folder_key};
-use mdshared_app::settings;
 use serde_json::{Value, json};
 
 use crate::dialogs::{Dialog, Pending};
@@ -20,6 +19,8 @@ const TOAST_PREFIX: &str = "Tabs not reopened: ";
 
 #[path = "resume_tabs_draw.rs"]
 mod drawing;
+#[path = "resume_tabs_ownership.rs"]
+mod ownership;
 #[path = "resume_tabs_process.rs"]
 mod process;
 pub use drawing::draw_toasts;
@@ -36,6 +37,7 @@ struct Entry {
 #[derive(Default)]
 pub struct Restore {
     pub save_failed: bool,
+    pub window_save_failed: bool,
     baseline: Option<String>,
     pending: VecDeque<Entry>,
     waiting: Option<Entry>,
@@ -43,6 +45,8 @@ pub struct Restore {
     active: Option<u64>,
     initial: Option<u64>,
     started: bool,
+    verified_owners: HashSet<(u64, String)>,
+    external_owners: ownership::PendingOwners,
 }
 
 fn valid_id(id: &str) -> bool {
@@ -160,12 +164,16 @@ impl AppState {
         } else {
             self.source.run(launch).map(|()| None)
         };
+        if !in_tab && !self.source.is_demo() && started.is_ok() {
+            self.restore.external_owners.launched(launch, account, Instant::now());
+        }
         let history = reservation.map(|r| r.finish(started.is_ok())).transpose().map(drop);
         Ok((started, history))
     }
 
-    pub fn identify_tabs(&mut self) {
+    pub fn identify_tabs(&mut self) -> bool {
         let mut processes = None;
+        let mut changed = self.verify_external_owners();
         for tab in &mut self.tabs.list {
             if !tab.term.running() {
                 continue;
@@ -173,27 +181,33 @@ impl AppState {
             let (Some(pty), Some(account), Some(cwd)) = (&tab.term.pty, &tab.account, &tab.cwd) else { continue };
             let processes = processes.get_or_insert_with(process::Processes::current);
             let found = live_id(&self.running, account, cwd, |pid| pid == pty.pid() || processes.wraps(pty.pid(), pid));
-            let indexed = found.and_then(|id| self.by_id.get(id)).and_then(|&i| self.sessions.get(i));
-            let verified = found.filter(|id| tab.pane.as_ref().is_some_and(|pane| pane.verify_identity(id)));
-            if verified.is_some() && tab.session.as_deref().is_none_or(|id| Some(id) == verified) {
-                tab.resume_id = verified.map(str::to_owned);
-                tab.session = tab.resume_id.clone();
-                if let Some(pane) = &mut tab.pane {
-                    pane.chat.identity_unverified = false;
-                }
-            } else {
-                // Do not silently switch the pane or send its draft to a different session.
-                tab.resume_id = None;
-                if let Some(pane) = &mut tab.pane {
-                    pane.identity_unverified(indexed.is_some());
+            changed |= apply_live_identity(tab, found);
+            if let Source::Real(roots) = &self.source
+                && let Some(id) = found.filter(|id| tab.resume_id.as_deref() == Some(*id))
+                && let Some(account) = &tab.account
+            {
+                let key = (tab.id, id.to_owned());
+                if !self.restore.verified_owners.contains(&key)
+                    && claude_switch_core::launch::record_verified_owner(roots, id, account).is_ok()
+                {
+                    self.restore.verified_owners.insert(key);
+                    if self.selected.as_deref() == Some(id) {
+                        self.last_account = Some((id.to_owned(), account.clone()));
+                        changed = true;
+                    }
                 }
             }
         }
+        self.restore.verified_owners.retain(|(id, _)| self.tabs.get(*id).is_some());
+        changed
     }
 
     pub fn load_tab_restore(&mut self) {
-        if let Some(file) = path(&self.source) {
-            self.restore.baseline = settings::read(&file).ok().flatten();
+        if let Some(file) = path(&self.source)
+            && let Err(error) = self.restore.load_snapshot(&file)
+        {
+            self.restore.save_failed = true;
+            self.error("Could not read saved terminal tabs", format!("{error} The saved file was left unchanged."));
         }
         if self.win_file.restore_tabs == RestoreTabs::Never {
             return;
@@ -245,11 +259,7 @@ impl AppState {
         }
         let rows = snapshot(&self.tabs);
         if !rows.is_empty() || self.restore.pending.is_empty() && self.restore.waiting.is_none() {
-            return claude_switch_core::replace_if_unchanged(
-                &file,
-                self.restore.baseline.as_deref().map(str::as_bytes),
-                encode(rows).as_bytes(),
-            );
+            return self.restore.save_snapshot(&file, rows);
         }
         Ok(())
     }
@@ -317,7 +327,7 @@ impl AppState {
         let active = self.restore.active.or(self.restore.initial).unwrap_or(SESSIONS);
         self.show_tab(active);
         let failures = std::mem::take(&mut self.restore.failures);
-        self.restore = Restore::default();
+        self.restore = Restore { baseline: self.restore.baseline.take(), ..Restore::default() };
         if !failures.is_empty() {
             self.toast(format!("{TOAST_PREFIX}{}", failures.join("; ")), now);
         }
@@ -422,12 +432,76 @@ impl AppState {
     }
 }
 
+fn apply_live_identity(tab: &mut crate::tabs::Tab, found: Option<&str>) -> bool {
+    tab.apply_live_identity(found)
+}
+
+impl Restore {
+    fn load_snapshot(&mut self, file: &Path) -> io::Result<()> {
+        self.baseline = match claude_switch_core::read_bounded(file, claude_switch_core::APP_FILE_LIMIT) {
+            Ok(bytes) => Some(String::from_utf8(bytes).map_err(io::Error::other)?),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        Ok(())
+    }
+
+    fn save_snapshot(&self, file: &Path, rows: Vec<Entry>) -> Result<(), Refusal> {
+        claude_switch_core::replace_if_unchanged(
+            file,
+            self.baseline.as_deref().map(str::as_bytes),
+            encode(rows).as_bytes(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const A: &str = "11111111-0000-0000-0000-000000000000";
     const B: &str = "22222222-0000-0000-0000-000000000000";
+
+    #[test]
+    fn oversized_saved_tabs_are_not_loaded_or_overwritten() {
+        let path = std::env::temp_dir().join(format!("cs-w3-tabs-cap-{}.json", std::process::id()));
+        let len = claude_switch_core::APP_FILE_LIMIT as u64 + 1;
+        std::fs::File::create_new(&path).unwrap().set_len(len).unwrap();
+        let mut restore = Restore::default();
+        assert_eq!(restore.load_snapshot(&path).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(restore.save_snapshot(&path, vec![]).is_err());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn finish_restore_then_save_changed_tabs_keeps_the_loaded_revision() {
+        let root = std::env::temp_dir().join(format!("cs-restore-exit-{}", std::process::id()));
+        let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
+        let file = path(&disk).unwrap();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        app.apply_scan(crate::demo::scan(&app.config));
+        let original = Entry {
+            id: app.sessions[2].id.clone(),
+            account: "main".into(),
+            cwd: app.sessions[2].cwd.clone(),
+            active: true,
+            chat: None,
+        };
+        std::fs::write(&file, encode([original.clone()])).unwrap();
+        app.restore.load_snapshot(&file).unwrap();
+        app.restore.pending = decode(app.restore.baseline.as_deref().unwrap());
+        app.begin_tab_restore(Instant::now());
+        assert!(!app.restore.started);
+        assert_eq!(snapshot(&app.tabs).len(), 1);
+        app.tabs.list.clear();
+        app.source = disk;
+        app.save_tab_restore().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "[]");
+        assert!(app.restore.save_snapshot(&file, vec![original]).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn records_round_trip_and_untrusted_or_duplicate_rows_are_skipped() {

@@ -28,6 +28,36 @@ fn credentials_are_read_fresh_and_never_changed_or_debugged() {
 }
 
 #[test]
+fn credentials_extract_only_access_token_and_expiry_and_usage_labels_share_the_same_limits() {
+    let token = parse_token(
+        br#"{"private":{"tokens":["unrelated"]},"claudeAiOauth":{"refreshToken":"fake","accessToken":"tok\u0065n","expiresAt":100}}"#,
+        0,
+    ).unwrap();
+    assert_eq!(token.bearer(99), Ok("token"));
+    let legacy = json!({
+        "seven_day": {"utilization": 12},
+        "new\nlimit": {"utilization": 13},
+        "seven_day_\tbad": {"utilization": 15},
+        ("x".repeat(257)): {"utilization": 14},
+    });
+    let modern =
+        json!({"limits":[{"kind":"seven_day_long","scope":{"model":{"display_name":"z".repeat(256)}},"percent":88}]});
+    let reading = |v: Value| token.reading(v.to_string().as_bytes(), 0).unwrap().limits;
+    assert_eq!(reading(legacy), [Limit::legacy("seven_day", 12.0, None)]);
+    assert!(reading(modern).is_empty());
+}
+
+#[test]
+fn local_settings_contention_does_not_back_off_manual_refresh() {
+    let now = Instant::now();
+    let mut attempt = Attempt::default();
+    attempt.start(now);
+    attempt.finish(now, Err(Error::SettingsBusy));
+    assert!(attempt.allowed(Demand::Refresh, now, None));
+    assert_eq!(attempt.error(), Some(Error::SettingsBusy));
+}
+
+#[test]
 fn tolerant_limits_remain_sorted_and_only_normalized_data_survives() {
     let token = Token { value: b"synthetic-token".to_vec(), expires_at: 100 };
     let limits = token

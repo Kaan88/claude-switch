@@ -6,12 +6,12 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 
 - Find local Claude Code sessions and see their working folders.
 - Resume a session as the chosen CLI account. By default, it opens in a terminal tab in the same window.
-- Open sessions in the Claude desktop app. When more than one Desktop profile is running, the hand-off may go to the default profile.
+- Hand sessions off to the Claude desktop app. Switch cannot confirm which Desktop profile received a handoff.
 - Start a new CLI session in a chosen folder or open a copy of an existing session.
 - Make an editable handover with an OpenCode model and open it in a brand-new Claude Code session.
 - Keep separate logins while sharing transcripts and settings.
 - Check OpenCode’s version and active sessions in **Settings → Workers**, confirm a service restart, or open OpenCode Config Studio when installed.
-- Open oversized handovers without trimming them: the new Claude session is asked to read the saved Markdown file before continuing.
+- Open handovers that are too long for the command line by asking the new session to read the saved Markdown file.
 
 ## Screenshots
 
@@ -24,17 +24,20 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 Download and run the installer from [Releases](https://github.com/Kaan88/claude-switch/releases). It installs for your Windows user and does not need administrator rights. Install the Claude Code CLI to use terminal sessions and the Claude desktop app to use Desktop sessions.
 Switch requires the native `claude.exe` on `PATH`; a `.cmd`- or `.bat`-only installation is not supported.
 
-To build from source on Windows, install Rust stable and run:
+To build from source on Windows, install stable Rust with the MSVC toolchain
+(`x86_64-pc-windows-msvc`), Visual Studio Build Tools with **Desktop development with C++**
+(including the x64 MSVC compiler and linker), and a Windows SDK with `rc.exe`, the resource compiler.
+Then run:
 
 ```powershell
-cargo build --release -p claude-switch
+cargo build --release --locked -p claude-switch
 ```
 
 The executable is `target\release\claude-switch.exe`. The [markdown-shared-rs](https://github.com/Kaan88/markdown-shared-rs) toolkit is fetched by Cargo.
 
 ## Accounts and settings
 
-The first account uses your existing Claude CLI and Desktop profiles. Each extra account gets separate profile folders and sign-ins. The CLI accounts share transcripts, skills, agents, plugins, and settings from the first account. Claude Switch copies the user-level MCP server settings at launch and does not overwrite a conflicting settings file. Credentials and running-session records stay separate.
+The first account uses your existing Claude CLI and Desktop profiles. Each extra account gets separate profile folders and sign-ins. Switch links CLI transcripts, skills, agents, plugins, and settings from the first account where there is no conflict. It seeds user-level MCP server settings in a missing secondary `.claude.json`, not in an existing profile file. Credentials and running-session records stay separate.
 
 ## Duplicate-session safeguard
 
@@ -56,12 +59,12 @@ Claude Switch checks its tabs and the running-session records across accounts be
 You can also middle-click a terminal tab to close it.
 
 The OpenCode controls are in **Settings → Workers**; there is no separate keyboard shortcut.
-Use `--demo --demo-workers` or `--demo --demo-compact-long` to preview the new screens without
+Use `--demo --demo-workers` or `--demo --demo-compact-long` to preview those screens without
 starting OpenCode or Claude.
 
 ## Privacy
 
-Claude Switch has no telemetry. When **Show usage** is on (the default), Claude Switch reads each account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Accounts to disable these reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
+Claude Switch has no telemetry. When **Show usage** is on (the default), a usage refresh reads the relevant account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Accounts to stop new token reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
 
 ## Compact and open
 
@@ -72,10 +75,11 @@ session. The character/token estimate updates as you edit. You can also copy or 
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 
-OpenCode receives assistant text, fixed tool category names (no tool arguments or paths), and the optional focus. The app appends
-verbatim prompts locally. Tool results, pictures, thinking and system reminders are excluded from
-the OpenCode request. OpenCode archives its own run; this is not a no-retention option. To remove
-remembered permission, use **Settings → Handovers → Forget consents**.
+OpenCode receives assistant prose, fixed tool category names, and the optional focus. The app does
+not send tool arguments or paths from tool records, but paths and other sensitive text may appear
+in the prose or focus. The app adds bounded user-prompt excerpts and tool evidence to the local
+Markdown, not to the OpenCode request. OpenCode archives its own run; this is not a no-retention
+option. To remove remembered permission, use **Settings → Handovers → Forget consents**.
 
 ```powershell
 claude-switch compact --session latest --cwd . --print
@@ -84,9 +88,9 @@ claude-switch compact --session latest --cwd . --as work --open
 
 Use a session ID instead of `latest` to target one transcript; `--model provider/model` overrides
 the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requires prior provider
-consent. `--print` outputs Markdown and opens nothing; `--open` explicitly opts into starting
-the new session in a new Claude Switch window and waits for tab-creation confirmation. Run it
-from the GUI instead to review first.
+consent. `--print` outputs Markdown and opens nothing; add `--save` to keep a local copy.
+`--open` saves the handover and starts a new session in a new Claude Switch window; it waits for
+tab-creation confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
 code units are saved in full; the new session's initial prompt asks it to read the saved
@@ -95,15 +99,24 @@ handover's file path in the command line.
 
 ### Install the Claude Code plugin
 
-Put `claude-switch.exe` on `PATH`. To load the plugin for one Claude Code session, start Claude Code
-with `claude --plugin-dir "<path-to-claude-switch-repo>\plugin"`. To keep it available in a trusted
-workspace, copy the whole `plugin` directory (including `.claude-plugin`) to
-`.claude/skills/claude-switch` in that workspace, then start a new Claude Code session. Use
-`/claude-switch:switch-compact [what to keep]` after granting the provider consent in Claude Switch.
+Put `claude-switch.exe` on `PATH`. From the parent folder of a local checkout named `claude-switch`,
+register its [plugin marketplace](https://code.claude.com/docs/en/plugins/marketplaces) and install:
+
+```powershell
+claude plugin marketplace add ./claude-switch
+claude plugin install switch-handover@kaan88-claude-switch
+claude plugin list
+```
+
+This installs to the current Claude Code profile (user scope). Keep the checkout at that path.
+To load without installing, start Claude Code with
+`claude --plugin-dir "<path-to-claude-switch-repo>\plugin"` for that session only.
+Use `/switch-handover:switch-compact [what to keep]` after granting provider consent in Claude Switch.
 
 ## Licence
 
-[MIT](LICENSE).
+[MIT](LICENSE). [Third-party notices](THIRD-PARTY-NOTICES) are installed beside the executable and
+published as a separate release asset alongside the standalone executable.
 
 Claude Switch is an unofficial tool. It is not made by or affiliated with Anthropic. “Claude” is a trademark of Anthropic.
 
@@ -114,6 +127,7 @@ for other views. Pins take priority. Search includes the last prompt, and the Al
 and Unseen filters help you narrow the list. Right-click a row to open it, rename or pin it,
 hide it or its folder, copy its ID or folder path, or reveal its transcript in Explorer.
 Hidden sessions are not deleted; turn on **Show hidden** in Settings to find and unhide them.
+**Waiting** is inferred from recent transcript activity, not a guarantee that the CLI is ready.
 
 | Shortcut | Action |
 | --- | --- |
@@ -140,7 +154,8 @@ subagents, and context/output tokens. Figures marked **about** are character-bas
 ### Window and terminal tabs
 
 Claude Switch remembers the normal window size and position, even when you quit maximized.
-If the saved position is mostly off-screen, it opens centered in the primary monitor’s work area.
+If no connected work area can show at least a 100 × 100 pixel portion of the saved normal rectangle,
+it opens centered in the primary monitor’s work area.
 **Settings → Terminal → Reopen terminal tabs on startup** offers **Ask** (default), **Always**,
 or **Never**. Only Claude sessions can be reopened; the app saves no shell tabs or terminal text.
 Reopening still honors the usual resume warnings and skips sessions it cannot safely open.
@@ -159,9 +174,10 @@ command palette with Ctrl+Shift+K first.
 
 ### Folder defaults and archive
 
-The main **Open** button, Enter, and **New session** use the folder’s last successful account
-and app (CLI or Desktop). Use **Change** in the session details to edit or clear it. If that
-account is removed, the selected account takes its place.
+The main **Open** button, Enter, and **New session** use the saved folder default when there is
+one. Use **Change** in the session details to edit or clear it. If the account is removed, the
+selected account takes its place. Without a default, **Open** uses the session’s last app and
+**New session** uses the CLI.
 
 Choose **Archive older sessions…** from the Sessions list’s **Archive** menu or the command
 palette. Pick 2, 4, 8, or 12 weeks and optionally one folder. The preview shows the number of
@@ -217,8 +233,8 @@ preview in the terminal drawer before submitting. A slash opens the CLI’s own 
 
 ## Grouping sessions
 
-The Sessions switcher now offers **Recent**, **Projects**, **Threads**, and **Topics** when a
-session has a topic. **Projects** combines local folders and worktrees of the same repository,
+The Sessions view offers **Recent**, **Projects**, and **Threads**; **Topics** appears when an
+indexed session has a topic. **Projects** combines local folders and worktrees of the same repository,
 with the newest rows first. Remote or redirected paths fall back to folder grouping. Use
 **Group by: Project / Folder** to switch back to the original folder grouping. **Threads**
 folds proven continuations under their newest member; click **N earlier** or use Left/Right

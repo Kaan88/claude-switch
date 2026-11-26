@@ -10,7 +10,7 @@ mod preview;
 mod text;
 mod ui;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use claude_switch_core::Launch;
@@ -26,6 +26,7 @@ use crate::winfile::WindowFile;
 
 const AXIS: Axis = Axis::Horizontal;
 const POLL: Duration = Duration::from_millis(500);
+const SESSION_CHANGED: &str = "Session changed in the terminal. Reopen the session to attach its transcript.";
 
 fn enabled(preference: Option<bool>, width: f32) -> bool {
     preference.unwrap_or(width >= 1100.0)
@@ -38,6 +39,7 @@ pub struct Window {
     split_hover: bool,
     text_focus: bool,
     pub drops: attach::DropBatch,
+    pub demo_permission: bool,
 }
 
 impl Window {
@@ -53,6 +55,7 @@ impl Window {
             split_hover: false,
             text_focus: false,
             drops: Default::default(),
+            demo_permission: false,
         }
     }
 }
@@ -61,6 +64,7 @@ pub struct Pane {
     model: model::Model,
     pub chat: chat::Chat,
     pub(crate) transcript_source: model::Source,
+    verified_path: Option<PathBuf>,
     ui: ui::Ui,
     cwd: PathBuf,
     next: Option<Instant>,
@@ -69,34 +73,53 @@ pub struct Pane {
 
 impl Pane {
     pub(crate) fn note_terminal_input(&mut self) {
-        let end = self.transcript_source.find_file().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
-        self.chat.invalidate_input(&self.model.chat, end);
+        let end = self.verified_path.as_ref().and_then(|p| std::fs::symlink_metadata(p).ok()).filter(|m| m.is_file());
+        self.chat.invalidate_input(&self.model.chat, end.map(|m| m.len()));
     }
     pub fn restore_chat_layout(&mut self, chat: bool) {
         self.chat.enabled = chat;
         self.ui.set_chat(chat);
     }
 
-    pub(crate) fn verify_identity(&self, id: &str) -> bool {
+    pub(crate) fn pinned_id(&self) -> Option<&str> {
         match &self.transcript_source {
-            model::Source::File(path) => {
-                path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| stem.eq_ignore_ascii_case(id))
-            }
+            model::Source::File(path) => path.file_stem()?.to_str(),
+            model::Source::Discover { verified, .. } => verified.get().map(String::as_str),
+        }
+    }
+
+    fn identity_path(&self, id: &str) -> Option<PathBuf> {
+        match &self.transcript_source {
+            model::Source::File(path) => Some(path.clone()),
             model::Source::Discover { verified, .. } => {
-                if let Some(previous) = verified.get() {
-                    return previous == id && self.transcript_source.find_file().is_some();
-                }
-                self.transcript_source.verify_candidate(id) && verified.set(id.to_owned()).is_ok()
+                let path = self.transcript_source.candidate_path(verified.get().map_or(id, String::as_str))?;
+                verified.get_or_init(|| id.to_owned());
+                Some(path)
             }
         }
     }
 
-    pub(crate) fn identity_unverified(&mut self, changed: bool) {
-        self.chat.identity_unverified = true;
-        if changed {
-            self.model.error =
-                Some("Session changed in the terminal. Reopen the session to attach its transcript.".into());
+    pub(crate) fn update_identity(&mut self, found: Option<&str>) -> bool {
+        let mismatch = self.pinned_id().zip(found).is_some_and(|(pin, id)| !pin.eq_ignore_ascii_case(id));
+        let path = found.filter(|_| !mismatch).and_then(|id| self.identity_path(id));
+        let unverified = path.is_none();
+        let changed = self.chat.identity_unverified != unverified
+            || (mismatch && self.model.error.as_deref() != Some(SESSION_CHANGED));
+        if self.chat.identity_unverified != unverified {
+            self.chat.invalidate(&self.model.chat);
         }
+        self.verified_path = path;
+        self.chat.identity_unverified = unverified;
+        if mismatch {
+            self.model.error = Some(SESSION_CHANGED.into());
+        } else if !unverified && self.model.error.as_deref() == Some(SESSION_CHANGED) {
+            self.model.error = None;
+        }
+        changed
+    }
+
+    pub(crate) fn verified_transcript(&self) -> Option<&Path> {
+        self.verified_path.as_deref()
     }
 }
 
@@ -143,14 +166,18 @@ impl AppState {
                 "\x1b[2mSynthetic session · no CLI process\x1b[0m\r\n\r\n",
                 "> Make a north ridge pocket guide.\r\n\r\n",
                 "  The demo is waiting for a decision about field-notes.md.\r\n",
-                "  No command will run here. Try Send anyway in Chat.\r\n",
+                "  Chat keeps your draft and blocks both Send buttons while waiting.\r\n",
                 "\x1b[?2004h",
                 "\x1b[?25l",
             )
             .as_bytes(),
         );
         let preview = self.config.appearance.backdrop != "off";
-        if preview {
+        let permission = self.session_view.demo_permission;
+        if permission {
+            terminal.feed("\r\nDo you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\nEsc to cancel".as_bytes());
+        }
+        if preview && !permission {
             terminal.feed(b"\x1b[44m Explicit background \x1b[0m\r\nSelected text\r\nCursor: \x1b[?25h");
             let line = terminal.screen.screen_start() + 8;
             let mut selection = mdshared_term::Selection::start(
@@ -174,8 +201,11 @@ impl AppState {
         );
         let mut pane = self.new_session_pane(model::Source::File(demo.path().to_owned()), demo.cwd().to_owned());
         pane._demo = Some(demo);
+        pane.verified_path = pane.transcript_source.find_file();
         pane.chat = chat::Chat::demo();
-        if preview {
+        if permission {
+            pane.chat.seed_permission_demo();
+        } else if preview {
             pane.chat.open_drawer();
         }
         pane.ui.chat_conversation(&mut pane.model);
@@ -211,7 +241,7 @@ impl AppState {
         Some(self.new_session_pane(source, cwd))
     }
 
-    fn new_session_pane(&self, source: model::Source, cwd: PathBuf) -> Pane {
+    pub(crate) fn new_session_pane(&self, source: model::Source, cwd: PathBuf) -> Pane {
         let proxy = self.proxy.clone();
         let model = model::Model::new(source.clone(), move || {
             if let Some(proxy) = &proxy
@@ -221,10 +251,11 @@ impl AppState {
             }
         });
         let mut chat = chat::Chat::default();
+        chat.identity_unverified = true;
         chat.enabled = self.win_file.chat_default;
         let mut ui = ui::Ui::default();
         ui.set_chat(chat.enabled);
-        Pane { model, transcript_source: source, ui, cwd, next: None, _demo: None, chat }
+        Pane { model, transcript_source: source, verified_path: None, ui, cwd, next: None, _demo: None, chat }
     }
 
     pub fn layout_session_view(&mut self, cx: &mut Cx<'_, Msg>, area: Rect) -> Rect {

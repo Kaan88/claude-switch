@@ -4,12 +4,16 @@ use std::time::{Duration, Instant};
 
 use claude_switch_core::grouping::Mode;
 use claude_switch_core::sessions::{folder_key, folder_name, group_by_folder};
-use claude_switch_core::{Session, clock};
+use claude_switch_core::{Running, Session, clock};
 use mdshared_ui::sections::Sections;
 
 use crate::list::model::{self, Filter, Flags};
 use crate::source::{ActivityScan, Source};
 use crate::state::{AppState, HEAD_H, ROW_H};
+use crate::tabs::Tab;
+
+#[cfg(test)]
+mod tests;
 
 pub struct UndoHide {
     pub key: String,
@@ -50,30 +54,52 @@ impl AppState {
         self.identify_tabs();
     }
 
+    fn update_running(
+        &mut self,
+        running: Vec<Running>,
+        live: impl Fn(&Tab) -> bool,
+        identify: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
+        let running_changed = self.running != running;
+        self.running = running;
+        if running_changed {
+            self.running_ids = self.running.iter().map(|r| r.session_id.clone()).collect();
+        }
+        if running_changed || self.tabs.list.iter().any(|tab| live(tab) && tab.needs_identity()) {
+            identify(self) || running_changed
+        } else {
+            false
+        }
+    }
+
     pub fn apply_activity(&mut self, activity: ActivityScan) -> bool {
-        let mut changed = self.running != activity.running;
-        self.running = activity.running;
-        if changed {
-            self.index_running();
-            if self.tabs.list.iter().filter_map(|tab| tab.resume_id.as_ref()).any(|id| !self.by_id.contains_key(id)) {
-                self.refresh(Instant::now());
-            }
+        let mut changed = self.update_running(activity.running, |tab| tab.term.running(), Self::identify_tabs);
+        if !changed {
+            changed |= self.verify_external_owners();
+        }
+        if changed
+            && self.tabs.list.iter().filter_map(|tab| tab.resume_id.as_ref()).any(|id| !self.by_id.contains_key(id))
+        {
+            self.refresh(Instant::now());
         }
         let mut updated = false;
         let mut selected_updated = false;
-        for (id, at, prompt, ended) in activity.updates {
-            if let Some(&i) = self.by_id.get(&id) {
+        for update in activity.updates {
+            if let Some(&i) = self.by_id.get(&update.id) {
                 let s = &mut self.sessions[i];
                 // A full scan may have applied while this poll was in flight.
-                if at <= s.transcript_ms {
+                if s.file != update.file || self.grouping.transcript_stamps.get(&update.id) != Some(&update.previous) {
                     continue;
                 }
+                let at = update.stamp.modified_ms();
                 s.transcript_ms = at;
+                s.bytes = update.stamp.size();
                 s.last_active_ms = s.last_active_ms.max(at);
-                s.last_prompt = prompt;
-                s.turn_ended = ended;
+                s.last_prompt = update.prompt;
+                s.turn_ended = update.ended;
                 updated = true;
-                selected_updated |= self.selected.as_deref() == Some(&id);
+                selected_updated |= self.selected.as_ref() == Some(&update.id);
+                self.grouping.transcript_stamps.insert(update.id, update.stamp);
             }
         }
         if updated {
@@ -81,8 +107,10 @@ impl AppState {
             if selected_updated && let Some(id) = self.selected.clone() {
                 self.load_details(&id, true);
             }
-            self.see_shown();
             changed = true;
+        }
+        if changed {
+            self.see_shown();
         }
         let now = crate::list::now_ms();
         let offset = clock::local_offset_minutes();
@@ -154,7 +182,7 @@ impl AppState {
             return;
         }
         let id = if self.terminal_shown() {
-            self.tabs.shown().and_then(|tab| tab.session.as_deref())
+            self.tabs.shown().filter(|tab| !tab.needs_identity()).and_then(|tab| tab.session.as_deref())
         } else {
             self.selected.as_deref()
         };
@@ -170,10 +198,8 @@ impl AppState {
     }
 
     pub fn rename_session(&mut self, id: &str, name: &str) {
-        if let Some(&i) = self.by_id.get(id)
-            && self.marks.rename(id, &self.sessions[i].file, name)
-        {
-            self.save_marks();
+        let Some(&i) = self.by_id.get(id) else { return };
+        if self.edit_marks(|st| st.marks.rename(id, &st.sessions[i].file, name)) {
             self.rebuild_view();
         }
     }
@@ -183,10 +209,27 @@ impl AppState {
         if self.is_archived(s) {
             return;
         }
-        if self.marks.pin(&s.id, &s.file, !self.marks.pinned(&s.id)) {
-            self.save_marks();
+        let pin = !self.marks.pinned(&s.id);
+        if self.edit_marks(|st| {
+            let s = &st.sessions[i];
+            st.marks.pin(&s.id, &s.file, pin)
+        }) {
             self.rebuild_view();
         }
+    }
+
+    fn edit_marks(&mut self, edit: impl FnOnce(&mut Self) -> bool) -> bool {
+        let previous = self.marks.clone();
+        let flush = self.marks_flush_at;
+        if !edit(self) {
+            return false;
+        }
+        if self.save_marks() {
+            return true;
+        }
+        self.marks = previous;
+        self.marks_flush_at = flush;
+        false
     }
 
     pub fn toggle_hidden(&mut self, now: Instant, folder: bool) {
@@ -195,32 +238,34 @@ impl AppState {
         };
         let key = if folder { folder_key(&s.cwd) } else { s.id.clone() };
         let hide = if folder { !self.marks.folder_hidden(&key) } else { !self.marks.hidden(&key) };
-        self.set_hidden(now, key, folder, hide);
+        self.set_hidden(now, &key, folder, hide);
     }
 
     pub fn hide_from_keyboard(&mut self, now: Instant) {
         if let Some(s) = self.selected_session()
             && !self.hidden_session(s)
         {
-            self.set_hidden(now, s.id.clone(), false, true);
+            let key = s.id.clone();
+            self.set_hidden(now, &key, false, true);
         }
     }
 
     pub fn toggle_group_hidden(&mut self, now: Instant, key: String) {
         let hide = !self.marks.folder_hidden(&key);
-        self.set_hidden(now, key, true, hide);
+        self.set_hidden(now, &key, true, hide);
     }
 
-    fn set_hidden(&mut self, now: Instant, key: String, folder: bool, hide: bool) {
-        let changed = if folder {
-            self.marks.hide_folder(&key, hide)
-        } else if let Some(&i) = self.by_id.get(&key) {
-            self.marks.hide(&key, &self.sessions[i].file, hide)
-        } else {
-            false
-        };
-        if changed {
-            self.save_marks();
+    fn set_hidden(&mut self, now: Instant, key: &str, folder: bool, hide: bool) -> bool {
+        let saved = self.edit_marks(|st| {
+            if folder {
+                st.marks.hide_folder(key, hide)
+            } else if let Some(&i) = st.by_id.get(key) {
+                st.marks.hide(key, &st.sessions[i].file, hide)
+            } else {
+                false
+            }
+        });
+        if saved {
             self.rebuild_view();
             if self.selected.as_deref().is_some_and(|id| self.entry_of(id).is_none()) {
                 if self.filter == Filter::Unseen {
@@ -233,14 +278,21 @@ impl AppState {
                 }
             }
             if hide {
-                self.undo_hide = Some(UndoHide { key, folder, until: now + Duration::from_secs(6) });
+                self.undo_hide = Some(UndoHide { key: key.into(), folder, until: now + Duration::from_secs(6) });
             }
         }
+        saved
     }
 
     pub fn undo_hidden(&mut self, now: Instant) {
-        if let Some(undo) = self.undo_hide.take().filter(|u| u.until >= now) {
-            self.set_hidden(now, undo.key, undo.folder, false);
+        let Some(undo) = self.undo_hide.take().filter(|u| u.until >= now) else { return };
+        let hidden = if undo.folder {
+            self.marks.folder_hidden(&undo.key)
+        } else {
+            self.by_id.contains_key(&undo.key) && self.marks.hidden(&undo.key)
+        };
+        if hidden && !self.set_hidden(now, &undo.key, undo.folder, false) {
+            self.undo_hide = Some(undo);
         }
     }
 }

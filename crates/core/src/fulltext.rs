@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use serde_json::Value;
 
-use crate::transcript::{LineKind, MAX_LINE, line_kind, prompt_text};
+use crate::transcript::{LineKind, MAX_LINE, line_kind};
 
 pub const SHOWN: usize = 3;
 const CHUNK: usize = 64 * 1024;
@@ -68,6 +68,7 @@ fn record(bytes: &[u8], visit: &mut impl FnMut(LineKind, &Value)) -> io::Result<
     let expected = if kind == LineKind::User { "user" } else { "assistant" };
     let message = &value["message"];
     if value["type"] == expected
+        && (kind != LineKind::User || crate::prompt_clean::main_user(&value))
         && ["isMeta", "isSidechain", "isCompactSummary", "isApiErrorMessage"].into_iter().all(|k| value[k] != true)
         && value["parent_tool_use_id"].is_null()
         && message.is_object()
@@ -109,8 +110,8 @@ pub(crate) fn text(message: &Value) -> impl Iterator<Item = &str> {
         .chain(blocks(message).filter(|block| block["type"] == "text").filter_map(|block| block["text"].as_str()))
 }
 
-pub(crate) fn prompts(message: &Value) -> impl Iterator<Item = &str> {
-    text(message).filter_map(prompt_text)
+pub(crate) fn prompts(message: &Value) -> impl Iterator<Item = String> {
+    crate::prompt_clean::prompt_blocks(text(message))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,9 +147,12 @@ impl Query {
     ) -> io::Result<()> {
         let mut hits = Hits::default();
         let result = records(input, &cancelled, |kind, message| {
-            let texts =
-                text(message).filter_map(|part| if kind == LineKind::User { prompt_text(part) } else { Some(part) });
-            for line in texts.flat_map(|part| part.split(['\n', '\r', '\u{0085}', '\u{2028}', '\u{2029}'])) {
+            let parts: Vec<_> = if kind == LineKind::User {
+                prompts(message).map(std::borrow::Cow::Owned).collect()
+            } else {
+                text(message).map(std::borrow::Cow::Borrowed).collect()
+            };
+            for line in parts.iter().flat_map(|part| part.split(['\n', '\r', '\u{0085}', '\u{2028}', '\u{2029}'])) {
                 if cancelled() {
                     break;
                 }

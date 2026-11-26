@@ -23,6 +23,7 @@ pub struct Warnings {
     seen: WarningWindows,
     pub next: Option<Instant>,
     deferred: VecDeque<String>,
+    pending: VecDeque<(String, Limit, u8)>,
     flash: bool,
 }
 
@@ -92,6 +93,7 @@ impl AppState {
         if self.usage_warnings.next.is_some_and(|at| at > now) {
             return;
         }
+        self.retry_usage_warnings(now);
         let slugs = self
             .config
             .accounts
@@ -99,7 +101,8 @@ impl AppState {
             .filter(|a| self.usage_active_in_app(&a.slug))
             .map(|a| a.slug.clone())
             .collect::<Vec<_>>();
-        self.usage_warnings.next = (!slugs.is_empty()).then_some(now + Duration::from_secs(15));
+        self.usage_warnings.next =
+            (!slugs.is_empty() || !self.usage_warnings.pending.is_empty()).then_some(now + Duration::from_secs(15));
         for slug in slugs {
             self.request_usage(now, Demand::Automatic, Some(&slug));
         }
@@ -114,15 +117,36 @@ impl AppState {
         }
         let Some(reading) = self.usage.reading(slug) else { return };
         let notices = self.usage_warnings.observe(slug, reading, previous);
-        for (limit, threshold) in notices {
-            if let Source::Real(roots) = &self.source
-                && !claim_warning(
+        self.usage_warnings.pending.extend(notices.into_iter().map(|(limit, n)| (slug.into(), limit, n)));
+        self.retry_usage_warnings(now);
+    }
+
+    pub fn clear_usage_notices(&mut self) {
+        self.usage_warnings.deferred.clear();
+        self.usage_warnings.pending.clear();
+        self.usage_warnings.flash = false;
+        self.notifications.tray.discard_usage_notices();
+    }
+
+    fn retry_usage_warnings(&mut self, now: Instant) {
+        let clock = claude_switch_core::usage::now_ms();
+        let pending = &mut self.usage_warnings.pending;
+        pending.retain(|(slug, limit, _)| active(limit, clock) && self.config.accounts.iter().any(|a| &a.slug == slug));
+        while let Some((slug, limit, threshold)) = self.usage_warnings.pending.front() {
+            let claimed = match &self.source {
+                Source::Demo => Ok(true),
+                Source::Real(roots) => claim_warning(
                     roots,
-                    (slug.into(), limit.slot.id().into(), limit.label.clone(), limit.reset),
-                    threshold,
-                )
-                .unwrap_or(false)
-            {
+                    (slug.clone(), limit.slot.id().into(), limit.label.clone(), limit.reset),
+                    *threshold,
+                ),
+            };
+            let Ok(claimed) = claimed else {
+                self.usage_warnings.next.get_or_insert(now + Duration::from_secs(15));
+                break;
+            };
+            let (slug, limit, threshold) = self.usage_warnings.pending.pop_front().expect("pending claim");
+            if !claimed {
                 continue;
             }
             let window = match limit.slot {
@@ -138,7 +162,7 @@ impl AppState {
                     format!("resets {day} {:02}:{:02}", civil.hour, civil.minute)
                 },
             );
-            let text = format!("{}: {threshold}% of {window} used, {reset}", self.account_name(slug));
+            let text = format!("{}: {threshold}% of {window} used, {reset}", self.account_name(&slug));
             let native = self.notifications.tray.notice("Claude Switch usage", &text, None);
             if self.window_focused || self.notifications.demo {
                 self.toast(text, now);
@@ -155,8 +179,7 @@ impl AppState {
 
     pub fn usage_warning_present(&mut self, cx: &mut Cx<'_, Msg>) {
         if !self.config.show_usage || !self.config.notifications.usage_warnings {
-            self.usage_warnings.deferred.clear();
-            self.usage_warnings.flash = false;
+            self.clear_usage_notices();
             return;
         }
         if cx.focused() && !self.notifications.hidden && cx.window().is_minimized() != Some(true) {
@@ -288,6 +311,26 @@ mod tests {
         assert!(!has_room(&week(81.0, 1000), &[&high.limits[0]], 0));
         let model = Limit::legacy("seven_day_opus", 95.0, Some(1000));
         assert!(!has_room(&week(30.0, 1000), &[&model], 0));
+    }
+
+    #[test]
+    fn failed_notice_claim_stays_pending_until_the_ledger_is_writable() {
+        let folder = std::env::temp_dir().join(format!("cs-w3-warning-retry-{}", std::process::id()));
+        let roots = claude_switch_core::Roots { home: folder.clone(), appdata: folder.clone() };
+        let ledger = roots.config_file().with_file_name("usage-notices.json");
+        std::fs::create_dir_all(&ledger).unwrap();
+        let mut app = AppState::new(Source::Demo, None, crate::winfile::WindowFile::default());
+        app.source = Source::Real(roots.clone());
+        let limit = Limit::legacy("seven_day", 82.0, None);
+        app.usage_warnings.pending.push_back(("main".into(), limit, 80));
+        let now = Instant::now();
+        app.retry_usage_warnings(now);
+        assert_eq!(app.usage_warnings.pending.len(), 1);
+        assert!(app.usage_warnings.next.is_some());
+        std::fs::remove_dir(&ledger).unwrap();
+        app.retry_usage_warnings(now);
+        assert!(app.usage_warnings.pending.is_empty());
+        assert_eq!(load_warning_windows(&roots).values().copied().collect::<Vec<_>>(), [80]);
     }
 
     #[test]

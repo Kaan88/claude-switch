@@ -43,6 +43,7 @@ fn status_counts_only_running_and_distinguishes_absent_and_bad_responses() {
     assert_eq!(online.running, Some(2));
     assert_eq!(active_sessions(fake("idle")), Some(0));
     assert_eq!(status(|| Some(fake("malformed"))).running, None);
+    assert_eq!(active_sessions(fake("unknown")), None);
     let log = fixture::fake_program().with_file_name("down.log");
     assert_eq!(
         status(|| {
@@ -98,17 +99,27 @@ fn model_listing_and_private_stdin_round_trip() {
 
 #[test]
 fn timeout_and_cancel_kill_children_instead_of_leaving_them_running() {
-    let setup = || {
-        let mut cmd = fake("");
-        cmd.arg("sleep");
-        cmd
-    };
+    use std::time::Instant;
     let done_timeout = fixture::fake_program().with_file_name("timeout-finished");
     let done_cancel = fixture::fake_program().with_file_name("cancel-finished");
-    let mut timeout = setup();
-    timeout.env("FAKE_DONE", &done_timeout);
-    assert_eq!(run(timeout, &[], Duration::from_millis(700)).unwrap_err(), "OpenCode timed out.");
-    assert!(done_timeout.with_extension("started").is_file(), "test child never started");
+    let mut timeout = fake("");
+    timeout.arg("sleep").env("FAKE_DONE", &done_timeout);
+    let ready = done_timeout.with_extension("started");
+    let started = Instant::now();
+    let budget = Duration::from_millis(700);
+    assert_eq!(
+        process::capture_with_clock(
+            timeout,
+            None,
+            false,
+            || false,
+            budget,
+            || { if ready.is_file() || started.elapsed() >= TIME { started + budget } else { started } }
+        )
+        .unwrap_err(),
+        "OpenCode timed out."
+    );
+    assert!(ready.is_file(), "test child did not signal readiness before the watchdog");
 
     let mut cancel = fake("");
     cancel.env("FAKE_DONE", &done_cancel);

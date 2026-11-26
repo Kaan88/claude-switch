@@ -50,11 +50,26 @@ fn projects_resolve_subfolders_worktrees_and_submodules_without_a_git_program() 
     assert_ne!(project(&submodule).key, base.key);
     let missing = main.join("gone");
     assert_eq!(project(&missing), Project::folder(&missing));
-    let mut cache = ProjectCache::default();
-    assert_eq!(cache.get(&work_inside).key, base.key);
+    let folders = [work_inside.as_path()];
+    let key = folder_key(&work_inside);
+    assert_eq!(projects_for_scan(folders)[&key].key, base.key);
     put(&gitdir.join("commondir"), "../missing");
-    assert_eq!(project(&work_inside), Project::folder(&work_inside));
-    assert_eq!(cache.get(&work_inside).key, base.key);
+    assert_eq!(projects_for_scan(folders)[&key], Project::folder(&work_inside));
+}
+
+#[test]
+fn project_refresh_rechecks_a_normal_comp_folder_after_git_init() {
+    let t = TempDir::new("project-refresh");
+    let comp = t.0.join("comp");
+    std::fs::create_dir(&comp).unwrap();
+    let folders = [comp.as_path()];
+    let key = folder_key(&comp);
+    assert_eq!(projects_for_scan(folders)[&key], Project::folder(&comp));
+    put(&comp.join(".git/HEAD"), "ref: refs/heads/main\n");
+    assert_eq!(projects_for_scan(folders)[&key].branch.as_deref(), Some("main"));
+    put(&comp.join(".git/HEAD"), "ref: refs/heads/next\n");
+    assert_eq!(projects_for_scan(folders)[&key].branch.as_deref(), Some("next"));
+    assert!(projects_for_scan([]).is_empty());
 }
 
 #[test]

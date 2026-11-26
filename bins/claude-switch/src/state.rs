@@ -129,6 +129,7 @@ pub struct ViewGroup {
 pub struct AppState {
     pub source: Source,
     pub config: Config,
+    config_baseline: Config,
     pub config_damaged: bool,
     pub desktop_job: Option<mdshared_app::job::Job<Result<String, String>>>,
     pub desktop_folder_open: Option<(std::path::PathBuf, String, claude_switch_core::App)>,
@@ -240,6 +241,7 @@ impl AppState {
         }
         let mut s = AppState {
             source,
+            config_baseline: config.clone(),
             config,
             config_damaged,
             desktop_job: None,
@@ -388,7 +390,7 @@ impl AppState {
         }
         let (source, config) = (self.source.clone(), self.config.clone());
         self.last_scan = Some(now);
-        let cache = self.grouping.cache.clone();
+        let cache = self.grouping.scan_cache.clone();
         self.scan_job = Job::start(self.wake_fn(), move |_, _| {
             source.scan(&config, &mut cache.lock().unwrap_or_else(|e| e.into_inner()))
         })
@@ -401,7 +403,9 @@ impl AppState {
             return;
         }
         let (source, config) = (self.source.clone(), self.config.clone());
-        let files = self.sessions.iter().map(|s| (s.id.clone(), (s.file.clone(), s.transcript_ms))).collect();
+        let stamps = &self.grouping.transcript_stamps;
+        let files =
+            self.sessions.iter().filter_map(|s| Some((s.id.clone(), (s.file.clone(), *stamps.get(&s.id)?)))).collect();
         let watch = self
             .running
             .iter()
@@ -459,6 +463,9 @@ impl AppState {
                 }));
         self.sessions = scan.sessions;
         self.grouping.projects = scan.projects;
+        self.grouping.transcript_stamps = scan.transcript_stamps;
+        self.cancel_related();
+        self.grouping.related_index = scan.related;
         self.running = scan.running;
         self.index_running();
         self.statuses = scan.statuses.into_iter().collect();
@@ -486,7 +493,14 @@ impl AppState {
                 self.see_shown();
                 self.load_details(&id, true);
             }
-            _ => self.select_first(),
+            _ => {
+                self.select_first();
+                if self.grouping.related_id.is_none()
+                    && let Some(&i) = self.selected.as_deref().and_then(|id| self.by_id.get(id))
+                {
+                    self.load_related(i);
+                }
+            }
         }
     }
 
@@ -542,7 +556,7 @@ impl AppState {
         self.load_handover_history(id);
         let wake = self.wake_fn();
         self.session_size.start(&session, self.source.is_demo(), wake);
-        self.last_account = Some((id.to_string(), self.source.last_account(&self.config, &session)));
+        self.last_account = self.source.last_account(&self.config, &session).map(|account| (id.to_string(), account));
         if !again && self.preview.as_ref().is_some_and(|(p, _)| p == id) {
             return;
         }

@@ -6,7 +6,7 @@ use crate::util::read_json;
 #[cfg(test)]
 use crate::util::write_json;
 mod history;
-pub use history::{Reservation, reserve, with_archive_check};
+pub use history::{Reservation, record_verified_owner, reserve, with_archive_check};
 #[cfg(test)]
 mod tests;
 use crate::{Account, App, Config, Launch, Place, Refusal, Roots, Running, Session, account as find_account};
@@ -129,14 +129,6 @@ fn account_env(account: &Account) -> (BTreeMap<String, String>, Vec<String>) {
     }
 }
 
-/// Provisions missing links and seeds MCP for a new profile; failures do not stop a launch.
-fn refresh_shared(roots: &Roots, account: &Account) {
-    if !account.primary {
-        let _ = crate::share::apply(roots, account);
-        let _ = crate::share::sync_mcp(roots, account);
-    }
-}
-
 pub(crate) fn cli_launch(account: &Account, args: &[&str], cwd: PathBuf, place: Place, label: String) -> Launch {
     let (env, mut env_remove) = account_env(account);
     env_remove.extend(SESSION_VARS.map(str::to_string));
@@ -158,7 +150,7 @@ pub(crate) fn cli_launch(account: &Account, args: &[&str], cwd: PathBuf, place: 
 /// gone), [`crate::Place::Terminal`]. Desktop: `claude --desktop --resume <id>`,
 /// [`crate::Place::Detached`]. Either way `CLAUDE_CONFIG_DIR` is set for a further account and
 /// removed for the first; missing shared links and initial MCP settings are provisioned first
-/// ([`crate::share::apply`], [`crate::share::sync_mcp`]; their failure does not stop the launch).
+/// without replacing existing directories.
 pub fn resume(
     roots: &Roots,
     config: &Config,
@@ -178,7 +170,7 @@ pub fn resume(
     if !crate::accounts::status(roots, account).cli_logged_in {
         return Err(Refusal::NotLoggedIn(account.name.clone()));
     }
-    refresh_shared(roots, account);
+    crate::share::prepare_cli(roots, account, Some(session))?;
     let cwd = if session.cwd.is_dir() { session.cwd.clone() } else { roots.home.clone() };
     let folder = folder_name(&session.cwd);
     Ok(match app {
@@ -214,7 +206,7 @@ pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str, ne
     if !crate::accounts::status(roots, account).cli_logged_in {
         return Err(Refusal::NotLoggedIn(account.name.clone()));
     }
-    refresh_shared(roots, account);
+    crate::share::prepare_cli(roots, account, Some(session))?;
     let cwd = if session.cwd.is_dir() { session.cwd.clone() } else { roots.home.clone() };
     let label = format!("{} · {} · Copy", account.name, folder_name(&session.cwd));
     Ok(cli_launch(
@@ -243,7 +235,7 @@ pub fn new_session(roots: &Roots, config: &Config, account: &str, app: App, cwd:
         return open_desktop(config, account);
     }
     let account = find_account(config, account)?;
-    refresh_shared(roots, account);
+    crate::share::prepare_cli(roots, account, None)?;
     let label = format!("{} · {} · New", account.name, folder_name(cwd));
     Ok(cli_launch(account, &[], cwd.to_path_buf(), Place::Terminal, label))
 }
@@ -251,6 +243,7 @@ pub fn new_session(roots: &Roots, config: &Config, account: &str, app: App, cwd:
 /// `claude auth login` for the account, in a terminal.
 pub fn login(roots: &Roots, config: &Config, account: &str) -> Result<Launch, Refusal> {
     let account = find_account(config, account)?;
+    crate::share::prepare_cli(roots, account, None)?;
     let label = format!("{} · Sign in", account.name);
     Ok(cli_launch(account, &["auth", "login"], roots.home.clone(), Place::Terminal, label))
 }
@@ -310,7 +303,7 @@ pub fn shell(cwd: &Path) -> Launch {
 }
 
 fn history_file(roots: &Roots) -> PathBuf {
-    roots.appdata.join("claude-switch").join("history.json")
+    roots.config_file().with_file_name("history.json")
 }
 
 /// The system clock, in milliseconds since 1970.
@@ -345,9 +338,8 @@ fn note_launch(roots: &Roots, session_id: &str, account: &str) {
     note_starting(roots, session_id, account);
 }
 
-/// The account a session was last opened as: what [`note_launch`] recorded, else the desktop record's
-/// account, else the first account.
-pub fn last_account(roots: &Roots, config: &Config, session: &Session) -> String {
+/// The verified account in launch history or the Desktop index; otherwise ownership is unknown.
+pub fn last_account(roots: &Roots, config: &Config, session: &Session) -> Option<String> {
     let known = |s: &str| config.accounts.iter().any(|a| a.slug == s);
     // An entry is `{"account": …, "at": …}`; an older one is the account's slug alone.
     let noted = read_json(&history_file(roots))
@@ -360,10 +352,7 @@ pub fn last_account(roots: &Roots, config: &Config, session: &Session) -> String
             entry.as_str().or_else(|| entry.get("account")?.as_str()).map(str::to_string)
         })
         .filter(|s| known(s));
-    noted
-        .or_else(|| session.desktop_account.clone().filter(|s| known(s)))
-        .or_else(|| config.accounts.first().map(|a| a.slug.clone()))
-        .unwrap_or_else(|| "main".to_string())
+    noted.or_else(|| session.desktop_account.clone().filter(|s| known(s)))
 }
 
 /// A size in plain words: `850 KB`, `12.4 MB`.
@@ -378,10 +367,18 @@ fn size_words(bytes: u64) -> String {
 /// transcript's size as a rough measure). `None` when the account is the same.
 pub fn carry_warning(roots: &Roots, config: &Config, session: &Session, account: &str) -> Option<String> {
     let last = last_account(roots, config, session);
-    if last == account {
+    if last.as_deref() == Some(account) {
         return None;
     }
     let name = |slug: &str| find_account(config, slug).map_or_else(|_| slug.to_string(), |a| a.name.clone());
+    let Some(last) = last else {
+        return Some(format!(
+            "The previous account is unknown. If this conversation last ran under a different account, \
+             {} must re-read the conversation ({}) on the first message.",
+            name(account),
+            size_words(session.bytes)
+        ));
+    };
     Some(format!(
         "This conversation last ran as {} and continues as {}. {} has none of it cached, so the first message \
          re-reads the whole conversation at full price (the transcript is {}).",

@@ -73,6 +73,8 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     if let Some(slug) = &last {
         p.rbox(Rect::new(x + LABEL_W, y + 4.0, 10.0, 10.0), 5.0, st.account_color(slug));
         p.text(Face::Ui, 13.0, x + LABEL_W + 16.0, y + 9.0, &st.account_name(slug), pal.text, w - LABEL_W - 16.0);
+    } else {
+        p.text(Face::Ui, 13.0, x + LABEL_W, y + 9.0, "Unknown", pal.muted, w - LABEL_W);
     }
     y += 22.0;
     p.text(Face::Ui, 12.0, x, y + 9.0, "Session", pal.muted, LABEL_W - 8.0);
@@ -160,6 +162,10 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     p.restore(old);
 }
 
+fn related_candidate(selected: Option<&str>, id: &str) -> bool {
+    selected.is_none_or(|selected| !selected.eq_ignore_ascii_case(id))
+}
+
 fn related(st: &mut AppState, p: &mut Painter, view: Rect, r: Rect) -> f32 {
     let pal = *st.pal();
     let mut y = r.y;
@@ -168,6 +174,9 @@ fn related(st: &mut AppState, p: &mut Painter, view: Rect, r: Rect) -> f32 {
     y += 24.0;
     let start = y;
     for (i, (id, relation)) in st.grouping.related.iter().enumerate() {
+        if !related_candidate(st.selected.as_deref(), id) {
+            continue;
+        }
         let Some(s) = st.by_id.get(id).map(|&j| &st.sessions[j]).filter(|s| st.related_visible(s)) else { continue };
         let hit = Rect::new(r.x, y, r.w, 24.0);
         y += hit.h;
@@ -204,6 +213,12 @@ pub fn local_date_time(ms: u64, offset: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn related_rows_never_include_the_selected_session_even_with_different_id_case() {
+        assert!(!related_candidate(Some("A-123"), "a-123"));
+        assert!(related_candidate(Some("A-123"), "A-124"));
+    }
 
     #[test]
     fn the_time_is_shown_on_the_local_clock() {

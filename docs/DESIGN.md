@@ -30,6 +30,11 @@ Files can be tens of megabytes: the session index reads at most the first 256 Ki
 256 KiB. Entries are internal to Claude Code and may change: a line that does not parse, or lacks a
 field, is skipped, never an error.
 
+Refreshes reuse parsed transcripts and Desktop records when the open file's identity, size and
+precise modification time match; entries no longer visited are evicted. The full scan and row
+activity poll check the stamp on the same handle before and after reading. An unstable read is
+discarded rather than assigning its parsed result a newer stamp.
+
 **Desktop records.** The desktop app keeps one JSON file per session of its own:
 `<desktop data dir>/claude-code-sessions/<account uuid>/<organisation uuid>/local_<uuid>.json` with
 `sessionId` (`local_…`), `cliSessionId` (the transcript's id), `cwd`, `title`, `model`, `isArchived`,
@@ -114,7 +119,9 @@ With `--labels`, the diagnostic may also print short simple strings for `kind`, 
 `key` and `display_name` (up to 40 ASCII letters, digits, spaces, dots, dashes or underscores),
 never a string containing the bearer. Without `--labels` no values are printed.
 
-The app prefers active entries in a nonempty `limits` array and uses the older named limits otherwise.
+The app uses the nonempty `limits` array in preference to the older named limits. It deliberately
+keeps valid inactive entries: a limit still belongs in the display even when it is not the one
+currently binding.
 Both 80% usage and non-normal severity trigger the warning colour. “This week by app” shows up
 to six rows, largest first, using `percent_of_limit`. This is a guess about the undocumented field:
 we interpret it as a share of the weekly allowance, not a share of the usage so far.
@@ -293,8 +300,10 @@ search. The CLI has no no-persistence flag; the run is archived, not deleted. Op
 configuration and provider retention policies still apply. The worker kills and reaps its active
 process on Cancel or after 120 seconds per request. Provider consent and the selected model are in
 `config.json`. A CLI invocation without prior provider consent refuses before reading the transcript.
+Both routes recheck persisted consent before sending each part or merge.
 
-The preview is editable, with characters and approximate tokens (characters / 4).
+The preview is editable, with characters and approximate tokens (characters / 4). Previewing or
+canceling does not save a handover. Only an explicit Save As or Open writes the edited text.
 Local Markdown files live in `handover/<session-id>-<time>.md` beside config; the newest 20
 are kept per session. An opened edited handover is kept as a new revision. Save As never
 overwrites an existing file. Native Claude Code receives `claude --session-id <new-uuid> -- <text>`
@@ -303,11 +312,13 @@ interactive CLI documents no stdin/file argument for a first prompt, so short te
 argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file. The app uses the
 new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
 
-The CLI runs headlessly for `--print` (the default); explicit `--open` starts a new window with the
+The CLI runs headlessly for `--print` (the default) and writes the handover only to stdout unless
+`--save` is supplied. Explicit `--open` keeps the handover and starts a new window with the
 new tab because the app has no single-instance request channel. On Windows, the new window is
 ShellExecuted through a fixed non-interactive PowerShell bootstrap so it cannot keep the caller's
 output pipes open; only the executable path and validated identifiers reach the bootstrap.
-`--open` waits up to 30 seconds for the new window to acknowledge creating the tab. This is not
+`--open` waits up to 30 seconds for the new window to acknowledge creating the tab. On timeout
+the outcome is unknown: check for the tab before retrying. Tab creation is not
 confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
 1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no
 handover request and launches no Claude process.
@@ -565,7 +576,7 @@ Demo shows the waiting state, and its composer writes only to the synthetic term
 
 Recent, Projects, Threads and (when at least one indexed session has a label) Topics are remembered in
 `config.json`. The old Folders setting migrates to Projects → Group by: Folder. Projects resolves each
-working folder once per run on the scan worker. It walks up to the first `.git` directory or file,
+working folder once per refresh on the scan worker. It walks up to the first `.git` directory or file,
 follows `gitdir:` and `commondir` using paths relative to the files that hold them, and uses the
 main checkout's `HEAD` as the branch reference. It does not run Git. On Windows the starting path
 must have an ordinary drive letter mapped directly to a `\Device\HarddiskVolumeN` device and
@@ -595,8 +606,9 @@ end times are never merged. A range that crosses midnight is clipped to its last
 cluster occupies its newest member’s position, and its members stay in newest-first order.
 The scrollable details pane shows visible thread members first, then up to five other sessions
 from the same project with nonzero Jaccard overlap of case-folded, stop-word-filtered first/last
-prompt words. Scoring runs on a cancellable selection-scoped worker; no transcript or prompt goes
-to a model for Related.
+prompt words. Each full scan builds one immutable prompt index off the window thread. Scoring
+runs on a cancellable selection-scoped worker against that snapshot, then current visibility
+and thread membership are applied before showing results. Related sends nothing to a model.
 
 **Include topics when suggesting names** is off by default in Settings → Sessions. If enabled,
 the existing confirmed naming request adds existing short topic labels and asks for an optional
@@ -622,3 +634,56 @@ popups and dialogs temporarily use an opaque terminal frame beneath their edges 
 
 `--demo --demo-terminal bar,80,mica` previews this with a synthetic Chat drawer; a debug build
 can add `--shell cmd.exe` to preview it with an isolated command prompt instead.
+
+## Tab identity and interaction checks
+
+The running-session poll retries unattached live tabs even when PID records are unchanged.
+An attached pane keeps its original transcript and draft. If a live record identifies a
+different session, the tab clears the current identity used by Open, local marks, and
+background transcript notices without moving that draft to the other session. A missing
+PID record retains the existing duplicate-resume guard, not permission to send or mark seen.
+Real Chat panes start with both Send paths blocked until verification. A verified tab missing from
+the Sessions index requests a refresh when asked to open a handover and explains how to retry.
+
+Direct terminal input samples only file length at the cached verified transcript path; it
+does not rerun transcript discovery. An unchanged tray tooltip does not call Explorer again
+on terminal wakes. Explorer restart and a close-to-tray request bypass that cached decision.
+Session-view Reveal uses the same sanitized Explorer launcher as Sessions.
+
+A permission dialog must have its question, choices, and cancel footer together near the
+terminal input cursor. Either send keeps the draft when this pattern is recognized. The
+pattern is an English CLI screen heuristic, not confirmation that no interaction is pending.
+`--demo --demo-permission` displays a synthetic dialog with a draft.
+
+Main-user picture blocks count as a new turn for Waiting and background notices, without
+contributing naming text. Failed saves of local names, pins, or visibility restore the
+previous marks; unsuccessful hides do not change selection or offer Undo.
+
+## Account and usage recovery checks
+
+Adding a secondary account claims its directory exclusively; a collision advances the slug suffix.
+Before its first CLI sign-in, Switch seeds a missing MCP list and creates Main's projects directory
+and the shared junction. An independent projects tree is never replaced or removed. An existing
+transcript can be resumed or forked only when the chosen CLI can reach that same file. A new CLI
+launch or sign-in refuses an independent tree rather than silently splitting transcript history.
+
+The Workers bridge is synchronized from committed settings, including after reset. Switch serializes
+its updates to the bridge file and preserves unrelated keys. If sync fails, use **Settings → Workers
+→ Sync bridge account settings** to retry. An unrecognized active-session response gives an unknown
+count. If a confirmed restart is in progress, normal exit waits for its completion, including the
+stop/start fallback and verification.
+
+Usage retries local settings-lock contention within the request deadline instead of applying network
+backoff. The credential reader decodes only the selected token and expiry values; other values remain
+borrows of the wiped input buffer. Expiry and the deadline are checked again under the final submission
+permit. Windows check the committed usage preference before rendering or accepting results; opt-out
+discards unsubmitted usage balloons without dropping waiting-tab alerts. Undelivered warning claims
+are retried, and expired claims are pruned under the ledger lock. Hovering leaves keyboard input with
+the current control or terminal. `--demo --demo-usage-hover` echoes terminal keys into a process-free
+screen; F8 reopens the passive preview for testing without launching Claude.
+
+A verified live CLI identity can establish the owner of a new or copied session. Missing evidence
+means **Unknown**, not Main. Windows rejects a running record whose last write predates the live
+process's creation. The writer resolves a redirected profile above the app directory but refuses
+redirects at or below the app directory. Settings, marks and saved tabs have an 8 MiB read limit;
+oversized settings must be moved aside manually rather than reset without an exact backup.

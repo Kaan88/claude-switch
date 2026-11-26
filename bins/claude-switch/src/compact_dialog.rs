@@ -1,6 +1,7 @@
 //! Handover dialog state, consent, and worker lifecycle. Drawing lives in `draw`.
 mod draw;
 pub(crate) mod editor;
+mod save_reply;
 use crate::compact_runner as runner;
 use crate::dialogs::{CANCEL, Dialog, OK};
 use crate::source::Source;
@@ -159,10 +160,25 @@ impl AppState {
             self.warn("Session not verified", "Choose the exact session from the Sessions list.".into());
             return;
         };
-        let Some(session) = self.by_id.get(&id).and_then(|&i| self.sessions.get(i)).cloned() else { return };
+        let Some(session) = self.by_id.get(&id).and_then(|&i| self.sessions.get(i)).cloned() else {
+            self.refresh(Instant::now());
+            self.warn(
+                "Session not indexed yet",
+                "Try the handover again after the Sessions list refreshes. If it is still missing, use Refresh.".into(),
+            );
+            return;
+        };
         self.ask_compact_for(session, account, false);
         if let Some(Dialog::Compact(dialog)) = &mut self.dialog {
             dialog.source_tab = Some(tab);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compact_source(&self) -> Option<(&str, Option<u64>)> {
+        match &self.dialog {
+            Some(Dialog::Compact(dialog)) => Some((&dialog.session.id, dialog.source_tab)),
+            _ => None,
         }
     }
 
@@ -201,7 +217,7 @@ impl AppState {
             changed = true;
         }
         if let Some(rx) = &dialog.saving
-            && let Ok(result) = rx.try_recv()
+            && let Some(result) = save_reply::take(rx)
         {
             dialog.saving = None;
             match result {
@@ -318,13 +334,6 @@ impl Compact {
                 self.preview.set(text);
                 self.phase = Phase::Preview;
                 self.saved = None;
-                if let Source::Real(roots) = &st.source {
-                    match compact::save(roots, &self.session.id, &self.preview.text) {
-                        Ok(path) => self.saved = Some(path),
-                        Err(e) => self.error(format!("Could not keep a local copy: {e}")),
-                    }
-                }
-                st.load_handover_history(&self.session.id);
             }
             Err(e) => self.error(e),
         }
@@ -378,8 +387,9 @@ impl Compact {
         }
         self.phase = Phase::Setup;
         let focus = self.focus.text.clone();
+        let roots = roots.clone();
         self.job = Job::start(st.wake_fn(), move |cancel, _| {
-            runner::make(&program, &model, &data, &focus, || cancel.cancelled()).map(Update::Preview)
+            runner::make(&roots, &program, &model, &data, &focus, || cancel.cancelled()).map(Update::Preview)
         })
         .map_err(|_| self.error("Could not start the handover worker.".into()))
         .ok();
@@ -390,7 +400,7 @@ impl Compact {
             return;
         }
         let (tx, rx) = mpsc::channel();
-        let wake = st.wake_fn();
+        let reply = save_reply::Reply::new(tx, st.wake_fn());
         let text = self.preview.text.clone();
         platform::pick_save_async(&PathBuf::from("handover.md"), move |file| {
             let result = file
@@ -399,8 +409,7 @@ impl Compact {
                     compact::export(&path, &text).map_err(|e| format!("Could not save the Markdown copy: {e}"))
                 })
                 .transpose();
-            let _ = tx.send(result);
-            wake();
+            reply.complete(result);
         });
         self.saving = Some(rx);
     }

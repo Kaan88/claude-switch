@@ -5,14 +5,17 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use claude_switch_core::sessions::{self, PreviewLine};
+use claude_switch_core::grouping::{Project, projects_for_scan};
+use claude_switch_core::sessions::{self, PreviewLine, ScanCache, Stamp};
 use claude_switch_core::share::{self, ShareState};
 use claude_switch_core::{
     Account, AccountStatus, App, Config, Launch, Refusal, Roots, Running, Session, accounts, config, launch, running,
 };
 
 use crate::demo;
+use crate::list::grouping::RelatedIndex;
 
 /// The real computer, or the demo.
 #[derive(Clone, Debug)]
@@ -27,12 +30,30 @@ pub struct Scan {
     pub sessions: Vec<Session>,
     pub running: Vec<Running>,
     pub statuses: Vec<(String, AccountStatus)>,
-    pub projects: HashMap<String, claude_switch_core::grouping::Project>,
+    pub projects: HashMap<String, Project>,
+    pub transcript_stamps: HashMap<String, Stamp>,
+    pub related: Arc<RelatedIndex>,
+}
+
+impl Scan {
+    pub fn with_related(mut self) -> Self {
+        self.related = Arc::new(RelatedIndex::new(&self.sessions, &self.projects));
+        self
+    }
 }
 
 pub struct ActivityScan {
     pub running: Vec<Running>,
-    pub updates: Vec<(String, u64, String, bool)>,
+    pub updates: Vec<ActivityUpdate>,
+}
+
+pub struct ActivityUpdate {
+    pub id: String,
+    pub file: PathBuf,
+    pub previous: Stamp,
+    pub stamp: Stamp,
+    pub prompt: String,
+    pub ended: bool,
 }
 
 impl Source {
@@ -47,35 +68,30 @@ impl Source {
         }
     }
 
-    pub fn save_config(&self, c: &Config) -> Result<(), Refusal> {
+    pub fn save_config(&self, baseline: &Config, c: &Config) -> Result<Config, Refusal> {
         match self {
-            Source::Real(roots) => config::save(roots, c),
-            Source::Demo => Ok(()),
-        }
-    }
-
-    pub fn write_workers(&self, c: &Config) -> Result<(), Refusal> {
-        match self {
-            Source::Real(roots) => config::write_workers(roots, c),
-            Source::Demo => Ok(()),
+            Source::Real(roots) => config::save_changes(roots, baseline, c),
+            Source::Demo => Ok(c.clone()),
         }
     }
 
     /// Sessions, running sessions and the accounts' login states. Runs on a worker thread.
-    pub fn scan(&self, c: &Config, cache: &mut claude_switch_core::grouping::ProjectCache) -> Scan {
+    pub fn scan(&self, c: &Config, cache: &mut ScanCache) -> Scan {
         match self {
             Source::Real(roots) => {
-                let sessions = sessions::scan(roots, c);
-                let mut projects = HashMap::new();
-                for s in &sessions {
-                    projects.entry(sessions::folder_key(&s.cwd)).or_insert_with(|| cache.get(&s.cwd));
-                }
+                let sessions = cache.scan(roots, c);
+                let projects = projects_for_scan(sessions.iter().map(|s| s.cwd.as_path()));
+                let transcript_stamps =
+                    sessions.iter().filter_map(|s| Some((s.id.clone(), cache.transcript_stamp(&s.file)?))).collect();
                 Scan {
                     sessions,
                     projects,
+                    transcript_stamps,
                     running: running::scan(roots, c),
                     statuses: c.accounts.iter().map(|a| (a.slug.clone(), accounts::status(roots, a))).collect(),
+                    ..Scan::default()
                 }
+                .with_related()
             }
             Source::Demo => demo::scan(c),
         }
@@ -91,7 +107,7 @@ impl Source {
     pub fn activity(
         &self,
         c: &Config,
-        files: HashMap<String, (PathBuf, u64)>,
+        mut files: HashMap<String, (PathBuf, Stamp)>,
         mut watch: HashSet<String>,
     ) -> ActivityScan {
         let running = self.running(c);
@@ -99,13 +115,9 @@ impl Source {
         if !self.is_demo() {
             watch.extend(running.iter().map(|r| r.session_id.clone()));
             for id in watch {
-                let Some((file, previous)) = files.get(&id) else { continue };
-                let modified = claude_switch_core::modified_ms(file);
-                if modified != 0
-                    && modified != *previous
-                    && let Some((prompt, ended)) = sessions::row_activity(file)
-                {
-                    updates.push((id, modified, prompt, ended));
+                let Some((file, previous)) = files.remove(&id) else { continue };
+                if let Some((stamp, prompt, ended)) = sessions::changed_row_activity(&file, previous) {
+                    updates.push(ActivityUpdate { id, file, previous, stamp, prompt, ended });
                 }
             }
         }
@@ -120,10 +132,10 @@ impl Source {
         }
     }
 
-    pub fn last_account(&self, c: &Config, s: &Session) -> String {
+    pub fn last_account(&self, c: &Config, s: &Session) -> Option<String> {
         match self {
             Source::Real(roots) => launch::last_account(roots, c, s),
-            Source::Demo => demo::last_account(s),
+            Source::Demo => Some(demo::last_account(s)),
         }
     }
 
@@ -235,7 +247,7 @@ impl Source {
     /// The window's own settings file; none in the demo, which writes nothing.
     pub fn window_file(&self) -> Option<PathBuf> {
         match self {
-            Source::Real(roots) => Some(roots.appdata.join("claude-switch").join("window.ini")),
+            Source::Real(roots) => Some(roots.config_file().with_file_name("window.ini")),
             Source::Demo => None,
         }
     }

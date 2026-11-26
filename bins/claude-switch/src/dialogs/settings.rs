@@ -1,4 +1,5 @@
 use super::*;
+
 use super::{opencode_rows, terminal_appearance};
 use crate::termtheme::{self, ACCENT_SOURCES, PRESETS, WINDOW_THEMES, preset_index};
 use claude_switch_core::WorkersUse;
@@ -33,6 +34,7 @@ const SET_CLOSE_TO_TRAY: u32 = 74;
 const SET_RESTORE_TABS: u32 = 87;
 const FORGET_HANDOVER_CONSENTS: u32 = 90;
 const SET_SUGGEST_TOPICS: u32 = 91;
+const SYNC_WORKERS: u32 = 92;
 
 pub fn settings(st: &AppState) -> Dialog {
     let mut options = vec!["Same account as the session".to_string(), "The other account".to_string()];
@@ -129,7 +131,9 @@ pub fn settings(st: &AppState) -> Dialog {
     ];
     let mut rows = rows;
     let workers = rows.iter().position(|row| row.id() == Some(SET_WORKERS)).expect("Workers row");
-    rows.splice(workers + 1..workers + 1, opencode_rows::rows(st));
+    let worker_rows =
+        opencode_rows::rows(st).chain([Row::action(SYNC_WORKERS, "Sync bridge account settings", "Sync")]);
+    rows.splice(workers + 1..workers + 1, worker_rows);
     rows.extend([
         Row::header("Notification area"),
         Row::toggle(SET_TRAY, "Show tray icon", st.config.notifications.tray_icon),
@@ -157,6 +161,7 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
             }
         }
         Outcome::Action(FORGET_HANDOVER_CONSENTS) => st.forget_handover_consents(),
+        Outcome::Action(SYNC_WORKERS) => st.sync_worker_accounts(),
         Outcome::Action(opencode_rows::REFRESH) => st.refresh_opencode(),
         Outcome::Action(opencode_rows::RESTART) => st.ask_restart_opencode(),
         Outcome::Action(opencode_rows::STUDIO) => st.open_config_studio(),
@@ -176,9 +181,6 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
                             .get(k - 2)
                             .map_or(WorkersUse::Same, |a| WorkersUse::Account(a.slug.clone())),
                     };
-                    if let Err(e) = st.source.write_workers(&st.config) {
-                        st.error("The workers' setting was not written", e.to_string());
-                    }
                 }
                 (SET_EMBEDDED, Value::Bool(b)) => st.config.embedded_terminal = b,
                 (SET_SUGGEST_TOPICS, Value::Bool(b)) => st.config.suggest_topics = b,
@@ -189,10 +191,7 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
                         st.error("Usage setting was not saved", error.to_string());
                         return;
                     }
-                    st.config.show_usage = b;
-                    if !b {
-                        st.usage.disable();
-                    }
+                    st.apply_committed_usage(b);
                 }
                 (SET_ATTENTION, Value::Choice(i)) if i < claude_switch_core::config::Attention::OPTIONS.len() => {
                     st.config.notifications.attention = claude_switch_core::config::Attention::OPTIONS[i].0;

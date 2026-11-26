@@ -3,17 +3,22 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use claude_switch_core::grouping::{self, Activity, Mode, Project, ProjectCache};
-use claude_switch_core::sessions::{folder_key, folder_name};
+use claude_switch_core::grouping::{self, Activity, Mode, Project};
+use claude_switch_core::sessions::{ScanCache, Stamp, folder_key, folder_name};
 use mdshared_app::job::Job;
 
 use crate::list::model::{self, BUCKETS, Calendar, Filter};
 use crate::state::{AppState, ViewGroup};
 
+mod related;
+pub(crate) use related::RelatedIndex;
+
 #[derive(Default)]
 pub struct Grouping {
-    pub cache: Arc<Mutex<ProjectCache>>,
+    pub scan_cache: Arc<Mutex<ScanCache>>,
     pub projects: HashMap<String, Project>,
+    pub transcript_stamps: HashMap<String, Stamp>,
+    pub related_index: Arc<RelatedIndex>,
     roots: Vec<usize>,
     threads: HashMap<usize, Vec<usize>>,
     pub expanded: HashSet<String>,
@@ -22,7 +27,7 @@ pub struct Grouping {
     pub brackets: HashMap<usize, (bool, bool)>,
     pub topics: bool,
     pub related: Vec<(String, Relation)>,
-    pub pending: Option<Job<Vec<String>>>,
+    pub pending: Option<Job<Vec<usize>>>,
     pub related_id: Option<String>,
 }
 
@@ -319,50 +324,35 @@ impl AppState {
                 (other.id.clone(), if compare(other, s).is_gt() { Relation::Later } else { Relation::Earlier })
             })
             .collect();
-        let project = self.project(i).map(|p| p.key.as_str());
-        let sample = |s: &claude_switch_core::Session| {
-            (s.grouping.first_prompt.clone().unwrap_or_default(), s.last_prompt.clone())
-        };
-        let (first, last) = sample(s);
-        let candidates: Vec<_> = self
-            .sessions
-            .iter()
-            .enumerate()
-            .filter(|(j, _)| {
-                *j != i
-                    && self.grouping.roots.get(*j) != Some(&root)
-                    && visible(*j)
-                    && project.is_some_and(|project| self.project(*j).is_some_and(|p| p.key == project))
-            })
-            .map(|(_, s)| (s.id.clone(), s.last_active_ms, sample(s)))
-            .collect();
         self.grouping.related = related;
         self.grouping.related_id = Some(s.id.clone());
-        if candidates.is_empty() {
-            return;
-        }
-        self.grouping.pending = Job::start(self.wake_fn(), move |cancel, _| {
-            let words = grouping::words(&first, &last);
-            let mut scored = Vec::new();
-            for (id, at, (first, last)) in candidates {
-                if cancel.cancelled() {
-                    return Vec::new();
-                }
-                let score = grouping::similarity(&words, &grouping::words(&first, &last));
-                if score != 0 {
-                    scored.push((std::cmp::Reverse((score, at)), id));
-                }
-            }
-            scored.sort_unstable();
-            scored.into_iter().take(5).map(|(_, id)| id).collect()
-        })
-        .ok();
+        let id = s.id.clone();
+        let index = Arc::clone(&self.grouping.related_index);
+        self.grouping.pending =
+            Job::start(self.wake_fn(), move |cancel, _| index.ranks(&id, || cancel.cancelled())).ok();
     }
 
     pub fn take_related(&mut self) -> bool {
         let Some(job) = self.grouping.pending.take_if(|j| !j.running()) else { return false };
-        if self.selected == self.grouping.related_id {
-            self.grouping.related.extend(job.take().unwrap_or_default().into_iter().map(|id| (id, Relation::Similar)));
+        if self.selected == self.grouping.related_id
+            && let Some(&i) = self.selected.as_deref().and_then(|id| self.by_id.get(id))
+        {
+            let root = self.grouping.roots.get(i);
+            // Apply live marks/visibility after ranking, without copying any candidate prompts.
+            let similar: Vec<_> = job
+                .take()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|j| self.grouping.related_index.id(j))
+                .filter(|&id| {
+                    self.by_id
+                        .get(id)
+                        .is_some_and(|&j| self.grouping.roots.get(j) != root && self.related_visible(&self.sessions[j]))
+                })
+                .take(5)
+                .map(|id| (id.to_owned(), Relation::Similar))
+                .collect();
+            self.grouping.related.extend(similar);
         }
         true
     }

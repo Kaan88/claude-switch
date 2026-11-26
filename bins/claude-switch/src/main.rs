@@ -64,6 +64,8 @@ use crate::state::AppState;
 fn main() {
     let mut demo = false;
     let mut demo_notifications = false;
+    let mut demo_usage_hover = false;
+    let mut demo_permission = false;
     let mut demo_terminal = None;
     let mut demo_terminal_settings = false;
     let mut forced_dark = None;
@@ -85,6 +87,8 @@ fn main() {
         match a.as_str() {
             "--demo" => demo = true,
             "--demo-notifications" => demo_notifications = true,
+            "--demo-usage-hover" => demo_usage_hover = true,
+            "--demo-permission" => demo_permission = true,
             "--demo-terminal" => demo_terminal = args.next().as_deref().and_then(demo_terminal::Preview::parse),
             "--demo-terminal-settings" => demo_terminal_settings = true,
             "--theme" => forced_dark = args.next().as_deref().and_then(termtheme::window_dark),
@@ -148,6 +152,8 @@ fn main() {
         None
     };
     let mut state = AppState::new(source, forced_dark, win_file.clone());
+    state.usage.demo_echo = demo && demo_usage_hover;
+    state.session_view.demo_permission = demo && demo_permission;
     if let Some(preview) = demo_terminal {
         preview.apply(&mut state);
     }

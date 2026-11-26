@@ -21,12 +21,12 @@ pub enum Source {
 }
 
 impl Source {
-    pub fn verify_candidate(&self, id: &str) -> bool {
+    pub(super) fn candidate_path(&self, id: &str) -> Option<PathBuf> {
         match self {
             Self::Discover { config, cwd, started, .. } => {
-                discover(&project(config, cwd), cwd, *started, id).is_ok_and(|p| p.is_some())
+                discover(&project(config, cwd), cwd, *started, id).ok().flatten()
             }
-            Self::File(_) => false,
+            Self::File(_) => None,
         }
     }
     pub fn find_file(&self) -> Option<PathBuf> {

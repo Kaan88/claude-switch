@@ -21,7 +21,7 @@ impl Default for Marks {
 
 fn read(path: &Path) -> Result<Option<Vec<u8>>, Refusal> {
     crate::util::regular_target(path)?;
-    match std::fs::read(path) {
+    match crate::read_bounded(path, crate::APP_FILE_LIMIT) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_refusal("read", path, &e)),

@@ -38,36 +38,50 @@ pub fn needs_terminal(launch: &Launch) -> bool {
 }
 
 pub fn run_unseen(launch: &Launch, cancelled: impl Fn() -> bool) -> io::Result<()> {
-    run_unseen_until(launch, Duration::from_secs(30), cancelled)
-}
-
-fn run_unseen_until(launch: &Launch, limit: Duration, cancelled: impl Fn() -> bool) -> io::Result<()> {
     let mut launch = launch.clone();
     launch.program = native_program(&launch.program)?;
     let mut pty = mdshared_pty::Pty::spawn(&crate::term::command(&launch), 200, 30, || {})?;
     let start = Instant::now();
     let mut printed = Vec::new();
-    let mut collect = |output: Vec<u8>| {
+    let collect = |printed: &mut Vec<u8>, output: Vec<u8>| {
         const CAP: usize = 8 * 1024;
         let output = &output[output.len().saturating_sub(CAP)..];
         let remove = (printed.len() + output.len()).saturating_sub(CAP);
         printed.drain(..remove);
         printed.extend_from_slice(output);
     };
-    while start.elapsed() < limit && !cancelled() {
-        collect(pty.take_output());
-        if let Some(exit) = pty.exit() {
-            collect(pty.take_output());
+    wait_for_handoff(
+        || start.elapsed(),
+        cancelled,
+        || {
+            collect(&mut printed, pty.take_output());
+            let exit = pty.exit()?;
+            collect(&mut printed, pty.take_output());
             let said = plain_text(&printed);
-            return if exit.success() {
+            Some(if exit.success() {
                 Ok(())
             } else if said.is_empty() {
                 Err(io::Error::other("The Claude Code CLI ended with an error and said nothing."))
             } else {
                 Err(io::Error::other(said))
-            };
+            })
+        },
+        || std::thread::sleep(Duration::from_millis(50)),
+    )
+}
+
+fn wait_for_handoff(
+    elapsed: impl Fn() -> Duration,
+    cancelled: impl Fn() -> bool,
+    mut poll: impl FnMut() -> Option<io::Result<()>>,
+    mut pause: impl FnMut(),
+) -> io::Result<()> {
+    const LIMIT: Duration = Duration::from_secs(30);
+    while elapsed() < LIMIT && !cancelled() {
+        if let Some(result) = poll() {
+            return result;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        pause();
     }
     Err(if cancelled() {
         io::Error::new(io::ErrorKind::Interrupted, "Desktop handoff was cancelled.")
@@ -295,43 +309,45 @@ mod tests {
     fn an_unseen_run_reports_what_a_failing_program_said_and_nothing_for_a_good_one() {
         let mut l = launch(Place::Detached);
         l.cwd = None;
-        l.program = "cmd.exe".into();
-        l.args = vec!["/c".into(), "echo no such session& exit 3".into()];
+        l.program = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join(r"System32\cmd.exe");
+        l.args = vec!["/d".into(), "/c".into(), "echo no such session& exit 3".into()];
         assert_eq!(run_unseen(&l, || false).unwrap_err().to_string(), "no such session");
-        l.args = vec!["/c".into(), "echo fine".into()];
+        l.args = vec!["/d".into(), "/c".into(), "echo fine".into()];
         assert!(run_unseen(&l, || false).is_ok());
     }
 
-    #[cfg(windows)]
     #[test]
-    fn desktop_handoff_returns_an_error_for_a_deadline_instead_of_success() {
-        let mut l = launch(Place::Detached);
-        l.cwd = None;
-        l.program = "cmd.exe".into();
-        l.args = vec!["/d".into(), "/c".into(), "echo not needed".into()];
-        let error = run_unseen_until(&l, Duration::ZERO, || false).unwrap_err();
+    fn desktop_handoff_polls_until_its_thirty_second_deadline_then_returns_timeout() {
+        let now = std::cell::Cell::new(29_950);
+        let mut polled = false;
+        let error = wait_for_handoff(
+            || Duration::from_millis(now.get()),
+            || false,
+            || {
+                assert!(!polled, "polled at or beyond the deadline");
+                polled = true;
+                None
+            },
+            || now.set(30_000),
+        )
+        .unwrap_err();
+        assert!(polled);
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 
-    #[cfg(windows)]
     #[test]
-    fn desktop_handoff_reports_a_cli_failure_after_the_old_four_second_cutoff() {
-        let mut l = launch(Place::Detached);
-        l.cwd = None;
-        l.program = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-            .join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
-        l.args = [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Start-Sleep -Milliseconds 4200; [Console]::WriteLine('handoff failed'); exit 3",
-        ]
-        .map(str::to_owned)
-        .into();
-        let started = Instant::now();
-        let error = run_unseen_until(&l, Duration::from_secs(90), || false).unwrap_err();
-        assert!(started.elapsed() >= Duration::from_secs(4));
-        assert!(error.to_string().contains("handoff failed"), "{error}");
+    fn desktop_handoff_wait_preserves_a_cli_failure_after_the_old_four_second_cutoff() {
+        let now = std::cell::Cell::new(0);
+        let error = wait_for_handoff(
+            || Duration::from_millis(now.get()),
+            || false,
+            || (now.get() == 4_200).then(|| Err(io::Error::other("handoff failed"))),
+            || {
+                assert_eq!(now.replace(4_200), 0, "did not return the ready failure");
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "handoff failed");
     }
 
     /// A real hand-over: `CS_DESKTOP_SESSION` is the session's id and `CS_DESKTOP_CWD` its folder.

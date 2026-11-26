@@ -1,0 +1,39 @@
+InspiredGitHub:
+https://github.com/sethlopezme/InspiredGitHub.tmtheme/blob/18ddb271179e118cfc2dd83abf88b915b7328a25/LICENSE
+Copyright (c) 2015 Seth Lopez
+
+Solarized for Sublime Text:
+https://github.com/braver/Solarized/blob/bcd6234b4f5f96d3fd27db079268b5757053072a/LICENSE
+Copyright (c) 2016 Koen Lageveen
+
+Original Solarized:
+https://github.com/altercation/solarized/blob/master/LICENSE
+Copyright (c) 2011 Ethan Schoonover
+
+Spacegray:
+https://github.com/kkga/spacegray/blob/2703e93f559e212ef3895edd10d861a4383ce93d/LICENSE
+Copyright (c) 2013 Gadzhi Kharkharov
+
+Base16 Textmate:
+https://github.com/chriskempson/base16-textmate/blob/master/LICENSE.md
+Copyright (C) 2012 Chris Kempson (http://chriskempson.com)
+
+The MIT License (MIT) applies to each of the notices above:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

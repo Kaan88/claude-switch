@@ -31,7 +31,7 @@ pub struct Tab {
     pub program_title: String,
     pub rename: Option<String>,
     pub color: [u8; 3],
-    /// The session it resumes, and the account it runs as.
+    /// Current session for list routing, badges and seen marks; never the pane's pinned identity.
     pub session: Option<String>,
     pub account: Option<String>,
     /// Launch folder for a Claude session; shell and sign-in tabs leave it unset.
@@ -44,6 +44,26 @@ pub struct Tab {
 }
 
 impl Tab {
+    pub(crate) fn needs_identity(&self) -> bool {
+        self.pane.as_ref().is_some_and(|pane| pane.chat.identity_unverified)
+    }
+
+    pub(crate) fn apply_live_identity(&mut self, found: Option<&str>) -> bool {
+        let Some(pane) = &mut self.pane else { return false };
+        let pane_changed = pane.update_identity(found);
+        let verified = found.filter(|_| !pane.chat.identity_unverified);
+        // An absent PID record must not permit a duplicate resume of an already open tab.
+        // A conflicting positive record, on the other hand, clears that routing claim.
+        let current = if found.is_none() { self.session.as_deref() } else { verified };
+        let changed = self.session.as_deref() != current || self.resume_id.as_deref() != verified;
+        if changed {
+            self.session = current.map(str::to_owned);
+            self.resume_id = verified.map(str::to_owned);
+            self.attention.clear_transcript();
+        }
+        changed || pane_changed
+    }
+
     /// The running program's title or launch label; after exit, identify the original launch.
     pub fn title(&self) -> Cow<'_, str> {
         if self.term.ended.is_some() {

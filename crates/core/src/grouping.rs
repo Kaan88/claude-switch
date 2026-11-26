@@ -234,13 +234,13 @@ pub fn valid_topic(text: &str) -> Option<&str> {
     .then_some(text)
 }
 
-#[derive(Default)]
-pub struct ProjectCache(HashMap<String, Project>);
-
-impl ProjectCache {
-    pub fn get(&mut self, folder: &Path) -> Project {
-        self.0.entry(folder_key(folder)).or_insert_with(|| project(folder)).clone()
+/// Resolve each distinct working folder once per refresh, including previous fallbacks.
+pub fn projects_for_scan<'a>(folders: impl IntoIterator<Item = &'a Path>) -> HashMap<String, Project> {
+    let mut projects = HashMap::new();
+    for folder in folders {
+        projects.entry(folder_key(folder)).or_insert_with(|| project(folder));
     }
+    projects
 }
 
 #[cfg(test)]

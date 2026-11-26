@@ -79,6 +79,36 @@ fn response(sock: &mut TcpStream, status: &str, extra: &str, body: &str) {
 }
 
 #[test]
+fn expiry_is_rechecked_inside_the_final_settings_permit_before_any_connection() {
+    use std::cell::Cell;
+    let fixture = Fixture::new(100);
+    let roots = Roots { home: fixture.0.clone(), appdata: fixture.0.clone() };
+    let dir = roots.primary_cli_dir();
+    fs::create_dir(&dir).unwrap();
+    fs::rename(fixture.0.join(".credentials.json"), dir.join(".credentials.json")).unwrap();
+    claude_switch_core::config::save(&roots, &claude_switch_core::config::load(&roots)).unwrap();
+    let socket = listener();
+    socket.set_nonblocking(true).unwrap();
+    let endpoint = Endpoint { host: "127.0.0.1", port: socket.local_addr().unwrap().port(), path: "test", flags: 0 };
+    let count = Cell::new(0);
+    let clock = || {
+        count.set(count.get() + 1);
+        if count.get() == 3 {
+            assert!(claude_switch_core::config::usage_permit(&roots, &dir).is_none(), "final permit must be held");
+            100
+        } else {
+            99
+        }
+    };
+    assert_eq!(request(&dir, endpoint, TIMEOUT, || true, reading, Some(&roots), clock), Err(Error::Expired));
+    assert_eq!(count.get(), 3);
+    assert_eq!(socket.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    fs::remove_dir_all(roots.config_file().parent().unwrap()).unwrap();
+    fs::remove_file(dir.join(".credentials.json")).unwrap();
+    fs::remove_dir(dir).unwrap();
+}
+
+#[test]
 fn request_context_is_dropped_once_on_success_pre_send_failure_and_pending_read_cancellation() {
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
@@ -126,7 +156,7 @@ fn request_context_is_dropped_once_on_success_pre_send_failure_and_pending_read_
     let drops = track_drop();
     let endpoint = Endpoint { host: "127.0.0.1", port, path: "api/oauth/usage", flags: 0 };
     assert_eq!(
-        request(&good.0, endpoint, TIMEOUT, || !cancelled.load(Ordering::SeqCst), reading, None),
+        request(&good.0, endpoint, TIMEOUT, || !cancelled.load(Ordering::SeqCst), reading, None, now_ms),
         Err(Error::Network)
     );
     stop.join().unwrap();
@@ -310,7 +340,7 @@ fn production_requires_tls_and_plaintext_never_receives_the_bearer() {
         assert!(!hello.windows(TOKEN.len()).any(|w| w == TOKEN.as_bytes()));
         response(&mut stream, "200 OK", "", "{}");
     });
-    assert_eq!(request(&dir.0, endpoint, Duration::from_secs(4), || true, reading, None), Err(Error::Network));
+    assert_eq!(request(&dir.0, endpoint, Duration::from_secs(4), || true, reading, None, now_ms), Err(Error::Network));
     server.join().unwrap();
 }
 

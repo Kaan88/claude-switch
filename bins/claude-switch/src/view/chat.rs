@@ -153,6 +153,11 @@ impl Chat {
         Self { enabled: true, demo: true, ..Self::default() }
     }
 
+    pub(super) fn seed_permission_demo(&mut self) {
+        self.editor.set("Keep this draft until I confirm.".into());
+        self.react(Some(Reason::Permission));
+    }
+
     pub fn output(&mut self, now: Instant, output: bool, bell: bool) {
         if output {
             self.last_output = Some(now);

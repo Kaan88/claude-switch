@@ -17,16 +17,27 @@ fn read(pipe: impl Read + Send + 'static, limit: u64) -> mpsc::Receiver<Result<V
 }
 
 pub(super) fn capture(
-    mut command: Command,
+    command: Command,
     input: Option<&str>,
     private: bool,
     cancelled: impl Fn() -> bool,
     timeout: Duration,
 ) -> Result<Output, String> {
+    capture_with_clock(command, input, private, cancelled, timeout, Instant::now)
+}
+
+pub(super) fn capture_with_clock(
+    mut command: Command,
+    input: Option<&str>,
+    private: bool,
+    cancelled: impl Fn() -> bool,
+    timeout: Duration,
+    clock: impl Fn() -> Instant,
+) -> Result<Output, String> {
     if cancelled() {
         return Err("Cancelled.".into());
     }
-    let started = Instant::now();
+    let started = clock();
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
@@ -61,7 +72,7 @@ pub(super) fn capture(
             if cancelled() {
                 return Err("Cancelled.".into());
             }
-            if started.elapsed() >= timeout {
+            if clock().saturating_duration_since(started) >= timeout {
                 return Err("OpenCode timed out.".into());
             }
             if status.is_none() {

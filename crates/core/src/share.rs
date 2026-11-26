@@ -1,8 +1,7 @@
 //! What a further account shares with the first: links in its CLI folder, and the MCP server list.
 //!
-//! A shared file is a hard link, which a program ends by saving the file as a new one under the old
-//! name. While the two files still hold the same bytes [`apply`] links them again; a diverged file is
-//! the owner's to settle.
+//! A program can break a hard link by saving a new file under the old name. Existing copies
+//! and directories are never replaced, even when they appear identical.
 
 use crate::util::{io_refusal, publish_new, read_json};
 use crate::{Account, Refusal, Roots};
@@ -23,9 +22,7 @@ pub enum LinkState {
     NoSource,
     /// Nothing is there yet; [`apply`] will make the link.
     Missing,
-    /// Something of the account's own is there (a real folder with content, a different file). Nothing
-    /// of it is lost: only a file with the very bytes of the first account's is linked again by
-    /// [`apply`]; the owner decides about everything else.
+    /// Something of the account's own is there. It is left for the owner to resolve.
     Conflict,
 }
 
@@ -69,12 +66,6 @@ fn same_file(a: &Path, b: &Path) -> bool {
     matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
-/// Whether `dir` is a real folder (not a link) with nothing in it.
-fn is_empty_real_dir(dir: &Path) -> bool {
-    std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_dir())
-        && std::fs::read_dir(dir).is_ok_and(|mut rd| rd.next().is_none())
-}
-
 fn state_of(source: &Path, target: &Path) -> LinkState {
     let Ok(src) = std::fs::metadata(source) else { return LinkState::NoSource };
     let Ok(dst) = std::fs::symlink_metadata(target) else { return LinkState::Missing };
@@ -83,18 +74,10 @@ fn state_of(source: &Path, target: &Path) -> LinkState {
             (std::fs::canonicalize(source), std::fs::canonicalize(target)),
             (Ok(a), Ok(b)) if a == b
         );
-        if same {
-            LinkState::Linked
-        } else if is_empty_real_dir(target) {
-            LinkState::Missing
-        } else {
-            LinkState::Conflict
-        }
+        if same { LinkState::Linked } else { LinkState::Conflict }
     } else if !dst.file_type().is_dir() && same_file(source, target) {
         // The same file: a hard link, or a file link that leads to it.
         LinkState::Linked
-    } else if is_empty_real_dir(target) {
-        LinkState::Missing
     } else {
         // A different file, a folder with content, or a link elsewhere: the owner's, left alone.
         LinkState::Conflict
@@ -137,8 +120,8 @@ fn make_junction(link: &Path, _target: &Path) -> Result<(), Refusal> {
     Err(io_refusal("link", link, &"links are not supported here"))
 }
 
-/// Makes every `Missing` link (directory junctions for folders; hard links for files, and an empty
-/// real folder in the way is removed first) and returns the states afterwards. An existing copy
+/// Makes every `Missing` link (directory junctions for folders; hard links for files).
+/// An existing directory or copy
 /// is left alone: Claude does not participate in our locks. An error making one
 /// link does not stop the others; the first such error is returned after all were tried.
 pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusal> {
@@ -164,13 +147,6 @@ pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusa
             note(Err(io_refusal("create the folder", &account.cli_dir, &e)));
             continue;
         }
-        if is_empty_real_dir(&target) {
-            // `remove_dir` removes only an empty folder, so nothing of the owner's can go here.
-            if let Err(e) = std::fs::remove_dir(&target) {
-                note(Err(io_refusal("remove the empty folder", &target, &e)));
-                continue;
-            }
-        }
         if source.is_dir() {
             note(make_junction(&target, &source));
         } else {
@@ -182,6 +158,49 @@ pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusa
         Some(e) => Err(e),
         None => Ok(states),
     }
+}
+
+pub(crate) fn prepare_cli(roots: &Roots, account: &Account, session: Option<&crate::Session>) -> Result<(), Refusal> {
+    let projects = account.cli_dir.join("projects");
+    if account.primary {
+        return check_transcript(&projects, account, session);
+    }
+    sync_mcp(roots, account)?;
+    let primary = roots.primary_cli_dir().join("projects");
+    std::fs::create_dir_all(&primary).map_err(|e| io_refusal("create projects", &primary, &e))?;
+    let applied = apply(roots, account);
+    if state_of(&primary, &projects) != LinkState::Linked {
+        // An existing independent tree is never replaced. Only a transcript already in that
+        // account's actual tree can be resumed or forked there.
+        let reachable = session.is_some_and(|session| transcript_reachable(&projects, &session.file, &session.id));
+        if !reachable {
+            return Err(Refusal::Invalid(format!(
+                "Could not use Main's projects directory for {}. The account's projects path was left unchanged; \
+                 only existing transcripts reachable through that path can be opened with this account.",
+                account.name
+            )));
+        }
+    }
+    applied?;
+    check_transcript(&projects, account, session)
+}
+
+fn check_transcript(projects: &Path, account: &Account, session: Option<&crate::Session>) -> Result<(), Refusal> {
+    if let Some(session) = session.filter(|session| !session.file.as_os_str().is_empty())
+        && !transcript_reachable(projects, &session.file, &session.id)
+    {
+        return Err(Refusal::Invalid(format!(
+            "{} cannot reach this transcript through its projects directory. No directories were changed to resolve it.",
+            account.name
+        )));
+    }
+    Ok(())
+}
+
+fn transcript_reachable(projects: &Path, file: &Path, id: &str) -> bool {
+    let Some(folder) = file.parent().and_then(Path::file_name) else { return false };
+    let expected = projects.join(folder).join(format!("{id}.jsonl"));
+    matches!((std::fs::canonicalize(expected), std::fs::canonicalize(file)), (Ok(a), Ok(b)) if a == b && a.is_file())
 }
 
 /// Seeds `mcpServers` before the secondary profile has its own `.claude.json`. Never replaces
@@ -245,7 +264,7 @@ mod tests {
             states(&before),
             [
                 ("projects", LinkState::Missing),
-                ("skills", LinkState::Missing),
+                ("skills", LinkState::Conflict),
                 ("agents", LinkState::Conflict),
                 ("plugins", LinkState::NoSource),
                 ("mcp-servers", LinkState::NoSource),

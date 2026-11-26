@@ -1,4 +1,5 @@
 use super::*;
+use crate::view::model;
 use mdshared_term::{Key, Mods, Screen, input};
 use mdshared_ui::gfx::Rect;
 
@@ -54,13 +55,89 @@ fn forced_send_keeps_the_draft_while_an_interaction_is_pending() {
 
 #[test]
 fn a_visible_permission_question_vetoes_fresh_completion() {
-    let mut term = crate::term::Term::empty((60, 20));
-    term.feed(b"\x1b[?2004hDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel");
+    use crate::{source::Source, state::AppState};
+    let mut app = AppState::new(Source::Demo, Some(false), Default::default());
+    app.start_demo_session();
+    let tab = app.tabs.shown_mut().unwrap();
+    tab.term = crate::term::Term::empty((60, 20));
+    tab.term.feed(b"\x1b[?2004hDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel");
     let now = Instant::now();
-    let chat = Chat { demo: true, fresh: true, last_output: Some(now - QUIET), ..Chat::default() };
-    let mut info = ChatInfo::default();
-    info.latest = Some((100, ChatPhase::EndTurn));
-    assert_ne!(chat.decision(&info, &term, "", now).0, Gate::Ready);
+    let pane = tab.pane.as_mut().unwrap();
+    pane.chat.fresh = true;
+    pane.chat.last_output = Some(now - QUIET);
+    pane.chat.editor.set("Keep this draft".into());
+    pane.model.chat.latest = Some((100, ChatPhase::EndTurn));
+    assert_eq!(pane.chat.decision(&pane.model.chat, &tab.term, "", now), (Gate::Check, Some(Reason::Permission)));
+    for force in [false, true] {
+        AppState::chat_send(tab, now, force);
+        let chat = &tab.pane.as_ref().unwrap().chat;
+        assert_eq!(chat.error, Some(Reason::Permission.label()));
+        assert_eq!(chat.editor.text, "Keep this draft");
+    }
+    tab.term.feed("\r\n```\r\n\r\n❯ ".as_bytes());
+    let pane = tab.pane.as_ref().unwrap();
+    assert_eq!(pane.chat.decision(&pane.model.chat, &tab.term, "", now), (Gate::Ready, None));
+}
+
+#[test]
+fn real_pane_vetoes_both_send_paths_until_its_identity_is_verified() {
+    use crate::{source::Source, state::AppState, tabs::NewTab, term::Term};
+    let root = std::env::temp_dir().join(format!("cs-real-chat-identity-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let roots = claude_switch_core::Roots { home: root.clone(), appdata: root.clone() };
+    let mut app = AppState::new(Source::Real(roots), Some(false), Default::default());
+    let id = "11111111-0000-0000-0000-000000000000";
+    let mut pane = app.new_session_pane(model::Source::File(root.join(format!("{id}.jsonl"))), root.clone());
+    pane.chat.editor.set("Do not send yet".into());
+    let mut term = Term::empty((60, 20));
+    term.feed(b"\x1b[?2004h");
+    let tab_id =
+        app.tabs.open(NewTab { label: "Test".into(), color: [0; 3], session: Some(id.into()), account: None }, term);
+    let tab = app.tabs.get_mut(tab_id).unwrap();
+    tab.pane = Some(pane);
+    for found in [None, Some("22222222-0000-0000-0000-000000000000")] {
+        for force in [false, true] {
+            AppState::chat_send(tab, Instant::now(), force);
+            let chat = &tab.pane.as_ref().unwrap().chat;
+            assert_eq!(chat.error, Some(Reason::Identity.label()));
+            assert_eq!(chat.editor.text, "Do not send yet");
+        }
+        tab.apply_live_identity(found);
+    }
+    assert!(tab.needs_identity());
+    assert!(tab.apply_live_identity(Some(id)));
+    assert!(!tab.needs_identity());
+    assert_eq!(tab.pane.as_ref().unwrap().chat.editor.text, "Do not send yet");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn direct_input_watermark_uses_cached_discovery_path_without_rereading_head() {
+    use crate::{source::Source, state::AppState};
+    let id = "11111111-0000-0000-0000-000000000000";
+    let root = std::env::temp_dir().join(format!("cs-chat-watermark-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let file = crate::view::handover_transcript(&root, &root, id);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"{}\n").unwrap();
+    let source = model::Source::Discover {
+        config: root.clone(),
+        cwd: root.clone(),
+        started: std::time::UNIX_EPOCH,
+        verified: Default::default(),
+    };
+    let app = AppState::new(Source::Demo, None, Default::default());
+    let mut pane = app.new_session_pane(source, root.clone());
+    assert!(pane.update_identity(Some(id)));
+    let conflicting = b"{\"cwd\":\"different\"}\n";
+    std::fs::write(&file, conflicting).unwrap();
+    assert!(pane.transcript_source.find_file().is_none(), "fresh discovery would reread and reject the changed head");
+    pane.note_terminal_input();
+    assert_eq!(pane.chat.input_floor, Some(conflicting.len() as u64));
+    pane.update_identity(None);
+    pane.note_terminal_input();
+    assert_eq!(pane.chat.input_floor, Some(u64::MAX));
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

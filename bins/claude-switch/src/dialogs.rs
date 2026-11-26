@@ -527,9 +527,6 @@ fn submit_name(st: &mut AppState, now: Instant, field: TextField, stops: Vec<f32
 /// After an account was added, renamed or removed: save, tell the bridge, read again.
 fn accounts_changed(st: &mut AppState, now: Instant) {
     st.save_config();
-    if let Err(e) = st.source.write_workers(&st.config) {
-        st.error("The workers' list was not updated", e.to_string());
-    }
     st.rebuild_accounts();
     st.refresh(now);
 }

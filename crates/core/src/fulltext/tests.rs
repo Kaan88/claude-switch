@@ -6,6 +6,31 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
+fn index_search_and_stats_agree_on_the_clean_main_prompt() {
+    let folder = Folder::new();
+    let file = folder.0.join("session.jsonl");
+    let text = concat!(
+        "{\"type\":\"user\",\"cwd\":\"C:/fixture\",\"message\":{\"content\":[",
+        "{\"type\":\"text\",\"text\":\"<system-reminder>hidden \"},",
+        "{\"type\":\"text\",\"text\":\"private</system-reminder>needle alpha\\nbeta gamma<system-reminder>secret</system-reminder>\"}]}}\n",
+        "{\"type\":\"user\",\"parent_tool_use_id\":\"nested\",\"message\":{\"content\":\"secret\"}}\n"
+    );
+    fs::write(&file, text).unwrap();
+    let indexed = crate::sessions::read_transcript(&file).unwrap();
+    assert_eq!(indexed.last_prompt, "needle alpha beta gamma");
+    let (first, _) = crate::sessions::naming_prompts(&file);
+    assert_eq!(first.as_deref(), Some("needle alpha beta gamma"));
+    for (query, expected) in [("needle alpha", 1), ("alpha beta", 0), ("secret", 0)] {
+        let mut count = 0;
+        Query::new(query).unwrap().scan(text.as_bytes(), || false, |hits| count = hits.shown.len()).unwrap();
+        assert_eq!(count, expected);
+    }
+    let stats = crate::stats::collect(text.as_bytes(), || false).unwrap();
+    assert_eq!(stats.turns, 1);
+    assert_eq!(stats.context.count, "needle alpha\nbeta gamma".chars().count() as u64 / 4);
+}
+
+#[test]
 fn a_record_with_extreme_json_width_fails_instead_of_reporting_a_partial_scan() {
     let padding = "0,".repeat(65_536);
     let input = format!("{{\"type\":\"user\",\"message\":{{\"content\":\"hello\",\"padding\":[{padding}0]}}}}\n");

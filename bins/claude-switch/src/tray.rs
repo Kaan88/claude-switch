@@ -39,7 +39,7 @@ pub struct Tray {
     hwnd: HWND,
     icon: HICON,
     added: bool,
-    tip: String,
+    requested_tip: Option<String>,
     queue: VecDeque<Balloon>,
     active: Option<Balloon>,
 }
@@ -66,12 +66,20 @@ impl Tray {
         self.added
     }
 
-    pub fn sync(&mut self, enabled: bool, tip: String) {
+    fn needs_sync(&self, tip: &str, force: bool) -> bool {
+        force || self.requested_tip.as_deref() != Some(tip)
+    }
+
+    pub fn sync(&mut self, enabled: bool, tip: String, force: bool) {
         if self.hwnd.is_null() {
             return;
         }
         if !enabled {
             self.remove_icon();
+            self.requested_tip = None;
+            return;
+        }
+        if !self.needs_sync(&tip, force) {
             return;
         }
         let mut data = self.data();
@@ -81,7 +89,7 @@ impl Tray {
         unsafe {
             if self.added {
                 if Shell_NotifyIconW(NIM_MODIFY, &data) != 0 {
-                    self.tip = tip;
+                    self.requested_tip = Some(tip);
                     return;
                 }
                 self.explorer_restarted();
@@ -92,17 +100,18 @@ impl Tray {
             if Shell_NotifyIconW(NIM_ADD, &data) != 0 {
                 data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
                 self.added = Shell_NotifyIconW(NIM_SETVERSION, &data) != 0;
-                if self.added {
-                    self.tip = tip;
-                } else {
+                if !self.added {
                     Shell_NotifyIconW(NIM_DELETE, &data);
                 }
             }
         }
+        // Even a failed registration must not retry on every terminal wake.
+        self.requested_tip = Some(tip);
     }
 
     pub fn explorer_restarted(&mut self) {
         self.added = false;
+        self.requested_tip = None;
         self.queue.clear();
         self.active = None;
     }
@@ -132,6 +141,10 @@ impl Tray {
         self.queue.push_back(Balloon { title: title.into(), text: text.into(), tab });
         self.next_balloon();
         self.active.is_some()
+    }
+
+    pub fn discard_usage_notices(&mut self) {
+        self.queue.retain(|balloon| balloon.title != "Claude Switch usage");
     }
 
     fn next_balloon(&mut self) {
@@ -323,6 +336,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dropping_queued_usage_preserves_waiting_tab_balloons() {
+        let mut tray = Tray::default();
+        tray.queue.push_back(Balloon { title: "Claude Switch usage".into(), text: "usage".into(), tab: None });
+        tray.queue.push_back(Balloon { title: "Session waiting".into(), text: "waiting".into(), tab: Some(9) });
+        tray.discard_usage_notices();
+        assert_eq!(tray.queue.iter().map(|balloon| balloon.tab).collect::<Vec<_>>(), [Some(9)]);
+    }
+
+    #[test]
     fn fixed_shell_buffers_keep_terminators_and_whole_surrogates() {
         let mut buffer = [0; 4];
         fill(&mut buffer, "a🌟z");
@@ -331,5 +353,16 @@ mod tests {
         let mut buffer = [0; 3];
         fill(&mut buffer, "a🌟");
         assert_eq!(buffer, [b'a' as u16, 0, 0]);
+    }
+
+    #[test]
+    fn unchanged_tray_tip_skips_shell_until_restart_or_forced_sync() {
+        let mut tray = Tray::default();
+        tray.requested_tip.replace("same".into());
+        assert!(!tray.needs_sync("same", false), "including after failed registration");
+        assert!(tray.needs_sync("changed", false));
+        assert!(tray.needs_sync("same", true), "before hiding the window");
+        tray.explorer_restarted();
+        assert!(tray.needs_sync("same", false));
     }
 }

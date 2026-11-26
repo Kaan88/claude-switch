@@ -8,22 +8,87 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) fn lock_beside(path: &Path) -> Result<std::fs::File, Refusal> {
+    lock_beside_until(path, std::time::Instant::now(), || true).map_err(|error| match error {
+        LockError::Refused(error) => error,
+        LockError::Busy => io_refusal("lock", path, &"another window is writing"),
+    })
+}
+
+pub(crate) enum LockError {
+    Busy,
+    Refused(Refusal),
+}
+
+pub(crate) fn lock_beside_until(
+    path: &Path,
+    deadline: std::time::Instant,
+    enabled: impl Fn() -> bool,
+) -> Result<std::fs::File, LockError> {
     let mut name = path.as_os_str().to_owned();
     name.push(".lock");
     let lock = PathBuf::from(name);
-    ensure_parent(&lock)?;
-    regular_target(&lock)?;
+    ensure_parent(&lock).map_err(LockError::Refused)?;
+    regular_target(&lock).map_err(LockError::Refused)?;
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(&lock)
-        .map_err(|e| io_refusal("open the lock", &lock, &e))?;
-    file.try_lock().map_err(|e| io_refusal("lock", &lock, &e))?;
-    Ok(file)
+        .map_err(|e| LockError::Refused(io_refusal("open the lock", &lock, &e)))?;
+    let mut retried = false;
+    loop {
+        if !enabled() || (retried && std::time::Instant::now() >= deadline) {
+            return Err(LockError::Busy);
+        }
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                if left.is_zero() {
+                    return Err(LockError::Busy);
+                }
+                std::thread::sleep(left.min(std::time::Duration::from_millis(10)));
+                retried = true;
+            }
+            Err(e) => return Err(LockError::Refused(io_refusal("lock", &lock, &e))),
+        }
+    }
 }
 
+pub fn read_bounded(path: &Path, max: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path)?;
+    let too_large = || std::io::Error::new(std::io::ErrorKind::InvalidData, "file exceeds its size limit");
+    if file.metadata()?.len() > max as u64 {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    file.take(max as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > max {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
+/// Resolve only the trusted profile directory, leaving every app-owned component for the
+/// strict parent checks. A first run can have missing profile subdirectories.
+pub(crate) fn resolve_profile(path: &Path) -> PathBuf {
+    if !path.is_absolute() {
+        return path.into();
+    }
+    let mut base = path;
+    loop {
+        match std::fs::canonicalize(base) {
+            Ok(dir) => return dir.join(path.strip_prefix(base).expect("profile ancestor")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let Some(parent) = base.parent() else { return path.into() };
+                base = parent;
+            }
+            Err(_) => return path.into(),
+        }
+    }
+}
 /// The JSON in a file, `None` when it is missing or does not parse.
 pub(crate) fn read_json(path: &Path) -> Option<Value> {
     let bytes = std::fs::read(path).ok()?;
@@ -77,11 +142,16 @@ pub(crate) fn reparse(metadata: &std::fs::Metadata) -> bool {
 }
 
 pub(crate) fn ensure_parent(path: &Path) -> Result<(), Refusal> {
+    check_parent(path, true)
+}
+
+pub(crate) fn check_parent(path: &Path, create: bool) -> Result<(), Refusal> {
     let dirs: Vec<_> = path.ancestors().skip(1).filter(|p| !p.as_os_str().is_empty()).collect();
     for dir in dirs.into_iter().rev() {
         let check = || std::fs::symlink_metadata(dir);
         let meta = match check() {
             Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !create => return Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 match std::fs::create_dir(dir) {
                     Ok(()) => {}
@@ -110,7 +180,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
 pub fn replace_if_unchanged(path: &Path, baseline: Option<&[u8]>, bytes: &[u8]) -> Result<(), Refusal> {
     let _lock = lock_beside(path)?;
     regular_target(path)?;
-    let current = match std::fs::read(path) {
+    let current = match read_bounded(path, APP_FILE_LIMIT) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(io_refusal("read", path, &e)),
@@ -120,6 +190,8 @@ pub fn replace_if_unchanged(path: &Path, baseline: Option<&[u8]>, bytes: &[u8]) 
     }
     write_atomic(path, bytes)
 }
+
+pub const APP_FILE_LIMIT: usize = 8 * 1024 * 1024;
 
 fn write_through_temp(path: &Path, tmp: &Path, bytes: &[u8]) -> Result<(), Refusal> {
     let mut file = std::fs::File::create_new(tmp).map_err(|e| io_refusal("create temporary file", tmp, &e))?;
@@ -233,6 +305,29 @@ mod tests {
         assert!(super::write_atomic(&alias.join("window.ini"), b"no").is_err());
         assert!(!real.join("window.ini").exists());
         std::fs::remove_dir(alias).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolved_profile_parent_is_allowed_but_app_subtree_redirects_are_not() {
+        let t = super::testing::TempDir::new("app-write-profile");
+        let actual = t.0.join("real");
+        std::fs::create_dir(&actual).unwrap();
+        let profile = t.0.join("redirected");
+        crate::share::junction::create(&profile, &actual).unwrap();
+        let roots = crate::Roots { home: t.0.clone(), appdata: profile.join("Roaming") };
+        let cfg = crate::config::load(&roots);
+        crate::config::save(&roots, &cfg).unwrap();
+        let actual_app = actual.join("Roaming/claude-switch");
+        assert!(actual_app.join("config.json").is_file());
+        let unrelated = t.0.join("unrelated");
+        std::fs::create_dir(&unrelated).unwrap();
+        let nested = actual_app.join("nested");
+        crate::share::junction::create(&nested, &unrelated).unwrap();
+        assert!(super::write_atomic(&roots.config_file().with_file_name("nested").join("export.md"), b"x").is_err());
+        assert!(!unrelated.join("export.md").exists());
+        std::fs::remove_dir(nested).unwrap();
+        std::fs::remove_dir(profile).unwrap();
     }
     use super::testing::{TempDir, put};
     use super::*;

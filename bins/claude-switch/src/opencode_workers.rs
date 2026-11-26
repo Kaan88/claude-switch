@@ -13,6 +13,7 @@ pub struct Workers {
     pub status: Option<Status>,
     pub studio_installed: bool,
     job: Option<Job<Update>>,
+    restarting: bool,
 }
 
 enum Update {
@@ -67,6 +68,10 @@ impl Workers {
     pub fn busy(&self) -> bool {
         self.job.is_some()
     }
+
+    pub fn restart_pending(&self) -> bool {
+        self.restarting && self.job.as_ref().is_some_and(Job::running)
+    }
 }
 
 impl AppState {
@@ -101,7 +106,7 @@ impl AppState {
     pub fn confirm_restart_opencode(&mut self, request: Restart, proceed: bool) {
         self.opencode_settings(true);
         if proceed {
-            self.opencode_job(move || {
+            self.start_opencode_job(true, move || {
                 restart_if_unchanged(
                     request,
                     |path| opencode_cli::service_sessions(|| Some(command(path))),
@@ -125,11 +130,18 @@ impl AppState {
     }
 
     fn opencode_job(&mut self, work: impl FnOnce() -> Update + Send + 'static) {
+        self.start_opencode_job(false, work);
+    }
+
+    fn start_opencode_job(&mut self, restarting: bool, work: impl FnOnce() -> Update + Send + 'static) {
         if self.source.is_demo() || self.opencode.busy() {
             return;
         }
         match Job::start(self.wake_fn(), move |_, _| work()) {
-            Ok(job) => self.opencode.job = Some(job),
+            Ok(job) => {
+                self.opencode.job = Some(job);
+                self.opencode.restarting = restarting;
+            }
             Err(_) => self.toast("Could not start the OpenCode worker.".into(), Instant::now()),
         }
         crate::dialogs::update_opencode_rows(self);
@@ -137,6 +149,7 @@ impl AppState {
 
     pub fn take_opencode_job(&mut self, now: Instant) -> bool {
         let Some(job) = self.opencode.job.take_if(|job| !job.running()) else { return false };
+        self.opencode.restarting = false;
         match job.take().unwrap_or(Update::Failed("The OpenCode worker stopped unexpectedly.")) {
             Update::Refreshed(status, studio) => {
                 self.opencode.status = Some(status);
@@ -169,7 +182,7 @@ fn restart_warning(running: Option<usize>) -> String {
     let count = match running {
         Some(1) => "1 OpenCode session is running.".into(),
         Some(n) => format!("{n} OpenCode sessions are running."),
-        None => "OpenCode did not answer; the number of running sessions is unknown.".into(),
+        None => "The number of running OpenCode sessions is unknown.".into(),
     };
     format!("{count} Restarting will cut off any running jobs.")
 }
@@ -178,6 +191,55 @@ fn restart_warning(running: Option<usize>) -> String {
 mod tests {
     use super::*;
     use crate::{dialogs, source::Source, winfile::WindowFile};
+
+    mod fixture {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../crates/opencode/tests/support/mod.rs"));
+    }
+
+    #[test]
+    fn quit_guard_spans_fake_service_stop_start_fallback() {
+        use std::cell::Cell;
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let path = fixture::fake_program();
+        let log = path.with_file_name("app-restart.log");
+        let job_log = log.clone();
+        let dir = path.parent().unwrap().to_path_buf();
+        let mut st = AppState::new(Source::Demo, None, WindowFile::default());
+        st.source = Source::Real(claude_switch_core::Roots { home: dir.clone(), appdata: dir });
+        let (stopped, wait_stop) = mpsc::channel();
+        let (proceed, wait_proceed) = mpsc::channel();
+        st.start_opencode_job(true, move || {
+            let calls = Cell::new(0);
+            let running = opencode_cli::restart_service(|| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 3 {
+                    stopped.send(()).unwrap();
+                    wait_proceed.recv_timeout(Duration::from_secs(10)).unwrap();
+                }
+                let mut cmd = Command::new(&path);
+                cmd.env("FAKE_MODE", "fallback").env("FAKE_LOG", &job_log);
+                cmd
+            })
+            .unwrap();
+            Update::Restarted { path, running }
+        });
+        wait_stop.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "service restart\nservice stop\n");
+        assert!(st.opencode.restart_pending());
+        proceed.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !st.take_opencode_job(Instant::now()) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!st.opencode.restart_pending());
+        assert_eq!(st.opencode.status.unwrap().running, Some(2));
+        assert_eq!(
+            std::fs::read_to_string(log).unwrap(),
+            "service restart\nservice stop\nservice start\napi session.active\n"
+        );
+    }
 
     #[test]
     fn restart_warning_counts_and_discloses_unknown() {

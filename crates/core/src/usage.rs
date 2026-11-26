@@ -15,6 +15,8 @@ pub enum Error {
     NotLoggedIn,
     Expired,
     Network,
+    SettingsBusy,
+    SettingsUnavailable,
     Http(u16),
     NotUnderstood,
 }
@@ -26,6 +28,8 @@ impl fmt::Display for Error {
             Self::NotLoggedIn => f.write_str("not logged in"),
             Self::Expired => f.write_str("expired"),
             Self::Network => f.write_str("network"),
+            Self::SettingsBusy => f.write_str("settings busy; try again"),
+            Self::SettingsUnavailable => f.write_str("usage settings unavailable or off"),
             Self::Http(status) => write!(f, "HTTP {status}"),
             Self::NotUnderstood => f.write_str("not understood"),
         }
@@ -122,24 +126,32 @@ pub fn read_token(cli_dir: &Path, now: u64) -> Result<Token, Error> {
     })?;
     let mut bytes = Vec::new();
     let read = file.take(MAX + 1).read_to_end(&mut bytes);
-    let parsed = if read.is_ok() && bytes.len() as u64 <= MAX { serde_json::from_slice(&bytes).ok() } else { None };
+    let parsed =
+        if read.is_ok() && bytes.len() as u64 <= MAX { parse_token(&bytes, now) } else { Err(Error::NotUnderstood) };
     bytes.fill(0);
     std::hint::black_box(&bytes);
-    let mut value: Value = parsed.ok_or(Error::NotUnderstood)?;
-    let oauth = value.get_mut("claudeAiOauth").ok_or(Error::NotLoggedIn)?;
-    let expires_at = oauth["expiresAt"].as_u64().ok_or(Error::NotUnderstood)?;
-    let Value::String(value) = oauth.get_mut("accessToken").map(Value::take).ok_or(Error::NotLoggedIn)? else {
-        return Err(Error::NotLoggedIn);
-    };
-    if value.is_empty() {
+    parsed
+}
+
+fn parse_token(bytes: &[u8], now: u64) -> Result<Token, Error> {
+    // Values outside these fields remain borrowed JSON spans, not decoded heap strings.
+    type Fields<'a> = BTreeMap<String, &'a serde_json::value::RawValue>;
+    let fields: Fields<'_> = serde_json::from_slice(bytes).map_err(|_| Error::NotUnderstood)?;
+    let oauth: Fields<'_> = serde_json::from_str(fields.get("claudeAiOauth").ok_or(Error::NotLoggedIn)?.get())
+        .map_err(|_| Error::NotUnderstood)?;
+    let expires_at = serde_json::from_str(oauth.get("expiresAt").ok_or(Error::NotUnderstood)?.get())
+        .map_err(|_| Error::NotUnderstood)?;
+    let value: String = serde_json::from_str(oauth.get("accessToken").ok_or(Error::NotLoggedIn)?.get())
+        .map_err(|_| Error::NotLoggedIn)?;
+    let token = Token { value: value.into_bytes(), expires_at };
+    if token.value().is_empty() {
         return Err(Error::NotLoggedIn);
     }
     // RFC 6750 bearer alphabet. No control characters or non-ASCII can reach the header API.
-    let base = value.trim_end_matches('=');
+    let base = token.value().trim_end_matches('=');
     if base.is_empty() || !base.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~+/".contains(&b)) {
         return Err(Error::NotUnderstood);
     }
-    let token = Token { value: value.into_bytes(), expires_at };
     token.bearer(now)?;
     Ok(token)
 }
@@ -208,9 +220,12 @@ fn humanise(name: &str) -> String {
 }
 
 fn report_text<'a>(value: &'a Value, bearer: &str) -> Option<&'a str> {
-    let text = value.as_str()?.trim();
-    (!text.is_empty() && text.len() <= 256 && !text.contains(bearer) && !text.chars().any(char::is_control))
-        .then_some(text)
+    let text = value.as_str()?;
+    valid_label(text, bearer).then(|| text.trim())
+}
+
+fn valid_label(text: &str, bearer: &str) -> bool {
+    !text.trim().is_empty() && text.len() <= 256 && !text.contains(bearer) && !text.chars().any(char::is_control)
 }
 
 fn modern_limit(item: &Value, bearer: &str) -> Option<Limit> {
@@ -231,7 +246,7 @@ fn modern_limit(item: &Value, bearer: &str) -> Option<Limit> {
     } else {
         (Slot::Other, humanise(kind))
     };
-    if label.contains(bearer) {
+    if !valid_label(&label, bearer) {
         return None;
     }
     let reset = item["resets_at"].as_str().and_then(timestamp);
@@ -252,7 +267,7 @@ fn decode(body: &[u8], bearer: &str, read_at: u64) -> Result<Reading, Error> {
             .filter_map(|(key, member)| {
                 let reset = member["resets_at"].as_str().and_then(timestamp);
                 let limit = Limit::legacy(key, percent(&member["utilization"])?, reset);
-                (!key.contains(bearer) && !limit.label.contains(bearer)).then_some(limit)
+                (valid_label(key, bearer) && valid_label(&limit.label, bearer)).then_some(limit)
             })
             .collect()
     };
@@ -420,7 +435,9 @@ impl Attempt {
         if self.busy || ((auto || self.started.is_none()) && cached_age.is_some_and(|age| age < floor)) {
             return false;
         }
-        if let Some((finished, Err(error))) = self.finished {
+        if let Some((finished, Err(error))) = self.finished
+            && !matches!(error, Error::SettingsBusy | Error::SettingsUnavailable)
+        {
             let seconds = if error == Error::Http(429) { 1800 } else { 300 };
             if now.saturating_duration_since(finished) < Duration::from_secs(seconds) {
                 return false;
@@ -436,6 +453,9 @@ impl Attempt {
 
     pub fn finish(&mut self, now: Instant, result: Result<(), Error>) {
         self.busy = false;
+        if matches!(result, Err(Error::SettingsBusy | Error::SettingsUnavailable)) {
+            self.started = None;
+        }
         self.finished = Some((now, result));
     }
 

@@ -267,7 +267,7 @@ mod win {
         enabled: impl Fn() -> bool,
         decode: impl FnOnce(&Token, &[u8]) -> Result<T, Error>,
     ) -> Result<T, Error> {
-        request(dir, production_endpoint().ok_or(Error::Network)?, TIMEOUT, enabled, decode, Some(roots))
+        request(dir, production_endpoint().ok_or(Error::Network)?, TIMEOUT, enabled, decode, Some(roots), now_ms)
     }
 
     #[cfg(test)]
@@ -284,7 +284,7 @@ mod win {
     ) -> Result<T, Error> {
         let port = base.strip_prefix("http://127.0.0.1:").and_then(|p| p.parse::<u16>().ok()).ok_or(Error::Network)?;
         let endpoint = Endpoint { host: "127.0.0.1", port, path: "api/oauth/usage", flags: 0 };
-        request(dir, endpoint, timeout, || true, decode, None)
+        request(dir, endpoint, timeout, || true, decode, None, now_ms)
     }
 
     fn request<T>(
@@ -294,6 +294,7 @@ mod win {
         enabled: impl Fn() -> bool,
         decode: impl FnOnce(&Token, &[u8]) -> Result<T, Error>,
         roots: Option<&Roots>,
+        token_clock: impl Fn() -> u64,
     ) -> Result<T, Error> {
         if !enabled() {
             return Err(Error::Network);
@@ -323,16 +324,16 @@ mod win {
             return Err(Error::Network);
         }
         let permit =
-            || roots.map(|r| claude_switch_core::config::usage_permit(r, dir).ok_or(Error::Network)).transpose();
+            || roots.map(|r| claude_switch_core::config::usage_permit_until(r, dir, deadline, &enabled)).transpose();
         let token = {
             let _permit = permit()?;
-            if !enabled() {
-                return Err(Error::Network);
+            if !enabled() || Instant::now() >= deadline {
+                return Err(Error::SettingsUnavailable);
             }
-            read_token(dir, now_ms())?
+            read_token(dir, token_clock())?
         };
         const PREFIX: &str = "anthropic-beta: oauth-2025-04-20\r\nAccept: application/json\r\nAuthorization: Bearer ";
-        let bearer = token.bearer(now_ms())?;
+        let bearer = token.bearer(token_clock())?;
         let mut headers = Vec::with_capacity(PREFIX.len() + bearer.len() + 2);
         headers.extend(PREFIX.encode_utf16());
         headers.extend(bearer.encode_utf16());
@@ -346,13 +347,13 @@ mod win {
         if added == 0 || !enabled() || Instant::now() >= deadline {
             return Err(Error::Network);
         }
-        token.bearer(now_ms())?;
         // SAFETY: live request, no temporary headers or body, and the context belongs to the close callback.
         let sent = {
             let _permit = permit()?;
-            if !enabled() {
-                return Err(Error::Network);
+            if !enabled() || Instant::now() >= deadline {
+                return Err(Error::SettingsUnavailable);
             }
+            token.bearer(token_clock())?;
             unsafe { WinHttpSendRequest(request.0, null(), 0, null(), 0, 0, call.id) }
         };
         if sent == 0 || !matches!(call.next(&enabled)?, Event::Sent) {

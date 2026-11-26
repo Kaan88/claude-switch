@@ -22,15 +22,17 @@
 //!
 //! Folders are not stored: they follow from the slug and [`Roots`].
 
+mod coordination;
 mod notifications;
 mod terminal;
+pub use coordination::{sync_workers, usage_enabled, usage_permit, usage_permit_until};
 pub use notifications::{Attention, Notifications, WarningWindows, claim_warning, load_warning_windows};
 pub use terminal::*;
 
 use crate::accounts::COLORS;
 use crate::util::{io_refusal, lock_beside, str_field, write_json};
 use crate::{Account, Config, Refusal, Roots, WorkersUse};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 pub const TERMINAL_FONT_MIN: u8 = 9;
 pub const TERMINAL_FONT_MAX: u8 = 24;
@@ -151,8 +153,9 @@ pub fn load(roots: &Roots) -> Config {
 }
 
 fn read_settings(path: &std::path::Path) -> Result<Value, Refusal> {
+    crate::util::check_parent(path, false)?;
     crate::util::regular_target(path)?;
-    match std::fs::read(path) {
+    match crate::read_bounded(path, crate::APP_FILE_LIMIT) {
         Ok(bytes) => {
             let value: Value = serde_json::from_slice(&bytes).map_err(|e| io_refusal("read settings", path, &e))?;
             if !value.is_object()
@@ -279,6 +282,31 @@ pub fn save(roots: &Roots, config: &Config) -> Result<(), Refusal> {
     save_value(roots, &config)
 }
 
+/// Apply only this window's edits. Refuse conflicting edits to the same field.
+pub fn save_changes(roots: &Roots, baseline: &Config, edited: &Config) -> Result<Config, Refusal> {
+    let path = roots.config_file();
+    let _lock = lock_beside(&path)?;
+    let disk = read_settings(&path)?;
+    let current = config_value(&parse(roots, disk.clone(), false));
+    let before = config_value(baseline);
+    let after = config_value(edited);
+    let mut merged = disk.as_object().cloned().unwrap_or_default();
+    for (key, value) in after.as_object().expect("settings object") {
+        if matches!(key.as_str(), "showUsage" | "compact") || before[key] == *value {
+            continue;
+        }
+        if current[key] != before[key] && current[key] != *value {
+            return Err(Refusal::Invalid(
+                "Another window changed these settings. Review the current values and retry.".into(),
+            ));
+        }
+        merged.insert(key.clone(), value.clone());
+    }
+    let merged = Value::Object(merged);
+    write_json(&path, &merged)?;
+    Ok(parse(roots, merged, false))
+}
+
 pub fn set_usage(roots: &Roots, enabled: bool) -> Result<(), Refusal> {
     let path = roots.config_file();
     let _lock = lock_beside(&path)?;
@@ -287,12 +315,6 @@ pub fn set_usage(roots: &Roots, enabled: bool) -> Result<(), Refusal> {
     write_json(&path, &current)
 }
 
-/// Hold the configuration lock across the credential open/read or request submission.
-pub fn usage_permit(roots: &Roots, dir: &std::path::Path) -> Option<std::fs::File> {
-    let lock = lock_beside(&roots.config_file()).ok()?;
-    let (config, damaged) = load_checked(roots);
-    (!damaged && config.show_usage && config.accounts.iter().any(|a| a.cli_dir == dir)).then_some(lock)
-}
 /// Updates handover preferences under the settings lock, without changing any other setting.
 pub fn update_compact(
     roots: &Roots,
@@ -317,12 +339,13 @@ pub fn reset(roots: &Roots) -> Result<Config, Refusal> {
     if read_settings(&path).is_ok() {
         return Err(Refusal::Invalid("Settings changed on disk. Restart to use the current settings.".into()));
     }
-    let bytes = std::fs::read(&path).map_err(|e| io_refusal("back up settings", &path, &e))?;
+    let bytes = crate::read_bounded(&path, crate::APP_FILE_LIMIT)
+        .map_err(|e| io_refusal("back up settings; move oversized files aside manually", &path, &e))?;
     let serial = crate::usage::now_ms();
     let backup = path.with_file_name(format!("config.broken.{}.{serial}.json", std::process::id()));
     crate::util::write_new_atomic(&backup, &bytes)?;
     let config = parse(roots, Value::Null, true); // Recover preferences without opting back into usage.
-    if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+    if crate::read_bounded(&path, crate::APP_FILE_LIMIT).ok().as_deref() != Some(bytes.as_slice()) {
         return Err(Refusal::Invalid("Settings changed while being backed up.".into()));
     }
     save_value(roots, &config)?;
@@ -330,6 +353,10 @@ pub fn reset(roots: &Roots) -> Result<Config, Refusal> {
 }
 
 fn save_value(roots: &Roots, config: &Config) -> Result<(), Refusal> {
+    write_json(&roots.config_file(), &config_value(config))
+}
+
+fn config_value(config: &Config) -> Value {
     let accounts: Vec<Value> =
         config.accounts.iter().map(|a| json!({"slug": a.slug, "name": a.name, "color": a.color})).collect();
     let workers = match &config.workers {
@@ -337,7 +364,7 @@ fn save_value(roots: &Roots, config: &Config) -> Result<(), Refusal> {
         WorkersUse::Other => json!("other"),
         WorkersUse::Account(s) => json!({"account": s}),
     };
-    let value = json!({
+    json!({
         "accounts": accounts,
         "current": config.current,
         "workers": workers,
@@ -356,42 +383,12 @@ fn save_value(roots: &Roots, config: &Config) -> Result<(), Refusal> {
         "windowTheme": config.window_theme,
         "appearance": config.appearance.json(),
         "compact": {"model": config.compact.model, "consents": config.compact.consents},
-    });
-    write_json(&roots.config_file(), &value)
-}
-
-/// Sets `claudeAccounts` (every account's CLI folder, in order, as strings) and `claudeWorkersUse`
-/// (`"same"`, `"other"` or a CLI folder) in [`Roots::workers_file`], leaving every other key of that
-/// file exactly as it is. A missing file is created holding only the two keys; a file that is not a
-/// JSON object is left alone and is [`Refusal::Io`].
-pub fn write_workers(roots: &Roots, config: &Config) -> Result<(), Refusal> {
-    let path = roots.workers_file();
-    let mut object = match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-            Ok(Value::Object(map)) => map,
-            Ok(_) => return Err(io_refusal("update", &path, &"it is not a JSON object")),
-            Err(e) => return Err(io_refusal("update", &path, &e)),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Map::new(),
-        Err(e) => return Err(io_refusal("read", &path, &e)),
-    };
-    let dirs: Vec<Value> =
-        config.accounts.iter().map(|a| Value::String(a.cli_dir.to_string_lossy().into_owned())).collect();
-    let uses = match &config.workers {
-        WorkersUse::Same => "same".to_string(),
-        WorkersUse::Other => "other".to_string(),
-        WorkersUse::Account(slug) => match config.accounts.iter().find(|a| &a.slug == slug) {
-            Some(a) => a.cli_dir.to_string_lossy().into_owned(),
-            None => "same".to_string(),
-        },
-    };
-    object.insert("claudeAccounts".into(), Value::Array(dirs));
-    object.insert("claudeWorkersUse".into(), Value::String(uses));
-    write_json(&path, &Value::Object(object))
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::coordination::write_workers;
     use super::*;
     use crate::util::read_json;
     use crate::util::testing::{TempDir, config_with, put};
@@ -573,6 +570,29 @@ mod tests {
         set_usage(&roots, true).unwrap();
         save(&roots, &stale_off).unwrap();
         assert!(load(&roots).show_usage);
+    }
+
+    #[test]
+    fn account_add_and_remove_survive_an_unrelated_stale_font_save() {
+        let t = TempDir::new("cfg-cross-window-accounts");
+        let roots = t.roots();
+        let main_only = load(&roots);
+        let mut with_work = main_only.clone();
+        let work = crate::accounts::add(&roots, &mut with_work, "Work").unwrap();
+        let with_work = save_changes(&roots, &main_only, &with_work).unwrap();
+        let mut font = main_only.clone();
+        font.terminal_font_size = 18;
+        let saved = save_changes(&roots, &main_only, &font).unwrap();
+        assert!(saved.accounts.iter().any(|a| a.slug == work.slug));
+        let mut removed = with_work.clone();
+        crate::accounts::remove(&mut removed, &work.slug).unwrap();
+        save_changes(&roots, &with_work, &removed).unwrap();
+        font = saved.clone();
+        font.terminal_font_size = 19;
+        let saved = save_changes(&roots, &saved, &font).unwrap();
+        assert_eq!(saved.accounts.len(), 1);
+        assert_eq!(saved.terminal_font_size, 19);
+        assert!(usage_permit(&roots, &work.cli_dir).is_none());
     }
 
     #[test]

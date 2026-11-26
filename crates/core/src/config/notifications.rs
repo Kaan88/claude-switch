@@ -65,13 +65,19 @@ const FILE: &str = "usage-notices.json";
 
 pub fn load_warning_windows(roots: &Roots) -> WarningWindows {
     let path = roots.config_file().with_file_name(FILE);
-    if !path.metadata().is_ok_and(|meta| meta.len() <= 256 * 1024) {
-        return BTreeMap::new();
-    }
-    let Some(json) = crate::util::read_json(&path) else { return BTreeMap::new() };
-    json.as_array()
-        .into_iter()
-        .flatten()
+    read_warning_windows(&path).unwrap_or_default()
+}
+
+fn read_warning_windows(path: &std::path::Path) -> Result<WarningWindows, Refusal> {
+    let bytes = match crate::read_bounded(path, 256 * 1024) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(crate::util::io_refusal("read usage notices", path, &e)),
+    };
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&bytes).map_err(|e| crate::util::io_refusal("decode usage notices", path, &e))?;
+    Ok(rows
+        .iter()
         .filter_map(|row| {
             let slug = row["account"].as_str()?.to_owned();
             let slot = row["slot"].as_str()?.to_owned();
@@ -79,7 +85,7 @@ pub fn load_warning_windows(roots: &Roots) -> WarningWindows {
             let threshold = u8::try_from(row["threshold"].as_u64()?).ok()?;
             matches!(threshold, 80 | 95).then_some(((slug, slot, label, row["reset"].as_i64()), threshold))
         })
-        .collect()
+        .collect())
 }
 
 pub fn save_warning_windows(roots: &Roots, windows: &WarningWindows) -> Result<(), Refusal> {
@@ -98,16 +104,30 @@ pub fn claim_warning(
     key: (String, String, String, Option<i64>),
     threshold: u8,
 ) -> Result<bool, Refusal> {
+    claim_warning_at(roots, key, threshold, (crate::usage::now_ms() / 1000) as i64)
+}
+
+fn claim_warning_at(
+    roots: &Roots,
+    key: (String, String, String, Option<i64>),
+    threshold: u8,
+    now: i64,
+) -> Result<bool, Refusal> {
     let path = roots.config_file().with_file_name(FILE);
     let _lock = crate::util::lock_beside(&path)?;
     crate::util::regular_target(&path)?;
-    let mut windows = load_warning_windows(roots);
-    if windows.get(&key).is_some_and(|prior| *prior >= threshold) {
-        return Ok(false);
+    let mut windows = read_warning_windows(&path)?;
+    let len = windows.len();
+    windows.retain(|(_, _, _, reset), _| reset.is_none_or(|reset| reset > now));
+    let claimed = key.3.is_none_or(|reset| reset > now) && windows.get(&key).is_none_or(|prior| *prior < threshold);
+    let pruned = len != windows.len();
+    if claimed {
+        windows.insert(key, threshold);
     }
-    windows.insert(key, threshold);
-    save_warning_windows(roots, &windows)?;
-    Ok(true)
+    if claimed || pruned {
+        save_warning_windows(roots, &windows)?;
+    }
+    Ok(claimed)
 }
 
 #[cfg(test)]
@@ -120,11 +140,13 @@ mod tests {
         let roots = dir.roots();
         let a = ("main".into(), "week".into(), "Week".into(), Some(100));
         let b = ("work".into(), "week".into(), "Week".into(), Some(200));
-        assert!(claim_warning(&roots, a.clone(), 80).unwrap());
-        assert!(claim_warning(&roots, b.clone(), 95).unwrap());
-        assert!(!claim_warning(&roots, a.clone(), 80).unwrap());
-        assert!(claim_warning(&roots, a.clone(), 95).unwrap());
-        assert_eq!(load_warning_windows(&roots), BTreeMap::from([(a, 95), (b, 95)]));
+        assert!(claim_warning_at(&roots, a.clone(), 80, 0).unwrap());
+        assert!(claim_warning_at(&roots, b.clone(), 95, 0).unwrap());
+        assert!(!claim_warning_at(&roots, a.clone(), 80, 0).unwrap());
+        assert!(claim_warning_at(&roots, a.clone(), 95, 0).unwrap());
+        assert_eq!(load_warning_windows(&roots), BTreeMap::from([(a, 95), (b.clone(), 95)]));
+        assert!(!claim_warning_at(&roots, b.clone(), 95, 100).unwrap());
+        assert_eq!(load_warning_windows(&roots), BTreeMap::from([(b, 95)]));
     }
 
     #[test]

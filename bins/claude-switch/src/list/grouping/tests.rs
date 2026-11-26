@@ -78,7 +78,7 @@ fn threads_fold_only_earlier_matches_and_related_navigation_reveals_them() {
 }
 
 #[test]
-fn related_worker_returns_up_to_five_for_the_current_selection_only() {
+fn related_reuses_the_scan_snapshot_and_returns_five_live_visible_matches() {
     let mut st = demo();
     let project = st.project(0).unwrap().key.clone();
     let eligible: Vec<_> = (10..st.sessions.len())
@@ -86,16 +86,27 @@ fn related_worker_returns_up_to_five_for_the_current_selection_only() {
         .take(7)
         .collect();
     assert_eq!(eligible.len(), 7);
+    let mut scan = crate::demo::scan(&st.config);
     for i in std::iter::once(0).chain(eligible.iter().copied()) {
-        st.sessions[i].grouping.first_prompt = Some("quux needle frobnicate".into());
-        st.sessions[i].last_prompt = "quux needle frobnicate".into();
+        scan.sessions[i].grouping.first_prompt = Some("quux needle frobnicate".into());
+        scan.sessions[i].last_prompt = "quux needle frobnicate".into();
     }
+    let scan = scan.with_related();
+    let index = Arc::clone(&scan.related);
+    st.apply_scan(scan);
+    let hidden = &st.sessions[eligible[0]];
+    assert!(st.marks.hide(&hidden.id, &hidden.file, true));
+    assert!(!st.related_visible(hidden));
+    // Row activity can change between scans; selection must still use the immutable scan index.
+    st.sessions[0].grouping.first_prompt = None;
+    st.sessions[0].last_prompt = "unrelated words".into();
     let mut select = |i: usize| {
         let id = st.sessions[i].id.clone();
         st.select(&id);
     };
     select(1);
     select(0);
+    assert!(Arc::ptr_eq(&st.grouping.related_index, &index));
     let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while st.grouping.pending.as_ref().is_some_and(Job::running) {
         assert!(std::time::Instant::now() < until);
@@ -104,7 +115,7 @@ fn related_worker_returns_up_to_five_for_the_current_selection_only() {
     assert!(st.take_related());
     let similar: Vec<_> =
         st.grouping.related.iter().filter(|(_, r)| *r == Relation::Similar).map(|(id, _)| st.by_id[id]).collect();
-    assert_eq!(similar, eligible[..5]);
+    assert_eq!(similar, eligible[1..6]);
 }
 
 #[test]

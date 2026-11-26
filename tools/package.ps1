@@ -2,12 +2,14 @@
 param(
     [ValidatePattern('\A[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?\z')]
     [string] $AppVersion = '0.1.0',
-    [string] $Iscc
+    [string] $Iscc,
+    [switch] $Offline
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$target = Join-Path $root 'target'
+$triple = 'x86_64-pc-windows-msvc'
+$dist = Join-Path $root 'dist'
 
 if (-not $Iscc) {
     $candidates = @(
@@ -30,13 +32,22 @@ $oldJobs = $env:CARGO_BUILD_JOBS
 Push-Location -LiteralPath $root
 try {
     $env:CARGO_BUILD_JOBS = '2'
-    & cargo build --release --locked -p claude-switch --target-dir $target
+    $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root 'target' }
+    $targetDir = [IO.Path]::GetFullPath($targetDir, $root)
+    $argsForCargo = @('--release', '--locked', '-p', 'claude-switch', '--target', $triple, '--target-dir', $targetDir)
+    if ($Offline) { $argsForCargo += '--offline' }
+    & cargo build @argsForCargo
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)." }
 
-    $exe = Join-Path $target 'release\claude-switch.exe'
-    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Missing release executable: $exe" }
+    $builtExe = Join-Path $targetDir "$triple/release/claude-switch.exe"
+    $fileVersion = (Get-Item -LiteralPath $builtExe).VersionInfo.FileVersion
+    if ($fileVersion -cne $AppVersion) { throw "Expected executable version $AppVersion; got '$fileVersion'." }
 
-    & $Iscc "/DAppVersion=$AppVersion" "/DExe=$exe" (Join-Path $root 'installer\claude-switch.iss')
+    $notices = Join-Path $dist 'THIRD-PARTY-NOTICES'
+    & "$PSScriptRoot/write-third-party-notices.ps1" -Out $notices -Offline:$Offline
+    $exe = Join-Path $dist 'claude-switch.exe'
+    Copy-Item -LiteralPath $builtExe -Destination $exe -Force
+    & $Iscc "/DAppVersion=$AppVersion" "/DExe=$exe" "/DNotices=$notices" (Join-Path $root 'installer\claude-switch.iss')
     if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)." }
 }
 finally {

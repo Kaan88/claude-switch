@@ -1,16 +1,19 @@
 //! The sessions on disk: transcripts joined with the desktop apps' records.
 
-use crate::util::{read_json, squeeze, str_field};
-use crate::{App, Config, Roots, Session, modified_ms};
+use crate::util::{squeeze, str_field};
+use crate::{App, Config, Roots, Session};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 mod archive_excerpts;
+mod cache;
 mod grouping;
 mod prompts;
 pub use archive_excerpts::archive_excerpts;
+pub use cache::{ScanCache, Stamp, changed_row_activity};
 pub use prompts::{TurnActivity, naming_prompts, row_activity, turn_activity};
 
 /// How much of a transcript is read at its start and at its end.
@@ -37,8 +40,12 @@ impl Lines {
     /// Reads at most `head_len` bytes of the start and `CHUNK` bytes of the end. With `head_len` 0
     /// only the tail is read.
     fn read(file: &Path, head_len: u64) -> Option<Lines> {
-        let mut f = std::fs::File::open(file).ok()?;
+        let mut f = File::open(file).ok()?;
         let len = f.metadata().ok()?.len();
+        Self::read_from(&mut f, len, head_len)
+    }
+
+    fn read_from(f: &mut File, len: u64, head_len: u64) -> Option<Lines> {
         if len <= head_len + CHUNK {
             let mut all = Vec::with_capacity(len as usize);
             f.take(len).read_to_end(&mut all).ok()?;
@@ -131,45 +138,21 @@ fn prompt_of(v: &Value, max: usize) -> Option<String> {
 }
 
 fn prompt_text(v: &Value) -> Option<String> {
-    if str_field(v, "type") != Some("user")
-        || flag(v, "isSidechain")
-        || flag(v, "isMeta")
-        || flag(v, "isCompactSummary")
-    {
+    if !crate::prompt_clean::main_user(v) {
         return None;
     }
-    let parts = texts(v);
-    if parts.iter().any(|s| {
-        let text = s.trim_start();
-        text.starts_with('<') && !text.starts_with("<system-reminder")
-    }) {
-        return None;
-    }
-    let mut clean = String::new();
-    for mut part in parts {
-        while let Some((head, body)) = part.split_once("<system-reminder") {
-            clean.push_str(head);
-            let Some((_, tail)) = body.split_once("</system-reminder>") else {
-                part = "";
-                break;
-            };
-            part = tail;
-        }
-        clean.push_str(part);
-        if !clean.is_empty() && !clean.ends_with(' ') {
-            clean.push(' ');
-        }
-    }
-    Some(clean.trim_end().to_owned()).filter(|t| !t.trim().is_empty())
+    let clean = crate::prompt_clean::prompt_blocks(texts(v)).collect::<Vec<_>>().join(" ");
+    (!clean.trim().is_empty()).then_some(clean)
 }
 
-fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {
+fn transcript_id(file: &Path) -> Option<&str> {
+    let id = file.file_stem()?.to_str()?;
+    (file.extension().is_some_and(|e| e == "jsonl") && !id.is_empty()).then_some(id)
+}
+
+fn read_inner(file: &Path, stamp: Stamp, lines: Lines) -> Option<(Session, TitleFrom)> {
     let id = file.file_stem()?.to_str()?.to_string();
-    if file.extension().and_then(|e| e.to_str()) != Some("jsonl") || id.is_empty() {
-        return None;
-    }
-    let lines = Lines::read(file, CHUNK)?;
-    let transcript_ms = modified_ms(file);
+    let transcript_ms = stamp.modified_ms();
     let (last_prompt, turn_ended) = prompts::activity(&lines);
     let grouping = grouping::head(&lines.head, &id);
     let (mut custom, mut ai, mut prompt) = (None::<String>, None::<String>, None::<String>);
@@ -238,7 +221,7 @@ fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {
         cwd: cwd.map(PathBuf::from).unwrap_or_default(),
         branch,
         last_active_ms: transcript_ms,
-        bytes: std::fs::metadata(file).map_or(0, |m| m.len()),
+        bytes: stamp.size(),
         last_app: if entrypoint.as_deref() == Some("claude-desktop") { App::Desktop } else { App::Cli },
         desktop_id: None,
         desktop_account: None,
@@ -286,6 +269,10 @@ pub(crate) fn first_visit(seen: &mut HashSet<PathBuf>, dir: &Path) -> bool {
 /// no session lines. A desktop record's `priorCliSessionIds` are not sessions of their own: they are
 /// left out when the record's current `cliSessionId` has a transcript. Never fails.
 pub fn scan(roots: &Roots, config: &Config) -> Vec<Session> {
+    ScanCache::default().scan(roots, config)
+}
+
+fn scan_cached(roots: &Roots, config: &Config, cached: &mut ScanCache, next: &mut ScanCache) -> Vec<Session> {
     let _ = roots;
     let mut found: HashMap<String, (Session, TitleFrom)> = HashMap::new();
     let mut seen = HashSet::new();
@@ -307,7 +294,7 @@ pub fn scan(roots: &Roots, config: &Config) -> Vec<Session> {
                 if !file.file_type().is_ok_and(|t| t.is_file()) {
                     continue;
                 }
-                let Some((s, from)) = read_inner(&file.path()) else { continue };
+                let Some((s, from)) = cached.transcript(file.path(), next) else { continue };
                 if crate::naming::is_private_folder(&s.cwd) {
                     continue;
                 }
@@ -329,7 +316,7 @@ pub fn scan(roots: &Roots, config: &Config) -> Vec<Session> {
             continue;
         }
         for path in desktop_record_files(&account.desktop_dir) {
-            if let Some(v) = read_json(&path).filter(|v| str_field(v, "cliSessionId").is_some()) {
+            if let Some(v) = cached.desktop(path, next) {
                 records.push((account.slug.clone(), v));
             }
         }
@@ -375,7 +362,8 @@ pub fn scan(roots: &Roots, config: &Config) -> Vec<Session> {
 /// One transcript read alone (head and tail only, see `docs/DESIGN.md`), without desktop records.
 /// `None` when the file is not a session's transcript.
 pub fn read_transcript(file: &Path) -> Option<Session> {
-    read_inner(file).map(|(s, _)| s)
+    let (stamp, lines) = cache::transcript_snapshot(file)?;
+    read_inner(file, stamp, lines).map(|(s, _)| s)
 }
 
 /// The sessions of one working folder.

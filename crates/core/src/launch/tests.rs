@@ -34,6 +34,41 @@ fn setup(t: &TempDir) -> (Roots, Config) {
 }
 
 #[test]
+fn first_secondary_sign_in_seeds_mcp_and_creates_shared_projects_before_launch() {
+    let t = TempDir::new("launch-first-secondary");
+    let roots = t.roots();
+    put(&roots.home.join(".claude.json"), r#"{"mcpServers":{"one":{}},"oauthAccount":{"private":true}}"#);
+    let mut config = crate::config::load(&roots);
+    let work = crate::accounts::add(&roots, &mut config, "Work").unwrap();
+    let main_projects = roots.primary_cli_dir().join("projects");
+    assert!(!main_projects.exists());
+    assert_eq!(login(&roots, &config, &work.slug).unwrap().args, ["auth", "login"]);
+    assert_eq!(read_json(&work.cli_dir.join(".claude.json")), Some(json!({"mcpServers":{"one":{}}})));
+    assert_eq!(
+        std::fs::canonicalize(main_projects).unwrap(),
+        std::fs::canonicalize(work.cli_dir.join("projects")).unwrap()
+    );
+}
+
+#[test]
+fn separate_secondary_projects_allow_only_reachable_transcripts_and_are_never_replaced() {
+    let t = TempDir::new("launch-separate-projects");
+    let (roots, config) = setup(&t);
+    let mut s = session(&t.0);
+    let work_projects = config.accounts[1].cli_dir.join("projects");
+    s.file = roots.primary_cli_dir().join("projects/project").join(format!("{ID}.jsonl"));
+    put(&s.file, "main data");
+    let work_file = work_projects.join("project").join(format!("{ID}.jsonl"));
+    put(&work_file, "work data");
+    assert!(resume(&roots, &config, &s, "work", App::Cli, &[]).is_err());
+    assert!(new_session(&roots, &config, "work", App::Cli, &t.0).is_err());
+    s.file = work_file.clone();
+    assert!(resume(&roots, &config, &s, "work", App::Cli, &[]).is_ok());
+    assert!(resume(&roots, &config, &s, "main", App::Cli, &[]).is_err());
+    assert_eq!(std::fs::read_to_string(work_file).unwrap(), "work data");
+}
+
+#[test]
 fn a_copy_forks_the_session_also_while_it_runs_but_needs_a_login() {
     let t = TempDir::new("lau-fork");
     let (roots, config) = setup(&t);
@@ -178,7 +213,7 @@ fn a_session_opened_a_moment_ago_is_refused() {
     assert!(again("main", App::Cli).is_ok(), "a time far ahead does not lock the session");
     note_starting(&roots, &s.id, "work");
     assert_eq!(again("main", App::Cli), refusal);
-    assert_eq!(last_account(&roots, &config, &s), "work");
+    assert_eq!(last_account(&roots, &config, &s).as_deref(), Some("work"));
     noted_at(0);
     note_launch(&roots, &s.id, "main");
     assert_eq!(again("main", App::Cli), refusal, "the same account again still records the new time");
@@ -190,10 +225,10 @@ fn the_old_history_format_is_still_read() {
     let (roots, config) = setup(&t);
     let s = session(&t.0);
     put(&history_file(&roots), &json!({(ID): "work", "other": "main"}).to_string());
-    assert_eq!(last_account(&roots, &config, &s), "work");
+    assert_eq!(last_account(&roots, &config, &s).as_deref(), Some("work"));
     assert!(resume(&roots, &config, &s, "work", App::Cli, &[]).is_ok());
     note_starting(&roots, "new-one", "main");
-    assert_eq!(last_account(&roots, &config, &s), "work", "older entries stay as they were");
+    assert_eq!(last_account(&roots, &config, &s).as_deref(), Some("work"), "older entries stay as they were");
 }
 
 #[test]
@@ -294,14 +329,25 @@ fn a_carry_to_another_account_is_warned_about() {
     let t = TempDir::new("lau-carry");
     let (roots, config) = setup(&t);
     let mut s = session(&t.0);
-    assert_eq!(last_account(&roots, &config, &s), "main");
-    assert!(carry_warning(&roots, &config, &s, "main").is_none());
+    assert_eq!(last_account(&roots, &config, &s), None);
+    assert!(carry_warning(&roots, &config, &s, "main").unwrap().contains("unknown"));
     let w = carry_warning(&roots, &config, &s, "work").unwrap();
-    assert!(w.contains("Main") && w.contains("Work") && w.contains("3.0 MB"));
+    assert!(w.contains("unknown") && w.contains("Work") && w.contains("3.0 MB"));
     s.desktop_account = Some("work".into());
-    assert_eq!(last_account(&roots, &config, &s), "work");
+    assert_eq!(last_account(&roots, &config, &s).as_deref(), Some("work"));
     note_launch(&roots, &s.id, "main");
-    assert_eq!(last_account(&roots, &config, &s), "main");
+    assert_eq!(last_account(&roots, &config, &s).as_deref(), Some("main"));
     note_launch(&roots, &s.id, "nobody");
-    assert_eq!(last_account(&roots, &config, &s), "work", "an unknown account is not believed");
+    assert_eq!(last_account(&roots, &config, &s).as_deref(), Some("work"), "an unknown account is not believed");
+}
+
+#[test]
+fn verified_ownership_is_persisted_without_creating_a_launch_cooldown() {
+    let t = TempDir::new("verified-owner");
+    let (roots, config) = setup(&t);
+    let s = session(&t.0);
+    assert!(last_account(&roots, &config, &s).is_none());
+    record_verified_owner(&roots, &s.id, "work").unwrap();
+    assert_eq!(last_account(&roots, &config, &s).as_deref(), Some("work"));
+    assert!(!launched_a_moment_ago(&roots, &s.id));
 }

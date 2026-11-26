@@ -131,7 +131,7 @@ pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
                 continue;
             };
             let pid = stem_pid;
-            match pid_state(pid) {
+            match record_pid_state(pid, &path) {
                 Some(true) => {}
                 Some(false) => continue,
                 None => {
@@ -168,12 +168,41 @@ pub fn pid_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn pid_state(pid: u32) -> Option<bool> {
+    windows_pid_state(pid, None)
+}
+
+#[cfg(windows)]
+fn record_pid_state(pid: u32, path: &Path) -> Option<bool> {
+    use std::os::windows::fs::MetadataExt as _;
+    let last_write = std::fs::metadata(path).ok()?.last_write_time();
+    (last_write != 0).then_some(())?;
+    windows_pid_state(pid, Some(last_write))
+}
+
+#[cfg(not(windows))]
+fn record_pid_state(pid: u32, _path: &Path) -> Option<bool> {
+    pid_state(pid)
+}
+
+#[cfg(windows)]
+fn windows_pid_state(pid: u32, record_time: Option<u64>) -> Option<bool> {
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, GetLastError, HANDLE, WAIT_OBJECT_0,
+        WAIT_TIMEOUT,
     };
     use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        WaitForSingleObject,
     };
+    fn matches_record(handle: HANDLE, record_time: Option<u64>) -> Option<bool> {
+        let Some(record_time) = record_time else { return Some(true) };
+        let (mut creation, mut exit, mut kernel, mut user) =
+            (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        // SAFETY: the process handle is live and each distinct FILETIME is writable until return.
+        let ok = unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) } != 0;
+        let created = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+        (ok && created != 0).then_some(created <= record_time)
+    }
     const STILL_ACTIVE: u32 = 259;
     if pid == 0 {
         return Some(false);
@@ -184,7 +213,7 @@ fn pid_state(pid: u32) -> Option<bool> {
         // A process handle is signalled once the process has ended, whatever its exit code.
         // SAFETY: `handle` was opened above with the right to wait on it; a zero timeout returns at once.
         let alive = match unsafe { WaitForSingleObject(handle, 0) } {
-            WAIT_TIMEOUT => Some(true),
+            WAIT_TIMEOUT => matches_record(handle, record_time),
             WAIT_OBJECT_0 => Some(false),
             _ => None,
         };
@@ -208,9 +237,14 @@ fn pid_state(pid: u32) -> Option<bool> {
     let mut code: u32 = 0;
     // SAFETY: `handle` is a valid process handle opened above and `code` is a live u32 to write to.
     let ok = unsafe { GetExitCodeProcess(handle, &mut code) } != 0;
+    let alive = match (ok, code) {
+        (true, STILL_ACTIVE) => matches_record(handle, record_time),
+        (true, _) => Some(false),
+        _ => None,
+    };
     // SAFETY: `handle` was opened above and is closed exactly once.
     unsafe { CloseHandle(handle) };
-    ok.then_some(code == STILL_ACTIVE)
+    alive
 }
 
 /// Whether a process with this id exists now.
@@ -280,6 +314,26 @@ mod tests {
         assert_eq!(r.cwd, PathBuf::from("C:\\x"));
         assert!(find(&running, "00000000-0000-4000-a000-000000000001").is_some());
         assert!(find(&running, "dead").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_live_pid_does_not_validate_a_record_written_before_that_process_started() {
+        let t = TempDir::new("run-reused");
+        let roots = t.roots();
+        let config = config_with(&roots, &[]);
+        let pid = std::process::id();
+        let path = roots.primary_cli_dir().join("sessions").join(format!("{pid}.json"));
+        put(&path, &json!({"pid":pid,"sessionId":"00000000-0000-4000-a000-000000000001"}).to_string());
+        assert_eq!(scan_checked(&roots, &config).0.len(), 1);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
+            .unwrap();
+        let (running, complete) = scan_checked(&roots, &config);
+        assert!(running.is_empty() && complete);
     }
 
     #[cfg(windows)]

@@ -23,6 +23,7 @@ impl App for AppState {
         self.resume_polling(now);
         self.start_debug(cx);
         self.start_demo_session();
+        self.start_usage_hover_demo(now);
         self.start_compact();
         self.setup_notifications(cx);
         self.timers(cx);
@@ -141,6 +142,9 @@ impl App for AppState {
                 self.retheme();
             }
             Event::Wake(now) => {
+                if self.sync_usage_setting() {
+                    cx.request_redraw_all();
+                }
                 self.attention_tick(cx);
                 self.usage_warning_tick(now);
                 if self.start_conversation_search(now) {
@@ -176,6 +180,7 @@ impl App for AppState {
                     // A new or forked tab still needs its verified transcript identity while minimized.
                     if cx.window().is_minimized() == Some(true)
                         && !self.tabs.list.iter().any(|tab| tab.pane.is_some() && tab.term.running())
+                        && !self.pending_external_ownership()
                     {
                         self.next_poll = None;
                     } else {
@@ -230,6 +235,7 @@ impl App for AppState {
             }
             Msg::Term => self.term_woke(cx),
             Msg::Tray(event) => {
+                self.sync_usage_setting();
                 self.tray_event(cx, event);
                 if !self.exit_if_requested(cx) {
                     self.timers(cx);
@@ -260,6 +266,9 @@ impl AppState {
     fn exit_if_requested(&mut self, cx: &mut Cx<'_, Msg>) -> bool {
         if !self.quit {
             return false;
+        }
+        if self.opencode.restart_pending() {
+            return true;
         }
         if self.cancel_compact_work() {
             return true;
@@ -294,7 +303,18 @@ impl AppState {
         }
         if !self.compact.standalone_window {
             self.capture_window(cx);
-            self.save_window();
+            if !self.restore.window_save_failed
+                && let Err(error) = self.write_window()
+            {
+                self.restore.window_save_failed = true;
+                self.quit = false;
+                self.error(
+                    "Could not save window settings",
+                    format!("{error} Close again to exit without saving them."),
+                );
+                cx.request_redraw_all();
+                return;
+            }
             if !self.restore.save_failed
                 && let Err(error) = self.save_tab_restore()
             {

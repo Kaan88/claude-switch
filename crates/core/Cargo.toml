@@ -8,7 +8,7 @@ license.workspace = true
 name = "claude_switch_core"
 
 [dependencies]
-serde_json = { version = "1", features = ["arbitrary_precision"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

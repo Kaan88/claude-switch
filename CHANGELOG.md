@@ -31,3 +31,14 @@
 - Add an optional Chat layout over the same embedded Claude Code terminal, with draft recall, tool previews, a details panel and an automatic terminal drawer.
 - Group sessions by repository and worktree, proven thread, or topic; add optional Recent sittings and local Related suggestions in details. Keep the original Folder option and add opt-in topics to the existing name review.
 - Add live terminal cursor shape and blink preferences, and adjustable background opacity with Mica or Acrylic, including in Chat’s drawer.
+- Retry delayed transcript attachment, keep stale tab identities out of routing, and keep Chat drafts blocked until real panes verify their session.
+- Keep local name, pin and hide changes out of the UI when saving fails; use the sanitized Explorer path for Session-view Reveal.
+- Recognize permission prompts near the input cursor, count picture-only turns for Waiting, and avoid transcript discovery per key and unchanged tray updates per wake.
+- Reuse unchanged session and Desktop records on refresh, discard transcript reads that race an append, and reuse one Related index per scan.
+- Recheck project metadata on refresh and recognize repository folders such as `comp`.
+- Make secondary first sign-in prepare shared projects and MCP settings, claim account folders exclusively,
+  and retry worker-account bridge sync from committed settings.
+- Keep terminal input active during usage hover; honor cross-window opt-out before displaying figures or
+  accepting readings, and retry local usage-lock contention and unsaved warning claims.
+- Show unknown session ownership or OpenCode counts when evidence is missing, wait for a committed restart
+  on exit, and report window-setting save failures and oversized metadata files.

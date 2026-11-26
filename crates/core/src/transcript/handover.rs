@@ -57,7 +57,11 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
                             _ => None,
                         }
                     }));
-                    let text = parts.filter_map(real_text).collect::<Vec<_>>().join("\n");
+                    let text = if crate::prompt_clean::main_user(&value) {
+                        crate::prompt_clean::user_blocks(parts).collect::<Vec<_>>().join("\n")
+                    } else {
+                        String::new()
+                    };
                     if !text.is_empty() {
                         visit(Entry::Prompt(string(&value["timestamp"]), text));
                     }
@@ -66,10 +70,16 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
                     if let Some(text) = content.as_str() {
                         visit(Entry::Assistant(text.into()));
                     }
+                    let mut cleaned = crate::prompt_clean::strip_blocks(
+                        blocks(content).filter_map(|b| (b["type"] == "text").then(|| b["text"].as_str()).flatten()),
+                    )
+                    .into_iter();
                     for block in blocks(content) {
                         if block["type"] == "text" {
-                            if let Some(text) = block["text"].as_str() {
-                                visit(Entry::Assistant(text.into()));
+                            if block["text"].is_string()
+                                && let Some(text) = cleaned.next().filter(|s| !s.is_empty())
+                            {
+                                visit(Entry::Assistant(text));
                             }
                         } else if let Some((id, name, input)) = tool_use(block) {
                             native.call(id, name, input);
@@ -104,24 +114,4 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
         line.clear();
     }
     Ok(if native_is_latest { native.finish() } else { tasks })
-}
-
-fn real_text(mut text: &str) -> Option<&str> {
-    while text.trim_start().starts_with("<system-reminder") {
-        let (_, next) = text.split_once("</system-reminder>")?;
-        text = next.trim_start_matches(['\n', '\r']);
-    }
-    let trimmed = text.trim_start();
-    // Do not drop ordinary prompts starting with "<" (e.g. code/XML).
-    (!trimmed.is_empty()
-        && ![
-            "<local-command-stdout>",
-            "<local-command-stderr>",
-            "<local-command-caveat>",
-            "<task-notification>",
-            "<teammate-message",
-        ]
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix)))
-    .then_some(text)
 }

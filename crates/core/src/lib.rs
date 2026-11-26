@@ -24,6 +24,7 @@ pub mod grouping;
 pub mod launch;
 pub mod marks;
 pub mod naming;
+mod prompt_clean;
 pub mod running;
 pub mod sessions;
 pub mod share;
@@ -31,8 +32,8 @@ pub mod stats;
 pub mod transcript;
 pub mod usage;
 mod util;
-pub use util::replace_if_unchanged;
 pub use util::write_atomic as write_app_file;
+pub use util::{APP_FILE_LIMIT, read_bounded, replace_if_unchanged};
 
 /// Where the files of this computer are, so that tests can point everything at a temporary folder.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,11 +63,11 @@ impl Roots {
     }
     /// This app's own settings file: `<appdata>/claude-switch/config.json`.
     pub fn config_file(&self) -> PathBuf {
-        self.appdata.join("claude-switch").join("config.json")
+        crate::util::resolve_profile(&self.appdata).join("claude-switch").join("config.json")
     }
     /// The bridge's worker list: `<home>/.config/opencode-bridge/workers.json`.
     pub fn workers_file(&self) -> PathBuf {
-        self.home.join(".config").join("opencode-bridge").join("workers.json")
+        crate::util::resolve_profile(&self.home).join(".config").join("opencode-bridge").join("workers.json")
     }
 }
 

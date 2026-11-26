@@ -191,7 +191,7 @@ pub fn scan(c: &Config) -> Scan {
             (folder_key(&s.cwd), p)
         })
         .collect();
-    Scan { sessions, running: running(), statuses, projects }
+    Scan { sessions, running: running(), statuses, projects, ..Scan::default() }.with_related()
 }
 
 pub fn seed_marks(marks: &mut claude_switch_core::marks::Marks, sessions: &[Session]) {

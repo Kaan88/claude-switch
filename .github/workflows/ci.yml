@@ -23,11 +23,15 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: .\tools\test-release-workspace.ps1
+      - name: Generate third-party notices
+        run: .\tools\write-third-party-notices.ps1 -Out target/THIRD-PARTY-NOTICES
       - name: Build release executable
         run: cargo build --release --locked -p claude-switch
       - uses: actions/upload-artifact@v7
         with:
           name: claude-switch-windows
-          path: target/release/claude-switch.exe
+          path: |
+            target/release/claude-switch.exe
+            target/THIRD-PARTY-NOTICES
           if-no-files-found: error

@@ -11,7 +11,6 @@ use mdshared_ui::host::Cx;
 use crate::state::{AppState, Msg, POLL};
 use crate::tabs::{NewTab, Tab};
 use crate::tray::{self, Event, Tray};
-use crate::view::model::Source;
 
 pub struct TabAttention {
     pub marked: bool,
@@ -21,7 +20,6 @@ pub struct TabAttention {
     prompt: Option<u64>,
     consumed: bool,
     started: u64,
-    file: Option<PathBuf>,
     transcript: Option<claude_switch_core::Session>,
     stamp: u64,
 }
@@ -35,7 +33,6 @@ impl Default for TabAttention {
             prompt: None,
             consumed: false,
             started: claude_switch_core::usage::now_ms(),
-            file: None,
             transcript: None,
             stamp: 0,
         }
@@ -59,6 +56,14 @@ impl TabAttention {
 
     pub fn transcript(&self) -> Option<&claude_switch_core::Session> {
         self.transcript.as_ref()
+    }
+
+    pub fn clear_transcript(&mut self) {
+        self.marked = false;
+        self.prompt = None;
+        self.consumed = false;
+        self.transcript = None;
+        self.stamp = 0;
     }
 
     fn observe(&mut self, sample: Option<(u64, TurnActivity)>, visible: bool, mode: Attention) -> bool {
@@ -91,27 +96,46 @@ impl TabAttention {
 }
 
 pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
-    permission_prompt((0..screen.rows()).map(|row| screen.row_text(row)))
-}
-
-fn permission_prompt(rows: impl IntoIterator<Item = String>) -> bool {
-    let (mut question, mut allow, mut deny, mut footer) = (false, false, false, false);
-    for row in rows {
-        let row = row.trim().trim_start_matches(['❯', '>']).trim_start();
-        question |= row.starts_with("Do you want to ") || row.starts_with("Would you like to ");
-        let option = |label| {
-            row.strip_prefix(label).is_some_and(|rest| rest.chars().next().is_none_or(|ch| !ch.is_alphanumeric()))
-        };
-        allow |= ["1. Yes", "1. Allow"].into_iter().any(option);
-        deny |= ["2. No", "3. No", "2. Deny", "3. Deny"].into_iter().any(option);
-        footer |= row.starts_with("Esc to cancel");
+    // Anchor at the last visible text near the input cursor, not arbitrary output or scrollback.
+    let cursor = screen.cursor().row;
+    let bottom = (0..screen.rows()).rev().find_map(|row| {
+        let text = screen.row_text(row);
+        (!text.trim().is_empty()).then_some((row, text))
+    });
+    let Some((footer, text)) = bottom else { return false };
+    if !text.trim_start().starts_with("Esc to cancel") || cursor > footer + 2 || footer > cursor + 8 {
+        return false;
     }
-    question && allow && deny && footer
+    let rows: Vec<_> = (footer.saturating_sub(8)..footer)
+        .rev()
+        .map(|row| screen.row_text(row))
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    let mut rows = rows.iter().map(|s| s.trim());
+    let option = |row: &str, labels: &[&str]| {
+        let row = row.trim_start_matches(['❯', '>']).trim_start();
+        labels.iter().any(|label| {
+            row.strip_prefix(label).is_some_and(|rest| rest.chars().next().is_none_or(|ch| !ch.is_alphanumeric()))
+        })
+    };
+    let Some(deny) = rows.next() else { return false };
+    if !option(deny, &["2. No", "3. No", "2. Deny", "3. Deny"]) {
+        return false;
+    }
+    let Some(mut allow) = rows.next() else { return false };
+    let numbered = |row: &str, prefix: &str| row.trim_start_matches(['❯', '>']).trim_start().starts_with(prefix);
+    if numbered(deny, "3. ")
+        && numbered(allow, "2. ")
+        && let Some(previous) = rows.next()
+    {
+        allow = previous;
+    }
+    option(allow, &["1. Yes", "1. Allow"])
+        && rows.next().is_some_and(|row| row.starts_with("Do you want to ") || row.starts_with("Would you like to "))
 }
 
 struct Watch {
     id: u64,
-    source: Source,
     file: Option<PathBuf>,
     stamp: u64,
     need_transcript: bool,
@@ -179,18 +203,21 @@ impl AppState {
         }
     }
 
-    pub fn sync_tray(&mut self, cx: &mut Cx<'_, Msg>) {
+    fn sync_tray(&mut self, cx: &mut Cx<'_, Msg>, force: bool) {
         let enabled = self.config.notifications.tray_icon;
+        if enabled {
+            self.sync_usage_setting();
+        }
         let tip = if enabled { self.usage_tray_tip() } else { String::new() };
         // Never strand a hidden window if the setting is changed or Explorer loses its icon.
-        self.notifications.tray.sync(enabled, tip);
+        self.notifications.tray.sync(enabled, tip, force);
         if self.notifications.hidden && !self.notifications.tray.enabled() {
             self.show_from_tray(cx);
         }
     }
 
     pub fn request_window_close(&mut self, cx: &mut Cx<'_, Msg>) {
-        self.sync_tray(cx);
+        self.sync_tray(cx, self.config.notifications.close_to_tray);
         if self.config.notifications.close_to_tray && self.notifications.tray.enabled() {
             self.notifications.hidden = true;
             self.term_focus(false);
@@ -249,7 +276,7 @@ impl AppState {
     }
 
     pub fn attention_tick(&mut self, cx: &mut Cx<'_, Msg>) {
-        self.sync_tray(cx);
+        self.sync_tray(cx, false);
         self.usage_warning_present(cx);
         let mode = self.config.notifications.attention;
         let now = cx.now();
@@ -264,13 +291,15 @@ impl AppState {
         let mut changed = false;
         for tab in &mut self.tabs.list {
             let visible = present && self.tabs.active == Some(tab.id);
-            let sample = samples.iter().position(|s| s.id == tab.id).map(|i| {
+            let sample = samples.iter().position(|s| s.id == tab.id).and_then(|i| {
                 let sample = samples.swap_remove(i);
-                tab.attention.file = Some(sample.file);
+                if tab.pane.as_ref()?.verified_transcript() != Some(sample.file.as_path()) {
+                    return None;
+                }
                 if let Some(transcript) = sample.transcript {
                     tab.attention.transcript = Some(transcript);
                 }
-                (sample.stamp, sample.activity)
+                Some((sample.stamp, sample.activity))
             });
             if visible && tab.attention.bell.is_some() {
                 tab.attention.bell = Some(true);
@@ -304,8 +333,7 @@ impl AppState {
                 .filter_map(|tab| {
                     Some(Watch {
                         id: tab.id,
-                        source: tab.pane.as_ref()?.transcript_source.clone(),
-                        file: tab.attention.file.clone(),
+                        file: tab.pane.as_ref()?.verified_transcript().map(std::path::Path::to_owned),
                         stamp: tab.attention.stamp,
                         need_transcript: tab.attention.transcript.is_none()
                             && tab.session.as_ref().is_none_or(|id| !self.by_id.contains_key(id)),
@@ -320,7 +348,7 @@ impl AppState {
                     watch
                         .into_iter()
                         .filter_map(|w| {
-                            let file = w.file.or_else(|| w.source.find_file())?;
+                            let file = w.file?;
                             let stamp = claude_switch_core::modified_ms(&file);
                             if stamp == 0 || stamp == w.stamp {
                                 return None;

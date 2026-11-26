@@ -69,9 +69,15 @@ impl AppState {
     }
 
     pub(crate) fn save_window(&mut self) {
+        if let Err(error) = self.write_window() {
+            self.error("Could not save window settings", error.to_string());
+        }
+    }
+
+    pub(crate) fn write_window(&mut self) -> Result<(), claude_switch_core::Refusal> {
         self.win_file.split = self.splitter.to_setting();
         self.win_file.session_split = self.session_view.splitter.to_setting();
-        winfile::save(self.source.window_file().as_deref(), &self.win_file);
+        winfile::save(self.source.window_file().as_deref(), &self.win_file)
     }
 
     fn activate(&mut self, cx: &mut Cx<'_, Msg>, t: Target, x: f32) {
@@ -230,6 +236,10 @@ impl AppState {
             return;
         };
         let (mods, text) = (k.mods, k.text.as_deref());
+        if self.source.is_demo() && self.usage.demo_echo && name == KeyName::F(8) && mods.none() {
+            self.open_usage(now, false);
+            return;
+        }
         let bar = Bar::layout(cx.size().0);
         if crate::view::chat::layout_shortcut(
             &name,
@@ -272,7 +282,7 @@ impl AppState {
             dialogs::key(self, now, &name, mods, text);
             return;
         }
-        if self.usage.popup.open {
+        if self.usage.popup.takes_keyboard() {
             match name {
                 KeyName::Escape | KeyName::Tab => self.usage.popup = Default::default(),
                 KeyName::Enter if mods.shift => self.activate(cx, Target::UsageOpenAs, 0.0),
