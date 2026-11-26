@@ -541,3 +541,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     fixed-width slot (the widest glyph of the set, centred) and start the text at a fixed x; use tabular figures, or a
     fixed slot per counter, so changing digits do not move what follows (`view/working.rs`, and the Session view's
     copy of the line).
+56. **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
+    later item. not now."). Today search is literal text and Related is word overlap (DESIGN.md, Session
+    organization). Wanted: a search that finds a session by what it was about ("where we fixed push"), questions
+    about past sessions, and grouping by meaning across projects. Done by a model the owner picks in Settings, the
+    same way as the handover's summarizer (an OpenCode worker/model or the Claude CLI), opt-in, sending only the
+    excerpts "Suggest names" already sends, with a confirmation before a run that sends anything. An on-device
+    embedding model was the alternative offered; not chosen. Not started.
