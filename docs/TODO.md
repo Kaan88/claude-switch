@@ -234,3 +234,12 @@ and in the README, not committed, and not copied to the installed clone
     token count as the CLI prints them, updated as the terminal screen changes, with Stop beside it;
     gone when the turn ends. Read only from the visible screen rows; if the line cannot be parsed,
     show "Working…" with the elapsed time the app measures itself.
+17. **Background shells stay hidden at the foot of the terminal** (owner, 2026-11-26, screenshot of
+    "3 shells still running · ↓ to manage"). Proposed in artboard F of the mock-ups: a "Shells" tab in
+    the Details panel with a count, one row per shell Claude started in the background (command,
+    running time, status), a running row expands to its last output lines with Full output, Follow and
+    Stop…; finished shells below with their exit code; a "3 shells running" chip under the message box
+    opens the tab; tool rows of background commands carry a "background" mark. Source: the
+    transcript's background Bash calls and the output files their results name (read-only, only files
+    the transcript names). Stop asks first and goes through the CLI's own shell manager (the "↓ to
+    manage" menu); the app never kills processes itself. Not approved yet.
