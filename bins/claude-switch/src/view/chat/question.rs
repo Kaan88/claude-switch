@@ -535,7 +535,7 @@ impl Chat {
     }
 
     /// Follows the transcript's pending call and the screen's prompt; true when the card changed.
-    fn sync_question(&mut self, model: &Model, cwd: &Path, screen: &Screen) -> bool {
+    pub(super) fn sync_question(&mut self, model: &Model, cwd: &Path, screen: &Screen) -> bool {
         let pending = pending(model);
         let item = pending.as_ref().map(|p| p.item);
         let mut changed = false;

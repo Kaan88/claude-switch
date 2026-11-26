@@ -216,8 +216,10 @@ impl AppState {
             let reported = chat.observe_cli(&pane.model.chat, &tab.term.screen, now);
             let catalog = chat.commands.collect() | chat.popups.collect();
             let suggested = shown && chat.popups.read_next_prompt(&tab.term.screen);
+            // The card first: the gate asks it whether it answers the pending call's menu.
+            let card = chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
-            let changed = chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
+            let changed = card | chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);

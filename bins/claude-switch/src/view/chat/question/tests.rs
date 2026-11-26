@@ -1019,3 +1019,21 @@ fn the_busy_notice_goes_once_the_other_keys_have_gone_even_with_a_draft_queued()
     assert!(press(f.tab(), now, Hit::Option(0)));
     assert_eq!(f.writes(), [b"\r".to_vec()]);
 }
+
+#[test]
+fn a_question_worded_like_a_permission_prompt_never_opens_the_drawer_for_a_tick() {
+    // "Do you want to …" is how Claude often asks. The gate must know the question card answers
+    // this menu before it judges the screen, in the same tick the call and the menu appear.
+    let mut q = question(false);
+    q.question = "Do you want to build the parser?".into();
+    let mut f = Fixture::new(vec![q]);
+    let now = Instant::now();
+    f.app.tabs.active = Some(f.tab);
+    f.screen(&menu(0, None).replace("Who builds the parser?", "Do you want to build the parser?"), now);
+    assert!(screens::permission_like(&f.tab().term.screen), "the look-alike rule alone would refuse it");
+    f.app.progress_chat_tabs(now, true);
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+    assert_ne!(f.chat().reason, Some(Reason::Permission));
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
