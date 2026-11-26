@@ -1,5 +1,9 @@
 //! One new native Claude process, with a preallocated UUID for its transcript and provenance.
-use crate::{compact_runner, source::Source, state::AppState};
+use crate::{
+    compact_runner,
+    source::Source,
+    state::{AppState, Msg},
+};
 use claude_switch_core::marks::Marks;
 use claude_switch_core::{App, Config, Launch, Roots, Session, accounts, compact, launch};
 use std::io::Read as _;
@@ -169,6 +173,11 @@ impl AppState {
             return Err(e.to_string());
         }
         let result = self.open_tab(&request.launch, Some(&request.id), Some(&request.account));
+        if let Ok(tab) = result
+            && let Some(source) = self.tabs.by_session(&request.parent, |t| t.id != tab).map(|t| t.id)
+        {
+            self.tabs.place_after(tab, source);
+        }
         if result.is_err() {
             // Roll back only the mark we added. The original session was never touched.
             self.marks.clear_handover_from(&request.id);
@@ -177,6 +186,35 @@ impl AppState {
             self.save_marks();
         }
         result.map(drop).map_err(|_| "Could not start Claude Code in a terminal tab.".into())
+    }
+}
+
+impl AppState {
+    /// Lets a later `claude-switch compact --open` of this user open its tab here.
+    pub fn serve_handovers(&self) {
+        let (Source::Real(roots), Some(proxy)) = (&self.source, self.proxy.clone()) else { return };
+        let roots = roots.clone();
+        crate::handover_pipe::serve(move |bytes| {
+            let result = (|| {
+                let args = crate::compact_cli::decode_request(&bytes)?;
+                let request = crate::compact_cli::handoff(&roots, args)?;
+                let (tx, rx) = std::sync::mpsc::channel();
+                proxy.lock().map_err(|_| "Claude Switch is closing.")?.send(Msg::Handover(Box::new(request), tx));
+                rx.recv_timeout(crate::handover_pipe::REPLY_WAIT).map_err(
+                    |_| "Timed out waiting for the window. The outcome is unknown; check for the tab before retrying.",
+                )?
+            })();
+            crate::handover_pipe::reply(&result)
+        });
+    }
+
+    /// A request from another process, already decoded and prepared by the pipe thread.
+    pub fn handover_requested(&mut self, request: NewHandover) -> Result<(), String> {
+        let result = self.open_handover_tab(request);
+        if let Err(e) = &result {
+            self.error("Could not open handover", e.clone());
+        }
+        result
     }
 }
 

@@ -55,12 +55,67 @@ const FORGET_HANDOVER_CONSENTS: u32 = 90;
 const SET_SUGGEST_TOPICS: u32 = 91;
 const SYNC_WORKERS: u32 = 94;
 const SET_HANDOVER_AGENT: u32 = 95;
+const SET_HANDOVER_MODEL: u32 = 96;
+const SET_AUTO_HANDOVER: u32 = 97;
+const SET_AUTO_PERCENT: u32 = 98;
+const AUTO_STEPS: [u8; 5] = [50, 60, 70, 80, 90];
+
+/// The threshold choice: Claude Code's own point first, then percentages (a saved one included).
+fn auto_percents(st: &AppState) -> Vec<Option<u8>> {
+    let mut steps: Vec<_> = std::iter::once(None).chain(AUTO_STEPS.map(Some)).collect();
+    if let Some(saved) = st.config.compact.auto_percent
+        && !steps.contains(&Some(saved))
+    {
+        let at = steps.iter().position(|step| step.is_some_and(|step| step > saved)).unwrap_or(steps.len());
+        steps.insert(at, Some(saved));
+    }
+    steps
+}
+
+fn update_handover_prefs(st: &mut AppState, change: impl FnOnce(&mut claude_switch_core::compact::Preferences)) {
+    let result = match &st.source {
+        crate::source::Source::Real(roots) => claude_switch_core::config::update_compact(roots, |prefs| {
+            change(prefs);
+            Ok(())
+        })
+        .map(|prefs| st.config.compact = prefs),
+        crate::source::Source::Demo => {
+            change(&mut st.config.compact);
+            Ok(())
+        }
+    };
+    if let Err(e) = result {
+        st.error("Handover setting was not saved", e.to_string());
+    }
+    refresh_handover_page(st);
+}
 
 pub(crate) fn settings(st: &mut AppState, category: Option<&str>) -> Dialog {
     let category = category.or(st.settings_category);
     let index = PAGES.iter().position(|(name, _)| Some(*name) == category).unwrap_or(0);
+    prepare_page(st, index);
     st.settings_category = Some(PAGES[index].0);
     Dialog::Settings(Box::new(Settings::new(st, index)))
+}
+
+/// Fresh data for a page that shows more than settings: the accounts' agents and the saved
+/// handover preferences (another window may have changed them).
+fn prepare_page(st: &mut AppState, index: usize) {
+    if PAGES[index].0 == HANDOVERS {
+        if let crate::source::Source::Real(roots) = &st.source {
+            st.config.compact = claude_switch_core::config::load(roots).compact;
+        }
+        st.load_settings_agents();
+    }
+}
+
+fn refresh_handover_page(st: &mut AppState) {
+    let rows = handovers(st);
+    if let Some(Dialog::Settings(settings)) = &mut st.dialog
+        && settings.category() == HANDOVERS
+    {
+        settings.form.set_rows(rows);
+    }
 }
 
 pub(crate) enum SettingsEvent {
@@ -75,6 +130,7 @@ pub(crate) fn settings_event(st: &mut AppState, event: SettingsEvent) {
             if let Some((name, _)) = PAGES.get(index)
                 && let Some(Dialog::Settings(mut settings)) = st.dialog.take_if(|d| matches!(d, Dialog::Settings(_)))
             {
+                prepare_page(st, index);
                 settings.show_page(st, index);
                 st.settings_category = Some(name);
                 st.dialog = Some(Dialog::Settings(settings));
@@ -188,13 +244,83 @@ fn usage(st: &AppState) -> Vec<Row> {
     ]
 }
 
+const NO_AGENT: &str = "None (plain Claude)";
+
+/// The agent choice's names: `None` first, then the accounts' agents, then a saved name that no
+/// account has (shown as missing; launches check it again for their own account and folder).
+fn agent_names(st: &AppState) -> Vec<Option<String>> {
+    let saved = st.config.compact.default_agent.as_deref();
+    let mut names: Vec<_> =
+        std::iter::once(None).chain(st.compact.settings_agents.iter().map(|(name, _)| Some(name.clone()))).collect();
+    if let Some(saved) = saved
+        && !names.iter().any(|name| name.as_deref() == Some(saved))
+    {
+        names.push(Some(saved.to_owned()));
+    }
+    names
+}
+
+/// The models this window last listed, with the saved one first if the list lacks it.
+fn model_options(st: &AppState) -> Vec<String> {
+    let mut models = st.listed_models().map(<[String]>::to_vec).unwrap_or_default();
+    let saved = &st.config.compact.model;
+    if !saved.is_empty() && !models.contains(saved) {
+        models.insert(0, saved.clone());
+    }
+    models
+}
+
 fn handovers(st: &AppState) -> Vec<Row> {
-    // The existing name dialog edits a draft and validates it on OK, not on every keystroke.
-    let current = st.config.compact.default_agent.as_deref().unwrap_or("Default (Claude)");
-    let label =
-        current.char_indices().nth(26).map_or_else(|| current.to_owned(), |(end, _)| format!("{}…", &current[..end]));
+    let saved = st.config.compact.default_agent.as_deref();
+    let names = agent_names(st);
+    let labels: Vec<String> = names
+        .iter()
+        .map(|name| match name {
+            None => NO_AGENT.to_owned(),
+            Some(name) => st
+                .compact
+                .settings_agents
+                .iter()
+                .find(|(found, _)| found == name)
+                .map_or_else(|| format!("{name} (missing)"), |(_, label)| label.clone()),
+        })
+        .collect();
+    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let value = names.iter().position(|name| name.as_deref() == saved).unwrap_or(0);
+    let missing = saved.is_some_and(|saved| !st.compact.settings_agents.iter().any(|(name, _)| name == saved));
+    let agent_help = if missing {
+        "Missing in every account: launches skip it, with a notice."
+    } else {
+        "The dialog also offers each project's own agents."
+    };
+    let model_ids = model_options(st);
+    let models: Vec<&str> = if model_ids.is_empty() {
+        vec!["Chosen at the first handover"]
+    } else {
+        model_ids.iter().map(String::as_str).collect()
+    };
+    let model_value = model_ids.iter().position(|m| *m == st.config.compact.model).unwrap_or(0);
+    let percents = auto_percents(st);
+    let percent_labels: Vec<String> = percents
+        .iter()
+        .map(|p| p.map_or_else(|| "Where Claude Code would compact".to_owned(), |p| format!("{p}%")))
+        .collect();
+    let percent_labels: Vec<&str> = percent_labels.iter().map(String::as_str).collect();
+    let percent_value = percents.iter().position(|p| *p == st.config.compact.auto_percent).unwrap_or(0);
     vec![
-        Row::action(SET_HANDOVER_AGENT, "Default CLI agent", &label),
+        Row::choice(SET_HANDOVER_AGENT, "New chat starts as", &refs, value).help(agent_help),
+        Row::choice(SET_HANDOVER_MODEL, "Summary written by", &models, model_value)
+            .help("The OpenCode model that writes the handover."),
+        Row::header("Instead of Claude Code's compaction"),
+        Row::choice(
+            SET_AUTO_HANDOVER,
+            "Hand over automatically",
+            &claude_switch_core::compact::AutoHandover::OPTIONS.map(|(_, _, label)| label),
+            st.config.compact.auto.index(),
+        )
+        .help("Tabs started from now on, same account."),
+        Row::choice(SET_AUTO_PERCENT, "When the context reaches", &percent_labels, percent_value)
+            .help("After the turn ends. The old chat stays open."),
         Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents"),
     ]
 }
@@ -246,15 +372,40 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
             }
         }
         Outcome::Action(FORGET_HANDOVER_CONSENTS) => st.forget_handover_consents(),
-        Outcome::Action(SET_HANDOVER_AGENT) if !st.config_damaged => {
-            if let crate::source::Source::Real(roots) = &st.source {
-                st.config.compact = claude_switch_core::config::load(roots).compact;
+        Outcome::Changed { id: SET_HANDOVER_AGENT, value: Value::Choice(i) } if !st.config_damaged => {
+            let name = agent_names(st).get(i).cloned().flatten().unwrap_or_default();
+            if let Err(e) = set_handover_agent(st, &name) {
+                st.error("Default agent was not saved", e.to_string());
             }
-            st.dialog = Some(name_dialog(
-                "Default handover agent (CLI)",
-                st.config.compact.default_agent.as_deref().unwrap_or_default(),
-                NameFor::HandoverAgent,
-            ));
+            refresh_handover_page(st);
+        }
+        Outcome::Changed { id: SET_AUTO_HANDOVER, value: Value::Choice(i) } if !st.config_damaged => {
+            if let Some(&(mode, _, _)) = claude_switch_core::compact::AutoHandover::OPTIONS.get(i) {
+                update_handover_prefs(st, |prefs| prefs.auto = mode);
+            }
+        }
+        Outcome::Changed { id: SET_AUTO_PERCENT, value: Value::Choice(i) } if !st.config_damaged => {
+            if let Some(&percent) = auto_percents(st).get(i) {
+                update_handover_prefs(st, |prefs| prefs.auto_percent = percent);
+            }
+        }
+        Outcome::Changed { id: SET_HANDOVER_MODEL, value: Value::Choice(i) } if !st.config_damaged => {
+            let Some(model) = model_options(st).into_iter().nth(i) else { return };
+            let result = match &st.source {
+                crate::source::Source::Real(roots) => claude_switch_core::config::update_compact(roots, |prefs| {
+                    prefs.model = model;
+                    Ok(())
+                })
+                .map(|prefs| st.config.compact = prefs),
+                crate::source::Source::Demo => {
+                    st.config.compact.model = model;
+                    Ok(())
+                }
+            };
+            if let Err(e) = result {
+                st.error("Handover model was not saved", e.to_string());
+            }
+            refresh_handover_page(st);
         }
         Outcome::Action(SYNC_WORKERS) => st.sync_worker_accounts(),
         Outcome::Action(opencode_rows::REFRESH) => st.refresh_opencode(),
@@ -394,7 +545,7 @@ mod tests {
             ],
             &[SET_EMBEDDED, SET_ARCHIVED, SET_WORKERS_SHOWN, SET_HIDDEN, SET_ATTENTION, SET_SUGGEST_TOPICS],
             &[SET_USAGE, SET_USAGE_WARNINGS],
-            &[SET_HANDOVER_AGENT, FORGET_HANDOVER_CONSENTS],
+            &[SET_HANDOVER_AGENT, SET_HANDOVER_MODEL, SET_AUTO_HANDOVER, SET_AUTO_PERCENT, FORGET_HANDOVER_CONSENTS],
             &[SET_WORKERS, opencode_rows::REFRESH, opencode_rows::RESTART, opencode_rows::STUDIO, SYNC_WORKERS],
             &[SET_TRAY, SET_CLOSE_TO_TRAY],
         ];
@@ -410,30 +561,41 @@ mod tests {
     }
 
     #[test]
-    fn handover_agent_edit_commits_on_ok_reports_invalid_input_and_can_clear() {
+    fn handover_agent_is_a_choice_of_real_agents_with_a_missing_saved_name_marked() {
         let mut st = AppState::new(Source::Demo, None, WindowFile::default());
-        let now = Instant::now();
-        let open = |st: &mut AppState| settings_outcome(st, Outcome::Action(SET_HANDOVER_AGENT));
+        st.config.compact.set_default_agent("deepseek-flash").unwrap();
         st.dialog = Some(settings(&mut st, Some(HANDOVERS)));
-        open(&mut st);
-        super::super::text_input(&mut st, "bad name");
+        let labels = |st: &AppState| match current(st).form.rows().iter().find(|r| r.id() == Some(SET_HANDOVER_AGENT)) {
+            Some(Row::Choice { label, options, value, .. }) => (label.clone(), options.clone(), *value),
+            _ => panic!("agent row must be a choice"),
+        };
+        let (label, options, value) = labels(&st);
+        assert_eq!(label, "New chat starts as");
+        assert_eq!(options[0], NO_AGENT);
+        assert!(options.iter().any(|o| o.starts_with("main-reviewer (")), "{options:?}");
+        assert_eq!(options[value], "deepseek-flash (missing)");
+        let main = options.iter().position(|o| o.starts_with("main-reviewer")).unwrap();
+        settings_outcome(&mut st, Outcome::Changed { id: SET_HANDOVER_AGENT, value: Value::Choice(main) });
+        assert_eq!(st.config.compact.default_agent.as_deref(), Some("main-reviewer"));
+        let (_, options, value) = labels(&st);
+        assert!(!options.iter().any(|o| o.contains("missing")), "the page is rebuilt");
+        assert!(options[value].starts_with("main-reviewer"));
+        settings_outcome(&mut st, Outcome::Changed { id: SET_HANDOVER_AGENT, value: Value::Choice(0) });
         assert!(st.config.compact.default_agent.is_none());
-        super::super::click(&mut st, now, OK, 0.0);
-        assert!(matches!(&st.dialog, Some(Dialog::Name { error: Some(_), .. })));
-        super::super::click(&mut st, now, CANCEL, 0.0);
         assert_eq!(current(&st).category(), HANDOVERS);
-        open(&mut st);
-        super::super::text_input(&mut st, "my-plugin:review");
-        super::super::click(&mut st, now, OK, 0.0);
-        assert_eq!(st.config.compact.default_agent.as_deref(), Some("my-plugin:review"));
-        assert_eq!(current(&st).category(), HANDOVERS);
-        open(&mut st);
-        if let Some(Dialog::Name { field, .. }) = &mut st.dialog {
-            field.select_all();
-        }
-        super::super::key(&mut st, now, &KeyName::Backspace, Mods::default(), None);
-        super::super::click(&mut st, now, OK, 0.0);
-        assert!(st.config.compact.default_agent.is_none());
+    }
+
+    #[test]
+    fn summary_model_row_names_the_saved_model_and_offers_listed_ones() {
+        let mut st = AppState::new(Source::Demo, None, WindowFile::default());
+        st.config.compact.model = "deepseek/deepseek-flash".into();
+        st.dialog = Some(settings(&mut st, Some(HANDOVERS)));
+        let row = current(&st).form.rows().iter().find(|r| r.id() == Some(SET_HANDOVER_MODEL)).cloned();
+        let Some(Row::Choice { label, options, .. }) = row else { panic!("model row must be a choice") };
+        assert_eq!(label, "Summary written by");
+        assert_eq!(options, ["deepseek/deepseek-flash"]);
+        settings_outcome(&mut st, Outcome::Changed { id: SET_HANDOVER_MODEL, value: Value::Choice(3) });
+        assert_eq!(st.config.compact.model, "deepseek/deepseek-flash", "an index outside the list changes nothing");
     }
 
     #[test]

@@ -82,11 +82,19 @@ session. The character/token estimate updates as you edit. You can also copy or 
 **New session name** starts with the source’s displayed name plus ` · continued` (then
 ` · continued 2`, ` · continued 3`, and so on if needed). Edit it before opening to set the
 Claude Code session name, not just the handover tab label.
-The editor's **Agent** picker starts with the **Default CLI agent** from **Settings → Handovers**.
-Leave the setting blank to start at **Default (Claude)**, which adds no `--agent` override.
+The editor's **Agent** picker starts with **New chat starts as** from **Settings → Handovers**, a
+list of the agents your accounts have (with the accounts named when they differ). **None (plain
+Claude)** adds no `--agent` override. If the target account and folder do not have the saved agent,
+the new chat starts as plain Claude and a notice says so; Settings marks a name no account has as
+missing. **Summary written by** in the same page is the OpenCode model that writes the handover.
 You can choose a different agent before selecting **Open in CLI**. Changing the target account
 resets the picker to your setting.
 There is no supported agent option for starting a handover in Desktop.
+**Hand over automatically** (Off, Ask first, Automatic) replaces Claude Code's own compaction in
+the CLI tabs Claude Switch starts: they run with `DISABLE_AUTO_COMPACT=1`, and once the context
+reaches the set point (by default where Claude Code would compact) and the turn has ended,
+Switch asks with the handover dialog or makes the handover itself and opens the new chat in the
+same account, linked to the old one. Automatic needs the summary model's provider approved once.
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 
@@ -106,8 +114,9 @@ the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requ
 consent. `--print` outputs Markdown and opens nothing; add `--save` to keep a local copy.
 `--agent <name>` overrides the handover default for `--open` only. The agent must be available to
 Claude Code in the target account and project. `--name <title>` is also `--open` only; omit it to
-use the same numbered continuation name as the editor. `--open` saves the handover and starts a new
-session in a new Claude Switch window; it waits for
+use the same numbered continuation name as the editor. `--open` saves the handover and opens the new
+session as a tab in the running Claude Switch window (beside the source session's tab when it has
+one), or starts Claude Switch with that tab when it is not running; it waits for
 tab-creation confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16

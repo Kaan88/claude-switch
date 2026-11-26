@@ -360,12 +360,21 @@ uses it as the initial tab label and reads native custom-title records on scan. 
 launch reservation in `marks.json` avoids reusing names before the transcript appears; it is
 not a permanent Switch rename. A failed spawn rolls it back with the new UUID's provenance.
 
-The editor's **Agent** picker is CLI-only. **Settings → Handovers → Default CLI agent** edits
-`compact.defaultAgent` under the handover settings lock without changing provider consent or
-the model. Blank is the default and means no switch-level override. **Default (Claude)** is the
-first entry and always adds no flag. A configured name is preselected, including when the
-catalog cannot find it; the catalog is a suggestion list, not proof of CLI availability.
-Changing the target account resets to the configured default. A selected custom agent adds
+The editor's **Agent** picker is CLI-only. **Settings → Handovers → New chat starts as** is a
+choice, not a text box: **None (plain Claude)** first, then the agents every account has in its own
+`agents/` and its user-scope plugins (read when the page opens, local files only), each labelled
+with the accounts that have it when the accounts differ. A saved name that no account has is shown
+as “(missing)” until another is chosen. Saving goes through the handover settings lock and leaves
+provider consent alone. **Summary written by** names the OpenCode model (`compact.model`), with
+the models this window last listed. The two are separate settings: one is a Claude Code agent,
+the other the OpenCode model that writes the summary. **None** adds no flag. A configured name is
+preselected but passed only if the target account and launch folder's catalog has it: the dialog
+and `compact --open` read that catalog before launching (the dialog even when its picker was
+never opened) and otherwise start plain Claude with a notice, instead of a launch that Claude
+Code refuses with `--agent '<name>' not found`. An explicit `--agent` or an agent picked in the
+dialog is passed as given. Built-in and managed agents are not in the catalog, so they cannot be
+the Settings default (they can still be named with `--agent`). Changing the target account
+resets to the configured default. A selected custom agent adds
 `--agent <name>` before the first-prompt separator. Discovery runs read-only from that account's
 `agents/` and the launch project's `.claude/agents/`; project definitions take precedence.
 The reader keeps bounded frontmatter names and descriptions, not agent prompts. It also offers
@@ -375,10 +384,21 @@ Discovery does not start Claude. The documented Desktop launch path takes neithe
 flag nor a first prompt, so the handover editor continues to open new sessions in the CLI.
 
 The CLI runs headlessly for `--print` (the default) and writes the handover only to stdout unless
-`--save` is supplied. Explicit `--open` keeps the handover and starts a new window with the
-new tab because the app has no single-instance request channel. On Windows, the new window is
-ShellExecuted through a fixed non-interactive PowerShell bootstrap so it cannot keep the caller's
-output pipes open; only the executable path and validated identifiers reach the bootstrap.
+`--save` is supplied. Explicit `--open` keeps the handover and hands the request to the running
+Claude Switch window, which opens the tab beside the source session's tab when one of its tabs
+runs it (otherwise at the end) and comes to the front. The channel is one per-user named pipe,
+`\\.\pipe\claude-switch-handover-<user SID>`: its DACL grants only that SID, remote clients are
+rejected, only the first window creates it, and each end checks that the process on the other end
+runs as the same user (the client allows identification, not impersonation). It carries one
+request kind only: a versioned list of the same validated words as the window arguments (session
+ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
+decoded and revalidated by the window, which then opens only an app-owned saved handover. The
+answer is `opened` or the window's error. When no window listens, the CLI starts Claude Switch
+itself as the normal window (saved tabs, then the handover tab), which first offers the request
+to a window that started meanwhile. On Windows, that window is
+ShellExecuted through a fixed non-interactive PowerShell bootstrap run without a console window, so it
+cannot keep the caller's output pipes open; only the executable path and validated identifiers
+reach the bootstrap.
 `compact --open --agent <name>` overrides the Settings default. The agent option is rejected
 with `--print`. The resolved agent is passed to the new Switch window as a separate
 word and revalidated there, then passed to Claude Code before `--`. The CLI, picker, and settings
@@ -391,7 +411,7 @@ The optional title is encoded as bounded UTF-8 hex for the fixed bootstrap and r
 the new window; absent a title, it uses the same index-based suggestion as the dialog. A title
 must be nonempty, single-line text of at most 200 UTF-16 units, with no control characters.
 The plugin doesn't supply this option and its focus text is never interpreted as a title.
-`--open` waits up to 30 seconds for the new window to acknowledge creating the tab. On timeout
+`--open` waits up to 30 seconds for the window to acknowledge creating the tab. On timeout
 the outcome is unknown: check for the tab before retrying. Tab creation is not
 confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
 1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no
@@ -407,6 +427,42 @@ Setup checks for intervening edits before writing; Windows does not provide an a
 compare-and-swap for this value. An interruption after append but before recording ownership can
 leave an untracked entry rather than let uninstall claim an entry it cannot prove it added.
 The plugin retains its fallback to the default per-user installation.
+
+### Automatic handover instead of compaction
+
+**Settings → Handovers → Hand over automatically** is Off (the default), Ask first or Automatic.
+It applies only to the CLI tabs Claude Switch starts from then on; nothing outside the app
+changes (no plugin hook, no global or account setting). While it is on, those tabs start Claude
+Code with `DISABLE_AUTO_COMPACT=1` in that process's environment only, which per Claude Code's
+docs turns off automatic (and idle) compaction and keeps manual `/compact`. Tabs started while it
+was off keep Claude Code's compaction and are not watched. Sign-in tabs never get it.
+
+A worker reads each watched tab's verified transcript tail (512 KiB, at most every 5 seconds and
+only when the file changed) for the last request's context size (input plus cache tokens, as the
+Chat view's context chip), the model and whether the turn has ended with no tool pending. The
+threshold is **When the context reaches**: either a set percentage (50–90 %; a hand-edited value
+from 40 to 95 is kept) or, by default, where Claude Code would have compacted, as far as Switch
+can read it: the window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` or `autoCompactWindow` from the
+account's `settings.json` (its `env` first, then Switch's own environment), otherwise the
+model's context window (1M for `[1m]` models and, per the model docs, Fable, Sonnet 5+, Haiku 5.5+
+and Opus 4.7+, unless `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`; 200K otherwise, and 1M once the context
+is past 200K), and the point is 95 % of it, lowered by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (which,
+as in Claude Code, cannot raise it). Claude Code's docs give no exact default percentage (a
+native 1M window compacts at about 967K); 95 % is a little earlier, so the next turn cannot
+overflow while compaction is off. A per-session `/autocompact` or `--autocompact` is not visible
+to Switch.
+
+Once past the threshold and after the turn has ended, **Ask first** opens the handover dialog for
+that tab (same account preselected) with a notice, never over another dialog or menu (it asks
+again at the next poll). **Automatic** makes the handover with the configured summarizer
+(**Summary written by**) and focus from the transcript, keeps it like any opened handover, and
+opens the new chat in the same account beside the old tab, with the Settings default agent if
+that account and folder have it. It needs that provider's consent already recorded; otherwise it
+asks first and says so. Either way it happens once per session in a tab. The new chat is linked,
+not forked: it carries the handover provenance (`handoverFrom`, `parentSessionId`), so it shows
+as a continuation in the list and Threads, and starts from the summary alone (a
+`--fork-session` would carry the full context). The old chat is never typed into; its tab stays
+open, labelled “· handed over”.
 
 ## Pictures into the CLI
 
@@ -532,7 +588,19 @@ the indexed one, and reports skipped entries together.
 The Sessions tab is fixed. Terminal tabs reorder when dragged past a neighbor’s midpoint.
 Right-click actions target the tab under the pointer, not the selected session row. The
 account-copy path uses the same fork and cache warning as the Sessions list, and compaction
-opens the handover dialog. Tab renames last until close. Close others keeps the clicked tab
+opens the handover dialog. Renaming a tab that runs a Claude session the list knows renames
+the session: its Switch mark (so the list, search, the tab label and a restored tab use it;
+`terminal-tabs.json` still holds identifiers only) and, when the tab's live identity is verified,
+Claude Code's own name through `/rename <name>`. That command is never typed directly: it waits
+on the tab until the tab is shown in the Chat view and is handed to the Chat view's slash gate,
+which refuses a running turn, a pending tool, a menu, a full-screen view or a prompt that is not
+idle and empty, and shows why; its own retry clears the refusal once the prompt is idle, and
+the next tick sends. A tab that starts running another session drops the waiting rename. A blank
+name clears the mark and sends nothing (a bare `/rename` would make Claude Code generate a name).
+Claude Code's docs say a session answers to the name set with `/rename` or `--name` in
+cross-session messaging; its per-process record (`~/.claude/sessions/<pid>.json`, `name`,
+`nameSource: "user"`) is not documented. The transcript is never edited. A plain terminal tab,
+or a session not yet indexed, keeps a label-only rename until close. Close others keeps the clicked tab
 and asks once if any of the others still run. Ctrl+Tab and Ctrl+Shift+Tab keep cycling as
 before; Ctrl+1–9 selects a tab only in Sessions or after opening the command palette with
 Ctrl+Shift+K, because the terminal encoder can turn Ctrl+digits into meaningful input bytes.

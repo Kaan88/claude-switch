@@ -7,6 +7,7 @@ mod input;
 mod layout;
 mod paint;
 mod recall;
+mod rename;
 mod shortcuts;
 pub(super) mod side;
 pub(super) mod submission;

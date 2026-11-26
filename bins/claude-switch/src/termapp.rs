@@ -80,8 +80,10 @@ impl AppState {
         let signing_in = claude_switch_core::launch::is_login(l);
         let mut l = l.clone();
         l.program = crate::run::native_program(&l.program)?;
+        let managed = pane.is_some() && !signing_in && self.auto_handover_env(&mut l);
         let id = self.open_command(&term::command(&l), l.label.clone(), session, account)?;
         if let Some(tab) = self.tabs.get_mut(id) {
+            tab.auto.managed = managed;
             tab.cwd = pane.as_ref().and(l.cwd.clone());
             tab.pane = pane;
             tab.signing_in = signing_in;

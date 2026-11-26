@@ -4,6 +4,21 @@
 
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
+- Handover: `/switch-handover:switch-compact` and `claude-switch compact --open` open the new chat as
+  a tab in the running Claude Switch window, beside the source session's tab, instead of a window of
+  its own; only when Switch is not running do they start it (with its saved tabs and the new one).
+- Settings › Handovers: **New chat starts as** is a list of the agents your accounts really have
+  (**None (plain Claude)** first) and **Summary written by** names the OpenCode model. A saved
+  agent the target account lacks is shown as missing and skipped with a notice instead of failing
+  the launch with `--agent '…' not found`.
+- Tabs: renaming a tab that runs a Claude session renames the session (list, search, restored
+  tabs) and, at an idle prompt and through the Chat view's usual checks, Claude Code's own name
+  with `/rename`, so other sessions can reach it by that name. Plain terminal tabs keep a
+  label-only rename.
+- Handover: **Hand over automatically** (Off, Ask first, Automatic) in Settings › Handovers replaces
+  Claude Code's compaction in Claude Switch's own tabs: at the threshold, after the turn, the new
+  chat opens from a handover in the same account, linked to the old one, which stays open marked
+  handed over.
 
 ## 0.1.1 (2026-11-26)
 

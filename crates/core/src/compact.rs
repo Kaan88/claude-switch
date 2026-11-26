@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use std::io;
 
 mod storage;
-pub use storage::{Preferences, export, list, provider, save};
+pub use storage::{AUTO_PERCENT, AutoHandover, Preferences, export, list, provider, save};
 
 pub const PART_CHARS: usize = 60_000;
 const HEADINGS: [&str; 6] = [

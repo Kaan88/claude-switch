@@ -318,7 +318,9 @@ impl Panel {
                     st.command(now, if other { OPEN_AS } else { OPEN_LAST }, anchor);
                 }
             }
-            Mode::Rename { id: session, .. } if id == OK => st.rename_session(session, self.field.text()),
+            Mode::Rename { id: session, .. } if id == OK => {
+                st.rename_session(session, self.field.text());
+            }
             Mode::Topic { id: session } if id == OK => {
                 if valid_edit(self.field.text()) {
                     st.save_suggestion(session, None, Some(self.field.text()));

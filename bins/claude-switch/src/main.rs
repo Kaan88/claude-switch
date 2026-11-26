@@ -17,6 +17,7 @@ mod app_draw;
 mod archive;
 mod archive_report;
 mod attention;
+mod auto_handover;
 mod compact_cli;
 mod compact_dialog;
 mod compact_open;
@@ -29,6 +30,7 @@ mod demo_terminal;
 mod details;
 mod dialogs;
 mod folder_defaults;
+mod handover_pipe;
 mod list;
 mod opencode_workers;
 mod resume_tabs;
@@ -107,6 +109,7 @@ fn main() {
             "--demo-workers" => demo_workers = true,
             "--demo-offscreen" => demo_offscreen = true,
             "--compact-open-window" => match compact_cli::window_args(&mut args) {
+                Ok((request, ack)) if compact_cli::forward_to_running(&request, &ack) => std::process::exit(0),
                 Ok((request, ack)) => {
                     handoff = Some(request);
                     handoff_ack = Some(ack);
@@ -169,7 +172,6 @@ fn main() {
     if demo_terminal_settings {
         demo_terminal::show_settings(&mut state);
     }
-    state.compact.standalone_window = startup.is_some();
     state.compact.startup = startup;
     state.compact.startup_ack = handoff_ack;
     state.compact.demo = demo_compact.filter(|_| demo);
