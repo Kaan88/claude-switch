@@ -582,3 +582,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     thumbnail at a bounded size (about 240 px on the long side, aspect kept), decoded off the window thread and
     cached, with the label as its caption; a click opens it enlarged (the existing viewer). Same in the Session
     view. Keep a placeholder with the reason when a picture cannot be decoded or is over the size limit.
+    Other embeds (owner: "make it clear what other embeds are"): every non-text item in the conversation says what
+    it is at a glance, with an icon and a plain kind label instead of a generic bar: PDF or document (name, pages
+    if known, Open), file attachment (name, size, Open / Show in folder), link or artifact (title and host, Open),
+    pull request (repo and number), saved output file, Markdown file (opens the side panel), audio or other binary
+    (kind and size). Where a cheap preview exists (a picture, the first page of a PDF if the toolkit can render it),
+    show it as the thumbnail; otherwise the icon. The Details panel's Outputs uses the same labels.
