@@ -138,7 +138,14 @@ fn demo_requires_provider_consent_and_preview_before_the_open_action() {
     let now = Instant::now();
     let click = |st: &mut AppState, id| dialogs::click(st, now, id, 0.0);
     assert!(compact(&st).phase == Phase::Setup);
-    assert!(compact(&st).focus.text.contains("remaining verification"));
+    assert!(compact(&st).focus.text.starts_with("No code here."));
+    assert!(compact(&st).focus_label().contains("non-code work, picked for this session"));
+    let mut edited = compact(&st).focus.text.clone();
+    edited.push_str(" Keep the glossary.");
+    if let Some(Dialog::Compact(dialog)) = &mut st.dialog {
+        dialog.focus.set(edited);
+    }
+    assert_eq!(compact(&st).focus_label(), "Focus: your own", "an edit makes it the user's own");
     click(&mut st, MODEL);
     click(&mut st, OPTION + 1);
     assert_eq!(st.config.compact.model, "demo/summary-thorough");

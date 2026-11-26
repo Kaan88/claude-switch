@@ -8,13 +8,19 @@
   checks; the dialog's button reads **Continue here**. The old session is marked handed over in
   its tab and in Sessions. A step that does not happen in time stops it with the reason and the
   saved file's path. Otherwise, or with a new tab chosen, it opens a new tab as before.
+- Handover: when you give no focus, one is picked locally from the session (coordination, non-code
+  work, or the default); the dialog says which and lets you edit it, and Settings › Handovers can
+  edit and reset each of the three texts. The summary gains an **In flight and promised** section
+  (jobs, workers, reviews and what was promised when they report); "instructions" holds only rules
+  still in force; long fields are cut at a line with a visible `[cut]`; Files leaves out temporary
+  paths and keeps the 30 most recent; the task list is marked possibly stale.
 - Two Claude Switch windows no longer stop each other from saving: session marks (names, pins,
   hiding, handover links) and settings apply only each window's own changes onto the file as it is
   now. Only the same field changed differently in both is refused, with a notice naming it, and
   nothing asks for a restart.
 - Settings › Handovers: **Where it continues** (This tab, A new tab), **Summary written by**,
-  **Default focus text** (used when you give no focus; editable, with Reset), **New chat starts
-  as** (new tabs only), **Hand over automatically** and **When the context reaches**, in that order.
+  the focus texts (used when you give no focus; editable, with Reset), **New chat starts as** (new
+  tabs only), **Hand over automatically** and **When the context reaches**, in that order.
 - Chat: new Claude tabs use Claude Code's classic renderer (Settings › Sessions › Classic terminal
   view for Claude tabs, on by default), so Chat no longer refuses every send in fresh chats; the
   refusal now says how to switch the renderer.

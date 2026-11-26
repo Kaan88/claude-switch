@@ -95,6 +95,9 @@ pub struct Compact {
     agent: usize,
     agent_focus: usize,
     focus: Editor,
+    /// The focus put in the box when the transcript was read: the session's own `/compact`
+    /// focus (kind `None`) or the Settings text for the kind picked for this session.
+    picked: Option<(Option<compact::FocusKind>, String)>,
     preview: Editor,
     saved: Option<PathBuf>,
     history: Vec<PathBuf>,
@@ -247,7 +250,10 @@ impl AppState {
                 }
             }
         } else if self.source.is_demo() {
-            dialog.focus.set("Keep the decision and the remaining verification.".into());
+            let kind = compact::FocusKind::NonCode;
+            let text = self.config.compact.focus_text(kind).to_owned();
+            dialog.focus.set(text.clone());
+            dialog.picked = Some((Some(kind), text));
             dialog.models = vec!["demo/summary-fast".into(), "demo/summary-thorough".into()];
             self.compact.models = Some(dialog.models.clone());
         } else {
@@ -327,6 +333,7 @@ impl Compact {
             models: Vec::new(),
             model: 0,
             focus: Editor::default(),
+            picked: None,
             preview: Editor::default(),
             saved: None,
             history: Vec::new(),
@@ -397,7 +404,9 @@ impl Compact {
         match result {
             Ok(Update::Loaded(data, models)) => {
                 if let Some(data) = data {
-                    self.focus.set(data.chosen_focus(&st.config.compact).1);
+                    let picked = data.chosen_focus(&st.config.compact);
+                    self.focus.set(picked.1.clone());
+                    self.picked = Some(picked);
                     self.data = Some(data);
                 }
                 match models {
@@ -690,10 +699,25 @@ impl Compact {
     }
 }
 
+impl Compact {
+    /// The focus box's label: which focus it holds.
+    pub(super) fn focus_label(&self) -> String {
+        match &self.picked {
+            None => "Focus (optional)".into(),
+            Some((_, text)) if *text != self.focus.text => "Focus: your own".into(),
+            Some((None, _)) => "Focus: your own, from the session's /compact".into(),
+            Some((Some(kind), _)) => {
+                format!("Focus: {}, picked for this session (edit or replace it)", kind.label().to_lowercase())
+            }
+        }
+    }
+}
+
 fn demo_text(name: &str) -> String {
     format!(
         "## Goal\n\n> Find why a clean release build takes four minutes.\n\n\
          ## Where it stands\n\n> Compared the clean and warm builds. Most time is in dependency compilation.\n\n\
+         ## In flight and promised\n\n> None.\n\n\
          ## Decisions and why\n\n> Use a separate target directory so a clean timing cannot disturb an existing build.\n\n\
          ## Standing instructions from the user\n\n> Keep the toolkit unchanged.\n\n\
          ## Open items\n\n> Repeat the timing after disabling the optional feature.\n\n\
@@ -701,7 +725,7 @@ fn demo_text(name: &str) -> String {
          ## Files\n\n- docs/build-notes.md (2)\n\n\
          ## Source session\n\nName: {name}\nID: demo\nFolder: C:\\demo\\mdplay\nBranch: main\n\
          Transcript: C:\\demo\\mdplay.jsonl\n\nLook up further details in the original transcript.\n\n\
-         ## Latest task list\n\n- [pending] Repeat the feature comparison\n\n\
+         ## Latest task list\n\nPossibly stale: as the session last wrote it.\n\n- [pending] Repeat the feature comparison\n\n\
          ## Last 15 shell commands\n\n    cargo build --release --timings\n\n\
          ## User prompts (verbatim)\n\n### 2026-11-26T09:00:00Z\n\n```\nCompare a clean build with an incremental build and report the timings.\n```\n\n\
          ## Last 6 turns (assistant text only)\n\n```\nThe warm run does not reproduce the delay.\n```\n"

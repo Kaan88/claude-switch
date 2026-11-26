@@ -100,7 +100,7 @@ impl Compact {
             p.text(Face::Ui, FONT, body.x, y + 16.0, model, d.pal.muted, half);
             p.text(Face::Ui, FONT, body.x + half + 16.0, y + 16.0, account, d.pal.muted, half);
         }
-        p.text(Face::Semibold, 13.0, body.x, body.y + 115.0, "Focus (optional)", d.pal.text, body.w);
+        p.text(Face::Semibold, 13.0, body.x, body.y + 115.0, &self.focus_label(), d.pal.text, body.w);
         if ready {
             self.draw_editor(d, p, Rect::new(body.x, body.y + 131.0, body.w, (body.h - 183.0).max(36.0)), false);
         }

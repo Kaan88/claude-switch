@@ -337,9 +337,30 @@ records, embedded reminders, sidechains, tool results, image bytes, and thinking
 
 Every serialized request, including a merge, is capped at 60,000 characters. The worker emits
 parts one at a time, prefers turn boundaries and splits oversized turns. Adjacent summaries
-merge in bounded stages. Model replies supply only six Markdown
-fields; the application renders the headings and all local evidence independently. Invalid or
-missing summary fields say `unknown`. A transcript over 2 GiB (it is read as a stream; only prompts and answers are kept), or a record over 48 MiB,
+merge in bounded stages. Model replies supply only seven Markdown
+fields (goal, where it stands, in flight and promised, decisions, standing instructions, open
+items, not verified); the application renders the headings and all local evidence independently.
+Invalid or missing summary fields say `unknown`. The fixed prompt asks for at most 800 characters
+a field; a longer one is cut at the last line break before 1,500 characters and ends with a
+visible `[cut]`. It tells the summarizer that it sees assistant text and tool categories only,
+that the user's prompts are appended verbatim afterwards, and never to infer that a permission
+was given or a rule lifted; it defines "instructions" as the user's rules still in force (no
+tasks or next steps), and "in flight" as jobs, workers and reviews still running or unread with
+id, worktree, branch and state and what was promised for when one reports. When partial
+summaries disagree the later wins, and items a later part shows done are dropped. The Files
+section leaves out paths in temporary and scratch folders and keeps the 30 most recently edited
+(saying how many older ones were left out); the task list is marked possibly stale.
+
+When the user gives no focus of their own, one is picked locally, without a model, from the
+session's tool calls: **coordination** when at least three calls hand work to agents or workers
+(Claude Code's Agent or Task, SendMessage, Workflow, MCP tools named for workers or agents), they
+are most of the calls that act (edits, shell and other tools; reads and searches do not count),
+and own edits are at most a third of them; **non-code work** when the session acted but edited no
+code file outside temporary folders and ran no build tool (cargo, npm, dotnet and the like); else
+the **default**. The dialog's focus box is filled with that kind's text and its label says which
+kind was picked; editing it, a `/compact` focus in the transcript, or `--focus-file` with text
+makes it the user's own, which replaces the picked one. An empty focus file (the plugin with no
+focus) counts as none. A transcript over 2 GiB (it is read as a stream; only prompts and answers are kept), or a record over 48 MiB,
 fails the handover rather than silently dropping a possible user turn.
 
 Native OpenCode V2 is discovered on `PATH`. `opencode models` is cached in memory, with manual
@@ -378,10 +399,10 @@ not a permanent Switch rename. A failed spawn rolls it back with the new UUID's 
 **Settings → Handovers** holds, in order: **Where it continues** (This tab, the default, or A new
 tab; `compact.continueIn`), **Summary written by**, **Default focus text**, **New chat starts as**
 (new tabs only: a session continued in place keeps its process and agent), then **Hand over
-automatically** and **When the context reaches**. The default focus text is used when the user
-gives no focus of their own (in the dialog's focus box, in the transcript, or `--focus-file`); it
+automatically** and **When the context reaches**. **Default focus text**, **Focus for
+coordination** and **Focus for non-code work** are the three picked focus texts (see above); each
 is built in until edited, saved as typed (`compact.focus`, at most 4,000 characters, control
-characters dropped), and **Reset**, an emptied box, or the built-in text itself go back to the
+characters dropped), and its **Reset**, an emptied box, or the built-in text itself go back to the
 built-in text.
 
 The editor's **Agent** picker is CLI-only. **Settings → Handovers → New chat starts as** is a
@@ -481,7 +502,7 @@ to Switch.
 Once past the threshold and after the turn has ended, **Ask first** opens the handover dialog for
 that tab (same account preselected) with a notice, never over another dialog or menu (it asks
 again at the next poll). **Automatic** makes the handover with the configured summarizer
-(**Summary written by**) and focus from the transcript, keeps it like any opened handover, and
+(**Summary written by**) and the focus from the transcript or, without one, the picked focus, keeps it like any opened handover, and
 opens the new chat in the same account beside the old tab, with the Settings default agent if
 that account and folder have it. It needs that provider's consent already recorded; otherwise it
 asks first and says so. Either way it happens once per session in a tab. By default the handover

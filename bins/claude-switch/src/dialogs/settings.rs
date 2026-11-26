@@ -60,8 +60,24 @@ const SET_HANDOVER_MODEL: u32 = 96;
 const SET_AUTO_HANDOVER: u32 = 97;
 const SET_AUTO_PERCENT: u32 = 98;
 const SET_CONTINUE_IN: u32 = 120;
-const SET_DEFAULT_FOCUS: u32 = 121;
-const RESET_DEFAULT_FOCUS: u32 = 122;
+/// Per [`FocusKind`]: the text row is `FOCUS_TEXT + 2 * index`, its Reset button the next id.
+const FOCUS_TEXT: u32 = 121;
+#[cfg(test)]
+const SET_DEFAULT_FOCUS: u32 = FOCUS_TEXT;
+#[cfg(test)]
+const RESET_DEFAULT_FOCUS: u32 = FOCUS_TEXT + 1;
+
+fn focus_ids(kind: FocusKind) -> (u32, u32) {
+    let text = FOCUS_TEXT + 2 * kind.index() as u32;
+    (text, text + 1)
+}
+
+fn focus_kind_of(id: u32) -> Option<(FocusKind, bool)> {
+    FocusKind::ALL.into_iter().find_map(|kind| {
+        let (text, reset) = focus_ids(kind);
+        (id == text || id == reset).then_some((kind, id == reset))
+    })
+}
 const SET_CLASSIC_VIEW: u32 = 99;
 const AUTO_STEPS: [u8; 5] = [50, 60, 70, 80, 90];
 
@@ -319,19 +335,32 @@ fn handovers(st: &AppState) -> Vec<Row> {
     let percent_labels: Vec<&str> = percent_labels.iter().map(String::as_str).collect();
     let percent_value = percents.iter().position(|p| *p == st.config.compact.auto_percent).unwrap_or(0);
     let prefs = &st.config.compact;
-    let focus = prefs.focus_text(FocusKind::Default);
-    let focus_help = if prefs.focus[FocusKind::Default.index()].is_some() {
-        "Your text. Used when you give no focus of your own."
-    } else {
-        "Built in. Used when you give no focus of your own."
-    };
-    vec![
+    let focus_rows = FocusKind::ALL.into_iter().flat_map(|kind| {
+        let (text, reset) = focus_ids(kind);
+        let label = match kind {
+            FocusKind::Default => "Default focus text",
+            FocusKind::Coordination => "Focus for coordination",
+            FocusKind::NonCode => "Focus for non-code work",
+        };
+        let edited = prefs.focus[kind.index()].is_some();
+        let help = match (kind, edited) {
+            (FocusKind::Default, false) => "Built in. When you give none.",
+            (FocusKind::Default, true) => "Yours. When you give none.",
+            (FocusKind::Coordination, false) => "Built in. Sessions run by agents.",
+            (FocusKind::Coordination, true) => "Yours. Sessions run by agents.",
+            (FocusKind::NonCode, false) => "Built in. Sessions with no code edits.",
+            (FocusKind::NonCode, true) => "Yours. Sessions with no code edits.",
+        };
+        [Row::text(text, label, prefs.focus_text(kind)).help(help), Row::action(reset, label, "Reset")]
+    });
+    let mut rows = vec![
         Row::choice(SET_CONTINUE_IN, "Where it continues", &["This tab", "A new tab"], usize::from(prefs.new_tab))
             .help("This tab: /clear, then the handover as the first message."),
         Row::choice(SET_HANDOVER_MODEL, "Summary written by", &models, model_value)
             .help("The OpenCode model that writes the handover."),
-        Row::text(SET_DEFAULT_FOCUS, "Default focus text", focus).help(focus_help),
-        Row::action(RESET_DEFAULT_FOCUS, "Default focus text", "Reset"),
+    ];
+    rows.extend(focus_rows);
+    rows.extend([
         Row::choice(SET_HANDOVER_AGENT, "New chat starts as", &refs, value).help(if prefs.new_tab {
             agent_help
         } else {
@@ -348,7 +377,8 @@ fn handovers(st: &AppState) -> Vec<Row> {
         Row::choice(SET_AUTO_PERCENT, "When the context reaches", &percent_labels, percent_value)
             .help("After the turn ends. The old chat stays open."),
         Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents"),
-    ]
+    ]);
+    rows
 }
 
 pub(super) fn set_handover_agent(st: &mut AppState, name: &str) -> Result<(), claude_switch_core::Refusal> {
@@ -413,12 +443,16 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
         Outcome::Changed { id: SET_CONTINUE_IN, value: Value::Choice(i) } if !st.config_damaged => {
             update_handover_prefs(st, |prefs| prefs.new_tab = i == 1);
         }
-        Outcome::Changed { id: SET_DEFAULT_FOCUS, value: Value::Text(text) } if !st.config_damaged => {
+        Outcome::Changed { id, value: Value::Text(text) }
+            if !st.config_damaged && focus_kind_of(id).is_some_and(|(_, reset)| !reset) =>
+        {
+            let Some((kind, _)) = focus_kind_of(id) else { return };
             // Saved as typed; the page is not rebuilt, so the field keeps its caret.
-            save_handover_prefs(st, |prefs| prefs.set_focus(FocusKind::Default, &text));
+            save_handover_prefs(st, |prefs| prefs.set_focus(kind, &text));
         }
-        Outcome::Action(RESET_DEFAULT_FOCUS) if !st.config_damaged => {
-            update_handover_prefs(st, |prefs| prefs.set_focus(FocusKind::Default, ""));
+        Outcome::Action(id) if !st.config_damaged && focus_kind_of(id).is_some_and(|(_, reset)| reset) => {
+            let Some((kind, _)) = focus_kind_of(id) else { return };
+            update_handover_prefs(st, |prefs| prefs.set_focus(kind, ""));
         }
         Outcome::Changed { id: SET_AUTO_PERCENT, value: Value::Choice(i) } if !st.config_damaged => {
             if let Some(&percent) = auto_percents(st).get(i) {
@@ -595,6 +629,10 @@ mod tests {
                 SET_HANDOVER_MODEL,
                 SET_DEFAULT_FOCUS,
                 RESET_DEFAULT_FOCUS,
+                focus_ids(FocusKind::Coordination).0,
+                focus_ids(FocusKind::Coordination).1,
+                focus_ids(FocusKind::NonCode).0,
+                focus_ids(FocusKind::NonCode).1,
                 SET_HANDOVER_AGENT,
                 SET_AUTO_HANDOVER,
                 SET_AUTO_PERCENT,
@@ -659,6 +697,14 @@ mod tests {
         assert_eq!(st.config.compact.focus_text(FocusKind::Default), FocusKind::Default.built_in());
         let Some(Value::Text(text)) = current(&st).form.value(SET_DEFAULT_FOCUS) else { panic!("a text row") };
         assert_eq!(text, FocusKind::Default.built_in(), "the field shows the reset text");
+        let (coordination, reset) = focus_ids(FocusKind::Coordination);
+        settings_outcome(&mut st, Outcome::Changed { id: coordination, value: Value::Text("Workers first.".into()) });
+        assert_eq!(st.config.compact.focus_text(FocusKind::Coordination), "Workers first.");
+        assert_eq!(st.config.compact.focus_text(FocusKind::Default), FocusKind::Default.built_in(), "only that kind");
+        settings_outcome(&mut st, Outcome::Action(reset));
+        assert_eq!(st.config.compact.focus_text(FocusKind::Coordination), FocusKind::Coordination.built_in());
+        let Some(Value::Text(text)) = current(&st).form.value(focus_ids(FocusKind::NonCode).0) else { panic!() };
+        assert!(text.starts_with("No code here."));
     }
 
     #[test]
