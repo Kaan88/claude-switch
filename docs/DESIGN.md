@@ -375,10 +375,21 @@ Discovery does not start Claude. The documented Desktop launch path takes neithe
 flag nor a first prompt, so the handover editor continues to open new sessions in the CLI.
 
 The CLI runs headlessly for `--print` (the default) and writes the handover only to stdout unless
-`--save` is supplied. Explicit `--open` keeps the handover and starts a new window with the
-new tab because the app has no single-instance request channel. On Windows, the new window is
-ShellExecuted through a fixed non-interactive PowerShell bootstrap so it cannot keep the caller's
-output pipes open; only the executable path and validated identifiers reach the bootstrap.
+`--save` is supplied. Explicit `--open` keeps the handover and hands the request to the running
+Claude Switch window, which opens the tab beside the source session's tab when one of its tabs
+runs it (otherwise at the end) and comes to the front. The channel is one per-user named pipe,
+`\\.\pipe\claude-switch-handover-<user SID>`: its DACL grants only that SID, remote clients are
+rejected, only the first window creates it, and each end checks that the process on the other end
+runs as the same user (the client allows identification, not impersonation). It carries one
+request kind only: a versioned list of the same validated words as the window arguments (session
+ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
+decoded and revalidated by the window, which then opens only an app-owned saved handover. The
+answer is `opened` or the window's error. When no window listens, the CLI starts Claude Switch
+itself as the normal window (saved tabs, then the handover tab), which first offers the request
+to a window that started meanwhile. On Windows, that window is
+ShellExecuted through a fixed non-interactive PowerShell bootstrap run without a console window, so it
+cannot keep the caller's output pipes open; only the executable path and validated identifiers
+reach the bootstrap.
 `compact --open --agent <name>` overrides the Settings default. The agent option is rejected
 with `--print`. The resolved agent is passed to the new Switch window as a separate
 word and revalidated there, then passed to Claude Code before `--`. The CLI, picker, and settings
@@ -391,7 +402,7 @@ The optional title is encoded as bounded UTF-8 hex for the fixed bootstrap and r
 the new window; absent a title, it uses the same index-based suggestion as the dialog. A title
 must be nonempty, single-line text of at most 200 UTF-16 units, with no control characters.
 The plugin doesn't supply this option and its focus text is never interpreted as a title.
-`--open` waits up to 30 seconds for the new window to acknowledge creating the tab. On timeout
+`--open` waits up to 30 seconds for the window to acknowledge creating the tab. On timeout
 the outcome is unknown: check for the tab before retrying. Tab creation is not
 confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
 1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no

@@ -1,7 +1,7 @@
 //! `compact` is dispatched before the window or any window state is created.
 use crate::{
     compact_open::{self, names},
-    compact_runner,
+    compact_runner, handover_pipe,
 };
 use claude_switch_core::{Roots, Session, compact, config, marks::Marks, sessions};
 use std::io::{self, Write};
@@ -153,8 +153,23 @@ fn run(options: Options) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|_| "Could not locate Claude Switch.")?;
     let name = file.file_name().and_then(|n| n.to_str()).ok_or("Invalid saved handover path.")?;
     let agent = config.compact.agent_for(options.agent.as_deref());
-    window::spawn(&exe, &session.id, account, name, agent, options.name.as_deref())?;
-    eprintln!("Claude Switch: opened the handover tab in a new window.");
+    let request = Handoff {
+        id: session.id.clone(),
+        account: account.to_owned(),
+        file: name.to_owned(),
+        agent: agent.map(str::to_owned),
+        name: options.name.clone(),
+    };
+    match handover_pipe::send(&encode_request(&request)?) {
+        handover_pipe::Sent::Answered(result) => {
+            result?;
+            eprintln!("Claude Switch: opened the handover tab in the running window.");
+        }
+        handover_pipe::Sent::NotRunning => {
+            window::spawn(&exe, &session.id, account, name, agent, options.name.as_deref())?;
+            eprintln!("Claude Switch: started Claude Switch with the handover tab.");
+        }
+    }
     Ok(())
 }
 
@@ -187,6 +202,42 @@ pub struct Handoff {
     file: String,
     agent: Option<String>,
     name: Option<String>,
+}
+
+const REQUEST_VERSION: &str = "claude-switch-handover-1";
+
+/// The running window's request: the same validated words as the window arguments, one a line.
+pub fn encode_request(request: &Handoff) -> Result<Vec<u8>, String> {
+    window::words(&request.id, &request.account, &request.file, request.agent.as_deref())?;
+    let name = request.name.as_deref().map(names::encode).transpose()?;
+    let lines = [
+        REQUEST_VERSION,
+        &request.id,
+        &request.account,
+        &request.file,
+        request.agent.as_deref().unwrap_or("-"),
+        name.as_deref().unwrap_or("-"),
+    ];
+    let bytes = lines.join("\n").into_bytes();
+    if bytes.len() > handover_pipe::MAX_REQUEST {
+        return Err("The handover request is too long.".into());
+    }
+    Ok(bytes)
+}
+
+/// Revalidates everything: the sender is the same user, but not trusted to have checked.
+pub fn decode_request(bytes: &[u8]) -> Result<Handoff, String> {
+    let invalid = "Invalid handover request.";
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid)?;
+    let lines: Vec<&str> = text.split('\n').collect();
+    let [version, id, account, file, agent, name] = lines[..] else { return Err(invalid.into()) };
+    if version != REQUEST_VERSION {
+        return Err(invalid.into());
+    }
+    let agent = (agent != "-").then(|| agent.to_owned());
+    window::words(id, account, file, agent.as_deref())?;
+    let name = (name != "-").then(|| names::decode(name)).transpose()?;
+    Ok(Handoff { id: id.into(), account: account.into(), file: file.into(), agent, name })
 }
 
 /// Only app-owned handovers are accepted by the window handoff, never a caller-selected file path.
@@ -228,6 +279,22 @@ pub fn window_args(mut args: impl Iterator<Item = String>) -> Result<(Handoff, S
     Ok((Handoff { id, account, file, agent, name }, ack))
 }
 
+/// The window started for a handover gives it to a Switch that started meanwhile, rather than
+/// becoming a second one. True when that window answered (the answer is acknowledged).
+pub fn forward_to_running(request: &Handoff, ack: &str) -> bool {
+    let Ok(payload) = encode_request(request) else { return false };
+    match handover_pipe::send(&payload) {
+        handover_pipe::Sent::NotRunning => false,
+        handover_pipe::Sent::Answered(result) => {
+            if let Err(e) = &result {
+                eprintln!("claude-switch compact: {e}");
+            }
+            acknowledge(ack, result.is_ok());
+            true
+        }
+    }
+}
+
 pub(crate) fn acknowledge(key: &str, opened: bool) {
     window::acknowledge(key, opened);
 }
@@ -253,6 +320,42 @@ mod tests {
         assert!(parse(&["--session", "latest", "--name", "Review"]).is_err());
         assert!(parse(&["--session", "latest", "--open", "--name", "--save"]).is_err());
         assert!(parse(&["--session", "latest", "--open", "--name=one", "--name", "two"]).is_err());
+    }
+
+    #[test]
+    fn running_window_request_round_trips_validated_words_only() {
+        let id = "5eed3dde-1c2d-4e5f-8a9b-000000033232";
+        let make = |agent: Option<&str>, name: Option<&str>| Handoff {
+            id: id.into(),
+            account: "work".into(),
+            file: "handover-001.md".into(),
+            agent: agent.map(str::to_owned),
+            name: name.map(str::to_owned),
+        };
+        for (agent, name) in [(None, None), (Some("plugin:review"), Some("Dev's \"notes\" & $env:PATH 😺"))] {
+            let bytes = encode_request(&make(agent, name)).unwrap();
+            let back = decode_request(&bytes).unwrap();
+            assert_eq!((back.id.as_str(), back.account.as_str(), back.file.as_str()), (id, "work", "handover-001.md"));
+            assert_eq!(back.agent.as_deref(), agent);
+            assert_eq!(back.name.as_deref(), name);
+        }
+        assert!(encode_request(&make(Some("bad agent"), None)).is_err());
+        assert!(encode_request(&make(None, Some("two\nlines"))).is_err());
+        let good = String::from_utf8(encode_request(&make(None, None)).unwrap()).unwrap();
+        for bad in [
+            good.replace("claude-switch-handover-1", "claude-switch-handover-2"),
+            good.replace("handover-001.md", "..\\other.md"),
+            good.replace("work", "work & calc"),
+            format!("{good}\nextra"),
+            good.replace(id, "not-a-uuid"),
+            good.replace("\n-\n-", "\n--help\n-"),
+            good.replace("\n-\n-", "\n-\nzz"),
+            good.replace('\n', "\r\n"),
+            String::new(),
+        ] {
+            assert!(decode_request(bad.as_bytes()).is_err(), "{bad:?}");
+        }
+        assert!(decode_request(b"\xff").is_err());
     }
 
     #[test]

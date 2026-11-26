@@ -13,9 +13,7 @@ impl App for AppState {
         if let Some(place) = &self.win_file.place {
             winfile::apply(cx.window(), place);
         }
-        if !self.compact.standalone_window {
-            self.load_tab_restore();
-        }
+        self.load_tab_restore();
         windowlook::apply(self, cx);
         let now = cx.now();
         self.refresh(now);
@@ -25,6 +23,7 @@ impl App for AppState {
         self.start_demo_session();
         self.start_usage_hover_demo(now);
         self.start_compact();
+        self.serve_handovers();
         self.setup_notifications(cx);
         self.timers(cx);
     }
@@ -244,6 +243,15 @@ impl App for AppState {
                 }
             }
             Msg::SessionView => self.session_ready(cx),
+            Msg::Handover(request, reply) => {
+                let result = self.handover_requested(*request);
+                if result.is_ok() {
+                    crate::tray::show(cx.window());
+                }
+                let _ = reply.send(result);
+                cx.request_redraw_all();
+                self.timers(cx);
+            }
             Msg::ArchiveReportSaved(result) => {
                 self.report_saved(result);
                 cx.request_redraw_all();
@@ -308,32 +316,27 @@ impl AppState {
         if self.marks_flush_at.is_some() {
             self.save_marks();
         }
-        if !self.compact.standalone_window {
-            self.capture_window(cx);
-            if !self.restore.window_save_failed
-                && let Err(error) = self.write_window()
-            {
-                self.restore.window_save_failed = true;
-                self.quit = false;
-                self.error(
-                    "Could not save window settings",
-                    format!("{error} Close again to exit without saving them."),
-                );
-                cx.request_redraw_all();
-                return;
-            }
-            if !self.restore.save_failed
-                && let Err(error) = self.save_tab_restore()
-            {
-                self.restore.save_failed = true;
-                self.quit = false;
-                self.error(
-                    "Could not save terminal tabs",
-                    format!("{error} Close again to leave the saved snapshot unchanged."),
-                );
-                cx.request_redraw_all();
-                return;
-            }
+        self.capture_window(cx);
+        if !self.restore.window_save_failed
+            && let Err(error) = self.write_window()
+        {
+            self.restore.window_save_failed = true;
+            self.quit = false;
+            self.error("Could not save window settings", format!("{error} Close again to exit without saving them."));
+            cx.request_redraw_all();
+            return;
+        }
+        if !self.restore.save_failed
+            && let Err(error) = self.save_tab_restore()
+        {
+            self.restore.save_failed = true;
+            self.quit = false;
+            self.error(
+                "Could not save terminal tabs",
+                format!("{error} Close again to leave the saved snapshot unchanged."),
+            );
+            cx.request_redraw_all();
+            return;
         }
         cx.exit();
     }

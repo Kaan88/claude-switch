@@ -42,7 +42,6 @@ pub struct Cache {
     retiring: Vec<Work>,
     pub startup: Option<crate::compact_open::NewHandover>,
     pub startup_ack: Option<String>,
-    pub standalone_window: bool,
     pub demo: Option<bool>,
     pub demo_long: bool,
     pub history: Option<(String, Vec<PathBuf>)>,

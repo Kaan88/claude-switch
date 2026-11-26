@@ -106,8 +106,9 @@ the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requ
 consent. `--print` outputs Markdown and opens nothing; add `--save` to keep a local copy.
 `--agent <name>` overrides the handover default for `--open` only. The agent must be available to
 Claude Code in the target account and project. `--name <title>` is also `--open` only; omit it to
-use the same numbered continuation name as the editor. `--open` saves the handover and starts a new
-session in a new Claude Switch window; it waits for
+use the same numbered continuation name as the editor. `--open` saves the handover and opens the new
+session as a tab in the running Claude Switch window (beside the source session's tab when it has
+one), or starts Claude Switch with that tab when it is not running; it waits for
 tab-creation confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16

@@ -184,6 +184,18 @@ impl Tabs {
         self.list.iter().find(|t| t.session.as_deref() == Some(session) && eligible(t))
     }
 
+    /// Moves tab `id` to just right of `anchor`; false if either is missing.
+    pub fn place_after(&mut self, id: u64, anchor: u64) -> bool {
+        let (Some(from), Some(_)) = (self.index(id), self.index(anchor)) else { return false };
+        if id == anchor {
+            return false;
+        }
+        let tab = self.list.remove(from);
+        let to = self.index(anchor).map_or(self.list.len(), |i| i + 1);
+        self.list.insert(to, tab);
+        true
+    }
+
     /// How many tabs have a program that still runs.
     pub fn running(&self) -> usize {
         self.list.iter().filter(|t| t.term.running()).count()
@@ -358,6 +370,17 @@ mod tests {
         let b = t.open(new("b", None), Term::empty((10, 3)));
         let c = t.open(new("c", Some("s-c")), Term::empty((10, 3)));
         (t, [a, b, c])
+    }
+
+    #[test]
+    fn a_handover_tab_moves_beside_its_source_and_stays_shown() {
+        let (mut t, [a, b, c]) = three();
+        assert!(t.place_after(c, a));
+        assert_eq!(t.list.iter().map(|x| x.id).collect::<Vec<_>>(), [a, c, b]);
+        assert_eq!(t.active, Some(c));
+        assert!(t.place_after(a, b));
+        assert_eq!(t.list.iter().map(|x| x.id).collect::<Vec<_>>(), [c, b, a]);
+        assert!(!t.place_after(a, a) && !t.place_after(a, 99) && !t.place_after(99, a));
     }
 
     #[test]
