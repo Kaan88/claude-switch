@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
+  now 2 GiB.
+
 ## 0.1.1 (2026-11-26)
 
 - Chat: a clearer conversation (your messages in tinted bubbles, Claude's answers without a card,
