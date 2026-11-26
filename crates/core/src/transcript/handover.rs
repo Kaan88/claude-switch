@@ -18,8 +18,10 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
     // Bound the snapshot to the initial file length; a simultaneous append is for the next handover.
     let file = File::open(path)?;
     let size = file.metadata()?.len();
-    if size > 64 * 1024 * 1024 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Handover transcript exceeds 64 MiB"));
+    // Read as a stream and only prompts and answers are kept, so the size bounds time, not memory.
+    // Long sessions with large tool output reach a few hundred MiB.
+    if size > 2 * 1024 * 1024 * 1024 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Handover transcript exceeds 2 GiB"));
     }
     let mut reader = BufReader::new(file.take(size));
     let mut line = Vec::new();

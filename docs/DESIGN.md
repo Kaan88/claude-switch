@@ -324,7 +324,7 @@ Every serialized request, including a merge, is capped at 60,000 characters. The
 parts one at a time, prefers turn boundaries and splits oversized turns. Adjacent summaries
 merge in bounded stages. Model replies supply only six Markdown
 fields; the application renders the headings and all local evidence independently. Invalid or
-missing summary fields say `unknown`. A transcript over 64 MiB, or a record over 48 MiB,
+missing summary fields say `unknown`. A transcript over 2 GiB (it is read as a stream; only prompts and answers are kept), or a record over 48 MiB,
 fails the handover rather than silently dropping a possible user turn.
 
 Native OpenCode V2 is discovered on `PATH`. `opencode models` is cached in memory, with manual
