@@ -196,11 +196,18 @@ impl Ui {
             if let Some(body) = &row.body {
                 let range = selection(&self.selection, &row.id, body.text());
                 if row.compact {
-                    let c = p.clip(Rect::new(tx, y, (width - INSET * 2.0 - sw - 8.0).max(1.0), HEAD));
-                    body.draw(p, tx, y + 7.0, range, pal);
+                    let bounds = Rect::new(tx, y, (width - INSET * 2.0 - sw - 8.0).max(1.0), HEAD);
+                    let c = p.clip(bounds);
+                    body.draw(p, Rect::new(tx, y + 7.0, bounds.w, body.height()), bounds, range, pal);
                     p.restore(c);
                 } else {
-                    body.draw(p, tx, py, range, pal);
+                    body.draw(
+                        p,
+                        Rect::new(tx, py, (width - 2.0 * INSET).max(1.0), body.height()),
+                        self.body,
+                        range,
+                        pal,
+                    );
                     py += body.height();
                 }
             }

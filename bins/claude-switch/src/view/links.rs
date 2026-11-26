@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 
 use mdshared_ui::platform;
 
-fn url(s: &str) -> bool {
-    ["https://", "http://"]
-        .iter()
-        .any(|p| s.get(..p.len()).is_some_and(|start| start.eq_ignore_ascii_case(p)) && s.len() > p.len())
+pub fn url(s: &str) -> bool {
+    !s.chars().any(char::is_control)
+        && ["https://", "http://"]
+            .iter()
+            .any(|p| s.get(..p.len()).is_some_and(|start| start.eq_ignore_ascii_case(p)) && s.len() > p.len())
 }
 
 fn local(s: &str) -> bool {

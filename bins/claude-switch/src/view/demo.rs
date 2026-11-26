@@ -155,7 +155,34 @@ fn seed(demo: &Transcript, file: &mut File) -> io::Result<()> {
         8,
         "assistant",
         json!(
-            "### Proof notes\n- **Dusk** uses the sun; **night** uses the moon.\nThe [night proof](ridge-proof.png) matches the [field notes](field-notes.md)."
+            r#"### Proof notes
+
+| Plate | Light |
+| --- | --- |
+| Dusk | Sun |
+| Night | Moon |
+
+1. Compare both silhouettes.
+   - [x] Check contrast.
+   - [ ] Review at pocket size.
+2. Keep the **night** plate.
+
+> Face west. The paler peak stands beyond the saddle.
+
+---
+
+Use `caption` for the printed label. See the [Markdown reference](https://commonmark.org/).
+
+```rust
+fn caption(night: bool) -> &'static str {
+    if night { "Moon" } else { "Sun" }
+}
+```
+
+```sh
+plate="night"
+printf '%s\n' "$plate"
+```"#
         ),
     )?;
     Ok(())

@@ -3,9 +3,10 @@
 pub mod attach;
 mod discovery;
 mod links;
-mod markdown;
 mod model;
 mod pictures;
+mod preview;
+mod text;
 mod ui;
 
 use std::path::PathBuf;

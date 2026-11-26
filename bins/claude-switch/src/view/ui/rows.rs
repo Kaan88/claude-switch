@@ -2,10 +2,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use claude_switch_core::transcript::{Item, ItemId, ItemKind, NoticeKind, Subagent, Task, TaskStatus, ToolState};
+use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::theme::Palette;
 
-use super::super::markdown::TextLayout;
 use super::super::model::{Group, Model};
+use super::super::preview::Preview;
+use super::super::text::TextLayout;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Id {
@@ -37,13 +39,48 @@ pub(super) struct Body {
     raw: String,
     rich: bool,
     width: f32,
-    layout: TextLayout,
+    layout: Layout,
 }
 
-impl std::ops::Deref for Body {
-    type Target = TextLayout;
-    fn deref(&self) -> &TextLayout {
-        &self.layout
+enum Layout {
+    Plain(Box<TextLayout>),
+    Markdown(Box<Preview>),
+}
+
+impl Body {
+    pub fn text(&self) -> &str {
+        match &self.layout {
+            Layout::Plain(t) => t.text(),
+            Layout::Markdown(t) => t.text(),
+        }
+    }
+
+    pub fn height(&self) -> f32 {
+        match &self.layout {
+            Layout::Plain(t) => t.height(),
+            Layout::Markdown(t) => t.height(),
+        }
+    }
+
+    pub fn point(&self, x: f32, y: f32) -> (usize, Option<&str>) {
+        match &self.layout {
+            Layout::Plain(t) => (t.at(x, y), t.link(x, y)),
+            Layout::Markdown(t) => t.point(x, y),
+        }
+    }
+
+    pub fn draw(
+        &self,
+        p: &mut Painter,
+        area: Rect,
+        clip: Rect,
+        selection: Option<std::ops::Range<usize>>,
+        pal: &Palette,
+    ) {
+        match &self.layout {
+            Layout::Plain(t) => t.draw(p, area.x, area.y, selection, pal),
+            Layout::Markdown(t) => t.draw(p, area, clip, selection, pal),
+        }
     }
 }
 
@@ -89,7 +126,12 @@ impl Rows<'_> {
         {
             return body;
         }
-        Body { raw: raw.to_owned(), rich, width, layout: TextLayout::new(raw, self.pal, self.scale, width, rich) }
+        let layout = if rich {
+            Layout::Markdown(Box::new(Preview::new(raw, self.pal, self.scale, width)))
+        } else {
+            Layout::Plain(Box::new(TextLayout::new(raw, self.pal, self.scale, width)))
+        };
+        Body { raw: raw.to_owned(), rich, width, layout }
     }
 
     fn add(&mut self, id: Id, title: &str, stamp: &str, text: &str, rich: bool, tone: Tone) -> &mut Row {

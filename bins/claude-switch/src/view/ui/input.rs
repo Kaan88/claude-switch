@@ -28,7 +28,8 @@ impl Ui {
         {
             return None;
         }
-        Some((row, layout.at(dx, dy), layout.link(dx, dy)))
+        let (at, link) = layout.point(dx, dy);
+        Some((row, at, link))
     }
 
     pub fn blur(&mut self) {
@@ -89,7 +90,7 @@ impl Ui {
             {
                 let dx = x - self.body.x - INSET;
                 let dy = y - self.body.y + self.offset - row.top - if row.compact { 7.0 } else { HEAD };
-                let next = text.at(dx, dy);
+                let next = text.point(dx, dy).0;
                 if next != *caret {
                     *caret = next;
                     changed = true;
