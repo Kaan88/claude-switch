@@ -7,7 +7,9 @@
   the tab to the new session and sends the handover as its first message, through the Chat view's
   checks; the dialog's button reads **Continue here**. The old session is marked handed over in
   its tab and in Sessions. A step that does not happen in time stops it with the reason and the
-  saved file's path. Otherwise, or with a new tab chosen, it opens a new tab as before.
+  saved file's path. Otherwise, or with a new tab chosen, it opens a new tab as before. Only that
+  tab switches to Chat (the default for new tabs is kept), and Claude Code's own name follows with
+  `/rename` once the first message has gone.
 - Handover: when you give no focus, one is picked locally from the session (coordination, non-code
   work, or the default); the dialog says which and lets you edit it, and Settings › Handovers can
   edit and reset each of the three texts. The summary gains an **In flight and promised** section

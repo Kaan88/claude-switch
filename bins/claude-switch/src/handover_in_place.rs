@@ -112,9 +112,8 @@ impl AppState {
             since: Instant::now(),
         });
         self.show_tab(tab);
-        if self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| !p.chat.enabled) {
-            self.set_chat_layout(true);
-        }
+        // Chat for this tab only; the saved default for new tabs stays as it was.
+        self.set_shown_tab_chat(true);
         self.toast(
             "Continuing here: Claude Code clears the conversation, then gets the handover.".into(),
             Instant::now(),
@@ -146,6 +145,11 @@ impl AppState {
         }
         if !self.save_marks() {
             self.marks = old;
+        }
+        // Claude Code's own name follows (item 39): `/rename` at the next idle prompt, through the
+        // Chat view's slash gate, once the first message has gone.
+        if let Some(t) = self.tabs.get_mut(tab) {
+            t.cli_rename = Some((new.to_owned(), job.name.clone()));
         }
         self.rebuild_view();
         self.toast("Handed over: this tab continues from the summary.".into(), Instant::now());

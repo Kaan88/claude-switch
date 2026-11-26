@@ -175,6 +175,7 @@ mod tests {
     fn clear_then_follow_then_the_handover_as_first_message_all_through_the_gate() {
         let mut st = super::super::tests::demo();
         let start = Instant::now();
+        st.win_file.chat_default = false;
         let tab = st.tabs.shown_mut().unwrap();
         let id = tab.id;
         let old = tab.session.clone().unwrap();
@@ -211,6 +212,11 @@ mod tests {
         assert!(st.in_place_tick(start), "{:?}", st.tabs.get(id).unwrap().pane.as_ref().unwrap().chat.error);
         let tab = st.tabs.get(id).unwrap();
         assert!(tab.in_place.is_none(), "done");
+        assert_eq!(
+            tab.cli_rename,
+            Some(("11111111-2222-4333-8444-555555555555".into(), "Old · continued".into())),
+            "Claude Code's own name follows with /rename at the next idle prompt"
+        );
         let writes = &tab.pane.as_ref().unwrap().chat.writes;
         assert!(writes.iter().any(|w| String::from_utf8_lossy(w).contains("## Goal")), "{writes:?}");
     }
@@ -227,6 +233,17 @@ mod tests {
         assert!(st.in_place_tick(start), "no waiting for the deadline");
         assert!(st.tabs.get(id).unwrap().in_place.is_none());
         assert!(st.tabs.get(id).unwrap().pane.as_ref().unwrap().chat.writes.is_empty());
+    }
+
+    #[test]
+    fn chat_for_the_handover_tab_only_leaves_the_saved_default_alone() {
+        let mut st = super::super::tests::demo();
+        st.win_file.chat_default = false;
+        st.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat.enabled = false;
+        assert!(st.set_shown_tab_chat(true));
+        assert!(st.tabs.shown().unwrap().pane.as_ref().unwrap().chat.enabled);
+        assert!(!st.win_file.chat_default, "new tabs still open as the user chose");
+        assert!(!st.set_shown_tab_chat(true), "already in Chat");
     }
 
     #[test]

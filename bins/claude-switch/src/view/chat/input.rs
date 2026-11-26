@@ -106,9 +106,18 @@ impl AppState {
     }
 
     pub fn set_chat_layout(&mut self, enabled: bool) {
+        if self.set_shown_tab_chat(enabled) {
+            self.win_file.chat_default = enabled;
+            self.save_window();
+        }
+    }
+
+    /// Switches only the shown tab between Chat and the terminal, leaving the saved default
+    /// alone. True when it changed.
+    pub fn set_shown_tab_chat(&mut self, enabled: bool) -> bool {
         self.clear_session_text_focus();
-        let Some(tab) = self.tabs.shown_mut() else { return };
-        let Some(pane) = &mut tab.pane else { return };
+        let Some(tab) = self.tabs.shown_mut() else { return false };
+        let Some(pane) = &mut tab.pane else { return false };
         if pane.chat.enabled != enabled {
             tab.term.stop_pointer();
             pane.chat.enabled = enabled;
@@ -122,9 +131,9 @@ impl AppState {
             } else {
                 pane.ui.set_chat(false);
             }
-            self.win_file.chat_default = enabled;
-            self.save_window();
+            return true;
         }
+        false
     }
 
     pub fn chat_input_tick(&mut self, cx: &mut Cx<'_, Msg>) {

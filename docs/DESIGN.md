@@ -527,7 +527,8 @@ whose identity is verified as that session, with a live process and the Chat vie
 for the dialog and automatic handovers, as the chosen account). Otherwise, when **Where it
 continues** is A new tab, or when Switch is not running, it opens a new tab as before.
 
-Switch shows that tab in the Chat view and goes through the Chat view's gate for every write; it
+Switch shows that tab in the Chat view (that tab only; the saved Chat default for new tabs is
+left as it was) and goes through the Chat view's gate for every write; it
 never writes to the terminal itself. At an idle prompt it sends `/clear` with the gate's slash
 command path (up to 90 seconds for the prompt to become idle), waits until the tab has followed
 the CLI to the new session that `/clear` starts (the same following as for any `/clear`; the
@@ -536,8 +537,10 @@ empty composer and sends it with the composer's own send, so its checks and refu
 to 60 seconds). A draft in the composer is never replaced. Above the command-line limit the first
 message asks the session to read the saved file, as for a new tab. When the message is taken, the
 new session gets the handover provenance and continuation name, and the old one is marked handed
-over. A step that does not happen in time, a process that ends, or a tab that changes session
-before `/clear` stops it with the reason; nothing else is sent, and the notice names the saved
+over; then, at the next idle prompt, `/rename <continuation name>` goes through the same slash
+gate, so Claude Code's own name follows as for a tab rename. A step that does not happen in time,
+a process that ends, a tab that changes session before `/clear`, or a Claude Code that draws its
+full-screen view (where Chat cannot send) stops it with the reason; nothing else is sent, and the notice names the saved
 handover file, which is kept either way.
 
 ## Pictures into the CLI
