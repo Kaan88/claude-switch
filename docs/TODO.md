@@ -215,3 +215,10 @@ and in the README, not committed, and not copied to the installed clone
     user's messages tinted and right-aligned, Claude's answers without a card, tool calls as compact
     mono rows grouped under the answer, Markdown files opening in the viewer. Share the drawing code
     with the Chat view rather than keeping two looks; the panel keeps its own width and font size.
+14. **Text in input boxes cannot be selected with the mouse, and there is no context menu** (owner,
+    2026-11-26; seen in the Sessions search box). Expected everywhere text is typed (search, name
+    dialogs, new session, settings fields, the Chat composer): click to place the caret, drag and
+    Shift+click to select, double-click a word, triple-click all, and a right-click menu with Cut,
+    Copy, Paste, Select all. The fields are the toolkit's `mdshared_ui::textfield::TextField` (and the
+    composer's own editor), so the fix belongs in the toolkit where possible and then benefits every
+    app; tell the toolkit session before building it here.
