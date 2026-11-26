@@ -19,6 +19,17 @@ pub(super) const AMEND: &str = "tab to amend";
 pub(super) const PLAN_ASKS: &str = "Would you like to proceed?";
 /// The plan approval choice that declines (keeps planning).
 pub(super) const PLAN_KEEP: &str = "keep planning";
+/// The permission mode indicators under the input box, lower case, with the chip's names.
+const MODES: [(&str, &str); 6] = [
+    ("accept edits on", "Accept edits"),
+    ("plan mode on", "Plan"),
+    ("auto mode on", "Auto"),
+    ("don't ask on", "Don't ask"),
+    ("bypass permissions on", "Bypass"),
+    ("manual mode on", "Manual"),
+];
+/// How far below the input row the mode indicator may be.
+const MODE_ROWS: usize = 4;
 /// How far above a menu's footer its rows may start.
 const MENU_ROWS: usize = 60;
 /// How many rows above a permission question its tool description may use.
@@ -139,6 +150,15 @@ pub(super) fn permission(screen: &Screen) -> Option<Permission> {
     let tell = menu.entries.iter().position(|e| e.text.contains(TELL_CLAUDE));
     let body = body.iter().map(|s| (*s).to_owned()).collect();
     Some(Permission { question: question.to_owned(), body, tell, menu })
+}
+
+/// The permission mode the indicator under the input row names, if any.
+pub(in crate::view::chat) fn mode(screen: &Screen) -> Option<&'static str> {
+    let row = screen.cursor().row;
+    (row + 1..(row + 1 + MODE_ROWS).min(screen.rows())).find_map(|i| {
+        let text = clean(&screen.row_text(i)).1.to_lowercase().replace('’', "'");
+        MODES.iter().find(|(indicator, _)| text.contains(indicator)).map(|(_, name)| *name)
+    })
 }
 
 /// The plan approval menu: its question right above the choices, one of which keeps planning.

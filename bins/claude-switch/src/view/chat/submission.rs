@@ -1,4 +1,5 @@
 //! The only composer PTY writes. A clipboard send has a separate, fail-closed second step.
+pub(super) mod mode;
 mod report;
 pub(in crate::view) mod screen;
 mod stages;
@@ -315,7 +316,8 @@ impl AppState {
     }
 
     pub(super) fn advance_submission(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
-        let changed = super::question::advance(tab, now, may_write) | clear_recovery(tab, now);
+        let changed =
+            super::question::advance(tab, now, may_write) | mode::advance(tab, now) | clear_recovery(tab, now);
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
         if let Some(wait) = &chat.image_wait {
@@ -627,6 +629,7 @@ pub(super) fn stage_deadline(chat: &Chat) -> Option<Instant> {
         .map(|wait| wait.due)
         .or_else(|| chat.staging.echo.as_ref().map(|wait| wait.due))
         .or_else(|| chat.question.deadline())
+        .or_else(|| chat.mode_deadline())
 }
 
 #[cfg(test)]

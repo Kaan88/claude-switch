@@ -144,6 +144,9 @@ pub struct Chat {
     /// The tab was started with Claude Code's classic renderer (Settings).
     pub(crate) classic_renderer: bool,
     question: question::Card,
+    mode_step: Option<submission::mode::ModeStep>,
+    /// The permission mode as the screen last showed it.
+    mode_shown: Option<&'static str>,
     drawer: Drawer,
     drawer_height: Option<f32>,
     resizing: Option<(f32, f32)>,

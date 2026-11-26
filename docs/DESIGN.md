@@ -728,6 +728,15 @@ own choices, and only while the screen shows that menu: the row right above the 
 row. The same highlight, Enter and deadline rules apply. "Keep planning" with text uses the Tab field
 when the footer offers it, else the text goes to the composer for the next message.
 
+**Permission mode.** The toolbar's Mode chip names the mode from the indicator in the four rows under
+the input row ("accept edits on", "plan mode on", "auto mode on", "don't ask on", "bypass
+permissions on", "manual mode on"); no indicator under a clean prompt reads as Default, anything
+else as "—". No transcript field is used. A click writes one Shift+Tab (`CSI Z`, the CLI's own
+cycle) only under the same checks as a direct slash command (verified, quiet, visibly empty prompt,
+no turn or pending call, no menu); the next click is taken only after the indicator changed, and a
+mode that does not change or cannot be read within two seconds stops with a notice. The chip shows
+only where the toolbar row has room.
+
 Every screen pattern lives in `view/chat/question/screens.rs`.
 
 **Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›

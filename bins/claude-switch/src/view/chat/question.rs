@@ -5,7 +5,7 @@
 //! the screen shows it on the chosen row; a typed answer or comment must be visible before Enter.
 //! Nothing is pre-selected and nothing is answered without a click. Anything unexpected fails
 //! closed, says why and opens the drawer. Screen patterns live in `screens`.
-mod screens;
+pub(super) mod screens;
 
 use std::time::{Duration, Instant};
 

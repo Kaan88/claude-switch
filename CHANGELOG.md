@@ -17,6 +17,7 @@
 - Chat: the Effort chip shows the level the session started with (environment, `--effort`,
   settings, or the model's default) and follows `/effort` and `/model` typed in the terminal; Context
   reads "— after compact" after a compaction until the next answer.
+- Chat: a Mode chip shows the permission mode and cycles it like Shift+Tab at an idle prompt.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

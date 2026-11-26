@@ -136,7 +136,7 @@ impl Chat {
     }
 
     pub(in crate::view::chat) fn observe_cli(&mut self, info: &ChatInfo, screen: &Screen, now: Instant) -> bool {
-        let mut changed = self.observe_local(info);
+        let mut changed = self.observe_local(info) | self.observe_mode(screen);
         let report = &mut self.cli_report;
         let usage = info.usage_offset().map(|at| (info.generation, at));
         if let Some((_, offset)) = usage.filter(|u| Some(*u) != report.transcript) {

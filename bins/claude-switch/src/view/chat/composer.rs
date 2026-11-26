@@ -288,14 +288,22 @@ impl Draw<'_> {
             context = if compacted { "Context —".into() } else { context };
             (effort_w, context_w) = (79.0, 92.0);
         }
+        // The permission mode, when the row has room left for it.
+        let mode = chat.mode_label();
+        let mode_w = fit(p, &mode, 84.0);
+        let mode_w = if room - (effort_w + context_w - 79.0 - 92.0) >= mode_w + 4.0 { mode_w } else { 0.0 };
         for (label, w, control) in [
             (model.as_str(), MODEL_W, Control::Model),
             (effort.as_str(), effort_w, Control::Effort),
             (context.as_str(), context_w, Control::Context),
+            (mode.as_str(), mode_w, Control::Mode),
             ("Compact", 62.0, Control::Compact),
             ("Clear", 44.0, Control::Clear),
             ("/ …", 32.0, Control::Commands),
         ] {
+            if w == 0.0 {
+                continue;
+            }
             self.pill(
                 p,
                 Rect::new(x, r.y + 1.0, w, 24.0),
@@ -506,7 +514,9 @@ mod tests {
                 suggestions,
             );
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();
-            assert_eq!(tool.len(), if width >= 900 { 10 } else { 9 });
+            // The mode chip shows only where the row has room for it.
+            let mode = tool.iter().filter(|(_, t)| *t == Target::Chat(Control::Mode)).count();
+            assert_eq!(tool.len() - mode, if width >= 900 { 10 } else { 9 });
             for (i, (a, _)) in tool.iter().enumerate() {
                 assert!(layout.box_frame.contains(a.x, a.y));
                 for (b, _) in tool.iter().skip(i + 1).copied() {
