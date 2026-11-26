@@ -39,8 +39,9 @@ pub(super) const AMEND: &str = "tab to amend";
 /// How the comment field Tab opens shows on its choice's row: the choice, this mark, then the text
 /// typed so far. Without it the row is still a menu row, where digits pick choices.
 pub(super) const COMMENT_MARK: &str = ":";
-/// Rows only a permission prompt shows, lower case. A menu with one of them near its footer is
-/// never offered as a generic menu card, even when the prompt itself is not recognised.
+/// Rows only a permission prompt shows, lower case. A menu with one of them among its own rows
+/// (below the nearest rule above its footer) is never offered as a generic menu card, even when
+/// the prompt itself is not recognised.
 const PERMISSION_LOOKS: [&str; 5] =
     ["do you want to ", "would you like to ", "tab to amend", "don't ask again", "tell claude what to do"];
 /// How many rows above its footer a prompt's look is searched.
@@ -237,7 +238,11 @@ pub(in crate::view::chat) fn permission_like(screen: &Screen) -> bool {
     if !menu_footer(&lines[footer]) || footer + 2 < cursor || footer > cursor + 9 {
         return false;
     }
-    let near = &lines[footer.saturating_sub(LOOK_ROWS)..=footer];
+    // The CLI draws a prompt or menu under a rule: rows above the nearest one are the conversation,
+    // whose words say nothing about the menu. Without a rule every row near the footer counts.
+    let first = footer.saturating_sub(LOOK_ROWS);
+    let top = lines[first..footer].iter().rposition(|row| rule(row)).map_or(first, |at| first + at);
+    let near = &lines[top..=footer];
     let yes_no = menu(screen).is_some_and(|m| {
         let texts = m.texts();
         let first = texts.first().map(|t| t.to_lowercase()).unwrap_or_default();

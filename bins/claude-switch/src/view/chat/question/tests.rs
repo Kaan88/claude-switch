@@ -944,3 +944,31 @@ fn esc_leaves_a_menu_or_declines_a_prompt_only_while_the_screen_shows_it() {
     press(f.tab(), now, Hit::Escape);
     assert_eq!(f.writes(), [ESC.to_vec()]);
 }
+
+#[test]
+fn words_in_the_conversation_above_a_menu_do_not_make_it_a_permission_prompt() {
+    // Claude's last message asked something; then the user opened a picker. The CLI draws its
+    // menus under a rule, so only the rows below the nearest rule are the menu's own.
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    let above = "\x1b[2J\x1b[H● Do you want to keep the old parser? Would you like to see the diff?\r\n\r\n";
+    let rule = "────────────────────\r\n";
+    f.screen(&format!("{above}{rule}{}", picker(0).replace("\x1b[2J\x1b[H", "")), now);
+    assert!(!screens::permission_like(&f.tab().term.screen));
+    f.sync();
+    assert_eq!(f.chat().question.menu.as_ref().map(|m| m.choices.len()), Some(3), "the picker's card");
+    assert_eq!(f.decide(now), Some(Reason::Menu));
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+
+    // The prompt's own rows still count, with or without a rule above them.
+    for rule in [rule, ""] {
+        let odd = prompt("cargo test --workspace", 0, None).replace(" Do you want to proceed?", " Proceed?");
+        let mut f = Fixture::tool("cargo test --workspace");
+        f.screen(&format!("{above}{rule}{}", odd.replace("\x1b[2J\x1b[H", "")), now);
+        assert!(screens::permission_like(&f.tab().term.screen), "Tab to amend is in its footer");
+        let asks = picker(0).replace(" Switch between Claude models.", " Do you want to switch models?");
+        let mut f = Fixture::idle();
+        f.screen(&format!("\x1b[2J\x1b[H{rule}{}", asks.replace("\x1b[2J\x1b[H", "")), now);
+        assert!(screens::permission_like(&f.tab().term.screen), "the question is the menu's own row");
+    }
+}
