@@ -6,6 +6,7 @@ mod editor;
 mod input;
 mod layout;
 mod paint;
+mod recall;
 mod shortcuts;
 mod side;
 mod submission;
@@ -139,7 +140,7 @@ pub struct Chat {
     editor_drag: bool,
     chips: Vec<Chip>,
     chip_page: usize,
-    recall: Option<usize>,
+    recall: recall::Recall,
     error: Option<&'static str>,
     retry: Option<Intent>,
     queue: Option<Queue>,
@@ -330,22 +331,6 @@ impl Chat {
         self.drawer = Drawer::Manual;
         self.drawer_focus = true;
     }
-}
-
-fn recall<'a>(history: impl Iterator<Item = &'a str>, cursor: &mut Option<usize>, up: bool) -> Option<&'a str> {
-    let next = match (*cursor, up) {
-        (None, true) => 0,
-        (Some(i), true) => i + 1,
-        (Some(0), false) => {
-            *cursor = None;
-            return Some("");
-        }
-        (Some(i), false) => i - 1,
-        (None, false) => return None,
-    };
-    let prompt = history.filter(|text| !text.trim().is_empty()).nth(next)?;
-    *cursor = Some(next);
-    Some(prompt)
 }
 
 #[cfg(test)]

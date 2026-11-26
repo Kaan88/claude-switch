@@ -96,6 +96,10 @@ impl ComposerEditor {
 
     pub fn key(&mut self, k: &KeyName, mods: Mods, text: Option<&str>) {
         let row = self.caret_row();
+        if matches!(k, KeyName::Up | KeyName::Down) {
+            self.vertical(*k == KeyName::Up, mods.shift);
+            return;
+        }
         if !mods.ctrl
             && matches!(k, KeyName::Home | KeyName::End)
             && let Some(range) = self.inner.rows.get(row)
@@ -109,6 +113,33 @@ impl ComposerEditor {
                 self.metrics = None;
             }
         }
+    }
+
+    fn vertical(&mut self, up: bool, select: bool) {
+        let row = self.caret_row();
+        if let Some(range) = self.rows.get(row) {
+            let next = if up { row.saturating_sub(1) } else { (row + 1).min(self.rows.len() - 1) };
+            let col = self.text[range.start..self.caret].chars().count();
+            self.place(self.row_byte(next, col), next, select);
+            return;
+        }
+        // Text can change before the next paint knows its visual wraps. Still honor hard breaks.
+        let start = self.text[..self.caret].rfind('\n').map_or(0, |at| at + 1);
+        let end = self.text[self.caret..].find('\n').map_or(self.text.len(), |at| self.caret + at);
+        let next = if up {
+            let Some(end) = start.checked_sub(1) else { return };
+            let start = self.text[..end].rfind('\n').map_or(0, |at| at + 1);
+            start..end
+        } else {
+            if end == self.text.len() {
+                return;
+            }
+            let start = end + 1;
+            start..self.text[start..].find('\n').map_or(self.text.len(), |at| start + at)
+        };
+        let col = self.text[start..self.caret].chars().count();
+        let at = self.text[next.clone()].char_indices().nth(col).map_or(next.end, |(at, _)| next.start + at);
+        self.move_to(at, select);
     }
 
     fn target(&self, x: f32, y: f32, word: bool) -> (usize, usize) {
@@ -135,6 +166,18 @@ impl ComposerEditor {
 
     pub fn caret_row(&self) -> usize {
         self.row_hint.unwrap_or_else(|| self.inner.row_at(self.inner.caret))
+    }
+
+    pub fn on_first_line(&self) -> bool {
+        if self.rows.is_empty() { !self.text[..self.caret].contains('\n') } else { self.caret_row() == 0 }
+    }
+
+    pub fn on_last_line(&self) -> bool {
+        if self.rows.is_empty() {
+            !self.text[self.caret..].contains('\n')
+        } else {
+            self.caret_row() + 1 == self.rows.len()
+        }
     }
 
     pub fn point(&mut self, x: f32, y: f32, select: bool) -> bool {

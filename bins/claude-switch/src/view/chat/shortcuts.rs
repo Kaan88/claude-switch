@@ -114,6 +114,7 @@ impl AppState {
         chat.commands.open = open;
         chat.commands.reset();
         if open {
+            chat.recall.cancel_load();
             chat.drawer_focus = false;
             if let crate::source::Source::Real(roots) = &self.source {
                 let account =
@@ -129,7 +130,7 @@ impl AppState {
 
     pub(super) fn chat_editor_changed(&mut self) {
         let Some(chat) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()).map(|p| &mut p.chat) else { return };
-        chat.recall = None;
+        chat.recall.cancel_load();
         if chat.error == Some(super::submission::BAD_TEXT)
             && !chat.editor.text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
         {

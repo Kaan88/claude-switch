@@ -640,8 +640,11 @@ terminal output shows a quiet, clean prompt. If paste succeeded but Enter did no
 rechecks the staged input and retries only the Enter key. The composer replaces line feeds and
 tabs with spaces for messages, refuses other control characters, and writes the text as bracketed
 paste followed by one app-generated Enter. Ordinary
-terminal paste refuses multiline clipboard text when bracketed paste is off. Recall uses
-loaded main-transcript prompts. Expanded tool rows show bounded previews:
+terminal paste refuses multiline clipboard text when bracketed paste is off. Composer Up on the
+first displayed line and Down on the last walk real prompts in the main transcript, including
+terminal input. Recall skips adjacent repeats, pages back through the transcript worker as needed,
+and restores the original editor on Escape or Down past the newest.
+While the slash picker is open, it keeps the arrow keys. Expanded tool rows show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
 additions, and shell output uses only its first text lines. In Chat's Details panel, Task and Agent
 rows expand to show full task text or reported agent details. **Changed files** lists successful

@@ -271,18 +271,6 @@ fn direct_input_discards_unsampled_old_prompt_and_stop_cannot_reuse_a_turn() {
 }
 
 #[test]
-fn recall_walks_only_nonempty_prompts_newest_first_and_returns_to_the_empty_draft() {
-    let mut index = None;
-    let history = || ["", "latest", " \n ", "older\nsecond line"].into_iter();
-    assert_eq!(recall(history(), &mut index, true), Some("latest"));
-    assert_eq!(recall(history(), &mut index, true), Some("older\nsecond line"));
-    assert_eq!(recall(history(), &mut index, true), None);
-    assert_eq!(recall(history(), &mut index, false), Some("latest"));
-    assert_eq!(recall(history(), &mut index, false), Some(""));
-    assert_eq!(index, None);
-}
-
-#[test]
 fn layout_keeps_composer_and_drawer_disjoint_and_centers_the_reading_measure() {
     for (w, h, panel) in [(760.0, 480.0, false), (1100.0, 720.0, true), (1920.0, 1080.0, true)] {
         let area = Rect::new(0.0, 80.0, w, h - 80.0);
