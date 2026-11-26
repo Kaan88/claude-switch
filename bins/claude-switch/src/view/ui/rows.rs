@@ -355,12 +355,17 @@ impl Rows<'_> {
                 Group::One(id) => std::slice::from_ref(id),
                 Group::Tools(ids) => ids.as_slice(),
             };
+            // Thoughts ride along in a group of tool calls but are not counted as calls.
+            let calls = ids
+                .iter()
+                .filter(|id| matches!(m.items.get(id), Some(Item { kind: ItemKind::Tool { .. }, .. })))
+                .count();
             if let [first, ..] = ids
-                && collapsible(ids.len())
+                && collapsible(calls)
             {
                 let mut row = self.row(Id::Group(*first), Style::Group);
                 row.open = expanded.contains(first);
-                row.title = format!("{} tool calls", ids.len());
+                row.title = format!("{calls} tool calls");
                 let mut failed = 0;
                 let mut running = 0;
                 for id in ids {
@@ -381,7 +386,7 @@ impl Rows<'_> {
                     self.put_files(&mut writes);
                 }
                 writes.observe(id, item, files);
-                if !collapsible(ids.len()) || expanded.contains(&ids[0]) {
+                if !collapsible(calls) || expanded.contains(&ids[0]) {
                     self.item(id, item, tool_expanded.contains(&id), files, backgrounds.contains(&id));
                 }
             }
@@ -429,14 +434,16 @@ impl Rows<'_> {
                 row.body = Some(self.shape(&row.id, markdown, row.geo.tw, BodyKind::Markdown, files));
                 row
             }
-            ItemKind::Notice { kind, text } => {
-                let (title, tone) = match kind {
-                    NoticeKind::Compaction => ("Context compacted", Tone::Muted),
-                    NoticeKind::ApiError => ("API error", Tone::Warning),
+            ItemKind::Notice { kind: kind @ (NoticeKind::Compaction | NoticeKind::ApiError), text } => {
+                let (title, tone) = if *kind == NoticeKind::Compaction {
+                    ("Context compacted", Tone::Muted)
+                } else {
+                    ("API error", Tone::Warning)
                 };
                 let stamp = item.timestamp.as_deref().and_then(|s| s.get(11..19)).unwrap_or("");
                 self.card(Id::Message(id), title, stamp, text, tone, files)
             }
+            ItemKind::Notice { kind, text } => self.notice(id, *kind, text, open, files),
             ItemKind::Tool { name, summary, file_path, state, pictures, subagent, card, duration_ms, .. } => {
                 let mut row = self.row(Id::Tool(id), Style::Tool);
                 row.title = one_line(name, 160);
@@ -470,6 +477,21 @@ impl Rows<'_> {
             }
         };
         self.put(row);
+    }
+
+    /// A small notice: one line like a tool row (its kind and the text's first line) that
+    /// expands to the whole text.
+    fn notice(&mut self, id: ItemId, kind: NoticeKind, text: &str, open: bool, files: Option<&Files>) -> Row {
+        let (title, tone, body) = notice_look(kind);
+        let mut row = self.row(Id::Tool(id), Style::Tool);
+        row.title = title.into();
+        row.target = one_line(text.lines().find(|l| !l.trim().is_empty()).unwrap_or(""), 320);
+        row.tone = tone;
+        row.open = open;
+        if open {
+            row.body = Some(self.shape(&row.id, text, row.geo.tw, body, files));
+        }
+        row
     }
 
     pub fn agents(&mut self, agents: &[Subagent]) {
@@ -566,6 +588,20 @@ fn output_cards(
         }
     }
     by_row
+}
+
+fn notice_look(kind: NoticeKind) -> (&'static str, Tone, BodyKind) {
+    match kind {
+        NoticeKind::Thought => ("Thought", Tone::Muted, BodyKind::Markdown),
+        NoticeKind::HookError => ("Hook error", Tone::Warning, BodyKind::Plain),
+        NoticeKind::PromptBlocked => ("Prompt blocked by a hook", Tone::Warning, BodyKind::Plain),
+        NoticeKind::StopHook => ("Stop hook feedback", Tone::Accent, BodyKind::Plain),
+        NoticeKind::Memory => ("Memory", Tone::Muted, BodyKind::Plain),
+        NoticeKind::Recap => ("Recap", Tone::Muted, BodyKind::Markdown),
+        NoticeKind::Info => ("Notice", Tone::Warning, BodyKind::Plain),
+        NoticeKind::Compaction => ("Context compacted", Tone::Muted, BodyKind::Plain),
+        NoticeKind::ApiError => ("API error", Tone::Warning, BodyKind::Plain),
+    }
 }
 
 const fn collapsible(count: usize) -> bool {

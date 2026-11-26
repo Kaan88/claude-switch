@@ -287,6 +287,27 @@ the tool and its target, and the time between use and result timestamps when bot
 ordered. Runs of four or more consecutive tools start collapsed. Expand a row for the bounded
 details and any output pictures; a group can be expanded independently of its rows.
 
+Notices are rows like a tool row (their kind and the first line) that expand to the whole text,
+at most 8 KiB. Claude Code's docs call the transcript format internal and do not describe these
+records, so only shapes taken from the documented Agent SDK messages and the notice texts the docs
+quote are matched; anything else stays hidden rather than shown wrongly:
+
+| Shown as | Matched from |
+| --- | --- |
+| Thought | an assistant `thinking` block with readable text; redacted or omitted thinking (signature only) is not shown; thoughts sit inside a tool group without counting as calls |
+| Hook error | a `system` `hook_response` with `outcome: "error"` (hook name, stderr); `stop_hook_summary` with `hookErrors`; a text whose first line has "<hook name> hook error" |
+| Prompt blocked by a hook | a text ending its block with "Original prompt:", or a first line "… blocked by … hook" |
+| Stop hook feedback | a text starting "Stop hook feedback" (or SubagentStop); `stop_hook_summary` with `preventedContinuation` |
+| Memory | a `system` subtype starting `memory`; a line "Saved N memories" / "Recalled N memory" |
+| Recap | a `system` `away_summary`, `recap` or `session_recap` with content |
+| Notice | a `system` `informational` record with `level: "warning"` |
+
+Texts are read from `system` records' `content` and from Claude Code's own (`isMeta`) user records.
+Not shown: `turn_duration`, `compact_boundary` (the compact summary already has its card), `local_command`
+(item 47), `task_notification` (background work), informational records below warning level, and
+`attachment` records (the reader does not read that record type). Compaction and API errors keep
+their cards.
+
 The embedded Markdown viewer renders assistant answers and named Markdown files. Conversation row
 heights are cached and only visible slices are rasterized. Bare or inline-code Markdown paths and
 explicit Markdown link destinations are actionable when the reader worker finds a regular file.

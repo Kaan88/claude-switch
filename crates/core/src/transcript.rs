@@ -16,6 +16,7 @@ mod chat;
 pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellStatus};
 mod decode;
 mod native_tasks;
+mod notices;
 pub use chat::{ChatInfo, Phase as ChatPhase, ToolCard};
 mod tail;
 use decode::*;
@@ -52,6 +53,18 @@ pub enum ToolState {
 pub enum NoticeKind {
     Compaction,
     ApiError,
+    /// Claude's readable thinking.
+    Thought,
+    HookError,
+    /// A hook refused the prompt.
+    PromptBlocked,
+    /// A Stop or SubagentStop hook kept Claude working.
+    StopHook,
+    Memory,
+    /// The session recap shown on returning to the terminal.
+    Recap,
+    /// Another banner Claude Code marked as a warning.
+    Info,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -405,6 +418,11 @@ impl View {
             return;
         }
         if flag(&value, "isMeta") {
+            if kind == LineKind::User
+                && let Some((kind, text)) = notices::meta(&value)
+            {
+                self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
+            }
             return;
         }
         let content = &value["message"]["content"];
@@ -514,7 +532,9 @@ impl View {
                     self.add(id(0), timestamp, ItemKind::Assistant { markdown: markdown.into() }, changes);
                 }
                 for (i, block) in blocks(content).enumerate() {
-                    if block["type"] == "text" {
+                    if let Some(text) = notices::thought(block) {
+                        self.add(id(i), timestamp, ItemKind::Notice { kind: NoticeKind::Thought, text }, changes);
+                    } else if block["type"] == "text" {
                         if let Some(text) = block["text"].as_str().filter(|s| !s.is_empty()) {
                             self.add(id(i), timestamp, ItemKind::Assistant { markdown: text.into() }, changes);
                         }
@@ -545,7 +565,11 @@ impl View {
                     }
                 }
             }
-            LineKind::System => (),
+            LineKind::System => {
+                if let Some((kind, text)) = notices::system(&value) {
+                    self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
+                }
+            }
         }
     }
 

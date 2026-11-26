@@ -20,6 +20,8 @@
   outputs say what they are with an icon and a kind (PDF, document, link, pull request with its
   repository and number, …), in the conversation and in Details › Outputs.
 - Details panel: the Tasks tab follows Claude Code's TaskCreate/TaskUpdate tasks, not only TodoWrite.
+- Chat: Claude's readable thinking shows as a collapsed "Thought"; hook errors, prompts blocked by a
+  hook, Stop hook feedback, memory notices and session recaps show as small rows that expand.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::SystemTime;
 
-use claude_switch_core::transcript::{Changes, Item, ItemId, ItemKind, Picture, Reader, Subagent, Task};
+use claude_switch_core::transcript::{Changes, Item, ItemId, ItemKind, NoticeKind, Picture, Reader, Subagent, Task};
 use mdshared_text::image::Image;
 use mdshared_ui::thumbs::MemoryCache;
 
@@ -77,10 +77,11 @@ pub enum Group {
     Tools(Vec<ItemId>),
 }
 
-fn group(items: &BTreeMap<ItemId, Item>) -> Vec<Group> {
+pub(super) fn group(items: &BTreeMap<ItemId, Item>) -> Vec<Group> {
     let mut groups = Vec::new();
     for (&id, item) in items {
-        if matches!(item.kind, ItemKind::Tool { .. }) {
+        // A thought between tool calls stays in their group instead of splitting it.
+        if matches!(item.kind, ItemKind::Tool { .. } | ItemKind::Notice { kind: NoticeKind::Thought, .. }) {
             if let Some(Group::Tools(ids)) = groups.last_mut() {
                 ids.push(id);
             } else {

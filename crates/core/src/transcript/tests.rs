@@ -118,13 +118,14 @@ fn filters_hidden_invalid_and_repeated_content_and_keeps_order() {
     fs::write(&path, lines.join("\r\n") + "\r\n").unwrap();
     let reader = Reader::open(&path, 4096).unwrap();
     let items: Vec<_> = reader.items().map(|(_, item)| item).collect();
-    assert_eq!(items.len(), 5);
+    assert_eq!(items.len(), 6, "an ordinary system record is no notice");
     assert!(matches!(&items[0].kind, ItemKind::Prompt { text, .. } if text == "/x"));
-    assert_eq!(items[1].timestamp.as_deref(), Some("2026-11-26T01:00:00Z"));
-    assert!(matches!(&items[1].kind, ItemKind::Assistant { markdown } if markdown == "**hi**\n  there"));
-    assert!(matches!(&items[2].kind, ItemKind::Prompt { text, .. } if text == "works"));
-    assert_eq!(items[3].kind, ItemKind::Notice { kind: NoticeKind::Compaction, text: "one\ntwo".into() });
-    assert_eq!(items[4].kind, ItemKind::Notice { kind: NoticeKind::ApiError, text: "unavailable".into() });
+    assert_eq!(items[1].kind, ItemKind::Notice { kind: NoticeKind::Thought, text: "hide".into() });
+    assert_eq!(items[2].timestamp.as_deref(), Some("2026-11-26T01:00:00Z"));
+    assert!(matches!(&items[2].kind, ItemKind::Assistant { markdown } if markdown == "**hi**\n  there"));
+    assert!(matches!(&items[3].kind, ItemKind::Prompt { text, .. } if text == "works"));
+    assert_eq!(items[4].kind, ItemKind::Notice { kind: NoticeKind::Compaction, text: "one\ntwo".into() });
+    assert_eq!(items[5].kind, ItemKind::Notice { kind: NoticeKind::ApiError, text: "unavailable".into() });
     assert!(!reader.has_earlier());
 }
 
