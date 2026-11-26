@@ -79,9 +79,10 @@ Right-click a session and choose **Compact and open…**, or use the command pal
 pane’s **Open as…** menu. Pick a model from OpenCode and the account to start Claude Code as.
 After the first-use consent for that provider, review and edit the handover before starting the new
 session. The character/token estimate updates as you edit. You can also copy or export it as Markdown.
-The editor's **Agent** picker starts at **Default (Claude)**, with no `--agent` override.
-Choose a custom CLI agent from the target account, the project, or supported installed plugins
-before selecting **Open in CLI**. Changing the target account resets the choice.
+The editor's **Agent** picker starts with the **Default CLI agent** from **Settings → Handovers**.
+Leave the setting blank to start at **Default (Claude)**, which adds no `--agent` override.
+You can choose a different agent before selecting **Open in CLI**. Changing the target account
+resets the picker to your setting.
 There is no supported agent option for starting a handover in Desktop.
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
@@ -94,13 +95,15 @@ option. To remove remembered permission, use **Settings → Handovers → Forget
 
 ```powershell
 claude-switch compact --session latest --cwd . --print
-claude-switch compact --session latest --cwd . --as work --open
+claude-switch compact --session latest --cwd . --as work --open --agent my-plugin:reviewer
 ```
 
 Use a session ID instead of `latest` to target one transcript; `--model provider/model` overrides
 the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requires prior provider
 consent. `--print` outputs Markdown and opens nothing; add `--save` to keep a local copy.
-`--open` saves the handover and starts a new session in a new Claude Switch window; it waits for
+`--agent <name>` overrides the handover default for `--open` only. The agent must be available to
+Claude Code in the target account and project. `--open` saves the handover and starts a new session
+in a new Claude Switch window; it waits for
 tab-creation confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
@@ -110,8 +113,14 @@ handover's file path in the command line.
 
 ### Install the Claude Code plugin
 
-Put `claude-switch.exe` on `PATH`. From the parent folder of a local checkout named `claude-switch`,
-register its [plugin marketplace](https://code.claude.com/docs/en/plugins/marketplaces) and install:
+The installer offers **Add Claude Switch to PATH** for the current Windows user (checked by
+default). Restart your terminal or Claude Code to pick up the change. Uninstall removes entries
+Setup added, not pre-existing ones. The plugin first checks `PATH`, then falls back to
+`%LOCALAPPDATA%\Programs\Claude Switch\claude-switch.exe`. If you use a standalone copy or a
+different install folder without the Setup task, put `claude-switch.exe` on `PATH` yourself.
+
+From the parent folder of a local checkout named `claude-switch`, register its
+[plugin marketplace](https://code.claude.com/docs/en/plugins/marketplaces) and install:
 
 ```powershell
 claude plugin marketplace add ./claude-switch
@@ -122,7 +131,17 @@ claude plugin list
 This installs to the current Claude Code profile (user scope). Keep the checkout at that path.
 To load without installing, start Claude Code with
 `claude --plugin-dir "<path-to-claude-switch-repo>\plugin"` for that session only.
-Use `/switch-handover:switch-compact [what to keep]` after granting provider consent in Claude Switch.
+After granting provider consent in Claude Switch, use
+`/switch-handover:switch-compact [agent:<name>] [what to keep]`, for example:
+
+```text
+/switch-handover:switch-compact agent:my-plugin:reviewer Keep the open review findings
+```
+
+Only a first word beginning with `agent:` is an override. Names use up to 128 ASCII characters:
+letters or digits start each segment; letters, digits, `-`, and `_` continue it; `:` separates
+segments. An invalid first-word name stops the command. Remaining text is literal focus; with
+no first-word prefix, the entire text is focus and the configured default is used.
 
 ## Licence
 

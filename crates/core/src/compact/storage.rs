@@ -1,5 +1,5 @@
-use crate::Roots;
-use serde_json::Value;
+use crate::{Refusal, Roots};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct Preferences {
     pub model: String,
     pub consents: BTreeSet<String>,
+    pub default_agent: Option<String>,
 }
 
 impl Preferences {
@@ -24,7 +25,30 @@ impl Preferences {
                 .filter(|id| valid_component(id))
                 .map(str::to_owned)
                 .collect(),
+            default_agent: value["defaultAgent"]
+                .as_str()
+                .filter(|name| crate::launch::session_agent_args(name).is_ok())
+                .map(str::to_owned),
         }
+    }
+
+    pub(crate) fn json(&self) -> Value {
+        json!({"model": self.model, "consents": self.consents, "defaultAgent": self.default_agent})
+    }
+
+    pub fn set_default_agent(&mut self, name: &str) -> Result<(), Refusal> {
+        let name = name.trim();
+        if name.is_empty() {
+            self.default_agent = None;
+        } else {
+            crate::launch::session_agent_args(name)?;
+            self.default_agent = Some(name.to_owned());
+        }
+        Ok(())
+    }
+
+    pub fn agent_for<'a>(&'a self, explicit: Option<&'a str>) -> Option<&'a str> {
+        explicit.or(self.default_agent.as_deref())
     }
 }
 

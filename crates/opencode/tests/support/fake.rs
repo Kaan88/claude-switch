@@ -46,7 +46,13 @@ fn main() {
             process::exit(3);
         }
         ["reload"] => println!(" reloaded "),
-        ["--session-id", "fake-id", "--", first] => {
+        ["--session-id", "fake-id", rest @ ..] => {
+            let (agent, first) = match rest {
+                ["--", first] => (None, first),
+                ["--agent", agent, "--", first] => (Some(*agent), first),
+                _ => panic!("wrong agent or prompt argument placement"),
+            };
+            assert_eq!(agent, env::var("FAKE_CLAUDE_AGENT").ok().as_deref());
             let text = if let Some(path) = first
                 .strip_prefix("Read the handover file at \"")
                 .and_then(|s| s.strip_suffix("\" in full before doing anything else. Then continue from it."))

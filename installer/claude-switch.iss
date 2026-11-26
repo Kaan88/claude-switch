@@ -28,6 +28,7 @@ WizardStyle=modern
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
+Name: "userpath"; Description: "Add Claude Switch to PATH"
 
 [Files]
 Source: "{#Exe}"; DestDir: "{app}"; DestName: "claude-switch.exe"; Flags: ignoreversion
@@ -39,5 +40,35 @@ Source: "{#Notices}"; DestDir: "{app}"; DestName: "THIRD-PARTY-NOTICES"; Flags: 
 Name: "{autoprograms}\Claude Switch"; Filename: "{app}\claude-switch.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
 Name: "{autodesktop}\Claude Switch"; Filename: "{app}\claude-switch.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
-; The uninstaller removes installed files and shortcuts only. User settings
-; and Claude profiles are not installed or uninstalled by this script.
+; User settings and Claude profiles are not installed or uninstalled by this script.
+
+[Code]
+#include "user-path.iss"
+
+const
+  UserEnvironment = 'Environment';
+  PathOwnership = 'Software\Claude Switch\SetupPath';
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Changed: Boolean;
+begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('userpath') then begin
+    if not AddUserPath(UserEnvironment, PathOwnership, ExpandConstant('{app}'), Changed) then
+      SuppressibleMsgBox('Claude Switch was installed, but Setup could not finish updating the current user PATH.',
+        mbInformation, MB_OK, IDOK);
+    if Changed then NotifyEnvironmentChanged;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Changed: Boolean;
+begin
+  if CurUninstallStep = usPostUninstall then begin
+    if not RemoveUserPaths(UserEnvironment, PathOwnership, Changed) then
+      SuppressibleMsgBox('Setup could not safely remove all of its PATH entries. Check your user PATH in Windows Environment Variables.',
+        mbInformation, MB_OK, IDOK);
+    if Changed then NotifyEnvironmentChanged;
+  end;
+end;

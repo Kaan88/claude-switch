@@ -2,6 +2,43 @@ use super::*;
 use crate::dialogs;
 
 #[test]
+fn saved_agent_is_preselected_and_can_be_overridden_with_plain_claude() {
+    let mut st = app();
+    st.config.compact.set_default_agent("main-reviewer").unwrap();
+    let mut dialog = Compact::new(&st, st.selected_session().unwrap().clone(), Some("main"));
+    dialog.apply(&mut st, Ok(Update::Preview("handover".into())));
+    assert_eq!(dialog.agent_name(), Some("main-reviewer"), "even before discovery");
+    let now = Instant::now();
+    dialog.click(&mut st, now, AGENT, 0.0);
+    assert_eq!(dialog.count(), 2, "the discovered entry replaces the settings-only entry");
+    assert_eq!(dialog.key(&KeyName::Enter, Mods::default(), None), Some(OPTION + 1));
+    assert!(dialog.agents[0].description.contains("Synthetic"));
+    dialog.click(&mut st, now, OPTION, 0.0);
+    assert_eq!(dialog.agent_name(), None, "Default (Claude) explicitly adds no flag");
+    dialog.click(&mut st, now, ACCOUNT, 0.0);
+    dialog.click(&mut st, now, OPTION + 1, 0.0);
+    assert_eq!(dialog.agent_name(), Some("main-reviewer"), "an account change resets to Settings");
+    dialog.click(&mut st, now, AGENT, 0.0);
+    assert_eq!(dialog.count(), 3);
+    assert!(dialog.agents[0].description.contains("not found"));
+}
+
+#[test]
+fn creating_a_handover_dialog_reads_another_windows_saved_default() {
+    let root = std::env::temp_dir().join(format!("cs-agent-default-{}", crate::compact_open::session_id().unwrap()));
+    let roots = claude_switch_core::Roots { home: root.join("home"), appdata: root.join("appdata") };
+    let mut st = app();
+    let session = st.selected_session().unwrap().clone();
+    st.source = Source::Real(roots.clone());
+    assert!(st.config.compact.default_agent.is_none());
+    claude_switch_core::config::update_compact(&roots, |p| p.set_default_agent("reviewer")).unwrap();
+    // The history route constructs the same picker without finding or running OpenCode.
+    st.ask_compact_for(session, None, true);
+    assert_eq!(compact(&st).agent_name(), Some("reviewer"));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn preview_offers_default_first_and_changing_account_clears_the_explicit_agent() {
     let mut st = app();
     let now = Instant::now();

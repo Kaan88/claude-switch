@@ -13,6 +13,7 @@ pub(crate) use pages::Settings;
 
 pub(crate) const TERMINAL: &str = "Terminal";
 pub(crate) const OPENCODE: &str = "OpenCode";
+pub(super) const HANDOVERS: &str = "Handovers";
 
 type Page = (&'static str, fn(&AppState) -> Vec<Row>);
 // In display order. Adding a category only needs a label and a row builder here.
@@ -21,7 +22,7 @@ const PAGES: &[Page] = &[
     (TERMINAL, terminal),
     ("Sessions", sessions),
     ("Usage", usage),
-    ("Handovers", handovers),
+    (HANDOVERS, handovers),
     (OPENCODE, opencode),
     ("Notification area", notifications),
 ];
@@ -53,6 +54,7 @@ const SET_RESTORE_TABS: u32 = 87;
 const FORGET_HANDOVER_CONSENTS: u32 = 90;
 const SET_SUGGEST_TOPICS: u32 = 91;
 const SYNC_WORKERS: u32 = 94;
+const SET_HANDOVER_AGENT: u32 = 95;
 
 pub(crate) fn settings(st: &mut AppState, category: Option<&str>) -> Dialog {
     let category = category.or(st.settings_category);
@@ -186,8 +188,24 @@ fn usage(st: &AppState) -> Vec<Row> {
     ]
 }
 
-fn handovers(_: &AppState) -> Vec<Row> {
-    vec![Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents")]
+fn handovers(st: &AppState) -> Vec<Row> {
+    // The existing name dialog edits a draft and validates it on OK, not on every keystroke.
+    let current = st.config.compact.default_agent.as_deref().unwrap_or("Default (Claude)");
+    let label =
+        current.char_indices().nth(26).map_or_else(|| current.to_owned(), |(end, _)| format!("{}…", &current[..end]));
+    vec![
+        Row::action(SET_HANDOVER_AGENT, "Default CLI agent", &label),
+        Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents"),
+    ]
+}
+
+pub(super) fn set_handover_agent(st: &mut AppState, name: &str) -> Result<(), claude_switch_core::Refusal> {
+    if let crate::source::Source::Real(roots) = &st.source {
+        st.config.compact = claude_switch_core::config::update_compact(roots, |prefs| prefs.set_default_agent(name))?;
+    } else {
+        st.config.compact.set_default_agent(name)?;
+    }
+    Ok(())
 }
 
 fn opencode(st: &AppState) -> Vec<Row> {
@@ -228,6 +246,16 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
             }
         }
         Outcome::Action(FORGET_HANDOVER_CONSENTS) => st.forget_handover_consents(),
+        Outcome::Action(SET_HANDOVER_AGENT) if !st.config_damaged => {
+            if let crate::source::Source::Real(roots) = &st.source {
+                st.config.compact = claude_switch_core::config::load(roots).compact;
+            }
+            st.dialog = Some(name_dialog(
+                "Default handover agent (CLI)",
+                st.config.compact.default_agent.as_deref().unwrap_or_default(),
+                NameFor::HandoverAgent,
+            ));
+        }
         Outcome::Action(SYNC_WORKERS) => st.sync_worker_accounts(),
         Outcome::Action(opencode_rows::REFRESH) => st.refresh_opencode(),
         Outcome::Action(opencode_rows::RESTART) => st.ask_restart_opencode(),
@@ -366,7 +394,7 @@ mod tests {
             ],
             &[SET_EMBEDDED, SET_ARCHIVED, SET_WORKERS_SHOWN, SET_HIDDEN, SET_ATTENTION, SET_SUGGEST_TOPICS],
             &[SET_USAGE, SET_USAGE_WARNINGS],
-            &[FORGET_HANDOVER_CONSENTS],
+            &[SET_HANDOVER_AGENT, FORGET_HANDOVER_CONSENTS],
             &[SET_WORKERS, opencode_rows::REFRESH, opencode_rows::RESTART, opencode_rows::STUDIO, SYNC_WORKERS],
             &[SET_TRAY, SET_CLOSE_TO_TRAY],
         ];
@@ -379,6 +407,33 @@ mod tests {
             expected.iter().flat_map(|ids| ids.iter()).collect::<std::collections::HashSet<_>>().len(),
             expected.iter().map(|ids| ids.len()).sum::<usize>(),
         );
+    }
+
+    #[test]
+    fn handover_agent_edit_commits_on_ok_reports_invalid_input_and_can_clear() {
+        let mut st = AppState::new(Source::Demo, None, WindowFile::default());
+        let now = Instant::now();
+        let open = |st: &mut AppState| settings_outcome(st, Outcome::Action(SET_HANDOVER_AGENT));
+        st.dialog = Some(settings(&mut st, Some(HANDOVERS)));
+        open(&mut st);
+        super::super::text_input(&mut st, "bad name");
+        assert!(st.config.compact.default_agent.is_none());
+        super::super::click(&mut st, now, OK, 0.0);
+        assert!(matches!(&st.dialog, Some(Dialog::Name { error: Some(_), .. })));
+        super::super::click(&mut st, now, CANCEL, 0.0);
+        assert_eq!(current(&st).category(), HANDOVERS);
+        open(&mut st);
+        super::super::text_input(&mut st, "my-plugin:review");
+        super::super::click(&mut st, now, OK, 0.0);
+        assert_eq!(st.config.compact.default_agent.as_deref(), Some("my-plugin:review"));
+        assert_eq!(current(&st).category(), HANDOVERS);
+        open(&mut st);
+        if let Some(Dialog::Name { field, .. }) = &mut st.dialog {
+            field.select_all();
+        }
+        super::super::key(&mut st, now, &KeyName::Backspace, Mods::default(), None);
+        super::super::click(&mut st, now, OK, 0.0);
+        assert!(st.config.compact.default_agent.is_none());
     }
 
     #[test]

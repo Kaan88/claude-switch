@@ -78,6 +78,7 @@ pub struct Compact {
     model: usize,
     accounts: Vec<(String, String)>,
     account: usize,
+    default_agent: Option<String>,
     agents: Vec<agents::Agent>,
     agents_loaded: bool,
     agent: usize,
@@ -192,6 +193,10 @@ impl AppState {
     }
 
     pub fn ask_compact_for(&mut self, session: Session, account: Option<&str>, history: bool) {
+        if let Source::Real(roots) = &self.source {
+            // A different window may have saved the default since this window opened.
+            self.config.compact = claude_switch_core::config::load(roots).compact;
+        }
         let mut dialog = Compact::new(self, session, account);
         if history {
             dialog.phase = Phase::History;
@@ -258,12 +263,13 @@ impl Compact {
         let account = account.unwrap_or(&st.current().slug);
         let account = accounts.iter().position(|(slug, _)| slug == account).unwrap_or(0);
         let name = st.title_of(&session).to_owned();
-        Self {
+        let mut this = Self {
             source_tab: None,
             session,
             name,
             accounts,
             account,
+            default_agent: st.config.compact.default_agent.clone(),
             agents: Vec::new(),
             agents_loaded: false,
             agent: 0,
@@ -284,7 +290,9 @@ impl Compact {
             job: None,
             saving: None,
             message: None,
-        }
+        };
+        this.reset_agents();
+        this
     }
 
     fn error(&mut self, text: String) {
@@ -349,12 +357,7 @@ impl Compact {
                 self.saved = None;
             }
             Ok(Update::Agents(slug, agents)) if self.accounts.get(self.account).is_some_and(|a| a.0 == slug) => {
-                self.agents = agents;
-                self.agents_loaded = true;
-                self.agent_focus = self.agent;
-                if self.choice == Some(Choice::Agent) {
-                    self.scroll = self.agent.min(self.count().saturating_sub(PAGE));
-                }
+                self.apply_agents(agents);
             }
             Ok(Update::Agents(..)) => {}
             Err(e) => self.error(e),

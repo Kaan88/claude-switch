@@ -326,7 +326,7 @@ pub fn update_compact(
     let mut current = read_settings(&path)?;
     let mut compact = crate::compact::Preferences::read(&current["compact"]);
     update(&mut compact)?;
-    current["compact"] = json!({"model": compact.model, "consents": compact.consents});
+    current["compact"] = compact.json();
     write_json(&path, &current)?;
     Ok(compact)
 }
@@ -382,7 +382,7 @@ fn config_value(config: &Config) -> Value {
         "terminalFontSize": config.terminal_font_size,
         "windowTheme": config.window_theme,
         "appearance": config.appearance.json(),
-        "compact": {"model": config.compact.model, "consents": config.compact.consents},
+        "compact": config.compact.json(),
     })
 }
 
@@ -393,6 +393,36 @@ mod tests {
     use crate::util::read_json;
     use crate::util::testing::{TempDir, config_with, put};
 
+    #[test]
+    fn handover_agent_loads_valid_names_only_and_is_saved_without_republishing_other_preferences() {
+        let t = TempDir::new("handover-agent");
+        let roots = t.roots();
+        let stale = load(&roots);
+        assert_eq!(stale.compact.default_agent, None);
+        update_compact(&roots, |p| {
+            p.model = "fixture/model".into();
+            p.consents.insert("fixture".into());
+            p.set_default_agent(" plugin:nested:review_2 ")
+        })
+        .unwrap();
+        let after = load(&roots);
+        assert_eq!(after.compact.agent_for(None), Some("plugin:nested:review_2"));
+        assert!(update_compact(&roots, |p| p.set_default_agent("plugin:--flag")).is_err());
+        assert_eq!(load(&roots).compact, after.compact);
+        let mut edited = stale.clone();
+        edited.show_hidden = !stale.show_hidden;
+        assert_eq!(save_changes(&roots, &stale, &edited).unwrap().compact, after.compact);
+        update_compact(&roots, |p| p.set_default_agent(" ")).unwrap();
+        let after = load(&roots);
+        assert_eq!(after.compact.default_agent, None);
+        assert_eq!(after.compact.model, "fixture/model");
+        assert!(after.compact.consents.contains("fixture"));
+        let path = roots.config_file();
+        let mut on_disk = read_json(&path).unwrap();
+        on_disk["compact"]["defaultAgent"] = json!("invalid agent");
+        write_json(&path, &on_disk).unwrap();
+        assert_eq!(load(&roots).compact, after.compact);
+    }
     #[test]
     fn damaged_settings_disable_usage_and_reset_preserves_exact_bytes() {
         let t = TempDir::new("settings-recovery");

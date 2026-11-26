@@ -7,7 +7,7 @@ use std::path::Path;
 mod window;
 
 const USAGE: &str = "Usage: claude-switch compact --session <id|latest> [--cwd <folder>] \
-    [--model <provider/model>] [--as <account>] [--focus-file <file>] [--print | --open] [--save]";
+    [--model <provider/model>] [--as <account>] [--focus-file <file>] [--print | --open [--agent <name>]] [--save]";
 
 #[derive(Default, Debug)]
 struct Options {
@@ -15,6 +15,7 @@ struct Options {
     cwd: Option<String>,
     model: Option<String>,
     account: Option<String>,
+    agent: Option<String>,
     focus_file: Option<String>,
     open: bool,
     save: bool,
@@ -30,6 +31,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
             "--cwd" => &mut options.cwd,
             "--model" => &mut options.model,
             "--as" => &mut options.account,
+            "--agent" => &mut options.agent,
             "--focus-file" => &mut options.focus_file,
             "--save" if !options.save => {
                 options.save = true;
@@ -52,6 +54,12 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
     }
     options.session = session.ok_or("Specify --session <id|latest>.")?;
     options.open = mode.unwrap_or(false);
+    if let Some(name) = &options.agent {
+        claude_switch_core::launch::session_agent_args(name).map_err(|error| error.to_string())?;
+        if !options.open {
+            return Err("--agent selects the new session's agent and requires --open.".into());
+        }
+    }
     Ok(options)
 }
 
@@ -126,7 +134,8 @@ fn run(options: Options) -> Result<(), String> {
     let file = compact::save(&roots, &session.id, &text).map_err(|e| format!("Could not keep the handover: {e}"))?;
     let exe = std::env::current_exe().map_err(|_| "Could not locate Claude Switch.")?;
     let name = file.file_name().and_then(|n| n.to_str()).ok_or("Invalid saved handover path.")?;
-    window::spawn(&exe, &session.id, account, name)?;
+    let agent = config.compact.agent_for(options.agent.as_deref());
+    window::spawn(&exe, &session.id, account, name, agent)?;
     eprintln!("Claude Switch: opened the handover tab in a new window.");
     Ok(())
 }
@@ -154,23 +163,43 @@ pub fn entry(args: impl Iterator<Item = String>) -> i32 {
     }
 }
 
+pub struct Handoff {
+    id: String,
+    account: String,
+    file: String,
+    agent: Option<String>,
+}
+
 /// Only app-owned handovers are accepted by the window handoff, never a caller-selected file path.
-pub fn handoff(roots: &Roots, args: (String, String, String)) -> Result<compact_open::NewHandover, String> {
-    let (id, account, name) = args;
+pub fn handoff(roots: &Roots, args: Handoff) -> Result<compact_open::NewHandover, String> {
+    let Handoff { id, account, file, agent } = args;
     let config = config::load(roots);
     let file = compact::list(roots, &id)
         .map_err(|_| "Could not list saved handovers.")?
         .into_iter()
-        .find(|p| p.file_name().is_some_and(|n| n == name.as_str()))
+        .find(|p| p.file_name().is_some_and(|n| n == file.as_str()))
         .ok_or("The saved handover was not found.")?;
     let session =
         sessions::scan(roots, &config).into_iter().find(|s| s.id == id).ok_or("The original session was not found.")?;
     let text = std::fs::read_to_string(&file).map_err(|_| "Could not read the saved handover.")?;
-    compact_open::prepare(roots, &config, &session, name_of(roots, &session), &account, &text, &file)
+    compact_open::prepare(roots, &config, &session, name_of(roots, &session), &account, &text, &file)?
+        .with_agent(agent.as_deref())
 }
 
-pub fn window_args(args: &mut impl Iterator<Item = String>) -> Option<(String, String, String)> {
-    Some((args.next()?, args.next()?, args.next()?))
+pub fn window_args(mut args: impl Iterator<Item = String>) -> Result<(Handoff, String), String> {
+    let invalid = "Invalid handover window arguments.";
+    let (id, account, file, ack) = (
+        args.next().ok_or(invalid)?,
+        args.next().ok_or(invalid)?,
+        args.next().ok_or(invalid)?,
+        args.next().ok_or(invalid)?,
+    );
+    let agent = args.next();
+    if args.next().is_some() || !window::valid_ack(&ack) {
+        return Err(invalid.into());
+    }
+    window::words(&id, &account, &file, agent.as_deref())?;
+    Ok((Handoff { id, account, file, agent }, ack))
 }
 
 pub(crate) fn acknowledge(key: &str, opened: bool) {
@@ -208,6 +237,23 @@ mod tests {
         assert!(parse("--session latest --model a/b --model c/d").is_err());
         assert!(parse("--session latest --open").unwrap().open);
         assert!(!parse("--session latest").unwrap().open);
+    }
+
+    #[test]
+    fn agent_is_only_for_open_and_validated_before_any_runtime_work() {
+        let parse = |values: &[&str]| super::parse(values.iter().map(|word| word.to_string()));
+        for name in ["", "--help", "plugin::agent", "agent;other", "two words", "ş", &"x".repeat(129)] {
+            assert!(parse(&["--session", "latest", "--open", "--agent", name]).is_err(), "{name:?}");
+        }
+        assert!(parse(&["--session", "latest", "--agent"]).is_err());
+        assert!(parse(&["--session", "latest", "--print", "--agent", "review"]).is_err());
+        assert!(parse(&["--session", "latest", "--open", "--agent", "review", "--agent", "other"]).is_err());
+        let opts = parse(&["--session", "latest", "--agent", "plugin:nested:agent_2", "--open"]).unwrap();
+        let mut prefs = compact::Preferences::default();
+        assert_eq!(prefs.agent_for(None), None);
+        prefs.set_default_agent("review").unwrap();
+        assert_eq!(prefs.agent_for(None), Some("review"));
+        assert_eq!(prefs.agent_for(opts.agent.as_deref()), Some("plugin:nested:agent_2"));
     }
 
     #[test]
