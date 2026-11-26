@@ -17,6 +17,7 @@ pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellSt
 mod decode;
 mod native_tasks;
 mod notices;
+mod local;
 pub use chat::{ChatInfo, Phase as ChatPhase, Question, QuestionOption, ToolCard};
 mod tail;
 use decode::*;
@@ -397,6 +398,10 @@ struct View {
     native_results: HashMap<String, (ItemId, native_tasks::Outcome)>,
     chat: ChatInfo,
     background: background::Background,
+    /// The newest slash command, for the output record that follows it.
+    last_command: Option<String>,
+    /// The newest shell-mode row, which its output record fills.
+    last_shell: Option<ItemId>,
 }
 
 struct ToolResult {
@@ -431,8 +436,12 @@ impl View {
                     .into_iter()
                     .chain(blocks(c).filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()))
             });
-            for text in texts.filter(|t| t.contains("<local-command-stdout>")) {
+            let texts: Vec<&str> = texts.collect();
+            for text in texts.iter().filter(|t| t.contains("<local-command-stdout>")) {
                 self.chat.local_output(offset, text);
+            }
+            if self.local_record(offset, timestamp, &texts, changes) {
+                return;
             }
         }
         if kind == LineKind::System && value["subtype"] == "compact_boundary" {
@@ -599,6 +608,54 @@ impl View {
                 }
             }
         }
+    }
+
+    /// Command output and shell mode as finished rows; true when the record was one of them.
+    fn local_record(&mut self, offset: u64, timestamp: Option<&str>, texts: &[&str], changes: &mut Changes) -> bool {
+        let id = ItemId { offset, block: 0 };
+        for text in texts {
+            if let Some(command) =
+                text.trim_start().strip_prefix("<command-name>").and_then(|s| s.split_once("</command-name>"))
+            {
+                let args = text.split_once("<command-args>").and_then(|(_, s)| s.split_once("</command-args>"));
+                let args = args.map_or("", |(a, _)| a.trim());
+                let line = [command.0.trim(), args].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+                self.last_command = Some(one_line(&line));
+                return false;
+            }
+            let Some(record) = local::parse(text) else { continue };
+            match record {
+                local::Local::Output { text, failed } => {
+                    let name = self.last_command.take().unwrap_or_else(|| "Command output".to_owned());
+                    let item = local::item(format!("local:{offset}"), &name, String::new(), text, failed);
+                    self.add(id, timestamp, item, changes);
+                }
+                local::Local::Shell(input) => {
+                    let item =
+                        local::item(format!("local:{offset}"), "Shell", format!("! {input}"), String::new(), false);
+                    self.add(id, timestamp, item, changes);
+                    self.last_shell = Some(id);
+                }
+                local::Local::ShellOutput { text, failed } => match self.last_shell.take() {
+                    Some(shell) if self.items.contains_key(&shell) => {
+                        if let Some(Item { kind: ItemKind::Tool { card, state, .. }, .. }) = self.items.get_mut(&shell)
+                        {
+                            *card = Some(ToolCard::Output(text));
+                            *state = if failed { ToolState::Failed } else { ToolState::Ok };
+                        }
+                        if !changes.added.contains(&shell) {
+                            changes.updated.insert(shell);
+                        }
+                    }
+                    _ => {
+                        let item = local::item(format!("local:{offset}"), "Shell", String::new(), text, failed);
+                        self.add(id, timestamp, item, changes);
+                    }
+                },
+            }
+            return true;
+        }
+        false
     }
 
     fn add(&mut self, id: ItemId, timestamp: Option<&str>, kind: ItemKind, changes: &mut Changes) {

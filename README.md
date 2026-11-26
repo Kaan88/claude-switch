@@ -280,7 +280,8 @@ with each tab and sets the default for new ones. Chat shows the local conversati
 composer, and a collapsible Details panel on wider windows. The composer is three lines tall and
 grows with your text up to about 40% of the view, then scrolls.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
-to resize it, and answer other CLI dialogs there.
+to resize it. Claude Code's menus and dialogs (the /model picker, /config, folder trust and the
+like) show as a card in the chat; one Chat cannot read shows its rows with **Open terminal**.
 
 When Claude asks a question (its AskUserQuestion tool), the question appears as a card under the
 conversation and the working line says **Waiting for your answer**. Click an option, or type an
@@ -293,7 +294,8 @@ When Claude Code asks to allow a tool (a command, an edit, an MCP tool, a web fe
 call and the terminal's own choices in a card, and the working line says **Waiting for your
 approval**. Click a choice, or type what Claude should do instead and choose **No, and tell
 Claude**. Chat answers only while the terminal shows that prompt for that same call; otherwise the
-card says so and offers **Open terminal**. When Claude finishes a plan, the plan shows in the
+card says so and offers **Open terminal**. While a long shell command runs and Claude Code offers
+Ctrl+B, the card offers **Run in background**. When Claude finishes a plan, the plan shows in the
 conversation and the card offers the terminal's choices (such as **Yes, manually approve edits** or
 **No, keep planning**, with an optional note).
 
@@ -354,7 +356,7 @@ the viewer.
 Chat shows why it held a draft. Neither **Send anyway** nor **Send now** overrides a recognized
 permission question or pending interaction. For pictures, Chat waits for Claude Code to display a new
 image marker before pressing Enter. The command list is a local preview; Claude Code determines which
-commands and choices are available. **Model** also opens Claude Code’s own picker in the drawer.
+commands and choices are available. **Model** can also open Claude Code’s own picker, which shows as a card.
 
 ## Grouping sessions
 

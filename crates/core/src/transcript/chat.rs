@@ -113,7 +113,7 @@ fn local_stdout(text: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Text without terminal escape sequences (the CLI colors its command output).
-fn strip_escapes(text: &str) -> String {
+pub(super) fn strip_escapes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
@@ -160,6 +160,8 @@ pub enum ToolCard {
     Questions(Vec<Question>),
     /// The Markdown plan of an `ExitPlanMode` call.
     Plan(String),
+    /// What a slash command or a shell-mode command printed, as mono text.
+    Output(String),
 }
 
 /// One question of an `AskUserQuestion` call. Its texts are whole: the window matches them
@@ -460,5 +462,37 @@ mod tests {
             panic!()
         };
         assert_eq!(cut.chars().count(), MAX_PLAN + 1);
+    }
+
+    #[test]
+    fn command_output_and_shell_mode_become_finished_rows_under_their_command() {
+        use super::super::{ItemKind, Reader};
+        let dir = crate::util::testing::TempDir::new("chat-local");
+        let path = dir.0.join("chat.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        for row in [
+            json!({"type":"user","message":{"content":"<command-name>/context</command-name><command-message>context</command-message><command-args></command-args>"}}),
+            json!({"type":"user","message":{"content":"<local-command-stdout>Context usage 12k / 200k</local-command-stdout>"}}),
+            json!({"type":"user","message":{"content":"<bash-input>git status</bash-input>"}}),
+            json!({"type":"user","message":{"content":"<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>"}}),
+        ] {
+            writeln!(file, "{row}").unwrap();
+        }
+        let reader = Reader::open(&path, 8192).unwrap();
+        let rows: Vec<_> = reader
+            .items()
+            .map(|(_, item)| match &item.kind {
+                ItemKind::Prompt { text, .. } => format!("prompt {text}"),
+                ItemKind::Tool { name, summary, state, card: Some(ToolCard::Output(text)), .. } => {
+                    format!("{name}|{summary}|{state:?}|{text}")
+                }
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            ["prompt /context", "/context||Ok|Context usage 12k / 200k", "Shell|! git status|Ok|On branch main"]
+        );
+        assert_eq!(reader.chat().pending, None, "finished rows never wait");
     }
 }

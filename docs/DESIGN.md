@@ -885,11 +885,17 @@ transcript byte watermark before writing so a buffered earlier prompt cannot rea
 
 **When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
-same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only an automatically
+same. A BEL and process exit also open the drawer. Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. Chat
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
 verified active turn.
+**Command results and shell mode.** A `<local-command-stdout>` (or `-stderr`) record becomes a finished
+row named after the slash command before it, and `<bash-input>` with its `<bash-stdout>`/`<bash-stderr>`
+becomes a "Shell" row (`! command`), both with the output as mono text, always open, cut at 60 lines or
+6,000 characters, escape sequences removed (`transcript/local.rs`). They never count as pending calls.
+Interactive panels that print their result the same way get the same row. The composer has no `!`
+toggle: whether a pasted `!` enters the CLI's shell mode is unverified.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
 from the selected account, the launch folder’s `.claude` directory, and installed plugin caches.
@@ -910,8 +916,15 @@ verified, quiet, visibly empty CLI prompt, no active turn or blocking interactio
 terminal mode checks as Send. Chat writes command text first, and only writes Enter after seeing
 the exact text on the live input row, within two seconds. Compact and Clear (including Clear aliases)
 ask for confirmation.
-Interactive CLI results stay in the drawer. Chat does not generate answers to its menus; without
-observable progress or a quiet, empty prompt it cannot verify that the menu closed.
+**CLI menus.** Menus, pickers and dialogs used to stay in the drawer. The owner gave that up with
+item 42's reason ("give that up, otherwise all I see is that chat has stopped. convenience trumps").
+Any menu whose footer (an "Esc to …"/"Enter to …" hint, or arrows with navigate/select/choose) is the
+last row by the input shows as a card when no question or permission card covers it: its title row
+and its numbered choices as buttons, answered like a question (arrows, then Enter once the screen
+shows the highlight on that row with the same title and choices); the step ends as soon as that
+menu is gone. A menu without numbered rows shows its rows read-only with Open terminal. While a
+card shows a menu, sends are refused with "Choose in Claude Code's menu above" and the drawer stays
+closed; a slash command no longer opens the drawer by itself.
 
 **Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
 the call's input (header, question, options with descriptions), never from the screen. Chat answers
@@ -960,6 +973,18 @@ cycle) only under the same checks as a direct slash command (verified, quiet, vi
 no turn or pending call, no menu); the next click is taken only after the indicator changed, and a
 mode that does not change or cannot be read within two seconds stops with a notice. The chip shows
 only where the toolbar row has room.
+
+**Esc.** A card's Esc button writes one Escape only under the same checks as its choices: the screen
+still shows that question, the pending call's own prompt, or the same menu (a menu Chat cannot read
+is matched by its rows) whose footer offers Esc. It then waits as a choice does; a menu step ends as
+soon as the menu is gone. Stop keeps its own rule: Escape at most once per freshly verified turn.
+
+**Background controls.** While the only pending call is a shell command (Bash or PowerShell), no
+prompt or menu shows, and the CLI's "ctrl+b to run in background" hint is within six rows of the
+input, a card offers Run in background. A click re-checks all of that and writes one Ctrl+B; it is
+done once newer output no longer shows the hint or the call ended, and stops with a notice after two
+seconds otherwise. Stop agent is not offered: the key that opens the CLI's agent panel is unverified
+(once that panel is open, it shows as a menu card).
 
 Every screen pattern lives in `view/chat/question/screens.rs`.
 

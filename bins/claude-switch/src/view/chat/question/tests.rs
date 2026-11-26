@@ -497,3 +497,176 @@ fn a_typed_row_that_loses_its_number_never_panics_and_stops_before_enter() {
     assert!(f.writes().is_empty(), "no Enter");
     assert_eq!(f.chat().question.error, Some(NOT_TYPED));
 }
+
+/// The native /model picker (its rows to confirm in a live session).
+fn picker(highlight: usize) -> String {
+    let choices = ["Default (recommended)  Opus 5.5", "Sonnet  Sonnet 5.5", "Haiku  Haiku 5.5"];
+    let mut rows =
+        vec!["\x1b[2J\x1b[H Select model".to_owned(), " Switch between Claude models.".to_owned(), String::new()];
+    for (i, choice) in choices.iter().enumerate() {
+        let mark = if i == highlight { "❯" } else { " " };
+        rows.push(format!(" {mark} {}. {choice}", i + 1));
+    }
+    rows.push(String::new());
+    rows.push(" Enter to confirm · Esc to exit".to_owned());
+    rows.join("\r\n")
+}
+
+impl Fixture {
+    /// Nothing pending: a menu the user opened with a command.
+    fn idle() -> Self {
+        let mut f = Self::new(vec![]);
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.items.clear();
+        pane.model.chat.pending = None;
+        pane.model.chat.latest = Some((AT, claude_switch_core::transcript::ChatPhase::EndTurn));
+        f
+    }
+}
+
+#[test]
+fn a_cli_menu_is_answered_from_its_card_and_keeps_the_drawer_closed() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen(&picker(0), now);
+    f.sync();
+    let menu = f.chat().question.menu.clone().expect("a menu card");
+    assert_eq!(menu.title, "Switch between Claude models.");
+    assert_eq!(menu.choices.len(), 3);
+    assert!(menu.esc);
+    assert_eq!(f.decide(now), Some(Reason::Menu));
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+
+    assert!(press(f.tab(), now, Hit::Option(2)));
+    assert_eq!(f.writes(), [down(2)]);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "not moved yet");
+    f.screen(&picker(2), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    // The menu closed: the step ends at once, without waiting for the deadline.
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    assert!(advance(f.tab(), now, true));
+    assert!(f.chat().question.step.is_none() && f.chat().question.menu.is_none());
+    assert!(f.chat().question.error.is_none());
+
+    // Other choices by the time the highlight moved: nothing more is written.
+    let mut f = Fixture::idle();
+    f.screen(&picker(0), now);
+    press(f.tab(), now, Hit::Option(1));
+    f.writes();
+    f.screen(&picker(1).replace("Sonnet  Sonnet 5.5", "Sonnet  Sonnet 4.6"), now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(CHANGED));
+}
+
+#[test]
+fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen("\x1b[2J\x1b[H Settings\r\n  Theme  Dark\r\n  Verbose  false\r\n\r\n Esc to cancel", now);
+    f.sync();
+    let menu = f.chat().question.menu.clone().expect("a read-only card");
+    assert!(menu.choices.is_empty());
+    assert_eq!(menu.rows, ["Settings", "Theme Dark", "Verbose false"]);
+    assert!(!press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+
+    let mut f = Fixture::idle();
+    f.screen(&format!("{}\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\x1b[?2004h❯ ", picker(0)), now);
+    f.sync();
+    assert!(f.chat().question.menu.is_none(), "a menu far above the input is old output");
+}
+
+fn running(hint: bool) -> String {
+    let hint = if hint { "  ctrl+b to run in background" } else { "  esc to interrupt" };
+    format!("\x1b[2J\x1b[H● Bash(npm test)\r\n  ⎿  Running…\r\n\r\n✻ Testing… (12s)\r\n{hint}")
+}
+
+#[test]
+fn run_in_background_is_offered_only_with_the_clis_hint_and_waits_for_it_to_go() {
+    let mut f = Fixture::tool("npm test");
+    let now = Instant::now();
+    f.screen(&running(false), now);
+    f.sync();
+    assert!(f.chat().question.background.is_none(), "no hint, no button");
+    assert!(press(f.tab(), now, Hit::Background));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NO_HINT));
+
+    let mut f = Fixture::tool("npm test");
+    f.screen(&running(true), now);
+    f.sync();
+    assert_eq!(f.chat().question.background.as_ref().map(|b| b.1.as_str()), Some("npm test"));
+    assert!(press(f.tab(), now, Hit::Background));
+    assert_eq!(f.writes(), [CTRL_B.to_vec()]);
+    assert!(!press(f.tab(), now, Hit::Background), "one at a time");
+    advance(f.tab(), now, true);
+    assert!(f.chat().question.background_step.is_some(), "the same screen proves nothing");
+    f.screen(&running(false), now);
+    advance(f.tab(), now, true);
+    assert!(f.chat().question.background_step.is_none() && f.chat().question.error.is_none());
+
+    // The hint stays: the CLI did not take it.
+    let mut f = Fixture::tool("npm test");
+    f.screen(&running(true), now);
+    press(f.tab(), now, Hit::Background);
+    f.screen(&running(true), now);
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.chat().question.error, Some(NOT_BACKGROUND));
+
+    // Two calls pending: the hint may be for either.
+    let mut f = Fixture::tool("npm test");
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model
+        .items
+        .insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: shell("toolu_0", "cargo build"), timestamp: None });
+    f.screen(&running(true), now);
+    f.sync();
+    assert!(f.chat().question.background.is_none());
+}
+
+#[test]
+fn esc_leaves_a_menu_or_declines_a_prompt_only_while_the_screen_shows_it() {
+    let now = Instant::now();
+    // A menu, readable or not: Esc, then done once the menu is gone.
+    for screen in [picker(0), "\x1b[2J\x1b[H Settings\r\n  Theme  Dark\r\n\r\n Esc to cancel".to_owned()] {
+        let mut f = Fixture::idle();
+        f.screen(&screen, now);
+        assert!(press(f.tab(), now, Hit::Escape));
+        assert_eq!(f.writes(), [ESC.to_vec()]);
+        assert!(!press(f.tab(), now, Hit::Escape), "one step at a time");
+        f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+        advance(f.tab(), now, true);
+        assert!(f.chat().question.step.is_none() && f.chat().question.error.is_none());
+    }
+
+    // A footer without Esc: nothing is written.
+    let mut f = Fixture::idle();
+    f.screen(&picker(0).replace("Enter to confirm · Esc to exit", "Enter to select"), now);
+    press(f.tab(), now, Hit::Escape);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NO_ESC));
+
+    // The pending call's permission prompt: Esc declines it.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+
+    // Another call's prompt, or a question the screen does not show: nothing.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.screen(&prompt("rm -rf target", 0, None), now);
+    press(f.tab(), now, Hit::Escape);
+    assert!(f.writes().is_empty());
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen("\x1b[?2004h❯ ", now);
+    press(f.tab(), now, Hit::Escape);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NOT_SHOWN));
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(1, None), now);
+    press(f.tab(), now, Hit::Escape);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+}
