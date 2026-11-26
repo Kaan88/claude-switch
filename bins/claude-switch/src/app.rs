@@ -416,7 +416,7 @@ impl AppState {
         }
         if let Some(Dialog::Settings(form)) = &mut self.dialog {
             let o = form.press(x, y, cx.mods(), clicks.min(3) as u8);
-            dialogs::settings_outcome(self, o);
+            dialogs::settings_event(self, o);
             return;
         }
         if self.dialog.is_some() {
@@ -545,7 +545,7 @@ impl AppState {
         }
         if let Some(Dialog::Settings(form)) = &mut self.dialog {
             let o = form.release(x, y);
-            dialogs::settings_outcome(self, o);
+            dialogs::settings_event(self, o);
             return;
         }
         if let Some(t) = self.pressed.take()

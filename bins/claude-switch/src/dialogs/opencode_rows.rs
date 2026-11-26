@@ -33,14 +33,21 @@ pub(super) fn rows(st: &AppState) -> impl Iterator<Item = Row> {
 }
 
 pub(crate) fn update_opencode_rows(st: &mut AppState) {
+    // Other pages are independent. Opening this page builds its rows from current state.
+    if !matches!(&st.dialog, Some(Dialog::Settings(settings)) if settings.category() == settings::OPENCODE) {
+        return;
+    }
     let block = rows(st).collect::<Vec<_>>();
-    if let Some(Dialog::Settings(form)) = &mut st.dialog {
+    if let Some(Dialog::Settings(settings)) = &mut st.dialog {
+        let form = &mut settings.form;
         let mut rows = form.rows().to_vec();
         if let Some(start) = rows.iter().position(|r| r.id() == Some(REFRESH)) {
             let end =
                 start + rows[start..].iter().take_while(|r| matches!(r.id(), Some(REFRESH | RESTART | STUDIO))).count();
-            rows.splice(start..end, block);
-            form.set_rows(rows);
+            if rows[start..end] != block {
+                rows.splice(start..end, block);
+                form.set_rows(rows);
+            }
         }
     }
 }
@@ -66,5 +73,41 @@ mod tests {
         assert!(!rows(&real).any(|r| r.id() == Some(STUDIO)));
         real.opencode.studio_installed = true;
         assert!(rows(&real).any(|r| r.id() == Some(STUDIO)));
+    }
+
+    #[test]
+    fn a_probe_refreshes_the_open_opencode_page_without_rebuilding_other_pages() {
+        use opencode_cli::Status;
+
+        let directory = std::env::temp_dir().join(format!("cs-settings-workers-{}", std::process::id()));
+        let mut st = AppState::new(
+            Source::Real(Roots { home: directory.join("home"), appdata: directory.join("appdata") }),
+            None,
+            WindowFile::default(),
+        );
+        st.dialog = Some(settings::settings(&mut st, None));
+        let Some(Dialog::Settings(page)) = &mut st.dialog else { panic!("Settings must be open") };
+        let colour = page.form.rows().iter().find(|r| matches!(r, Row::Text { .. })).and_then(Row::id).unwrap();
+        assert!(page.form.focus_row(colour));
+        page.form.key(&KeyName::Enter, Mods::default(), None);
+        assert_eq!(page.form.colour_open(), Some(colour));
+        st.opencode.status = Some(Status { path: None, version: None, running: Some(4) });
+        update_opencode_rows(&mut st);
+        let Some(Dialog::Settings(page)) = &st.dialog else { panic!("Settings must stay open") };
+        assert_eq!(page.form.colour_open(), Some(colour));
+
+        st.dialog = Some(settings::settings(&mut st, Some(settings::OPENCODE)));
+        st.opencode.studio_installed = true;
+        st.opencode.status.as_mut().unwrap().running = Some(7);
+        update_opencode_rows(&mut st);
+        let Some(Dialog::Settings(page)) = &st.dialog else { panic!("Settings must stay open") };
+        assert_eq!(page.category(), settings::OPENCODE);
+        assert!(page.form.rows().iter().any(|r| r.id() == Some(STUDIO)));
+        assert!(
+            page.form
+                .rows()
+                .iter()
+                .any(|r| matches!(r, Row::Action { id: RESTART, label, .. } if label.contains("7 sessions running")))
+        );
     }
 }

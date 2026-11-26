@@ -1,4 +1,4 @@
-//! Workers-page state and background jobs. No CLI or Studio launch in demo.
+//! OpenCode settings state and background jobs. No CLI or Studio launch in demo.
 use crate::dialogs::{Dialog, Pending};
 use crate::state::AppState;
 use claude_switch_core::{Place, launch};
@@ -75,15 +75,9 @@ impl Workers {
 }
 
 impl AppState {
-    pub fn opencode_settings(&mut self, workers_page: bool) {
-        self.dialog = Some(crate::dialogs::settings(self));
-        if workers_page
-            && let Some(Dialog::Settings(form)) = &mut self.dialog
-            && let Some(category) = form.categories().iter().position(|name| *name == "Workers")
-        {
-            form.jump_to_category(category);
-        }
-        if !workers_page {
+    pub fn opencode_settings(&mut self, open_opencode_page: bool) {
+        self.dialog = Some(crate::dialogs::settings(self, open_opencode_page.then_some(crate::dialogs::OPENCODE)));
+        if !open_opencode_page {
             self.refresh_opencode();
         }
     }

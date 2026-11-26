@@ -1,4 +1,4 @@
-use crate::dialogs::{self, Dialog};
+use crate::dialogs;
 use crate::state::AppState;
 use claude_switch_core::config::{TerminalCursor, terminal_opacity};
 use mdshared_app::backdrop::Backdrop;
@@ -6,12 +6,8 @@ use mdshared_app::backdrop::Backdrop;
 pub struct Preview(TerminalCursor, u8, Backdrop);
 
 pub fn show_settings(st: &mut AppState) {
-    if st.source.is_demo()
-        && let Dialog::Settings(mut form) = dialogs::settings(st)
-        && let Some(category) = form.categories().iter().position(|name| *name == "Terminal")
-    {
-        form.jump_to_category(category);
-        st.dialog = Some(Dialog::Settings(form));
+    if st.source.is_demo() {
+        st.dialog = Some(dialogs::settings(st, Some(dialogs::TERMINAL)));
     }
 }
 
