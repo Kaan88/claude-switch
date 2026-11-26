@@ -115,6 +115,7 @@ pub enum MenuKind {
     OpenAs,
     Row,
     Tab(u64),
+    Chat(u64, crate::view::chat::MenuMode),
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.

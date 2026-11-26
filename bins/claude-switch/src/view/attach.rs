@@ -35,7 +35,9 @@ impl AppState {
     pub fn attach_picker(&self, cwd: Option<&std::path::Path>, chat: bool) {
         let Some(id) = self.tabs.active else { return };
         let proxy = self.proxy.clone();
-        platform::pick_files_async(cwd, "Pictures", &["png", "jpg", "jpeg", "webp", "gif"], move |files| {
+        let (label, extensions): (&str, &[&str]) =
+            if chat { ("All files", &["*"]) } else { ("Pictures", &["png", "jpg", "jpeg", "webp", "gif"]) };
+        platform::pick_files_async(cwd, label, extensions, move |files| {
             if !files.is_empty()
                 && let Some(proxy) = proxy
                 && let Ok(proxy) = proxy.lock()

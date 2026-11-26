@@ -59,6 +59,9 @@ impl App for AppState {
                         self.tab_menu(id, Rect::new(x, y, 0.0, 0.0));
                     }
                     Some(Target::Terminal) => self.term_press(x, y, button, clicks, cx.mods()),
+                    Some(Target::Chat(crate::view::chat::Control::Editor)) if button == Button::Right => {
+                        self.chat_editor_menu(x, y);
+                    }
                     Some(Target::Entry(e) | Target::Pin(e) | Target::ArchivePick(e)) if button == Button::Right => {
                         self.mouse = (x, y);
                         self.focus = Focus::List;

@@ -1,20 +1,29 @@
 //! Chat's conservative PTY input gate and per-tab state.
+mod clipboard;
+mod commands;
+mod composer;
+mod editor;
 mod input;
 mod layout;
 mod paint;
+mod shortcuts;
+mod submission;
 
+pub(crate) use commands::valid_name as valid_command_name;
 pub use input::Control;
 pub use input::layout_shortcut;
 pub use layout::Layout;
 pub use paint::STRIP_RESERVE;
 pub use paint::strip_button;
+pub use shortcuts::MenuMode;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use claude_switch_core::transcript::{ChatInfo, ChatPhase};
 
-use crate::compact_dialog::editor::Editor;
+use editor::ComposerEditor;
+use submission::{ImageWait, Intent, Queue};
 
 pub const QUIET: Duration = Duration::from_millis(750);
 const TOOL_WAIT: Duration = Duration::from_secs(4);
@@ -109,7 +118,7 @@ pub enum Side {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Chip {
     Path(PathBuf),
-    Clipboard(u32),
+    Clipboard(clipboard::Picture),
 }
 
 #[derive(Default)]
@@ -126,13 +135,18 @@ pub struct Chat {
     side: Side,
     side_scroll: usize,
     side_max: usize,
-    editor: Editor,
+    editor: ComposerEditor,
     editor_drag: bool,
     chips: Vec<Chip>,
     chip_page: usize,
-    cell_width: f32,
     recall: Option<usize>,
     error: Option<&'static str>,
+    retry: Option<Intent>,
+    queue: Option<Queue>,
+    image_wait: Option<ImageWait>,
+    commands: commands::Picker,
+    cli_report: submission::CliReport,
+    output_epoch: u64,
     sample: Option<(u64, Option<(u64, ChatPhase)>)>,
     fresh: bool,
     require_prompt: Option<Option<u64>>,
@@ -145,6 +159,8 @@ pub struct Chat {
     last_gate: Option<Gate>,
     demo: bool,
     demo_progress: bool,
+    #[cfg(test)]
+    writes: Vec<Vec<u8>>,
     layout: Layout,
 }
 
@@ -161,6 +177,7 @@ impl Chat {
     pub fn output(&mut self, now: Instant, output: bool, bell: bool) {
         if output {
             self.last_output = Some(now);
+            self.output_epoch = self.output_epoch.wrapping_add(1);
         }
         if bell {
             self.bell = true;
@@ -174,6 +191,7 @@ impl Chat {
     }
 
     pub(super) fn invalidate_input(&mut self, info: &ChatInfo, end: Option<u64>) {
+        self.interrupt_submission();
         self.invalidate(info);
         self.input_floor = Some(end.unwrap_or(u64::MAX));
     }
@@ -195,7 +213,9 @@ impl Chat {
                     if self.reason == Some(Reason::Bell) || self.suppressed == Some(Reason::Bell) {
                         self.bell = false;
                     }
-                    self.slash = false;
+                    if self.require_prompt.is_none() {
+                        self.slash = false;
+                    }
                     self.suppressed = None;
                 }
                 _ => {
@@ -223,10 +243,19 @@ impl Chat {
         if self.identity_unverified {
             return (Gate::Check, Some(Reason::Identity));
         }
+        if term.ended.is_some() || !self.demo && !term.running() {
+            return (Gate::Ended, Some(Reason::Ended));
+        }
         if crate::attention::screen_permission_prompt(&term.screen) {
             return (Gate::Check, Some(Reason::Permission));
         }
-        if self.demo && self.demo_progress && !self.bell && !self.slash && info.pending.is_none() {
+        if self.demo
+            && self.demo_progress
+            && !self.bell
+            && !self.slash
+            && info.pending.is_none()
+            && !(self.fresh && info.latest.is_some_and(|(_, phase)| phase == ChatPhase::Active))
+        {
             return (Gate::Ready, None);
         }
         let mut decision = assess(Signals {
@@ -241,7 +270,7 @@ impl Chat {
             title,
             bell: self.bell,
             slash: self.slash,
-            ended: term.ended.is_some() || !self.demo && !term.running(),
+            ended: false,
             bracketed: modes.bracketed_paste,
             alternate: modes.alt_screen,
         });
@@ -310,39 +339,6 @@ fn recall<'a>(history: impl Iterator<Item = &'a str>, cursor: &mut Option<usize>
     let prompt = history.filter(|text| !text.trim().is_empty()).nth(next)?;
     *cursor = Some(next);
     Some(prompt)
-}
-
-fn send_bytes(chips: &[Chip], text: &str) -> Option<Vec<u8>> {
-    // Never let pasted content smuggle control sequences out of a bracketed paste.
-    if text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
-        || chips.iter().any(|chip| matches!(chip, Chip::Clipboard(_)))
-    {
-        return None;
-    }
-    let text = text.replace(['\n', '\t'], " ");
-    let mut bytes = Vec::new();
-    let paths: Vec<_> = chips
-        .iter()
-        .filter_map(|chip| match chip {
-            Chip::Path(path) => Some(path.clone()),
-            Chip::Clipboard(_) => None,
-        })
-        .collect();
-    let paths = super::attach::paths(&paths);
-    if !paths.is_empty() {
-        bytes.extend(mdshared_term::input::encode_paste(&paths, true));
-        if !text.is_empty() {
-            bytes.push(b' ');
-        }
-    }
-    if !text.is_empty() {
-        bytes.extend(mdshared_term::input::encode_paste(&text, true));
-    }
-    if bytes.is_empty() {
-        return None;
-    }
-    bytes.push(b'\r');
-    Some(bytes)
 }
 
 #[cfg(test)]

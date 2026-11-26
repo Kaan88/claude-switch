@@ -1,3 +1,4 @@
+use super::submission::send_bytes;
 use super::*;
 use crate::view::model;
 use mdshared_term::{Key, Mods, Screen, input};
@@ -229,14 +230,17 @@ fn a_send_or_manual_input_cannot_reuse_the_previous_completion() {
 }
 
 #[test]
-fn bytes_put_paths_before_control_free_prompt_and_refuse_clipboard_pictures() {
-    let chips = [Chip::Path(PathBuf::from(r"C:\my photo.png")), Chip::Clipboard(1)];
+fn paste_bytes_put_paths_before_control_free_prompt_without_an_image_key() {
+    let chips = [
+        Chip::Path(PathBuf::from(r"C:\my photo.png")),
+        Chip::Clipboard(clipboard::Picture { seq: 1, thumbnail: None }),
+    ];
     assert_eq!(
         send_bytes(&chips[..1], "line 1\nline 2\tword").unwrap(),
-        b"\x1b[200~\"C:\\my photo.png\"\x1b[201~ \x1b[200~line 1 line 2 word\x1b[201~\r"
+        b"\x1b[200~\"C:\\my photo.png\" line 1 line 2 word\x1b[201~"
     );
-    assert!(send_bytes(&chips, "some text").is_none());
-    assert_eq!(send_bytes(&[], "just text").unwrap(), b"\x1b[200~just text\x1b[201~\r");
+    assert_eq!(send_bytes(&chips[1..], "").unwrap(), b"");
+    assert_eq!(send_bytes(&[], "just text").unwrap(), b"\x1b[200~just text\x1b[201~");
     assert!(send_bytes(&[], "line\x1b[201~\rmenu").is_none());
     for control in ['\0', '\x07', '\x1b', '\x7f', '\u{009b}', '\r'] {
         assert!(send_bytes(&[], &format!("prompt{control}[201~")).is_none());
@@ -283,7 +287,7 @@ fn layout_keeps_composer_and_drawer_disjoint_and_centers_the_reading_measure() {
     for (w, h, panel) in [(760.0, 480.0, false), (1100.0, 720.0, true), (1920.0, 1080.0, true)] {
         let area = Rect::new(0.0, 80.0, w, h - 80.0);
         for chips in [false, true] {
-            let l = Layout::new(area, true, true, None, chips);
+            let l = Layout::new(area, true, true, None, chips, false);
             assert!(l.conversation.h >= 80.0 && l.conversation.w <= 770.0);
             assert_eq!(l.side.w > 0.0, panel);
             assert_eq!(l.conversation.x * 2.0 + l.conversation.w + l.side.w, w);
@@ -293,10 +297,10 @@ fn layout_keeps_composer_and_drawer_disjoint_and_centers_the_reading_measure() {
             assert_eq!(l.drawer.bottom(), h);
             assert!((l.drawer.h / area.h - 0.4).abs() < 0.04);
         }
-        let closed = Layout::new(area, false, false, None, false);
+        let closed = Layout::new(area, false, false, None, false, false);
         assert_eq!(closed.drawer.h, 0.0);
         assert_eq!(closed.side.w, 0.0);
-        let resized = Layout::new(area, true, true, Some(65.0), false);
+        let resized = Layout::new(area, true, true, Some(65.0), false, false);
         assert_eq!(resized.drawer.h, 65.0);
     }
 }
@@ -304,9 +308,9 @@ fn layout_keeps_composer_and_drawer_disjoint_and_centers_the_reading_measure() {
 #[test]
 fn drawer_drag_applies_the_release_position_even_if_motion_was_coalesced() {
     let mut chat = Chat { resizing: Some((460.0, 240.0)), ..Default::default() };
-    assert!(chat.end_drag(Some(535.0)));
+    assert!(chat.end_drag(Some((0.0, 535.0))));
     assert_eq!(chat.drawer_height, Some(165.0));
-    assert!(!chat.end_drag(Some(600.0)));
+    assert!(!chat.end_drag(Some((0.0, 600.0))));
     assert_eq!(chat.drawer_height, Some(165.0));
 }
 
@@ -337,4 +341,203 @@ fn demo_refuses_an_uncertain_draft_then_sends_only_into_its_fake_screen() {
     assert!(screen.contains("Demo input"));
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert!(tab.term.pty.is_none());
+}
+
+fn demo() -> crate::state::AppState {
+    let mut app = crate::state::AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+    app.start_demo_session();
+    app
+}
+
+#[test]
+fn uncertain_notice_survives_editing_and_offers_the_explicit_override() {
+    use crate::state::AppState;
+    let mut app = demo();
+    let now = Instant::now();
+    let tab = app.tabs.shown_mut().unwrap();
+    tab.pane.as_mut().unwrap().chat.editor.insert("First");
+    AppState::chat_send(tab, now, false);
+    tab.pane.as_mut().unwrap().chat.editor.insert(" and second");
+    app.chat_editor_changed();
+    let tab = app.tabs.shown_mut().unwrap();
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    assert_eq!(chat.error, Some(submission::CHECK));
+    assert_eq!(chat.editor.text, "First and second");
+    assert!(chat.writes.is_empty());
+    AppState::chat_send(tab, now, true);
+    assert_eq!(
+        tab.pane.as_ref().unwrap().chat.writes,
+        [b"\x1b[200~First and second\x1b[201~".to_vec(), b"\r".to_vec()]
+    );
+}
+
+fn image_draft(tab: &mut crate::tabs::Tab, text: &str) {
+    tab.term = crate::term::Term::empty((80, 20));
+    tab.term.feed("\x1b[?2004h❯ ".as_bytes());
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    chat.chips.push(Chip::Clipboard(clipboard::Picture { seq: 42, thumbnail: None }));
+    chat.editor.insert(text);
+}
+
+#[test]
+fn picture_pastes_only_after_a_new_cursor_row_marker_then_enters_exactly_once() {
+    use crate::state::AppState;
+    let mut app = demo();
+    let tab = app.tabs.shown_mut().unwrap();
+    let now = Instant::now();
+    image_draft(tab, "caption");
+    AppState::chat_send(tab, now, true);
+    assert_eq!(tab.pane.as_ref().unwrap().chat.writes, [b"\x1bv".to_vec()]);
+    // Replace the demo marker with an old echo/assistant line and an empty real input row.
+    tab.term.feed("\r\nAssistant quoted [Image #2]\r\n❯ ".as_bytes());
+    assert!(!AppState::advance_submission(tab, now, true));
+    tab.term.feed(b"[Image #2]");
+    assert!(!AppState::advance_submission(tab, now, false));
+    assert!(AppState::advance_submission(tab, now, true));
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    assert_eq!(chat.writes, [b"\x1bv".to_vec(), b"\x1b[200~caption\x1b[201~".to_vec(), b"\r".to_vec()]);
+    assert!(chat.editor.text.is_empty() && chat.chips.is_empty());
+    assert!(!AppState::advance_submission(tab, now, true));
+}
+
+#[test]
+fn picture_timeout_and_permission_never_press_enter_and_keep_the_draft() {
+    use crate::state::AppState;
+    for permission in [false, true] {
+        let mut app = demo();
+        let tab = app.tabs.shown_mut().unwrap();
+        let now = Instant::now();
+        image_draft(tab, "keep this");
+        AppState::chat_send(tab, now, true);
+        let when = if permission {
+            tab.term.feed(b"\r\nDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel");
+            now
+        } else {
+            // Even a now-visible marker cannot authorize an expired attempt.
+            now + Duration::from_secs(4)
+        };
+        assert!(AppState::advance_submission(tab, when, true));
+        let chat = &tab.pane.as_ref().unwrap().chat;
+        let err = chat.error.unwrap();
+        assert!(err.contains(if permission { "interrupted" } else { "No new CLI image marker" }));
+        assert_eq!(chat.writes, [b"\x1bv".to_vec()]);
+        assert_eq!(chat.editor.text, "keep this");
+        assert_eq!(chat.clipboard_sequence(), Some(42));
+        app.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat.editor.insert(" typed later");
+        app.chat_editor_changed();
+        assert_eq!(app.tabs.shown().unwrap().pane.as_ref().unwrap().chat.error, Some(err));
+    }
+}
+
+fn running(tab: &mut crate::tabs::Tab, now: Instant) {
+    let pane = tab.pane.as_mut().unwrap();
+    tab.term = crate::term::Term::empty((80, 20));
+    tab.term.feed("\x1b[?2004h❯ ".as_bytes());
+    pane.chat.fresh = true;
+    pane.chat.last_output = Some(now - QUIET);
+    pane.chat.last_gate = Some(Gate::Running);
+    pane.model.chat.latest = Some((100, ChatPhase::Active));
+    pane.model.chat.prompt = Some(50);
+    pane.chat.editor.insert("next");
+}
+
+#[test]
+fn queue_waits_for_a_newer_completion_then_sends_once_and_cancel_keeps_the_draft() {
+    use crate::state::AppState;
+    for cancel in [false, true] {
+        let mut app = demo();
+        let tab = app.tabs.shown_mut().unwrap();
+        let now = Instant::now();
+        running(tab, now);
+        AppState::chat_send(tab, now, false);
+        let pane = tab.pane.as_mut().unwrap();
+        assert!(pane.chat.locked() && pane.chat.writes.is_empty());
+        assert_eq!(pane.chat.notice(&pane.model.chat), Some("A turn is running. This will be sent when it ends."));
+        if cancel {
+            pane.chat.stop_waiting();
+            assert!(!pane.chat.locked());
+        }
+        pane.model.chat.latest = Some((100, ChatPhase::EndTurn));
+        assert!(!AppState::advance_submission(tab, now, true));
+        tab.pane.as_mut().unwrap().model.chat.latest = Some((120, ChatPhase::EndTurn));
+        assert!(!AppState::advance_submission(tab, now, false));
+        assert_eq!(AppState::advance_submission(tab, now, true), !cancel);
+        assert!(!AppState::advance_submission(tab, now, true));
+        let chat = &tab.pane.as_ref().unwrap().chat;
+        assert_eq!(chat.editor.text, if cancel { "next" } else { "" });
+        assert_eq!(chat.writes.iter().filter(|w| w.as_slice() == b"\r").count(), usize::from(!cancel));
+    }
+}
+
+#[test]
+fn send_now_never_overrides_a_live_permission_question() {
+    use crate::state::AppState;
+    let mut app = demo();
+    let tab = app.tabs.shown_mut().unwrap();
+    let now = Instant::now();
+    running(tab, now);
+    AppState::chat_send(tab, now, false);
+    tab.term.feed(b"\r\nDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel");
+    AppState::chat_send(tab, now, true);
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    assert!(chat.locked() && chat.writes.is_empty());
+    assert_eq!(chat.error, Some(Reason::Permission.label()));
+    tab.term.feed("\r\n\r\n\r\n\r\n❯ ".as_bytes());
+    AppState::chat_send(tab, now, true);
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    assert!(!chat.locked());
+    assert_eq!(chat.writes, [b"\x1b[200~next\x1b[201~".to_vec(), b"\r".to_vec()]);
+}
+
+#[test]
+fn send_anyway_from_a_stale_check_does_not_send_into_a_running_turn() {
+    use crate::state::AppState;
+    let mut app = demo();
+    let tab = app.tabs.shown_mut().unwrap();
+    let now = Instant::now();
+    running(tab, now);
+    AppState::chat_send(tab, now, true);
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    assert!(chat.error.unwrap().contains("Use Queue"));
+    assert!(chat.writes.is_empty());
+    assert_eq!(chat.editor.text, "next");
+    assert!(!chat.locked());
+}
+
+#[test]
+fn native_model_command_writes_or_names_the_gate_without_stealing_the_draft() {
+    use crate::state::AppState;
+    let mut app = demo();
+    let tab = app.tabs.shown_mut().unwrap();
+    let now = Instant::now();
+    let pane = tab.pane.as_mut().unwrap();
+    pane.chat.editor.insert("Unrelated draft");
+    pane.chat.bell = true;
+    AppState::submit_slash(tab, now, "/model", false);
+    let pane = tab.pane.as_mut().unwrap();
+    assert!(pane.chat.writes.is_empty());
+    assert_eq!(pane.chat.error, Some(Reason::Bell.label()));
+    pane.chat.bell = false;
+    AppState::submit_slash(tab, now, "/model", false);
+    let pane = tab.pane.as_ref().unwrap();
+    assert_eq!(pane.chat.writes, [b"/model\r".to_vec()]);
+    assert_eq!(pane.chat.editor.text, "Unrelated draft");
+    assert_ne!(pane.chat.drawer, Drawer::Closed);
+}
+
+#[test]
+fn compact_and_clear_only_write_after_confirmation() {
+    use crate::dialogs::{self, Dialog};
+    use crate::state::AppState;
+    for (command, from_editor) in [("/compact", false), ("/clear", false), ("/reset named", true)] {
+        let mut app = demo();
+        let now = Instant::now();
+        app.dialog = AppState::prepare_slash(app.tabs.shown_mut().unwrap(), now, command, from_editor);
+        assert!(matches!(app.dialog, Some(Dialog::Confirm { ref then, .. }) if !then.ok_is_primary()));
+        dialogs::click(&mut app, now, dialogs::CANCEL, 0.0);
+        assert!(app.tabs.shown().unwrap().pane.as_ref().unwrap().chat.writes.is_empty());
+        app.dialog = AppState::prepare_slash(app.tabs.shown_mut().unwrap(), now, command, from_editor);
+        dialogs::click(&mut app, now, dialogs::OK, 0.0);
+        assert_eq!(app.tabs.shown().unwrap().pane.as_ref().unwrap().chat.writes, [format!("{command}\r").into_bytes()]);
+    }
 }

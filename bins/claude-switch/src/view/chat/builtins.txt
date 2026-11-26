@@ -1,0 +1,126 @@
+add-dir|Add a working directory
+advisor|Configure the advisor model
+agents|Manage or create subagents
+artifact-capabilities|Show artifact runtime capabilities
+artifact-diagramming|Create diagrams in an artifact
+artifacts|List available artifacts
+auto-mode-setup|Draft auto mode environment settings
+autocompact|Set the auto-compact window
+autofix-pr|Start a cloud session to fix a pull request
+background|Detach to a background session
+batch|Coordinate parallel work
+branch|Branch this conversation
+btw|Ask a side question
+bug|Open the feedback form
+cd|Change the working directory
+chrome|Configure Claude in Chrome
+claude-api|Help with Claude API projects
+claude-approvals|Configure Claude Approvals
+claude-in-chrome|Use Claude in Chrome
+clear|Start a new conversation
+code-review|Review the current changes
+color|Set the prompt bar color
+compact|Summarize the current conversation
+config|Show Claude Code settings
+context|Show the context usage grid
+copy|Copy an assistant response
+cost|Show usage and costs
+dataviz|Build a data visualization
+debug|Diagnose runtime issues
+deep-research|Research a topic
+design|Open a Claude Design workflow
+design-login|Sign in to Claude Design
+design-sync|Sync a design system
+desktop|Hand off to Claude Desktop
+diff|Show the changes
+doctor|Check the Claude Code setup
+effort|Set or inspect reasoning effort
+exit|Exit the CLI
+export|Export the conversation
+fast|Toggle fast mode
+feedback|Send feedback
+fewer-permission-prompts|Suggest an allowlist from previous use
+focus|Toggle focus view
+fork|Copy this conversation
+goal|Set a goal for this session
+help|Show CLI help
+hooks|View hooks
+ide|Manage IDE connections
+import|Import configuration from another assistant
+init|Initialize CLAUDE.md
+insights|Report on recent sessions
+install-github-app|Set up GitHub integration
+install-slack-app|Set up Slack integration
+keybindings|Open keyboard shortcut settings
+list-agents|List available agents
+login|Sign in to Claude Code
+logout|Sign out of Claude Code
+loop|Repeat a prompt on a schedule
+mcp|Manage MCP servers
+memory|Manage memory files
+mobile|Show the mobile app QR code
+model|Choose the model
+motion|Create a motion artifact
+new|Start a new conversation
+output-style|Change the output style
+passes|Show referral passes
+permissions|Manage approval rules
+plan|Switch to plan mode
+plugin|Manage Claude Code plugins
+plugin-authoring|Create or update a plugin
+powerup|Discover Claude Code features
+privacy-settings|View privacy preferences
+radio|Open Claude FM
+rate-limit-options|Show rate-limit choices
+quit|Exit the CLI
+recap|Summarize the latest conversation
+release-notes|Read the CLI changelog
+reload-plugins|Reload active plugins
+reload-skills|Reload skills and custom commands
+remote-control|Connect remote control
+remote-env|Choose a cloud environment
+rename|Rename the session
+reset|Start a new conversation
+restart|Restart Claude Code
+resume|Resume a conversation
+review|Review the current changes
+rewind|Rewind to a checkpoint
+run|Launch and verify the project app
+run-skill-generator|Create project run and verification skills
+sandbox|Manage sandbox mode
+schedule|Manage cloud routines
+scroll-speed|Set fullscreen scrolling speed
+security-review|Review pending changes for security issues
+settings|Show Claude Code settings
+ship|Run the CLI’s shipping workflow
+ship:review|Review changes in the shipping workflow
+simplify|Review changes for reuse and quality
+skill-doctor|Improve skill descriptions
+skills|List available skills
+slides|Create a slide deck
+stats|Show usage statistics
+status|Show current session status
+statusline|Configure the status line
+steward|Review and fix a pull request
+stickers|Check sticker availability
+stop|Stop a background session
+subtask|Start a background agent
+tasks|Show running and completed tasks
+team-onboarding|Help onboard teammates
+teleport|Pull a cloud session into this terminal
+terminal-setup|Configure terminal key bindings
+theme|Change the CLI theme
+tui|Switch the terminal renderer
+ultraplan|Plan in a cloud session
+ultrareview|Start a cloud code review
+update-config|Update Claude Code configuration
+upgrade|View plan upgrade options
+usage|Show usage and limits
+usage-credits|Manage usage credits
+verify|Verify app behavior
+vim|Toggle Vim editing
+voice|Toggle voice input
+web-setup|Set up Claude Code on the web
+whiteboard|Create a shared diagram
+workflow-authoring|Create a workflow
+workflows|View active workflows
