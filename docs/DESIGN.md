@@ -1024,6 +1024,13 @@ no turn or pending call, no menu); the next click is taken only after the indica
 mode that does not change or cannot be read within two seconds stops with a notice. The chip shows
 only where the toolbar row has room.
 
+**Toolbar chips never clip.** Every chip is at least as wide as its label. Effort and Context take
+their long forms ("medium (default)", "… after compact") where the row has room, else their short
+forms, which are measured too. The layout reserves the widest short forms ("Effort medium ▾",
+"Context 999.9k") and puts the two chip groups on two lines when one line cannot hold them with
+Attach, Terminal, Details and Send. A test lays out every effort level, mode and Context form from
+the 760 px minimum window up at several display scales.
+
 **Esc.** A card's Esc button writes one Escape only under the same checks as its choices: the screen
 still shows that question, the pending call's own prompt, or the same menu (a menu Chat cannot read
 is matched by its rows) whose footer offers Esc. It then waits as a choice does; a menu step ends as

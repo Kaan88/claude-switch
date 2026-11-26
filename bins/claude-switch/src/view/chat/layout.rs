@@ -57,8 +57,10 @@ impl Layout {
         let main_w = (area.w - panel_w).max(0.0);
         let measure = main_w.min(770.0);
         // Leave room for the two groups and the gap between them. At narrower measures
-        // they stay intact on two lines rather than clipping a label.
-        let stacked = measure < 750.0;
+        // they stay intact on two lines rather than clipping a label. The right group has
+        // Details where the chat paints it wide (`paint`); the box's frame and padding take 38 px.
+        let wide = area.w >= 900.0 || panel_w > 0.0;
+        let stacked = measure < 750.0 || measure - 38.0 < super::composer::toolbar_one_line(wide);
         let chips_h = if chips { 46.0 } else { 0.0 };
         let notice_h = if notice { 30.0 } else { 0.0 };
         let toolbar_h = if stacked { 53.0 } else { 26.0 };
