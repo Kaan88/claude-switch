@@ -9,10 +9,14 @@
 
 use super::{AppState, Form, PAGES, SettingsEvent, appearance, page_form, terminal_appearance};
 use mdshared_ui::anim::{Animator, PageEffect, PageTransition, fluent};
-use mdshared_ui::gfx::{Face, Painter, Rect};
+use mdshared_ui::cursor::Cursor;
+use mdshared_ui::gfx::{Face, Gfx, Painter, Rect};
 use mdshared_ui::keys::{KeyName, Mods};
+use mdshared_ui::menu::Item;
 use mdshared_ui::overlay::draw_backdrop_presence;
 use mdshared_ui::settings::{Outcome, Style, Value};
+use mdshared_ui::textfield::ContextAction;
+use std::time::Instant;
 
 const NAV_W: f32 = 146.0;
 const NAV_ROW: f32 = 32.0;
@@ -272,11 +276,34 @@ impl Settings {
         }
     }
 
+    /// A press without text editing, for tests that only click controls.
+    #[cfg(test)]
     pub(crate) fn press(&mut self, x: f32, y: f32, mods: Mods, clicks: u8) -> SettingsEvent {
+        self.press_with(x, y, |form| form.press(x, y, mods, clicks))
+    }
+
+    /// A press through the toolkit's text editing: in a text row it places the caret, extends
+    /// with Shift, takes a word on a double click and the whole row on a triple click; anywhere
+    /// else it is [`Self::press`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn pointer_press(
+        &mut self,
+        x: f32,
+        y: f32,
+        mods: Mods,
+        clicks: u8,
+        now: Instant,
+        gfx: &mut Gfx,
+        scale: f32,
+    ) -> SettingsEvent {
+        self.press_with(x, y, |form| form.pointer_press((x, y), mods, clicks, now, gfx, scale))
+    }
+
+    fn press_with(&mut self, x: f32, y: f32, press: impl FnOnce(&mut Form) -> Outcome) -> SettingsEvent {
         self.pressed = None;
         self.key_used = false;
         let swatch = self.swatch_at(x, y);
-        let outcome = self.form.press(x, y, mods, clicks);
+        let outcome = press(&mut self.form);
         // A press that only closed the form's open dropdown is not a choice.
         self.swatch_pressed = swatch.filter(|_| outcome == Outcome::None);
         if self.layout.rail.contains(x, y) && outcome == Outcome::Closed {
@@ -322,33 +349,54 @@ impl Settings {
         self.form.colour_open().is_some()
     }
 
-    /// The enabled text row whose box is under the pointer, for the I-beam and the field menu.
+    /// The text row under the pointer, for the I-beam and the edit menu. The toolkit decides:
+    /// only an uncovered, editable text area counts, never one under an open dropdown or picker.
     pub(crate) fn text_row_at(&self, x: f32, y: f32) -> Option<u32> {
-        if self.form.colour_open().is_some() || !self.form.body_rect().contains(x, y) {
+        if self.layout.rail.contains(x, y) || !matches!(self.form.pointer_cursor_at(x, y), Some(Cursor::Text)) {
             return None;
         }
-        // Colour rows are text rows drawn as a swatch; they take no caret.
         self.form.rows().iter().enumerate().find_map(|(i, row)| match row {
-            mdshared_ui::settings::Row::Text { id, .. }
-                if self.form.colour(*id).is_none() && self.form.control_rect(i).contains(x, y) =>
-            {
-                Some(*id)
-            }
+            mdshared_ui::settings::Row::Text { id, .. } if self.form.control_rect(i).contains(x, y) => Some(*id),
             _ => None,
         })
     }
 
-    pub(crate) fn text_of(&self, id: u32) -> Option<String> {
-        match self.form.value(id)? {
-            mdshared_ui::settings::Value::Text(text) => Some(text),
-            _ => None,
-        }
+    /// A move while a text drag started by [`Self::pointer_press`] is held. True to redraw.
+    pub(crate) fn text_motion(&mut self, x: f32, y: f32, now: Instant, gfx: &mut Gfx) -> bool {
+        !matches!(self.form.pointer_motion((x, y), Mods::default(), now, gfx), Outcome::None | Outcome::Unused)
     }
 
-    /// Puts the keyboard on text row `id` without touching its selection.
-    pub(crate) fn focus_text_row(&mut self, id: u32) -> bool {
+    /// The button went up on a held text drag.
+    pub(crate) fn text_release(&mut self, x: f32, y: f32, now: Instant, gfx: &mut Gfx) -> SettingsEvent {
+        SettingsEvent::Form(self.form.pointer_release((x, y), now, gfx))
+    }
+
+    /// When a held text drag next scrolls its row, if it rests past an end.
+    pub(crate) fn text_deadline(&self) -> Option<Instant> {
+        self.form.text_scroll_deadline()
+    }
+
+    pub(crate) fn text_tick(&mut self, now: Instant, gfx: &mut Gfx) -> bool {
+        self.form.tick_text_scroll(now, gfx)
+    }
+
+    /// Lost focus or another button: the drag ends and the next click is a first one.
+    pub(crate) fn cancel_text(&mut self) {
+        self.form.cancel_text_pointer();
+    }
+
+    /// The edit menu of the text row at `(x, y)`, from its real selection. Secret rows get
+    /// Cut, Copy and Paste disabled. `None` off a text row or while a popup is open.
+    pub(crate) fn text_menu(&mut self, x: f32, y: f32) -> Option<Vec<Item<ContextAction>>> {
+        self.text_row_at(x, y)?;
+        let items = self.form.context_menu(Some((x, y)))?;
         self.rail_focus = false;
-        self.form.focus_row(id)
+        Some(items)
+    }
+
+    /// A chosen edit menu action, on the row the menu was opened for.
+    pub(crate) fn text_action(&mut self, action: ContextAction) -> SettingsEvent {
+        SettingsEvent::Form(self.form.apply_context_action(action))
     }
 
     pub(in super::super) fn wheel(&mut self, x: f32, y: f32, dy: f32) {
@@ -554,5 +602,69 @@ mod tests {
             assert_eq!(after, new_page);
         }
         assert!((120..=160).contains(&SWITCH.as_millis()));
+    }
+    #[test]
+    fn text_rows_select_with_the_mouse_and_the_menu_follows_the_real_selection() {
+        use std::time::Duration;
+        let st = AppState::new(Source::Demo, None, Default::default());
+        let mut gfx = Gfx::new();
+        let mut bitmap = Bitmap::new(900, 700);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        let index = PAGES.iter().position(|(name, _)| *name == super::super::HANDOVERS).unwrap();
+        let mut settings = Settings::new(&st, index);
+        let window = Rect::new(0.0, 0.0, 900.0, 700.0);
+        let viewport = settings.place(&mut p, window);
+        settings.form.layout(&mut p, viewport);
+        let mods = Mods::default();
+        let (row, id) = settings
+            .form
+            .rows()
+            .iter()
+            .enumerate()
+            .find_map(|(i, r)| match r {
+                Row::Text { id, value, .. } if !value.is_empty() => Some((i, *id)),
+                _ => None,
+            })
+            .expect("a text row with text");
+        let field = settings.form.control_rect(row);
+        let (x, y) = (field.x + 24.0, field.cy());
+        assert_eq!(settings.text_row_at(x, y), Some(id));
+        let mut tk = Gfx::new();
+        let t0 = Instant::now();
+
+        // A single click places the caret: nothing to cut or copy.
+        settings.pointer_press(x, y, mods, 1, t0, &mut tk, 1.0);
+        settings.text_release(x, y, t0, &mut tk);
+        let enabled = |items: Vec<Item<ContextAction>>, action| items.iter().any(|i| i.id == action && i.enabled);
+        let menu = settings.text_menu(x, y).expect("a menu on a text row");
+        assert!(!enabled(menu, ContextAction::Copy));
+
+        // A triple click takes the whole row, which the menu now offers to copy.
+        for (k, clicks) in [(1, 2u8), (2, 3)] {
+            let at = t0 + Duration::from_millis(100 * k);
+            settings.pointer_press(x, y, mods, clicks, at, &mut tk, 1.0);
+            settings.text_release(x, y, at, &mut tk);
+        }
+        let menu = settings.text_menu(x, y).unwrap();
+        assert!(enabled(menu.clone(), ContextAction::Copy) && enabled(menu, ContextAction::Cut));
+
+        // An open dropdown covers the text rows: no I-beam, no edit menu.
+        // Enter opens a dropdown choice (a segmented one picks its next option instead).
+        let choices: Vec<u32> = settings
+            .form
+            .rows()
+            .iter()
+            .filter_map(|r| matches!(r, Row::Choice { .. }).then(|| r.id()).flatten())
+            .collect();
+        for choice in choices {
+            settings.form.focus_row(choice);
+            settings.form.key(&KeyName::Enter, mods, None);
+            if settings.form.popup_open() {
+                break;
+            }
+        }
+        assert!(settings.form.popup_open(), "a dropdown on the page opened");
+        assert_eq!(settings.text_row_at(x, y), None);
+        assert!(settings.text_menu(x, y).is_none());
     }
 }

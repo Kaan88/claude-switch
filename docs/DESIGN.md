@@ -1109,9 +1109,12 @@ a word, a triple click everything, and a drag past either end scrolls the text. 
 its text rectangle as drawn (`FieldHit`) every frame; a press in the box's padding goes to the
 nearest end. One drag is held at a time (`fieldmouse.rs`). A right click opens the toolkit's Cut,
 Copy, Paste, Select all (`TextField::context_menu`), drawn above a dialog; outside the selection it
-first moves the caret. Settings text rows keep the form's own mouse selection; the app adds the
-triple click, the I-beam and the same menu, applied through the form's Ctrl+X/C/V/A, with Cut and
-Copy enabled whenever the row has text. Colour rows and an open colour picker take no caret. A field under the picture overlay
+first moves the caret. Settings text rows, the hex box of a colour row included, use the
+toolkit's own mouse editing (`Form::pointer_press`/`pointer_motion`/`pointer_release`, edge scrolling
+through `text_scroll_deadline`) and its menu built from the real selection (`Form::context_menu`,
+`apply_context_action`); the app only holds the drag and draws the menu. Secret rows refuse Cut,
+Copy and Paste; Settings has none today. An open dropdown or colour picker takes the pointer, so no
+text row under it gets the I-beam or the menu (`pointer_cursor_at`). A field under the picture overlay
 or the usage popup gets neither the menu nor the I-beam. The
 I-beam shows only over a field that takes the mouse now, the composer, the handover editor and
 terminal text.
