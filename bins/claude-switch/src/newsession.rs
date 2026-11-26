@@ -1,0 +1,271 @@
+//! The folder and account picker for a new CLI session.
+
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use claude_switch_core::App;
+use claude_switch_core::sessions::Group;
+use mdshared_ui::gfx::{Face, Painter, Rect};
+use mdshared_ui::keys::{KeyName, Mods};
+use mdshared_ui::overlay::{DIALOG_FOOTER, DIALOG_PAD, dialog_card};
+use mdshared_ui::textfield::{FieldColors, TextField};
+
+use super::{CANCEL, Dialog, Draw, FIELD, OK};
+use crate::state::{AppState, Target};
+
+const RECENT_LIMIT: usize = 4;
+const RECENT: u32 = 10;
+const PREVIOUS: u32 = 20;
+const NEXT: u32 = 21;
+
+pub struct NewSession {
+    field: TextField,
+    stops: Vec<f32>,
+    recent: Vec<PathBuf>,
+    accounts: Vec<(String, String)>,
+    account: usize,
+    account_focused: bool,
+    error: Option<&'static str>,
+}
+
+impl AppState {
+    pub fn ask_new_session(&mut self) {
+        self.dialog = Some(Dialog::NewSession(Box::new(NewSession::new(self))));
+    }
+}
+
+fn recent_folders(groups: &[Group]) -> Vec<PathBuf> {
+    // The session groups already deduplicate Windows paths and are ordered newest first.
+    groups.iter().filter(|g| !g.cwd.as_os_str().is_empty()).take(RECENT_LIMIT).map(|g| g.cwd.clone()).collect()
+}
+
+fn folder_from_text(text: &str, is_dir: impl FnOnce(&Path) -> bool) -> Result<PathBuf, &'static str> {
+    let path = PathBuf::from(text.trim());
+    if path.as_os_str().is_empty() {
+        Err("Enter a folder.")
+    } else if !is_dir(&path) {
+        Err("That folder does not exist or is not accessible.")
+    } else {
+        Ok(path)
+    }
+}
+
+impl NewSession {
+    fn new(st: &AppState) -> Self {
+        let accounts: Vec<_> = st.config.accounts.iter().map(|a| (a.slug.clone(), a.name.clone())).collect();
+        let account = accounts.iter().position(|(slug, _)| *slug == st.current().slug).unwrap_or(0);
+        let mut field = TextField::new();
+        let selected = st.selected_session().map(|s| &s.cwd).filter(|p| !p.as_os_str().is_empty());
+        field.set_text(&selected.cloned().unwrap_or_else(|| st.source.home()).to_string_lossy());
+        field.select_all();
+        Self {
+            field,
+            stops: Vec::new(),
+            recent: recent_folders(&st.all_groups),
+            accounts,
+            account,
+            account_focused: false,
+            error: None,
+        }
+    }
+
+    pub(super) fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, w: f32, h: f32) {
+        let pal = d.pal;
+        let recent_height = if self.recent.is_empty() { 0.0 } else { 28.0 + self.recent.len() as f32 * 32.0 };
+        let card = dialog_card(500.0, 174.0 + recent_height + DIALOG_FOOTER, w, h);
+        let footer = d.card(p, card);
+        d.title(p, card, "New session");
+        let x = card.x + DIALOG_PAD;
+        let width = card.w - 2.0 * DIALOG_PAD;
+
+        let fr = Rect::new(x, card.y + 64.0, width, 32.0);
+        p.text(Face::Ui, 12.0, x, fr.y - 9.0, "Folder", pal.muted, width);
+        p.frame(fr, 5.0, pal.field, if self.account_focused { pal.line } else { pal.accent });
+        let colors = FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
+        self.field.draw(p, fr.inset(8.0), Face::Ui, 13.0, &colors, "Folder path", !self.account_focused, true);
+        self.stops = p.caret_stops(Face::Ui, 13.0, &self.field.display());
+        d.hits.push((fr, Target::Dialog(FIELD)));
+        if let Some(error) = self.error {
+            p.text(Face::Ui, 12.0, x, fr.bottom() + 10.0, error, pal.danger, width);
+        }
+
+        let mut y = card.y + 118.0;
+        if !self.recent.is_empty() {
+            p.text(Face::Ui, 12.0, x, y + 6.0, "Recent folders", pal.muted, width);
+            y += 18.0;
+            for (i, folder) in self.recent.iter().enumerate() {
+                d.button(p, Rect::new(x, y, width, 28.0), &folder.to_string_lossy(), false, RECENT + i as u32);
+                y += 32.0;
+            }
+            y += 10.0;
+        }
+
+        p.text(Face::Ui, 12.0, x, y + 16.0, "Account", pal.muted, 67.0);
+        let r = Rect::new(x + 70.0, y, width - 70.0, 32.0);
+        p.frame(r, 5.0, pal.field, if self.account_focused { pal.accent } else { pal.line });
+        if let Some((_, name)) = self.accounts.get(self.account) {
+            let inset = if self.accounts.len() > 1 { 44.0 } else { 8.0 };
+            p.text(Face::Ui, 13.0, r.x + inset, r.cy(), name, pal.text, r.w - 2.0 * inset);
+        }
+        if self.accounts.len() > 1 {
+            d.button(p, Rect::new(r.x + 2.0, y + 2.0, 34.0, 28.0), "‹", false, PREVIOUS);
+            d.button(p, Rect::new(r.right() - 36.0, y + 2.0, 34.0, 28.0), "›", false, NEXT);
+        }
+        d.footer(p, footer, &[("Start", true, OK), ("Cancel", false, CANCEL)]);
+    }
+
+    fn step_account(&mut self, forward: bool) {
+        let n = self.accounts.len();
+        if n > 1 {
+            self.account = (self.account + if forward { 1 } else { n - 1 }) % n;
+        }
+    }
+
+    pub(super) fn click(&mut self, st: &mut AppState, now: Instant, id: u32, x: f32) -> bool {
+        match id {
+            CANCEL => return false,
+            OK => {
+                match folder_from_text(self.field.text(), |path| {
+                    if st.source.is_demo() {
+                        path == st.source.home() || st.all_groups.iter().any(|g| g.cwd == path)
+                    } else {
+                        path.is_dir()
+                    }
+                }) {
+                    Ok(cwd) => {
+                        if let Some((slug, _)) = self.accounts.get(self.account) {
+                            st.new_session_now(now, App::Cli, slug, &cwd);
+                        }
+                        return false;
+                    }
+                    Err(error) => {
+                        self.error = Some(error);
+                        self.account_focused = false;
+                    }
+                }
+            }
+            FIELD => {
+                self.account_focused = false;
+                let inner_x =
+                    x - st.hits.iter().find(|(_, t)| *t == Target::Dialog(FIELD)).map_or(0.0, |(r, _)| r.x + 8.0);
+                self.field.press(inner_x, &self.stops, false);
+            }
+            PREVIOUS | NEXT => {
+                self.account_focused = true;
+                self.step_account(id == NEXT);
+            }
+            id if id >= RECENT => {
+                if let Some(folder) = self.recent.get((id - RECENT) as usize) {
+                    self.field.set_text(&folder.to_string_lossy());
+                    self.error = None;
+                    self.account_focused = false;
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Enter and Escape go through the common dialog routes to Start and Cancel.
+    pub(super) fn key(&mut self, key: &KeyName, mods: Mods, text: Option<&str>) {
+        match key {
+            KeyName::Tab if self.accounts.len() > 1 => self.account_focused = !self.account_focused,
+            KeyName::Left | KeyName::Up if self.account_focused => self.step_account(false),
+            KeyName::Right | KeyName::Down if self.account_focused => self.step_account(true),
+            _ if !self.account_focused && self.field.handle_key(key, mods, text, true) == Some(true) => {
+                self.error = None;
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn text_input(&mut self, text: &str) {
+        if !self.account_focused && self.field.insert(text) {
+            self.error = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{actions, demo, dialogs, source::Source, winfile::WindowFile};
+
+    fn demo_state() -> AppState {
+        let mut st = AppState::new(Source::Demo, Some(false), WindowFile::default());
+        st.apply_scan(demo::scan(&st.config));
+        st
+    }
+
+    fn picker(st: &AppState) -> &NewSession {
+        match &st.dialog {
+            Some(Dialog::NewSession(picker)) => picker,
+            _ => panic!("expected the New session dialog"),
+        }
+    }
+
+    #[test]
+    fn the_new_session_command_asks_with_the_selected_folder_or_home_and_current_account() {
+        let mut st = demo_state();
+        let now = Instant::now();
+        let id = st.sessions[0].id.clone();
+        st.select(&id);
+        st.switch_account("work");
+        st.command(now, actions::NEW_SESSION, None);
+        let modal = picker(&st);
+        assert_eq!(modal.field.text(), st.sessions[0].cwd.to_string_lossy());
+        assert_eq!(modal.accounts[modal.account].0, "work");
+        assert!(st.toasts.is_empty(), "asking doesn't start anything");
+        dialogs::key(&mut st, now, &KeyName::Escape, Mods::default(), None);
+        assert!(st.dialog.is_none() && st.toasts.is_empty());
+        st.selected = None;
+        st.command(now, actions::NEW_SESSION, None);
+        assert_eq!(picker(&st).field.text(), st.source.home().to_string_lossy());
+    }
+
+    #[test]
+    fn recent_choices_are_distinct_and_newest_first() {
+        let mut st = demo_state();
+        st.ask_new_session();
+        let recent = &picker(&st).recent;
+        assert_eq!(recent.len(), RECENT_LIMIT);
+        assert_eq!(recent[0], st.sessions[0].cwd);
+        let mut expected = Vec::new();
+        for session in &st.sessions {
+            if !expected.contains(&session.cwd) {
+                expected.push(session.cwd.clone());
+            }
+        }
+        assert_eq!(recent.as_slice(), &expected[..RECENT_LIMIT]);
+    }
+
+    #[test]
+    fn enter_refuses_an_invalid_folder_then_starts_with_the_chosen_folder_and_account() {
+        let mut st = demo_state();
+        let now = Instant::now();
+        st.ask_new_session();
+        dialogs::text_input(&mut st, r"C:\made-up\missing");
+        dialogs::key(&mut st, now, &KeyName::Enter, Mods::default(), None);
+        assert!(picker(&st).error.is_some());
+        assert!(st.toasts.is_empty());
+        let chosen = picker(&st).recent[1].clone();
+        dialogs::click(&mut st, now, RECENT + 1, 0.0);
+        assert_eq!(picker(&st).field.text(), chosen.to_string_lossy());
+        dialogs::key(&mut st, now, &KeyName::Tab, Mods::default(), None);
+        dialogs::key(&mut st, now, &KeyName::Right, Mods::default(), None);
+        assert_eq!(picker(&st).accounts[picker(&st).account].0, "work");
+        dialogs::key(&mut st, now, &KeyName::Enter, Mods::default(), None);
+        assert!(st.dialog.is_none() && !st.toasts.is_empty());
+        assert_eq!(st.config.current, "main", "the pick is only for this launch");
+    }
+
+    #[test]
+    fn real_folder_validation_refuses_blank_missing_and_file_paths() {
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert_eq!(folder_from_text(&here.to_string_lossy(), Path::is_dir), Ok(here.to_owned()));
+        assert!(folder_from_text(" ", Path::is_dir).is_err());
+        let file = here.join("Cargo.toml");
+        assert!(folder_from_text(&file.to_string_lossy(), Path::is_dir).is_err());
+        assert!(folder_from_text(&file.join("missing").to_string_lossy(), Path::is_dir).is_err());
+    }
+}

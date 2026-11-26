@@ -6,3 +6,7 @@ license.workspace = true
 
 [dependencies]
 claude-switch-core = { path = "../../crates/core" }
+mdshared-ui = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "df8d4e1ef65164646585ed384c277ff8bdbb9dd5", features = ["host", "term"] }
+mdshared-app = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "df8d4e1ef65164646585ed384c277ff8bdbb9dd5" }
+mdshared-term = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "df8d4e1ef65164646585ed384c277ff8bdbb9dd5" }
+mdshared-pty = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "df8d4e1ef65164646585ed384c277ff8bdbb9dd5" }
