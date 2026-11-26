@@ -434,10 +434,10 @@ version = "0.1.1"
 dependencies = [
  "claude-switch-core",
  "getrandom 0.3.4",
- "mdshared-app 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997)",
+ "mdshared-app 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76)",
  "mdshared-pty",
  "mdshared-term",
- "mdshared-text 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997)",
+ "mdshared-text 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76)",
  "mdshared-ui",
  "mdview-core",
  "mdview-preview",
@@ -1352,7 +1352,7 @@ dependencies = [
 [[package]]
 name = "mdshared-app"
 version = "0.1.0"
-source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997#c2b981a897dcd7283bcc8e3443f979a056a99997"
+source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76#7da7b22feb4a3fa3532649dd094d062883154a76"
 dependencies = [
  "notify",
  "windows-sys 0.59.0",
@@ -1369,7 +1369,7 @@ dependencies = [
 [[package]]
 name = "mdshared-pty"
 version = "0.1.0"
-source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997#c2b981a897dcd7283bcc8e3443f979a056a99997"
+source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76#7da7b22feb4a3fa3532649dd094d062883154a76"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
@@ -1378,7 +1378,7 @@ dependencies = [
 [[package]]
 name = "mdshared-term"
 version = "0.1.0"
-source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997#c2b981a897dcd7283bcc8e3443f979a056a99997"
+source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76#7da7b22feb4a3fa3532649dd094d062883154a76"
 
 [[package]]
 name = "mdshared-text"
@@ -1394,7 +1394,7 @@ dependencies = [
 [[package]]
 name = "mdshared-text"
 version = "0.1.0"
-source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997#c2b981a897dcd7283bcc8e3443f979a056a99997"
+source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76#7da7b22feb4a3fa3532649dd094d062883154a76"
 dependencies = [
  "parley",
  "png",
@@ -1406,12 +1406,12 @@ dependencies = [
 [[package]]
 name = "mdshared-ui"
 version = "0.1.0"
-source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997#c2b981a897dcd7283bcc8e3443f979a056a99997"
+source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76#7da7b22feb4a3fa3532649dd094d062883154a76"
 dependencies = [
  "arboard",
- "mdshared-app 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997)",
+ "mdshared-app 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76)",
  "mdshared-term",
- "mdshared-text 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=c2b981a897dcd7283bcc8e3443f979a056a99997)",
+ "mdshared-text 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=7da7b22feb4a3fa3532649dd094d062883154a76)",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
