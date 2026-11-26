@@ -15,11 +15,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub mod accounts;
+pub mod clock;
 pub mod config;
 pub mod launch;
 pub mod running;
 pub mod sessions;
 pub mod share;
+pub mod transcript;
+mod util;
 
 /// Where the files of this computer are, so that tests can point everything at a temporary folder.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,6 +133,9 @@ pub struct Session {
     pub desktop_account: Option<String>,
     /// The desktop record says it is archived.
     pub archived: bool,
+    /// Started by a tool or a subagent, not by the owner: the newest `entrypoint` in the
+    /// transcript starts with `sdk` (`sdk-cli`, `sdk-ts`).
+    pub worker: bool,
     /// The transcript file.
     pub file: PathBuf,
 }
@@ -245,6 +251,16 @@ pub struct Config {
     pub embedded_terminal: bool,
     /// Show archived desktop sessions in the list.
     pub show_archived: bool,
+    /// Show the sessions started by tools and subagents ([`Session::worker`]) in the list.
+    pub show_workers: bool,
+    /// Terminal colour scheme id; unknown ids are treated as automatic by the window.
+    pub terminal_scheme: String,
+    /// Terminal font size in logical pixels.
+    pub terminal_font_size: u8,
+    /// Window theme: "system", "light" or "dark".
+    pub window_theme: String,
+    /// Optional visual preferences beyond the theme and font size.
+    pub appearance: config::AppearancePrefs,
 }
 
 /// Convenience for callers: the account with this slug.

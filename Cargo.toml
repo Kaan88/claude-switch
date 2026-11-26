@@ -10,3 +10,10 @@ license = "MIT"
 [profile.release]
 opt-level = 2
 strip = true
+
+# The session scan reads hundreds of transcripts: unoptimised it takes almost two seconds.
+[profile.dev.package.claude-switch-core]
+opt-level = 2
+
+[profile.dev.package.serde_json]
+opt-level = 2
