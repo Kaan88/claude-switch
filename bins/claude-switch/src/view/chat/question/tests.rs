@@ -497,3 +497,84 @@ fn a_typed_row_that_loses_its_number_never_panics_and_stops_before_enter() {
     assert!(f.writes().is_empty(), "no Enter");
     assert_eq!(f.chat().question.error, Some(NOT_TYPED));
 }
+
+/// The native /model picker (its rows to confirm in a live session).
+fn picker(highlight: usize) -> String {
+    let choices = ["Default (recommended)  Opus 5.5", "Sonnet  Sonnet 5.5", "Haiku  Haiku 5.5"];
+    let mut rows =
+        vec!["\x1b[2J\x1b[H Select model".to_owned(), " Switch between Claude models.".to_owned(), String::new()];
+    for (i, choice) in choices.iter().enumerate() {
+        let mark = if i == highlight { "❯" } else { " " };
+        rows.push(format!(" {mark} {}. {choice}", i + 1));
+    }
+    rows.push(String::new());
+    rows.push(" Enter to confirm · Esc to exit".to_owned());
+    rows.join("\r\n")
+}
+
+impl Fixture {
+    /// Nothing pending: a menu the user opened with a command.
+    fn idle() -> Self {
+        let mut f = Self::new(vec![]);
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.items.clear();
+        pane.model.chat.pending = None;
+        pane.model.chat.latest = Some((AT, claude_switch_core::transcript::ChatPhase::EndTurn));
+        f
+    }
+}
+
+#[test]
+fn a_cli_menu_is_answered_from_its_card_and_keeps_the_drawer_closed() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen(&picker(0), now);
+    f.sync();
+    let menu = f.chat().question.menu.clone().expect("a menu card");
+    assert_eq!(menu.title, "Switch between Claude models.");
+    assert_eq!(menu.choices.len(), 3);
+    assert!(menu.esc);
+    assert_eq!(f.decide(now), Some(Reason::Menu));
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+
+    assert!(press(f.tab(), now, Hit::Option(2)));
+    assert_eq!(f.writes(), [down(2)]);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "not moved yet");
+    f.screen(&picker(2), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    // The menu closed: the step ends at once, without waiting for the deadline.
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    assert!(advance(f.tab(), now, true));
+    assert!(f.chat().question.step.is_none() && f.chat().question.menu.is_none());
+    assert!(f.chat().question.error.is_none());
+
+    // Other choices by the time the highlight moved: nothing more is written.
+    let mut f = Fixture::idle();
+    f.screen(&picker(0), now);
+    press(f.tab(), now, Hit::Option(1));
+    f.writes();
+    f.screen(&picker(1).replace("Sonnet  Sonnet 5.5", "Sonnet  Sonnet 4.6"), now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(CHANGED));
+}
+
+#[test]
+fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen("\x1b[2J\x1b[H Settings\r\n  Theme  Dark\r\n  Verbose  false\r\n\r\n Esc to cancel", now);
+    f.sync();
+    let menu = f.chat().question.menu.clone().expect("a read-only card");
+    assert!(menu.choices.is_empty());
+    assert_eq!(menu.rows, ["Settings", "Theme Dark", "Verbose false"]);
+    assert!(!press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+
+    let mut f = Fixture::idle();
+    f.screen(&format!("{}\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\x1b[?2004h❯ ", picker(0)), now);
+    f.sync();
+    assert!(f.chat().question.menu.is_none(), "a menu far above the input is old output");
+}

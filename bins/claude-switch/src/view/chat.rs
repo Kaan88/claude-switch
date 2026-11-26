@@ -44,6 +44,8 @@ pub enum Reason {
     Question,
     /// A permission prompt the card in the conversation can answer.
     Approval,
+    /// A CLI menu or dialog the card in the conversation shows.
+    Menu,
 }
 
 impl Reason {
@@ -57,6 +59,7 @@ impl Reason {
             Self::Ended => "Claude Code has ended.",
             Self::Question => "Answer Claude's question above.",
             Self::Approval => "Answer Claude's request above.",
+            Self::Menu => "Choose in Claude Code's menu above, or open the terminal.",
         }
     }
 }
@@ -317,6 +320,13 @@ impl Chat {
         if decision.1 == Some(Reason::Tool) && info.pending.is_some() && self.question.answerable == info.pending {
             decision.1 = Some(if self.question.approval { Reason::Approval } else { Reason::Question });
         }
+        // A CLI menu shows as a card: nothing is sent past it and the drawer stays closed.
+        if self.question.menu.is_some()
+            && decision.0 != Gate::Ended
+            && decision.1.is_none_or(|r| matches!(r, Reason::Slash | Reason::Tool | Reason::Bell))
+        {
+            decision = (Gate::Check, Some(Reason::Menu));
+        }
         decision
     }
 
@@ -340,7 +350,10 @@ impl Chat {
         let before = (self.drawer, self.reason);
         self.reason = reason;
         // A question or request the card can answer does not open the drawer, and closes one it opened.
-        let reason = reason.filter(|r| !matches!(r, Reason::Question | Reason::Approval));
+        // A command's results and menus now show in the conversation: a slash command alone does
+        // not open it either.
+        let reason =
+            reason.filter(|r| !matches!(r, Reason::Question | Reason::Approval | Reason::Menu | Reason::Slash));
         match (self.drawer, reason) {
             (Drawer::Closed, Some(reason)) if Some(reason) != self.suppressed => self.drawer = Drawer::Auto(reason),
             (Drawer::Auto(_), Some(reason)) => self.drawer = Drawer::Auto(reason),

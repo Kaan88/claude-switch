@@ -22,6 +22,8 @@
   shows it on its input line.
 - Chat: slash command output and shell-mode commands (`!`) show in the conversation as rows with
   their output.
+- Chat: Claude Code's menus, pickers and dialogs show as cards in the chat and are answered there;
+  slash commands no longer open the terminal drawer.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

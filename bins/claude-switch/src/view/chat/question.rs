@@ -162,13 +162,24 @@ enum Stage {
 #[derive(Clone, Debug)]
 enum Subject {
     Question(Question),
-    Tool { needles: Vec<String>, choices: Vec<String> },
-    Plan { choices: Vec<String> },
+    Tool {
+        needles: Vec<String>,
+        choices: Vec<String>,
+    },
+    Plan {
+        choices: Vec<String>,
+    },
+    /// Any other CLI menu: its title row and its choices.
+    Menu {
+        title: String,
+        choices: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
 struct Step {
-    item: ItemId,
+    /// The pending call the step answers; `None` for a CLI menu.
+    item: Option<ItemId>,
     subject: Subject,
     /// The menu entry, counted from 0.
     target: usize,
@@ -176,6 +187,24 @@ struct Step {
     stage: Stage,
     due: Instant,
     epoch: u64,
+}
+
+/// A CLI menu, picker or dialog as last read from the screen, for the card.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct MenuShown {
+    title: String,
+    /// Its numbered choices; empty when Chat cannot read them.
+    choices: Vec<String>,
+    /// Its rows, shown read-only when there are no choices.
+    rows: Vec<String>,
+    /// Its footer offers Esc.
+    pub(super) esc: bool,
+}
+
+fn menu_shown(screen: &Screen) -> Option<MenuShown> {
+    let panel = screens::panel(screen)?;
+    let choices = panel.menu.as_ref().map(screens::Menu::texts).unwrap_or_default();
+    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc })
 }
 
 /// A permission prompt as last read from the screen, for the card.
@@ -201,6 +230,8 @@ pub(super) struct Card {
     failed: bool,
     rect: Rect,
     shown: Option<Shown>,
+    /// A CLI menu with no question or permission card for it.
+    pub(super) menu: Option<MenuShown>,
     /// The pending call's offset while Chat may answer it: its drawer stays closed.
     pub(super) answerable: Option<u64>,
     /// The card answers a permission prompt, not a question.
@@ -240,6 +271,11 @@ fn read(
             let same = texts.len() == choices.len()
                 && texts.iter().zip(choices).enumerate().all(|(i, (a, b))| a == b || typing == Some(i));
             same.then_some((menu, None, None))
+        }
+        Subject::Menu { title, choices } => {
+            let panel = screens::panel(screen)?;
+            let menu = panel.menu?;
+            (panel.title == *title && menu.texts() == *choices).then_some((menu, None, None))
         }
     }
 }
@@ -389,6 +425,12 @@ impl Chat {
             Kind::Tool(_) => shown.as_ref().is_some_and(|s| s.matched),
         });
         let answerable = answerable.map(|p| p.item.offset);
+        // Any other menu the screen shows, unless a question or prompt card already covers it.
+        let menu = (shown.is_none() && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
+            .then(|| menu_shown(screen))
+            .flatten();
+        changed |= self.question.menu != menu;
+        self.question.menu = menu;
         self.question.shown = shown;
         changed |= std::mem::replace(&mut self.question.answerable, answerable) != answerable;
         changed
@@ -423,6 +465,9 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         }
         _ if chat.question.step.is_some() || chat.locked() => return false,
         _ => {}
+    }
+    if let Some(menu) = chat.question.menu.clone() {
+        return press_menu(tab, now, hit, menu);
     }
     let Some(Pending { item, kind, alone }) = pending(&pane.model) else { return false };
     let subject = match kind {
@@ -492,7 +537,13 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     chat.question.error = None;
     chat.question.focus = false;
     let epoch = chat.output_epoch;
-    let mut step = Step { item, subject, target, then, stage: Stage::Moving, due: now + STEP, epoch };
+    let step = Step { item: Some(item), subject, target, then, stage: Stage::Moving, due: now + STEP, epoch };
+    start(tab, now, step, from)
+}
+
+/// Writes the first keys of a step whose menu shows its highlight on `from`.
+fn start(tab: &mut Tab, now: Instant, mut step: Step, from: usize) -> bool {
+    let target = step.target;
     let result =
         if from == target { arrived(tab, &mut step, now) } else { write(tab, &moves(from, target, &tab.term.screen)) };
     let chat = &mut tab.pane.as_mut().unwrap().chat;
@@ -501,6 +552,29 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         Err(error) => chat.question_failed(error),
     }
     true
+}
+
+/// A click in a CLI menu's card: the same checks, against the menu's title and choices.
+fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
+    let Hit::Option(target) = hit else { return false };
+    if target >= shown.choices.len() {
+        return false;
+    }
+    if !ready(tab) {
+        tab.pane.as_mut().unwrap().chat.question_failed(BLOCKED);
+        return true;
+    }
+    let subject = Subject::Menu { title: shown.title, choices: shown.choices };
+    let from = read(&subject, &tab.term.screen, None).and_then(|(menu, ..)| menu.highlight());
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    let Some(from) = from else {
+        chat.question_failed(CHANGED);
+        return true;
+    };
+    chat.question.error = None;
+    let epoch = chat.output_epoch;
+    let step = Step { item: None, subject, target, then: Then::Choose, stage: Stage::Moving, due: now + STEP, epoch };
+    start(tab, now, step, from)
 }
 
 /// The highlight is on the target: choose it, open its comment field, or type first.
@@ -532,7 +606,7 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_mut().expect("Chat pane");
     let changed = pane.chat.sync_question(&pane.model, &tab.term.screen);
     let Some(mut step) = pane.chat.question.step.clone() else { return changed };
-    if pending(&pane.model).is_none_or(|p| p.item != step.item) {
+    if step.item.is_some() && pending(&pane.model).map(|p| p.item) != step.item {
         // The transcript resolved or replaced the call; `sync_question` cleared the step.
         return changed;
     }
@@ -585,6 +659,14 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
         Then::Choose | Then::Chat(_) => None,
     };
     match step.stage {
+        // A menu that moved on (closed, or opened the next one) is done at once.
+        Stage::Sent
+            if may_act
+                && matches!(step.subject, Subject::Menu { .. })
+                && read(&step.subject, screen, None).is_none() =>
+        {
+            Action::Closed
+        }
         Stage::Sent if late && read(&step.subject, screen, Some(step.target)).is_some() => Action::Fail(NOT_CLOSED),
         Stage::Sent if late => Action::Closed,
         Stage::Sent => Action::Wait,
@@ -657,6 +739,7 @@ const FIELD: f32 = 30.0;
 const STATUS: f32 = 22.0;
 const DETAIL_LINES: usize = 6;
 const BODY_LINES: usize = 4;
+const MENU_LINES: usize = 10;
 
 /// The tool call as the transcript has it, a few lines for the card.
 fn detail(kind: &ItemKind) -> Vec<String> {
@@ -700,6 +783,16 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         }),
         None => None,
     };
+    let wanted = wanted.or_else(|| {
+        chat.question.menu.as_ref().map(|m| {
+            let body = if m.choices.is_empty() {
+                m.rows.len().min(MENU_LINES) as f32 * LINE
+            } else {
+                m.choices.len() as f32 * (CHOICE + 4.0)
+            };
+            HEADER + LINE + 6.0 + body
+        })
+    });
     let Some(wanted) = wanted else {
         chat.question.rect = Rect::default();
         return;
@@ -723,16 +816,61 @@ impl Draw<'_> {
     /// The card under the conversation; called by the Chat painter.
     pub(super) fn card(&self, p: &mut Painter, chat: &mut Chat, model: &Model, hits: &mut Vec<(Rect, Target)>) {
         let r = chat.question.rect;
-        let Some(pending) = pending(model).filter(|_| r.h > 0.0) else { return };
+        if r.h <= 0.0 {
+            return;
+        }
         let pal = self.pal;
         let clip = p.clip(r);
         p.frame(r, 8.0, pal.popup, pal.popup_line);
         let inner = r.inset(PAD);
-        match pending.kind {
-            Kind::Question(questions) => self.question(p, chat, inner, questions, hits),
-            Kind::Tool(kind) => self.permission(p, chat, inner, kind, hits),
+        match pending(model).map(|p| p.kind) {
+            Some(Kind::Question(questions)) => self.question(p, chat, inner, questions, hits),
+            Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
+            _ => self.menu(p, chat, inner, hits),
         }
         p.restore(clip);
+    }
+
+    /// A CLI menu, picker or dialog: its choices as buttons, or its rows read-only.
+    fn menu(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, hits: &mut Vec<(Rect, Target)>) {
+        let pal = self.pal;
+        let Some(menu) = chat.question.menu.clone() else { return };
+        let mut y = inner.y;
+        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code menu", pal.muted, inner.w);
+        y += HEADER;
+        let title = if menu.title.is_empty() { "Choose in the terminal's menu" } else { menu.title.as_str() };
+        p.text(Face::Semibold, 12.5, inner.x, y + LINE / 2.0, title, pal.text, inner.w);
+        y += LINE + 6.0;
+        if menu.choices.is_empty() {
+            for row in menu.rows.iter().rev().take(MENU_LINES).rev() {
+                p.text(Face::Mono, 11.0, inner.x, y + LINE / 2.0, row, pal.muted, inner.w);
+                y += LINE;
+            }
+        }
+        for (i, choice) in menu.choices.iter().enumerate() {
+            let row = Rect::new(inner.x, y, inner.w, CHOICE);
+            let target = Target::Chat(Control::Question(Hit::Option(i)));
+            p.rbox(row, 6.0, if self.hover == Some(target) { pal.hover } else { pal.bar });
+            p.text(
+                Face::Semibold,
+                12.0,
+                row.x + 10.0,
+                row.cy(),
+                &format!("{}. {choice}", i + 1),
+                pal.text,
+                row.w - 20.0,
+            );
+            hits.push((row, target));
+            y += CHOICE + 4.0;
+        }
+        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
+        let note = if menu.choices.is_empty() { TERMINAL_ONLY } else { "" };
+        let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or(note);
+        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
+        let open = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
+        let target = Target::Chat(Control::Question(Hit::Open));
+        super::paint::button(p, pal, open, "Open terminal", self.hover == Some(target), false);
+        hits.push((open, target));
     }
 
     fn question(

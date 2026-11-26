@@ -254,7 +254,8 @@ Pick **Chat** or **Terminal** at the right of a Claude session’s tab strip. Th
 with each tab and sets the default for new ones. Chat shows the local conversation, a multiline
 composer, and a collapsible Details panel on wider windows.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
-to resize it, and answer other CLI dialogs there.
+to resize it. Claude Code's menus and dialogs (the /model picker, /config, folder trust and the
+like) show as a card in the chat; one Chat cannot read shows its rows with **Open terminal**.
 
 When Claude asks a question (its AskUserQuestion tool), the question appears as a card under the
 conversation and the working line says **Waiting for your answer**. Click an option, or type an
@@ -316,7 +317,7 @@ the viewer. Both tabs are also available in **Session view**.
 Chat shows why it held a draft. Neither **Send anyway** nor **Send now** overrides a recognized
 permission question or pending interaction. For pictures, Chat waits for Claude Code to display a new
 image marker before pressing Enter. The command list is a local preview; Claude Code determines which
-commands and choices are available. **Model** also opens Claude Code’s own picker in the drawer.
+commands and choices are available. **Model** can also open Claude Code’s own picker, which shows as a card.
 
 ## Grouping sessions
 

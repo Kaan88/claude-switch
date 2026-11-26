@@ -676,7 +676,7 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
             chat.slash = !chat.demo;
             chat.suppressed = None;
             chat.react(chat.slash.then_some(Reason::Slash));
-            if chat.demo || !line.starts_with("/model ") && !line.starts_with("/effort ") {
+            if chat.demo {
                 chat.drawer = Drawer::Manual;
             }
         }

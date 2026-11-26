@@ -3,8 +3,27 @@
 //! live session. A screen that does not match exactly is not answered.
 use mdshared_term::Screen;
 
-/// Footer hints under a CLI menu (the last non-empty row), lower case.
-pub(super) const MENU_FOOTERS: [&str; 2] = ["esc to cancel", "enter to select"];
+/// Footer hints under a CLI menu, picker or dialog (the last non-empty row), lower case.
+const MENU_FOOTERS: [&str; 8] = [
+    "esc to cancel",
+    "escape to cancel",
+    "esc to close",
+    "esc to go back",
+    "esc to exit",
+    "enter to select",
+    "enter to confirm",
+    "enter to continue",
+];
+/// How many rows of a menu the read-only card copies.
+const PANEL_ROWS: usize = 14;
+
+/// A menu footer: one of the hints, or arrows with a word for moving or choosing.
+pub(in crate::view::chat) fn menu_footer(line: &str) -> bool {
+    let text = line.trim().to_ascii_lowercase();
+    MENU_FOOTERS.iter().any(|f| text.contains(f))
+        || (text.contains('↑') || text.contains('↓'))
+            && (text.contains("navigate") || text.contains("select") || text.contains("choose"))
+}
 /// The free-text row after an `AskUserQuestion`'s options.
 pub(super) const OTHER: &str = "Type something";
 /// The row that leaves an `AskUserQuestion` to talk about it.
@@ -118,8 +137,7 @@ impl Menu {
 pub(super) fn menu(screen: &Screen) -> Option<Menu> {
     let rows: Vec<_> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
     let footer = rows.iter().rposition(|(_, text)| !text.is_empty())?;
-    let hint = rows[footer].1.to_lowercase();
-    if !MENU_FOOTERS.iter().any(|f| hint.contains(f)) {
+    if !menu_footer(&rows[footer].1) {
         return None;
     }
     let mut entries: Vec<Entry> = Vec::new();
@@ -168,6 +186,39 @@ pub(in crate::view::chat) fn mode(screen: &Screen) -> Option<&'static str> {
         let text = clean(&screen.row_text(i)).1.to_lowercase().replace('’', "'");
         MODES.iter().find(|(indicator, _)| text.contains(indicator)).map(|(_, name)| *name)
     })
+}
+
+/// Any CLI menu, picker or dialog near the input: its title row, its numbered choices when it has
+/// them, else its rows to show read-only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Panel {
+    pub title: String,
+    pub menu: Option<Menu>,
+    pub rows: Vec<String>,
+    /// The footer offers Esc.
+    pub esc: bool,
+}
+
+pub(super) fn panel(screen: &Screen) -> Option<Panel> {
+    if crate::attention::screen_permission_prompt(screen) || screen.modes().alt_screen {
+        return None;
+    }
+    let lines: Vec<String> = (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1).collect();
+    let footer = lines.iter().rposition(|text| !text.is_empty())?;
+    let cursor = screen.cursor().row;
+    // Only a footer by the input: not an old menu left in the output above.
+    if !menu_footer(&lines[footer]) || footer + 1 < cursor || footer > cursor + 9 {
+        return None;
+    }
+    let esc = lines[footer].to_lowercase().contains("esc");
+    let menu = menu(screen);
+    let title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
+    let rows = lines[footer.saturating_sub(PANEL_ROWS)..footer]
+        .iter()
+        .filter(|text| !text.is_empty() && !rule(text))
+        .cloned()
+        .collect();
+    Some(Panel { title, menu, rows, esc })
 }
 
 /// The plan approval menu: its question right above the choices, one of which keeps planning.

@@ -662,7 +662,7 @@ transcript byte watermark before writing so a buffered earlier prompt cannot rea
 
 **When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
-same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only an automatically
+same. A BEL and process exit also open the drawer. Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. Chat
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
@@ -693,8 +693,15 @@ verified, quiet, visibly empty CLI prompt, no active turn or blocking interactio
 terminal mode checks as Send. Chat writes command text first, and only writes Enter after seeing
 the exact text on the live input row, within two seconds. Compact and Clear (including Clear aliases)
 ask for confirmation.
-Interactive CLI results stay in the drawer. Chat does not generate answers to its menus; without
-observable progress or a quiet, empty prompt it cannot verify that the menu closed.
+**CLI menus.** Menus, pickers and dialogs used to stay in the drawer. The owner gave that up with
+item 42's reason ("give that up, otherwise all I see is that chat has stopped. convenience trumps").
+Any menu whose footer (an "Esc to …"/"Enter to …" hint, or arrows with navigate/select/choose) is the
+last row by the input shows as a card when no question or permission card covers it: its title row
+and its numbered choices as buttons, answered like a question (arrows, then Enter once the screen
+shows the highlight on that row with the same title and choices); the step ends as soon as that
+menu is gone. A menu without numbered rows shows its rows read-only with Open terminal. While a
+card shows a menu, sends are refused with "Choose in Claude Code's menu above" and the drawer stays
+closed; a slash command no longer opens the drawer by itself.
 
 **Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
 the call's input (header, question, options with descriptions), never from the screen. Chat answers

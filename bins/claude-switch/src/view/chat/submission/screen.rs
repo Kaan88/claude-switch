@@ -15,15 +15,7 @@ fn blank(cell: &Cell) -> bool {
 }
 
 fn footer(line: &str) -> bool {
-    let text = line.trim().to_ascii_lowercase();
-    text.starts_with("esc to cancel")
-        || text.starts_with("escape to cancel")
-        || text.starts_with("esc to close")
-        || text.starts_with("esc to go back")
-        || text.contains("enter to select")
-        || text.contains("enter to confirm")
-        || ((text.contains('↑') || text.contains('↓'))
-            && (text.contains("navigate") || text.contains("select") || text.contains("choose")))
+    crate::view::chat::question::screens::menu_footer(line)
 }
 
 pub(super) fn menu(screen: &Screen) -> bool {
