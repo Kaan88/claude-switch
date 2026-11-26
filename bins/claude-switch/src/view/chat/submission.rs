@@ -440,7 +440,11 @@ impl AppState {
                 return true;
             }
             let intent = if queue.interrupted(tab, now) { Intent::Interrupted } else { Intent::Draft };
+            // Never past keys of a card, a mode change or Ctrl+B still on their way: the draft
+            // stays queued until they have gone (the send itself would refuse and drop the queue).
             if may_write
+                && chat.waiting().is_none()
+                && !chat.enter_only()
                 && (intent == Intent::Interrupted || queue.completed(&pane.model.chat))
                 && blocked(tab, now, intent).is_none()
                 && (chat.demo || clean_prompt(&tab.term.screen))

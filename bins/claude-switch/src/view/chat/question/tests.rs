@@ -972,3 +972,50 @@ fn words_in_the_conversation_above_a_menu_do_not_make_it_a_permission_prompt() {
         assert!(screens::permission_like(&f.tab().term.screen), "the question is the menu's own row");
     }
 }
+
+#[test]
+fn a_queued_draft_stays_queued_while_a_cards_keys_are_on_their_way() {
+    // The turn ended and the menu closed, but the card's answer is not known to have landed yet
+    // (no window focus, so nothing newer was read). The queue must neither send past it nor be
+    // dropped without a word.
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.chat().demo_progress = true;
+    f.screen(&picker(0), now);
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.tab().term.feed("\x1b[2J\x1b[H\x1b[?2004h❯ ".as_bytes());
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    AppState::advance_submission(f.tab(), now, false);
+    AppState::advance_submission(f.tab(), now, true);
+    assert!(f.chat().question.step.is_some(), "the answer is still in flight");
+    assert!(f.writes().is_empty());
+    assert!(f.chat().queue.is_some(), "still queued");
+
+    // Once the screen shows the menu gone, the step ends and the draft goes.
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    AppState::advance_submission(f.tab(), now, true);
+    AppState::advance_submission(f.tab(), now, true);
+    assert!(f.chat().question.step.is_none());
+    assert!(f.chat().queue.is_none() && f.chat().editor.text.is_empty(), "sent");
+}
+
+#[test]
+fn the_busy_notice_goes_once_the_other_keys_have_gone_even_with_a_draft_queued() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    f.sync();
+    f.chat().question.background_step = Some((ItemId { offset: AT, block: 0 }, now + STEP, 0));
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(WAITING));
+    f.chat().question.background_step = None;
+    f.sync();
+    assert_eq!(f.chat().question.error, None, "the queued draft is no key on its way");
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+}

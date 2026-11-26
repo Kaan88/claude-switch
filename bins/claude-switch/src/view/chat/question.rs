@@ -517,7 +517,10 @@ impl Chat {
 
     /// Drops a click's "other keys are on their way" notice once they have gone.
     fn clear_busy(&mut self) -> bool {
-        let Some(busy) = self.question.busy.filter(|_| !self.locked()) else { return false };
+        // A queued draft is no key on its way: the card answers ahead of it.
+        let Some(busy) = self.question.busy.filter(|_| self.waiting().is_none() && !self.enter_only()) else {
+            return false;
+        };
         self.question.busy = None;
         self.question.error.take_if(|error| *error == busy).is_some()
     }
