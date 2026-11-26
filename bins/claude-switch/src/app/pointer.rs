@@ -48,7 +48,16 @@ impl AppState {
 
     fn hover_target(&self, layer: Layer) -> Option<Target> {
         let (x, y) = self.mouse;
+        self.target_in(layer, x, y)
+    }
+
+    fn target_in(&self, layer: Layer, x: f32, y: f32) -> Option<Target> {
         self.hits.iter().rev().find(|(r, t)| layer.accepts(*t) && r.contains(x, y)).map(|(_, t)| *t)
+    }
+
+    /// The target at `(x, y)` in the front layer only.
+    pub(crate) fn front_target_at(&self, x: f32, y: f32) -> Option<Target> {
+        self.target_in(self.pointer_layer(), x, y)
     }
 
     fn pointer_for(&self, layer: Layer) -> (f32, f32) {

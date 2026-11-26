@@ -35,6 +35,24 @@ fn text_of(row: &Row) -> Option<&str> {
     row.body.as_ref().map(|b| b.text())
 }
 
+/// The nearest character boundary at or before `byte`, within the text.
+fn floor_char(text: &str, byte: usize) -> usize {
+    let mut at = byte.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+/// The nearest character boundary at or after `byte`, within the text.
+fn ceil_char(text: &str, byte: usize) -> usize {
+    let mut at = byte.min(text.len());
+    while !text.is_char_boundary(at) {
+        at += 1;
+    }
+    at
+}
+
 impl Selection {
     pub fn within(id: Id, a: usize, b: usize) -> Self {
         Self { anchor: (id.clone(), a), focus: (id, b) }
@@ -60,10 +78,11 @@ impl Selection {
         if index < first || index > last {
             return None;
         }
-        let start = if index == first { from.min(text.len()) } else { 0 };
-        let end = if index == last { to.min(text.len()) } else { text.len() };
-        let range = start..end.max(start);
-        text.get(range.clone()).is_some().then_some(range)
+        // A stored byte can fall inside a character once the row's text has changed under the
+        // selection; widen to whole characters rather than leave the row out of a copy.
+        let start = if index == first { floor_char(text, from) } else { 0 };
+        let end = if index == last { ceil_char(text, to) } else { text.len() };
+        Some(start..end.max(start))
     }
 
     /// The selected text, the rows' parts joined by a blank line.
@@ -218,8 +237,20 @@ mod tests {
         // One row, and an end past a shortened row's text.
         assert_eq!(Selection::range_in(((2, 1), (2, 4)), 2, "abcdef"), Some(1..4));
         assert_eq!(Selection::range_in(((2, 1), (2, 99)), 2, "abc"), Some(1..3));
-        // Never a range that splits a character.
-        assert_eq!(Selection::range_in(((0, 1), (0, 2)), 0, "é"), None);
+    }
+
+    #[test]
+    fn an_end_inside_a_character_widens_to_it_instead_of_dropping_the_row() {
+        // The row's text changed under the selection: byte 1 is now inside "é".
+        assert_eq!(Selection::range_in(((0, 1), (0, 2)), 0, "é"), Some(0..2));
+        let ends = ((0, 1), (2, 1));
+        let (first, middle, last) = ("éa", "middle", "üb");
+        assert_eq!(Selection::range_in(ends, 0, first).map(|r| &first[r]), Some("éa"));
+        assert_eq!(Selection::range_in(ends, 1, middle).map(|r| &middle[r]), Some("middle"));
+        assert_eq!(Selection::range_in(ends, 2, last).map(|r| &last[r]), Some("ü"));
+        // Ends in the middle of a four-byte character on one row.
+        let wide = "a😺b";
+        assert_eq!(Selection::range_in(((0, 2), (0, 3)), 0, wide).map(|r| &wide[r]), Some("😺"));
     }
 
     #[test]
