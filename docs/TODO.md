@@ -180,3 +180,14 @@ and in the README, not committed, and not copied to the installed clone
     commands (which chips, order, own commands, the switch for C). Replaces the single "/model" button
     (item 7). To find out: which commands take their argument on the line (`/model <name>` does;
     `/effort` to check), and how reliably the menus can be read from the terminal screen.
+11. **A clipboard picture can never be sent from the Chat view, and the reason disappears** (owner,
+    2026-11-26, with screenshots). Cause found: the second review (`706be9a`) made `chat_send` refuse
+    every draft holding a `Chip::Clipboard` ("Open the terminal to attach and preview…") and open the
+    drawer, so the picture paste the Chat view was built for cannot work. The refusal is in
+    `chat.error`, which every keystroke clears (`chat_key`, `chat_text`), so the message and "Send
+    anyway" vanish as soon as the user types; Send looks disabled with no reason shown. Also against
+    the usual chat conventions: the picture is a text chip above the box instead of a thumbnail inside
+    it, and a draft sent during a running turn is refused instead of queued (the CLI queues it
+    itself). Proposed: send the picture as Alt+V, wait until the CLI's input line shows the
+    `[Image #n]` marker, then paste the text and Enter (never both at once, as DESIGN.md asks); keep a
+    refusal on screen until its cause changes; a thumbnail inside the box; queue during a turn.
