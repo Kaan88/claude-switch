@@ -361,3 +361,9 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     `anim::PageTransition` plus `settings::pages::Form`'s `draw_animated` for item 29. No terminal
     colour schemes yet (toolkit roadmap T7). CS1's review fixes are fbfc5ee (safe to move the pin,
     page fades over the translucent terminal included).
+32. **Font choices** (owner, 2026-11-26) in Settings › Appearance: the interface font, the
+    conversation font, and the terminal and code font, each with a size, picked from the fonts
+    installed on the system (monospaced ones only for the terminal and code), with a live preview
+    and a "Default" entry. Check first what the toolkit's text stack can load (system fonts by
+    family name, fallback for emoji and missing glyphs, the terminal's cell metrics after a change);
+    whatever the toolkit lacks goes to the toolkit session.
