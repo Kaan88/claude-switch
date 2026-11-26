@@ -21,20 +21,23 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - name: Find or install Inno Setup
+      - name: Find or install Inno Setup 7
         run: |
           $candidates = @(
             foreach ($base in ${env:ProgramFiles(x86)}, $env:ProgramFiles, "$env:LOCALAPPDATA\Programs") {
               if ($base) {
-                Join-Path $base 'Inno Setup 6\ISCC.exe'
                 Join-Path $base 'Inno Setup 7\ISCC.exe'
               }
             }
           )
           $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
           if (-not $iscc) {
-            choco install innosetup -y
-            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed ($LASTEXITCODE)." }
+            $setup = Join-Path $env:RUNNER_TEMP 'innosetup-7.exe'
+            Invoke-WebRequest -Uri 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe' -OutFile $setup
+            $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash
+            if ($hash -ne '8A5A6711C3766A6E5FB74F280BA0E3551E719CE94538D901FDBD1F8F9920B3F0') { throw "Inno Setup download has an unexpected hash: $hash" }
+            $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "Inno Setup installation failed ($($p.ExitCode))." }
             $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
           }
           if (-not $iscc) { throw 'Could not locate ISCC.exe.' }

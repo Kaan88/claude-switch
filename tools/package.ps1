@@ -12,7 +12,7 @@ $target = Join-Path $root 'target'
 if (-not $Iscc) {
     $candidates = @(
         foreach ($base in ${env:ProgramFiles(x86)}, $env:ProgramFiles, "$env:LOCALAPPDATA\Programs") {
-            if ($base) { Join-Path $base 'Inno Setup 6\ISCC.exe' }
+            if ($base) { Join-Path $base 'Inno Setup 7\ISCC.exe' }
         }
     )
     $Iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
@@ -21,7 +21,7 @@ if (-not $Iscc) {
             Select-Object -First 1).Source
     }
     if (-not $Iscc) {
-        throw 'ISCC.exe not found. Install Inno Setup 6 or pass -Iscc with the full path.'
+        throw 'ISCC.exe not found. Install Inno Setup 7 or pass -Iscc with the full path.'
     }
 }
 $Iscc = (Resolve-Path -LiteralPath $Iscc).Path
