@@ -594,3 +594,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     handover text as its first prompt, e.g. when a Claude account hits its limit. Codex CLI support was considered
     and not chosen: every layer of the app is Claude Code specific (accounts, transcripts, live records, the send
     gate's screen rules). Not started; decide before building.
+60. **Clearer names for the two archives** (owner, 2026-11-27: yes). Settings › Sessions "Show archived sessions"
+    becomes "Show sessions archived in the desktop app" (help: "Claude Desktop's own archive. Switch's Archive is
+    separate."); the Archived chip becomes "Archived here"; the details row "Archived: yes, in the desktop app"
+    becomes "Desktop archive: yes", so "Archived" alone always means Switch's archive. Update README, DESIGN and
+    the wiki's Sessions and Settings pages.
