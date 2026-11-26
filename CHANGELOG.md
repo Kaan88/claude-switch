@@ -24,6 +24,7 @@
   their output.
 - Chat: Claude Code's menus, pickers and dialogs show as cards in the chat and are answered there;
   slash commands no longer open the terminal drawer.
+- Chat: Run in background for a running shell command, while Claude Code offers it.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

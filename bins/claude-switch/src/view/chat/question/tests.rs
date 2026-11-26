@@ -578,3 +578,51 @@ fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
     f.sync();
     assert!(f.chat().question.menu.is_none(), "a menu far above the input is old output");
 }
+
+fn running(hint: bool) -> String {
+    let hint = if hint { "  ctrl+b to run in background" } else { "  esc to interrupt" };
+    format!("\x1b[2J\x1b[H● Bash(npm test)\r\n  ⎿  Running…\r\n\r\n✻ Testing… (12s)\r\n{hint}")
+}
+
+#[test]
+fn run_in_background_is_offered_only_with_the_clis_hint_and_waits_for_it_to_go() {
+    let mut f = Fixture::tool("npm test");
+    let now = Instant::now();
+    f.screen(&running(false), now);
+    f.sync();
+    assert!(f.chat().question.background.is_none(), "no hint, no button");
+    assert!(press(f.tab(), now, Hit::Background));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NO_HINT));
+
+    let mut f = Fixture::tool("npm test");
+    f.screen(&running(true), now);
+    f.sync();
+    assert_eq!(f.chat().question.background.as_ref().map(|b| b.1.as_str()), Some("npm test"));
+    assert!(press(f.tab(), now, Hit::Background));
+    assert_eq!(f.writes(), [CTRL_B.to_vec()]);
+    assert!(!press(f.tab(), now, Hit::Background), "one at a time");
+    advance(f.tab(), now, true);
+    assert!(f.chat().question.background_step.is_some(), "the same screen proves nothing");
+    f.screen(&running(false), now);
+    advance(f.tab(), now, true);
+    assert!(f.chat().question.background_step.is_none() && f.chat().question.error.is_none());
+
+    // The hint stays: the CLI did not take it.
+    let mut f = Fixture::tool("npm test");
+    f.screen(&running(true), now);
+    press(f.tab(), now, Hit::Background);
+    f.screen(&running(true), now);
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.chat().question.error, Some(NOT_BACKGROUND));
+
+    // Two calls pending: the hint may be for either.
+    let mut f = Fixture::tool("npm test");
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model
+        .items
+        .insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: shell("toolu_0", "cargo build"), timestamp: None });
+    f.screen(&running(true), now);
+    f.sync();
+    assert!(f.chat().question.background.is_none());
+}

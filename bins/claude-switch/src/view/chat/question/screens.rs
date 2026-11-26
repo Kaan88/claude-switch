@@ -14,6 +14,8 @@ const MENU_FOOTERS: [&str; 8] = [
     "enter to confirm",
     "enter to continue",
 ];
+/// The hint the CLI shows under a running shell command that can move to the background, lower case.
+const BACKGROUND_HINT: &str = "ctrl+b to run in background";
 /// How many rows of a menu the read-only card copies.
 const PANEL_ROWS: usize = 14;
 
@@ -219,6 +221,13 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
         .cloned()
         .collect();
     Some(Panel { title, menu, rows, esc })
+}
+
+/// The CLI offers Ctrl+B for the running command: its hint is by the input.
+pub(super) fn background_hint(screen: &Screen) -> bool {
+    let cursor = screen.cursor().row;
+    (cursor.saturating_sub(6)..(cursor + 6).min(screen.rows()))
+        .any(|row| screen.row_text(row).to_lowercase().contains(BACKGROUND_HINT))
 }
 
 /// The plan approval menu: its question right above the choices, one of which keeps planning.

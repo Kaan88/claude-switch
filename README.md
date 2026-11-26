@@ -268,7 +268,8 @@ When Claude Code asks to allow a tool (a command, an edit, an MCP tool, a web fe
 call and the terminal's own choices in a card, and the working line says **Waiting for your
 approval**. Click a choice, or type what Claude should do instead and choose **No, and tell
 Claude**. Chat answers only while the terminal shows that prompt for that same call; otherwise the
-card says so and offers **Open terminal**. When Claude finishes a plan, the plan shows in the
+card says so and offers **Open terminal**. While a long shell command runs and Claude Code offers
+Ctrl+B, the card offers **Run in background**. When Claude finishes a plan, the plan shows in the
 conversation and the card offers the terminal's choices (such as **Yes, manually approve edits** or
 **No, keep planning**, with an optional note).
 

@@ -751,6 +751,13 @@ no turn or pending call, no menu); the next click is taken only after the indica
 mode that does not change or cannot be read within two seconds stops with a notice. The chip shows
 only where the toolbar row has room.
 
+**Background controls.** While the only pending call is a shell command (Bash or PowerShell), no
+prompt or menu shows, and the CLI's "ctrl+b to run in background" hint is within six rows of the
+input, a card offers Run in background. A click re-checks all of that and writes one Ctrl+B; it is
+done once newer output no longer shows the hint or the call ended, and stops with a notice after two
+seconds otherwise. Stop agent is not offered: the key that opens the CLI's agent panel is unverified
+(once that panel is open, it shows as a menu card).
+
 Every screen pattern lives in `view/chat/question/screens.rs`.
 
 **Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
