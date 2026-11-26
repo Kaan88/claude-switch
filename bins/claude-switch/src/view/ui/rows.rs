@@ -594,6 +594,7 @@ fn notice_look(kind: NoticeKind) -> (&'static str, Tone, BodyKind) {
     match kind {
         NoticeKind::Thought => ("Thought", Tone::Muted, BodyKind::Markdown),
         NoticeKind::HookError => ("Hook error", Tone::Warning, BodyKind::Plain),
+        NoticeKind::HookMessage => ("Hook", Tone::Muted, BodyKind::Plain),
         NoticeKind::PromptBlocked => ("Prompt blocked by a hook", Tone::Warning, BodyKind::Plain),
         NoticeKind::StopHook => ("Stop hook feedback", Tone::Accent, BodyKind::Plain),
         NoticeKind::Memory => ("Memory", Tone::Muted, BodyKind::Plain),

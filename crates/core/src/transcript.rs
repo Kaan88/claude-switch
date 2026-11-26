@@ -56,6 +56,8 @@ pub enum NoticeKind {
     /// Claude's readable thinking.
     Thought,
     HookError,
+    /// A message a hook asked Claude Code to show (`systemMessage`).
+    HookMessage,
     /// A hook refused the prompt.
     PromptBlocked,
     /// A Stop or SubagentStop hook kept Claude working.
@@ -407,6 +409,10 @@ struct ToolResult {
 
 impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
+        // Most attachments are large context records; parse only the kinds that are shown.
+        if decode::line_kind(line) == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
+            return;
+        }
         let Some((kind, value)) = message_line_with_meta(line) else { return };
         if flag(&value, "isSidechain") && !self.is_agent {
             return;
@@ -567,6 +573,11 @@ impl View {
             }
             LineKind::System => {
                 if let Some((kind, text)) = notices::system(&value) {
+                    self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
+                }
+            }
+            LineKind::Attachment => {
+                if let Some((kind, text)) = notices::attachment(&value["attachment"]) {
                     self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
                 }
             }

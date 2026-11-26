@@ -288,25 +288,29 @@ ordered. Runs of four or more consecutive tools start collapsed. Expand a row fo
 details and any output pictures; a group can be expanded independently of its rows.
 
 Notices are rows like a tool row (their kind and the first line) that expand to the whole text,
-at most 8 KiB. Claude Code's docs call the transcript format internal and do not describe these
-records, so only shapes taken from the documented Agent SDK messages and the notice texts the docs
-quote are matched; anything else stays hidden rather than shown wrongly:
+at most 8 KiB. Claude Code's docs call the transcript format internal; the shapes below were
+confirmed read-only against real transcripts (tests use synthetic records). Anything else stays
+hidden rather than shown wrongly:
 
-| Shown as | Matched from |
+| Shown as | Record |
 | --- | --- |
-| Thought | an assistant `thinking` block with readable text; redacted or omitted thinking (signature only) is not shown; thoughts sit inside a tool group without counting as calls |
-| Hook error | a `system` `hook_response` with `outcome: "error"` (hook name, stderr); `stop_hook_summary` with `hookErrors`; a text whose first line has "<hook name> hook error" |
-| Prompt blocked by a hook | a text ending its block with "Original prompt:", or a first line "… blocked by … hook" |
-| Stop hook feedback | a text starting "Stop hook feedback" (or SubagentStop); `stop_hook_summary` with `preventedContinuation` |
-| Memory | a `system` subtype starting `memory`; a line "Saved N memories" / "Recalled N memory" |
-| Recap | a `system` `away_summary`, `recap` or `session_recap` with content |
-| Notice | a `system` `informational` record with `level: "warning"` |
+| Thought | an assistant `thinking` block `{thinking, signature}` with text; about half have none (omitted thinking) and are not shown; thoughts sit inside a tool group without counting as calls |
+| Hook error | `system` `stop_hook_summary` with `hookErrors` (strings); an `attachment` `hook_non_blocking_error` (`hookName`, `stderr`) except for Stop hooks, whose summary already lists it |
+| Hook | an `attachment` `hook_system_message` (`hookName`, `content`), the hook's `systemMessage` |
+| Stop hook feedback | Claude Code's own user record starting "Stop hook feedback:"; a summary with `preventedContinuation` |
+| Memory | an `attachment` `nested_memory`: "Loaded" and its `displayPath` |
+| Recap | `system` `away_summary` with `content` |
+| Notice | `system` `informational` at `level: "warning"` (such as the Stop-hook block cap) |
+| Prompt blocked by a hook | not seen yet; a text with "Original prompt:", as the docs quote |
 
-Texts are read from `system` records' `content` and from Claude Code's own (`isMeta`) user records.
-Not shown: `turn_duration`, `compact_boundary` (the compact summary already has its card), `local_command`
-(item 47), `task_notification` (background work), informational records below warning level, and
-`attachment` records (the reader does not read that record type). Compaction and API errors keep
-their cards.
+Not shown: informational records below warning (usage-limit and goal notices), `turn_duration`,
+`compact_boundary` (the compact summary keeps its card), `local_command` (item 47), `api_error`
+retries, `permission_retry`, `bridge_status`, and the other attachments: context sent to Claude
+(`hook_additional_context`, `instructions`, `prompt_snapshot`, `deferred_tools_*`, reminders),
+`hook_success`, and `file` / `compact_file_reference` (files read into the context, most of them
+again after a compaction; an @-mentioned file is already in the prompt's text). "Saved N memories"
+lines are not records of their own and are not shown. Attachment records are parsed only for the
+three kinds shown. Compaction and API errors keep their cards.
 
 The embedded Markdown viewer renders assistant answers and named Markdown files. Conversation row
 heights are cached and only visible slices are rasterized. Bare or inline-code Markdown paths and

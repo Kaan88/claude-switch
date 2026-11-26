@@ -531,3 +531,27 @@ fn native_tasks_survive_history_paged_in_after_their_results() {
     }
     assert_eq!(reader.tasks(), [Task { content: "Early task".into(), status: TaskStatus::Pending }]);
 }
+
+#[test]
+fn shown_attachments_become_notices_and_context_attachments_are_skipped() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let lines = [
+        record(json!({"type":"attachment","attachment":{"type":"prompt_snapshot","systemPrompt":["long"]}})),
+        record(json!({"type":"attachment","attachment":{"type":"nested_memory","displayPath":"docs/CLAUDE.md"}})),
+        record(json!({"type":"attachment","attachment":{"type":"hook_non_blocking_error","hookName":"PreToolUse:Bash",
+            "hookEvent":"PreToolUse","stderr":"refused","exitCode":1}})),
+        record(json!({"type":"system","subtype":"away_summary","content":"Shipped the fix.","isMeta":false})),
+        record(json!({"type":"system","subtype":"turn_duration","durationMs":5})),
+    ];
+    fs::write(&path, lines.concat()).unwrap();
+    let reader = Reader::open(&path, 1024 * 1024).unwrap();
+    let kinds: Vec<_> = reader
+        .items()
+        .map(|(_, item)| match &item.kind {
+            ItemKind::Notice { kind, .. } => *kind,
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(kinds, [NoticeKind::Memory, NoticeKind::HookError, NoticeKind::Recap]);
+}
