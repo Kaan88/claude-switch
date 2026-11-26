@@ -198,6 +198,7 @@ are never saved unless you accept them. Rename, pins and hiding never edit trans
 All search terms must appear on the same line, in any order. Results show up to three matching
 lines per session, newest sessions first. The details pane shows turns, tool calls, pictures,
 subagents, and context/output tokens. Figures marked **about** are character-based estimates.
+After a compaction, context shows the size it left (**… after compact**) until Claude's next answer.
 
 | Shortcut in Sessions | Action |
 | --- | --- |
@@ -272,14 +273,22 @@ with each tab and sets the default for new ones. Chat shows the local conversati
 composer, and a collapsible Details panel on wider windows. The composer is three lines tall and
 grows with your text up to about 40% of the view, then scrolls.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
-to resize it, and answer permissions and other CLI dialogs there.
+to resize it, and answer other CLI dialogs there.
 
 When Claude asks a question (its AskUserQuestion tool), the question appears as a card under the
 conversation and the working line says **Waiting for your answer**. Click an option, or type an
 answer and choose **Answer**, or **Chat about this** to leave the question and send the text as
 your next message. Chat answers only while the terminal shows that same question, and only one
 single-choice question at a time; otherwise the card says why and the drawer opens for you to
-answer there. Permission questions are always answered in the terminal.
+answer there.
+
+When Claude Code asks to allow a tool (a command, an edit, an MCP tool, a web fetch), Chat shows the
+call and the terminal's own choices in a card, and the working line says **Waiting for your
+approval**. Click a choice, or type what Claude should do instead and choose **No, and tell
+Claude**. Chat answers only while the terminal shows that prompt for that same call; otherwise the
+card says so and offers **Open terminal**. When Claude finishes a plan, the plan shows in the
+conversation and the card offers the terminal's choices (such as **Yes, manually approve edits** or
+**No, keep planning**, with an optional note).
 
 Chat cannot send while Claude Code draws its full-screen view. **Settings › Sessions › Classic
 terminal view for Claude tabs** (on by default) starts new Claude tabs with Claude Code's classic
@@ -313,14 +322,15 @@ the viewer. Both tabs are also available in **Session view**.
 | --- | --- |
 | Ctrl+Shift+K, then F6 (or choose **Switch Chat / Terminal**) | Switch layouts without sending a key to the CLI |
 | Ctrl+Shift+E | Toggle the terminal drawer in Chat or Session view in Terminal |
-| Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (sent as a space) |
+| Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (kept when sent) |
 | Up on the first line / Down on the last line | Browse earlier or newer prompts, including terminal prompts. Escape or Down past newest restores the draft unless you edit or send |
 | Click, drag or Shift+click; double- or triple-click | Place the caret, extend a selection, select a word, or select everything |
 | Right-click in the composer or any text box | Cut, Copy, Paste, Select all |
 | Ctrl+V / Ctrl+Shift+V | Paste text if available (otherwise a picture) / paste a picture explicitly |
 | **Attach…** or file drop | Choose files or **Paste picture** from the menu, or drop files into Chat |
 | `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
-| **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first |
+| **Mode** | Shows Claude Code's permission mode and moves to the next one, as Shift+Tab does, when the prompt is idle and empty |
+| **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first. Effort shows the session's level, also after `/effort` typed in the terminal; **(default)** marks the model's default |
 | **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending; the queue also runs in background tabs |
 | **Press Enter** | Retry only the Enter key after the input was staged, without pasting it again |
 

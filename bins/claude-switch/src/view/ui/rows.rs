@@ -416,7 +416,8 @@ impl Rows<'_> {
                 row.duration = duration_ms.map(duration).unwrap_or_default();
                 row.open = open;
                 row.background = background;
-                if open {
+                // A plan is read before it is approved: always open.
+                if open || matches!(card, Some(ToolCard::Plan(_))) {
                     let (detail, kind) = tool_detail(card.as_ref(), target);
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
                     row.agent.clone_from(subagent);
@@ -570,6 +571,7 @@ fn tool_detail(card: Option<&ToolCard>, summary: &str) -> (String, BodyKind) {
             format!("{command}\n\n{}", if result.is_empty() { "No text result.".into() } else { result.join("\n") }),
             BodyKind::Shell,
         ),
+        Some(ToolCard::Plan(plan)) => (plan.clone(), BodyKind::Markdown),
         Some(ToolCard::Questions(_)) | None => (summary.into(), BodyKind::Mono),
     }
 }

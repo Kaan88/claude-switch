@@ -98,8 +98,15 @@ pub fn size(st: &AppState, p: &mut Painter, x: f32, y: f32, w: f32) -> f32 {
             .join("  ·  ");
     let mut next = y + 18.0;
     next += p.paragraph_wrapped(Face::Ui, 12.0, x, next, w, &counts, pal.muted, Wrap::Words);
-    let tokens =
-        format!("Context now  {}     ·     Output so far  {}", token_label(stats.context), token_label(stats.output));
+    // After a compaction the last answer's size is stale; the next answer reports the new one.
+    let context = match stats.compacted_size {
+        _ if !stats.compacted => token_label(stats.context),
+        Some(count) => {
+            format!("{} after compact", token_label(claude_switch_core::stats::Tokens { count, about: false }))
+        }
+        None => "— after compact".to_owned(),
+    };
+    let tokens = format!("Context now  {context}     ·     Output so far  {}", token_label(stats.output));
     next += p.paragraph_wrapped(Face::Semibold, 12.0, x, next + 2.0, w, &tokens, pal.text, Wrap::Words);
     next + 14.0
 }

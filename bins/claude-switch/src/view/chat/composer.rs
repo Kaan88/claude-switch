@@ -264,18 +264,47 @@ impl Draw<'_> {
         let r = l.toolbar;
         let mut x = r.x + 1.0;
         let model = chat.cli_report.model.as_deref().or(info.model.as_deref()).unwrap_or("Model");
-        let effort = chat.cli_report.effort.unwrap_or("—");
         let model = model_label(p, model);
-        let effort = format!("Effort {effort} ▾");
-        let context = info.context.map_or_else(|| "Context —".into(), |n| format!("Context {}", tokens(n)));
+        let effort = chat.effort_label(info);
+        let compacted = info.compacted;
+        let after = info.compacted_size.map_or_else(|| "—".to_owned(), tokens);
+        let context = match info.context {
+            _ if compacted => format!("Context {after} after compact"),
+            Some(n) => format!("Context {}", tokens(n)),
+            None => "Context —".into(),
+        };
+        // A longer label ("medium (default)", "— after compact") widens its pill while the row
+        // has room; otherwise the short form shows.
+        let fit = |p: &mut Painter, label: &str, min: f32| {
+            let w = p.measure(Face::Semibold, PILL_FONT, label) + 10.0;
+            if w <= min - 2.0 { min } else { w }
+        };
+        let mut effort = format!("Effort {effort} ▾");
+        let mut context = context;
+        let (mut effort_w, mut context_w) = (fit(p, &effort, 79.0), fit(p, &context, 92.0));
+        let right = if l.stacked { 0.0 } else { 216.0 + if self.wide { 62.0 } else { 0.0 } };
+        let room = r.w - right - (MODEL_W + 79.0 + 92.0 + 62.0 + 44.0 + 32.0 + 6.0 * 4.0);
+        if effort_w + context_w - 79.0 - 92.0 > room {
+            effort = format!("Effort {} ▾", chat.effort_label(info).trim_end_matches(" (default)"));
+            context = if compacted { format!("Context {after}") } else { context };
+            (effort_w, context_w) = (79.0, 92.0);
+        }
+        // The permission mode, when the row has room left for it.
+        let mode = chat.mode_label();
+        let mode_w = fit(p, &mode, 84.0);
+        let mode_w = if room - (effort_w + context_w - 79.0 - 92.0) >= mode_w + 4.0 { mode_w } else { 0.0 };
         for (label, w, control) in [
             (model.as_str(), MODEL_W, Control::Model),
-            (effort.as_str(), 79.0, Control::Effort),
-            (context.as_str(), 92.0, Control::Context),
+            (effort.as_str(), effort_w, Control::Effort),
+            (context.as_str(), context_w, Control::Context),
+            (mode.as_str(), mode_w, Control::Mode),
             ("Compact", 62.0, Control::Compact),
             ("Clear", 44.0, Control::Clear),
             ("/ …", 32.0, Control::Commands),
         ] {
+            if w == 0.0 {
+                continue;
+            }
             self.pill(
                 p,
                 Rect::new(x, r.y + 1.0, w, 24.0),
@@ -491,7 +520,9 @@ mod tests {
                 suggestions,
             );
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();
-            assert_eq!(tool.len(), if width >= 900 { 10 } else { 9 });
+            // The mode chip shows only where the row has room for it.
+            let mode = tool.iter().filter(|(_, t)| *t == Target::Chat(Control::Mode)).count();
+            assert_eq!(tool.len() - mode, if width >= 900 { 10 } else { 9 });
             for (i, (a, _)) in tool.iter().enumerate() {
                 assert!(layout.box_frame.contains(a.x, a.y));
                 for (b, _) in tool.iter().skip(i + 1).copied() {

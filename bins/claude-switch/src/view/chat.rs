@@ -4,6 +4,7 @@ mod commands;
 mod composer;
 mod editor;
 mod in_place;
+pub(crate) mod effort;
 mod input;
 mod layout;
 mod paint;
@@ -43,6 +44,8 @@ pub enum Reason {
     Ended,
     /// Claude asked a question the card in the conversation can answer.
     Question,
+    /// A permission prompt the card in the conversation can answer.
+    Approval,
 }
 
 impl Reason {
@@ -55,6 +58,7 @@ impl Reason {
             Self::Identity => "The current session could not be verified. Check the terminal.",
             Self::Ended => "Claude Code has ended.",
             Self::Question => "Answer Claude's question above.",
+            Self::Approval => "Answer Claude's request above.",
         }
     }
 }
@@ -142,6 +146,9 @@ pub struct Chat {
     /// The tab was started with Claude Code's classic renderer (Settings).
     pub(crate) classic_renderer: bool,
     question: question::Card,
+    mode_step: Option<submission::mode::ModeStep>,
+    /// The permission mode as the screen last showed it.
+    mode_shown: Option<&'static str>,
     drawer: Drawer,
     drawer_height: Option<f32>,
     resizing: Option<(f32, f32)>,
@@ -273,7 +280,9 @@ impl Chat {
             return (Gate::Ended, Some(Reason::Ended));
         }
         if crate::attention::screen_permission_prompt(&term.screen) {
-            return (Gate::Check, Some(Reason::Permission));
+            // The card answers it when it names the pending call; the terminal otherwise.
+            let card = info.pending.is_some() && self.question.approval && self.question.answerable == info.pending;
+            return (Gate::Check, Some(if card { Reason::Approval } else { Reason::Permission }));
         }
         if self.demo
             && self.demo_progress
@@ -308,7 +317,7 @@ impl Chat {
         }
         // The card answers it: the same refusal, without sending the user to the terminal.
         if decision.1 == Some(Reason::Tool) && info.pending.is_some() && self.question.answerable == info.pending {
-            decision.1 = Some(Reason::Question);
+            decision.1 = Some(if self.question.approval { Reason::Approval } else { Reason::Question });
         }
         decision
     }
@@ -332,8 +341,8 @@ impl Chat {
     fn react(&mut self, reason: Option<Reason>) -> bool {
         let before = (self.drawer, self.reason);
         self.reason = reason;
-        // A question the card can answer does not open the drawer, and closes one it opened.
-        let reason = reason.filter(|r| *r != Reason::Question);
+        // A question or request the card can answer does not open the drawer, and closes one it opened.
+        let reason = reason.filter(|r| !matches!(r, Reason::Question | Reason::Approval));
         match (self.drawer, reason) {
             (Drawer::Closed, Some(reason)) if Some(reason) != self.suppressed => self.drawer = Drawer::Auto(reason),
             (Drawer::Auto(_), Some(reason)) => self.drawer = Drawer::Auto(reason),

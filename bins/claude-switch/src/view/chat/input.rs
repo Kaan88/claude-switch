@@ -34,6 +34,7 @@ pub enum Control {
     Model,
     Effort,
     Context,
+    Mode,
     Compact,
     Clear,
     Commands,
@@ -432,6 +433,15 @@ impl AppState {
                 return self.arm_chat_tick(cx);
             }
             Control::Context => return self.chat_run_slash(cx, "/context".into(), false),
+            Control::Mode => {
+                // As Send: read the newest screen before the checks.
+                self.term_woke(cx);
+                if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.as_ref().is_some_and(|p| p.chat.enabled))
+                {
+                    AppState::chat_mode(tab, cx.now());
+                }
+                return self.arm_chat_tick(cx);
+            }
             Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
             Control::Clear => return self.chat_run_slash(cx, "/clear".into(), false),
             Control::Commands | Control::Suggestion(_) | Control::Argument(_, _) | Control::PinCommand(_) => {

@@ -212,3 +212,104 @@ fn the_alternate_screen_refusal_names_the_fix_for_a_claude_tab() {
     f.chat().classic_renderer = true;
     assert_eq!(f.send("hello", now), Some(ALTERNATE), "another full-screen program");
 }
+
+#[test]
+fn a_message_of_several_lines_keeps_its_breaks_and_waits_for_the_input_line() {
+    let mut f = Fixture::new("lines", discover);
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.chat().demo_progress = true;
+    let now = Instant::now();
+    assert_eq!(f.send("first line\nsecond line", now), None);
+    let writes = std::mem::take(&mut f.chat().writes);
+    assert_eq!(writes, [mdshared_term::input::encode_paste("first line\nsecond line", true)], "no Enter yet");
+    assert!(f.chat().waiting().is_some());
+    assert!(AppState::advance_submission(f.tab(), now, true));
+    assert_eq!(f.chat().writes, [b"\r".to_vec()], "Enter once the input line shows both lines");
+    assert!(f.chat().waiting().is_none());
+
+    // The screen never shows it: no Enter, the draft is kept and the terminal is to be checked.
+    let mut f = Fixture::new("lines-timeout", discover);
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.chat().demo_progress = true;
+    f.send("one\ntwo", now);
+    f.tab().term.feed("\x1b[2J\x1b[H\x1b[?2004h❯ ".as_bytes());
+    f.chat().writes.clear();
+    AppState::advance_submission(f.tab(), now + ECHO_TIMEOUT, true);
+    assert!(f.chat().writes.is_empty());
+    assert_eq!(f.chat().error, Some(LINES_TIMEOUT));
+    assert!(f.chat().recovery_notice().is_some());
+    assert_eq!(f.chat().editor.text, "one\ntwo");
+}
+
+#[test]
+fn a_followed_session_links_only_to_a_verified_one() {
+    // A new chat whose transcript was never written: `/clear` moves on, but no parent is recorded.
+    let mut f = Fixture::new("link-awaiting", discover);
+    assert!(f.tab().apply_live_identity(Some(A)));
+    assert!(f.chat().awaiting_transcript);
+    f.tab().apply_live_identity(Some(B));
+    let pane = f.tab().pane.as_ref().unwrap();
+    assert_eq!(pane.pinned_id(), Some(B));
+    assert_eq!(pane.continued, None, "A never existed");
+
+    // A tab refused for its session: the next one is not linked to the session it had left.
+    let mut f = Fixture::new("link-refused", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(None);
+    assert!(f.chat().identity_unverified);
+    f.tab().apply_live_identity(Some(B));
+    assert_eq!(f.tab().pane.as_ref().unwrap().continued, None);
+
+    // Attached and verified: linked, as before.
+    let mut f = Fixture::new("link-verified", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.tab().apply_live_identity(Some(B));
+    assert_eq!(f.tab().pane.as_ref().unwrap().continued, Some((B.to_owned(), A.to_owned())));
+}
+
+#[test]
+fn a_command_that_may_start_a_turn_counts_as_a_new_chats_first_send() {
+    for (line, starts) in [("/effort high", false), ("/review", true)] {
+        let mut f = Fixture::new(if starts { "first-cmd-turn" } else { "first-cmd-local" }, discover);
+        assert!(f.tab().apply_live_identity(Some(A)));
+        let now = Instant::now();
+        f.chat().last_output = Some(now - QUIET);
+        AppState::submit_slash(f.tab(), now, line, false);
+        assert!(AppState::advance_submission(f.tab(), now, true), "{:?}", f.chat().error);
+        assert!(f.chat().writes.last().is_some_and(|w| w == b"\r"), "{line} was entered");
+        assert_eq!(f.chat().first_sent, starts, "{line}");
+        let expected = if starts { Some(NO_TRANSCRIPT) } else { None };
+        assert_eq!(f.send("hello", now), expected, "{line}");
+    }
+}
+
+#[test]
+fn a_confirmed_command_rechecks_the_session_right_before_writing() {
+    let mut f = Fixture::new("confirm-recheck", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.tab().session = Some(A.to_owned());
+    let now = Instant::now();
+    f.chat().last_output = Some(now - QUIET);
+    f.app.tabs.active = Some(f.tab);
+
+    // The session records now name another session (a /clear typed meanwhile), while the tab's
+    // last poll still says A: the command is refused.
+    f.tab().resume_id = Some(B.to_owned());
+    f.app.chat_confirm_slash(now, f.tab, Some(A.to_owned()), "/rename Parser work", false);
+    assert!(f.chat().writes.is_empty());
+    assert!(f.chat().error.is_some_and(|e| e.contains("session changed")));
+
+    f.tab().resume_id = Some(A.to_owned());
+    f.chat().error = None;
+    f.app.chat_confirm_slash(now, f.tab, Some(A.to_owned()), "/rename Parser work", false);
+    assert!(!f.chat().writes.is_empty(), "{:?}", f.chat().error);
+}

@@ -113,3 +113,53 @@ fn an_apparently_empty_row_cannot_be_the_head_or_tail_of_wrapped_terminal_input(
     screen.feed("earlier text❯ ".as_bytes());
     assert!(!clean_prompt(&screen));
 }
+
+#[test]
+fn the_effort_chip_reads_the_transcripts_replies_whoever_typed_the_command() {
+    use crate::view::chat::effort::Start;
+    let now = Instant::now();
+    let screen = Screen::new(80, 6, 0);
+    let mut chat = Chat::default();
+    let mut info = ChatInfo::default();
+    assert_eq!(chat.effort_label(&info), "—", "nothing known");
+    info.model = Some("claude-opus-5-5".into());
+    assert_eq!(chat.effort_label(&info), "medium (default)");
+    chat.set_starting_effort(Start::Set("high"));
+    assert_eq!(chat.effort_label(&info), "high", "the flag or the settings");
+
+    // `/effort` typed in the terminal: not tracked on the screen, read from the transcript.
+    info.effort_report = Some((500, "Set effort level to low (saved as your default for new sessions)".into()));
+    assert!(chat.observe_cli(&info, &screen, now));
+    assert_eq!(chat.effort_label(&info), "low");
+    assert!(!chat.observe_cli(&info, &screen, now), "a report counts once");
+
+    // A model chosen later starts from its own level again.
+    info.model_report = Some((600, "Set model to Sonnet 5.5 (default)".into()));
+    assert!(chat.observe_cli(&info, &screen, now));
+    assert_eq!(chat.cli_report.model.as_deref(), Some("Sonnet 5.5"));
+    assert_eq!(chat.effort_label(&info), "high");
+    info.effort_report = Some((700, "Set effort level to max (this session only)".into()));
+    chat.observe_cli(&info, &screen, now);
+    assert_eq!(chat.effort_label(&info), "max");
+
+    // The environment variable outranks every command.
+    chat.set_starting_effort(Start::Env("xhigh"));
+    assert_eq!(chat.effort_label(&info), "xhigh");
+}
+
+#[test]
+fn several_lines_show_as_typed_or_as_the_paste_marker() {
+    let mut screen = Screen::new(60, 10, 0);
+    screen.feed("────────\r\n❯ first line\r\n  second line\r\n────────\x1b[3;14H".as_bytes());
+    assert!(screen::shows_lines(&screen, "first line\nsecond line"));
+    assert!(!screen::shows_lines(&screen, "first line\nother line"));
+    let mut marker = Screen::new(60, 10, 0);
+    marker.feed("❯ [Pasted text #2 +41 lines]".as_bytes());
+    assert!(screen::shows_lines(&marker, "a\nb"));
+    let mut picture = Screen::new(60, 10, 0);
+    picture.feed("❯ [Image #1] [Pasted text #1 +4 lines]".as_bytes());
+    assert!(screen::shows_lines(&picture, "[Image #1] a\nb"));
+    let mut other = Screen::new(60, 10, 0);
+    other.feed("❯ [Pasted text #x +4 lines]".as_bytes());
+    assert!(!screen::shows_lines(&other, "a\nb"));
+}

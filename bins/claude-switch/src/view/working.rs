@@ -7,8 +7,6 @@ use mdshared_ui::host::Cx;
 
 use crate::state::{AppState, Msg};
 
-const ASKING: &str = "Waiting for your answer";
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Footer {
     pub label: String,
@@ -38,16 +36,16 @@ impl Working {
         allowed: bool,
         screen: &Screen,
         can_stop: bool,
-        asking: bool,
+        waiting: Option<&'static str>,
     ) -> (Option<Footer>, Option<Instant>) {
         let phase = info.latest.map(|(_, phase)| phase);
         let Some(prompt) = info.prompt.filter(|_| allowed && phase != Some(ChatPhase::EndTurn)) else {
             self.turn = None;
             return (None, None);
         };
-        if asking && info.pending.is_some() {
-            // Claude is not working: the turn waits for the answer to its question.
-            return (Some(Footer { label: ASKING.into(), stop: None }), None);
+        if let Some(label) = waiting.filter(|_| info.pending.is_some()) {
+            // Claude is not working: the turn waits for an answer or an approval.
+            return (Some(Footer { label: label.into(), stop: None }), None);
         }
         let (row, hint) = visible(screen);
         let line = row.as_deref().and_then(parse);
@@ -92,11 +90,12 @@ impl AppState {
             && pane.model.error.is_none()
             && term.ended.is_none()
             && (pane.chat.is_demo() || term.running())
-            && !term.screen.modes().alt_screen
-            && !crate::attention::screen_permission_prompt(&term.screen);
+            && !term.screen.modes().alt_screen;
+        let waiting = super::chat::question::waiting_label(&pane.model, &term.screen);
+        // A permission prompt hides the working line unless it is the pending call's own.
+        let allowed = allowed && (waiting.is_some() || !crate::attention::screen_permission_prompt(&term.screen));
         let can_stop = allowed && pane.chat.stop_ready(&pane.model.chat, term, &tab.program_title, now);
-        let asking = super::chat::question::asking(&pane.model);
-        let (footer, wake) = pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop, asking);
+        let (footer, wake) = pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop, waiting);
         if pane.ui.set_working(footer) {
             cx.request_redraw(area);
         }
@@ -214,6 +213,7 @@ fn token_count(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const ASKING: &str = "Waiting for your answer";
 
     #[test]
     fn keeps_cli_word_time_and_tokens_without_echoing_interrupt_or_thinking_hints() {
@@ -256,20 +256,20 @@ mod tests {
         info.prompt = Some(10);
         info.latest = Some((10, ChatPhase::Active));
         let mut state = Working::default();
-        let (first, wake) = state.update(now, &info, true, &screen, true, false);
+        let (first, wake) = state.update(now, &info, true, &screen, true, None);
         assert_eq!(first.unwrap().label, "Working… (0s)");
         assert_eq!(wake, Some(now + Duration::from_secs(1)));
         assert_eq!(
-            state.update(now + Duration::from_secs(3), &info, true, &screen, false, false).0.unwrap().label,
+            state.update(now + Duration::from_secs(3), &info, true, &screen, false, None).0.unwrap().label,
             "Working… (3s)"
         );
         screen.feed("\r\n✻ Shimmying… (53m 37s · ↓ 27.1k tokens)".as_bytes());
-        let (live, wake) = state.update(now + Duration::from_secs(4), &info, true, &screen, true, false);
+        let (live, wake) = state.update(now + Duration::from_secs(4), &info, true, &screen, true, None);
         assert_eq!(live.unwrap().label, "✻ Shimmying… (53m 37s · ↓ 27.1k tokens)");
         assert_eq!(wake, None);
         info.latest = Some((30, ChatPhase::EndTurn));
-        assert_eq!(state.update(now + Duration::from_secs(5), &info, true, &screen, false, false), (None, None));
-        assert_eq!(state.update(now, &info, false, &screen, true, false), (None, None));
+        assert_eq!(state.update(now + Duration::from_secs(5), &info, true, &screen, false, None), (None, None));
+        assert_eq!(state.update(now, &info, false, &screen, true, None), (None, None));
     }
 
     #[test]
@@ -280,9 +280,16 @@ mod tests {
         info.latest = Some((20, ChatPhase::Active));
         info.pending = Some(20);
         let mut state = Working::default();
-        let footer = state.update(Instant::now(), &info, true, &screen, true, true).0.unwrap();
+        let footer = state.update(Instant::now(), &info, true, &screen, true, Some(ASKING)).0.unwrap();
         assert_eq!(footer, Footer { label: ASKING.into(), stop: None });
         info.pending = None;
-        assert!(state.update(Instant::now(), &info, true, &screen, true, true).0.unwrap().label.starts_with("Working"));
+        assert!(
+            state
+                .update(Instant::now(), &info, true, &screen, true, Some(ASKING))
+                .0
+                .unwrap()
+                .label
+                .starts_with("Working")
+        );
     }
 }

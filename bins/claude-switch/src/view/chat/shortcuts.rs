@@ -279,9 +279,13 @@ impl AppState {
         from_editor: bool,
     ) {
         self.pump_terms();
+        // Every confirmed or delayed command (Compact, Clear, a queued /rename) re-reads the
+        // session records right before writing: a /clear typed meanwhile moves the tab on.
+        let live = self.recheck_tab_identity(id);
         let Some(tab) = self.tabs.shown_mut().filter(|t| t.id == id) else { return };
         let Some(pane) = &mut tab.pane else { return };
-        if tab.session != session || !pane.chat.enabled {
+        let moved = session.is_some() && live != session;
+        if tab.session != session || moved || !pane.chat.enabled {
             pane.chat.error = Some("The session changed. Run the command again in the correct tab.");
             pane.chat.retry = None;
             return;

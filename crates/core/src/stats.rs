@@ -25,6 +25,10 @@ pub struct Stats {
     pub pictures: usize,
     pub subagents: usize,
     pub context: Tokens,
+    /// The conversation was compacted after its last answer: `context` is the size from before.
+    pub compacted: bool,
+    /// While `compacted`: the size the compaction left (`postTokens`), if recorded.
+    pub compacted_size: Option<u64>,
     pub output: Tokens,
 }
 
@@ -126,6 +130,14 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
         if exceeded {
             return;
         }
+        if kind == LineKind::System {
+            // A boundary carries its size; the summary after it keeps that size.
+            let post = message["postTokens"].as_u64();
+            stats.compacted_size =
+                if message.is_object() { post } else { stats.compacted_size.filter(|_| stats.compacted) };
+            stats.compacted = true;
+            return;
+        }
         let mut pictures = 0;
         let mut prompt = false;
         for block in blocks(message) {
@@ -154,6 +166,8 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
             stats.turns += usize::from(prompt || chars != 0);
         } else {
             assistant_seen = true;
+            stats.compacted = false;
+            stats.compacted_size = None;
             let usage = &message["usage"];
             context = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
                 .into_iter()

@@ -47,6 +47,16 @@
   Ctrl+C or the right-click menu (Copy, Select all, Copy message, Copy as Markdown); code blocks
   have a Copy button.
 - The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
+- Chat: permission prompts can be answered from a card in the chat, with the tool call and the
+  terminal's own choices; the working line says "Waiting for your approval".
+- Chat: a finished plan shows as Markdown in the conversation and is approved from a card with the
+  terminal's own choices.
+- Chat: the Effort chip shows the level the session started with (environment, `--effort`,
+  settings, or the model's default) and follows `/effort` and `/model` typed in the terminal; after a
+  compaction Context shows the size the compaction left until the next answer.
+- Chat: a Mode chip shows the permission mode and cycles it like Shift+Tab at an idle prompt.
+- Chat: messages keep their line breaks; a message of several lines is submitted once Claude Code
+  shows it on its input line.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 - Handover: `/switch-handover:switch-compact` and `claude-switch compact --open` open the new chat as

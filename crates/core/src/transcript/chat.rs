@@ -16,7 +16,18 @@ pub struct ChatInfo {
     pub pending: Option<u64>,
     pub model: Option<String>,
     pub context: Option<u64>,
+    /// The conversation was compacted after the last usage: `context` is the size from before,
+    /// and the real size comes with the next answer.
+    pub compacted: bool,
+    /// While `compacted`: the size the compaction left (`compactMetadata.postTokens`), if known.
+    pub compacted_size: Option<u64>,
+    /// The newest "Set effort level to …" a local command printed, whoever typed it, with its
+    /// offset.
+    pub effort_report: Option<(u64, String)>,
+    /// The newest "Set model to …" a local command printed, with its offset.
+    pub model_report: Option<(u64, String)>,
     usage_at: Option<u64>,
+    compacted_at: Option<u64>,
 }
 
 impl ChatInfo {
@@ -45,8 +56,92 @@ impl ChatInfo {
                 self.model = Some(model.chars().take(100).collect());
             }
             self.context = context;
+            self.compacted = self.compacted_at.is_some_and(|c| c > at);
+            if !self.compacted {
+                self.compacted_size = None;
+            }
         }
     }
+
+    /// A compaction record: the last usage no longer tells the conversation's size. `boundary`:
+    /// the `compact_boundary` record with its `compactMetadata`; else the summary that follows it,
+    /// which keeps the boundary's size.
+    pub(super) fn compaction(&mut self, at: u64, boundary: Option<&Value>) {
+        if self.compacted_at.is_none_or(|old| at > old) {
+            let after_boundary = self.compacted;
+            self.compacted_at = Some(at);
+            self.compacted = self.usage_at.is_none_or(|usage| at > usage);
+            self.compacted_size = match boundary {
+                Some(meta) => meta["postTokens"].as_u64(),
+                None if after_boundary => self.compacted_size,
+                None => None,
+            }
+            .filter(|_| self.compacted);
+        }
+    }
+
+    /// A record's text: keeps the newest effort and model reports of its `<local-command-stdout>`.
+    pub(super) fn local_output(&mut self, at: u64, text: &str) {
+        for output in local_stdout(text) {
+            for line in strip_escapes(output).lines().map(str::trim) {
+                let slot = if line.starts_with(EFFORT_SET) {
+                    &mut self.effort_report
+                } else if line.starts_with(MODEL_SET) {
+                    &mut self.model_report
+                } else {
+                    continue;
+                };
+                if slot.as_ref().is_none_or(|(old, _)| at >= *old) && line.len() <= 200 {
+                    *slot = Some((at, line.to_owned()));
+                }
+            }
+        }
+    }
+}
+
+/// How Claude Code confirms `/effort` and `/model` (to confirm in a live session).
+pub const EFFORT_SET: &str = "Set effort level to ";
+pub const MODEL_SET: &str = "Set model to ";
+
+fn local_stdout(text: &str) -> impl Iterator<Item = &str> {
+    const OPEN: &str = "<local-command-stdout>";
+    const CLOSE: &str = "</local-command-stdout>";
+    text.match_indices(OPEN).filter_map(move |(at, _)| {
+        let rest = &text[at + OPEN.len()..];
+        rest.find(CLOSE).map(|end| &rest[..end])
+    })
+}
+
+/// Text without terminal escape sequences (the CLI colors its command output).
+fn strip_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameters, then one final character from @ to ~.
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: up to BEL or ESC \.
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' || c == '\u{1b}' && chars.next_if_eq(&'\\').is_some() {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,6 +158,8 @@ pub enum ToolCard {
     },
     /// The questions of an `AskUserQuestion` call, exactly as Claude asked them.
     Questions(Vec<Question>),
+    /// The Markdown plan of an `ExitPlanMode` call.
+    Plan(String),
 }
 
 /// One question of an `AskUserQuestion` call. Its texts are whole: the window matches them
@@ -82,6 +179,8 @@ pub struct QuestionOption {
 }
 
 const MAX_QUESTIONS: usize = 4;
+/// A plan longer than this is cut for the conversation; the terminal shows it whole.
+const MAX_PLAN: usize = 20_000;
 const MAX_OPTIONS: usize = 8;
 const MAX_QUESTION_TEXT: usize = 2000;
 
@@ -161,6 +260,10 @@ impl ToolCard {
                 let questions = input["questions"].as_array()?;
                 (!questions.is_empty() && questions.len() <= MAX_QUESTIONS).then_some(())?;
                 Some(Self::Questions(questions.iter().map(Question::parse).collect::<Option<_>>()?))
+            }
+            "ExitPlanMode" => {
+                let plan = input["plan"].as_str().filter(|p| !p.trim().is_empty())?;
+                Some(Self::Plan(short(plan, MAX_PLAN)))
             }
             _ => None,
         }
@@ -309,5 +412,53 @@ mod tests {
         ] {
             assert_eq!(ToolCard::from_input("AskUserQuestion", &bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn compaction_and_local_command_reports_come_from_the_transcript() {
+        use super::super::Reader;
+        let dir = crate::util::testing::TempDir::new("chat-compact");
+        let path = dir.0.join("chat.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        for row in [
+            json!({"type":"user","message":{"content":"hello"}}),
+            json!({"type":"assistant","message":{"model":"m","usage":{"input_tokens":275000},"content":"Hi","stop_reason":"end_turn"}}),
+            json!({"type":"user","message":{"content":"<command-name>/effort</command-name>"}}),
+            json!({"type":"user","message":{"content":"<local-command-stdout>Set effort level to \u{1b}[1mmedium\u{1b}[22m (saved as your default for new sessions)</local-command-stdout>"}}),
+            json!({"type":"system","subtype":"local_command","content":"<local-command-stdout>Set model to Opus 5.5 (default)</local-command-stdout>"}),
+            json!({"type":"system","subtype":"compact_boundary","content":"Conversation compacted","level":"info","compactMetadata":{"trigger":"manual","preTokens":275000,"postTokens":18000}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"content":"Summary"}}),
+        ] {
+            writeln!(file, "{row}").unwrap();
+        }
+        let mut reader = Reader::open(&path, 8192).unwrap();
+        let info = reader.chat();
+        assert!(info.compacted);
+        assert_eq!(info.compacted_size, Some(18000), "the summary keeps the boundary's size");
+        assert_eq!(
+            info.effort_report.map(|(_, s)| s).as_deref(),
+            Some("Set effort level to medium (saved as your default for new sessions)")
+        );
+        assert_eq!(info.model_report.map(|(_, s)| s).as_deref(), Some("Set model to Opus 5.5 (default)"));
+        assert!(reader.items().all(|(_, item)| !matches!(&item.kind, super::super::ItemKind::Prompt { text, .. } if text.contains("Set effort"))));
+
+        writeln!(file, "{}", json!({"type":"assistant","message":{"usage":{"input_tokens":9000},"content":"Next","stop_reason":"end_turn"}})).unwrap();
+        reader.poll().unwrap();
+        let info = reader.chat();
+        assert!(!info.compacted);
+        assert_eq!(info.compacted_size, None);
+        assert_eq!(info.context, Some(9000));
+    }
+
+    #[test]
+    fn an_exit_plan_mode_call_carries_its_plan() {
+        let input = json!({"plan": "# Plan\n\n1. Parse"});
+        assert_eq!(ToolCard::from_input("ExitPlanMode", &input), Some(ToolCard::Plan("# Plan\n\n1. Parse".into())));
+        assert_eq!(ToolCard::from_input("ExitPlanMode", &json!({"plan": "  "})), None);
+        let long = "x".repeat(MAX_PLAN + 5);
+        let Some(ToolCard::Plan(cut)) = ToolCard::from_input("ExitPlanMode", &json!({ "plan": long })) else {
+            panic!()
+        };
+        assert_eq!(cut.chars().count(), MAX_PLAN + 1);
     }
 }

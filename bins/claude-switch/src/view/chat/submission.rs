@@ -1,4 +1,5 @@
 //! The only composer PTY writes. A clipboard send has a separate, fail-closed second step.
+pub(super) mod mode;
 mod report;
 pub(in crate::view) mod screen;
 mod stages;
@@ -13,7 +14,7 @@ pub(super) use report::CliReport;
 use report::local_reports;
 use screen::{clean_prompt, idle_slash_prompt, is_image_marker, prompt};
 pub(super) use stages::Staging;
-use stages::{Completion, EchoWait, EnterOnly, Recovery, Stamp, can_confirm, recovery_ready, shown_exactly};
+use stages::{Completion, EchoWait, EnterOnly, LinesWait, Recovery, Stamp, can_confirm, recovery_ready, shown_exactly};
 
 const IMAGE_TIMEOUT: Duration = Duration::from_secs(4);
 const ECHO_TIMEOUT: Duration = Duration::from_secs(2);
@@ -25,6 +26,9 @@ const IMAGE_TIMEOUT_NOTICE: &str = "No image marker yet. The CLI may hold a pict
 const IMAGE_INTERRUPTED: &str = "Image send interrupted. The CLI may hold a picture; check the terminal.";
 const COMMAND_TIMEOUT: &str = "The command did not appear on the CLI input line. Check the terminal before retrying.";
 const COMMAND_INTERRUPTED: &str = "Command not submitted. Check the terminal for text left on its input line.";
+const LINES_TIMEOUT: &str =
+    "The message did not appear on the CLI input line, so Enter was not pressed. Check the terminal.";
+const LINES_INTERRUPTED: &str = "Message not submitted. Check the terminal for text left on its input line.";
 const ENTER_ONLY: &str = "Input is already in the CLI. Use Press Enter to submit without pasting again.";
 const ENTER_WAIT: &str = "Staged input not confirmed. Check the terminal; Press Enter will not paste again.";
 const NO_PASTE: &str = "Bracketed paste is unavailable. Open the terminal to check.";
@@ -102,6 +106,10 @@ impl Chat {
         } else if let Some(wait) = self.staging.echo.take() {
             self.staging.recovery = Some(Recovery::Command(Stamp { epoch: self.output_epoch, ..wait.stamp }));
             self.error = Some(COMMAND_INTERRUPTED);
+        } else if let Some(wait) = self.staging.lines.take() {
+            self.staging.recovery =
+                Some(Recovery::Manual(Stamp { epoch: self.output_epoch, ..wait.stamp }, wait.picture));
+            self.error = Some(LINES_INTERRUPTED);
         } else if let Some(retry) = self.staging.retry.take() {
             self.staging.recovery =
                 Some(Recovery::Manual(Stamp { epoch: self.output_epoch, ..retry.stamp }, retry.picture));
@@ -285,7 +293,7 @@ impl AppState {
             }
             tab.pane.as_mut().unwrap().note_composer_input();
         } else {
-            finish(tab, &bytes, Completion::Message(demo_text), None, intent == Intent::Now);
+            finish(tab, now, &bytes, Completion::Message(demo_text), None, intent == Intent::Now);
         }
     }
 
@@ -315,7 +323,8 @@ impl AppState {
     }
 
     pub(super) fn advance_submission(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
-        let changed = super::question::advance(tab, now, may_write) | clear_recovery(tab, now);
+        let changed =
+            super::question::advance(tab, now, may_write) | mode::advance(tab, now) | clear_recovery(tab, now);
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
         if let Some(wait) = &chat.image_wait {
@@ -341,8 +350,41 @@ impl AppState {
                     }
                     Ok(marker) => {
                         let text = if wait.demo_text.is_empty() { "[Picture]".into() } else { wait.demo_text };
-                        finish(tab, &wait.bytes, Completion::Message(text), Some(marker), wait.allow_working);
+                        finish(tab, now, &wait.bytes, Completion::Message(text), Some(marker), wait.allow_working);
                     }
+                }
+                return true;
+            }
+        }
+        if let Some(wait) = &chat.staging.lines {
+            let result = if !can_confirm(tab, now, wait.stamp, wait.allow_working) {
+                Some(Err(LINES_INTERRUPTED))
+            } else if now >= wait.due {
+                Some(Err(LINES_TIMEOUT))
+            } else if may_write && chat.output_epoch != wait.stamp.epoch && shown_exactly(tab, &wait.expected) {
+                Some(Ok(()))
+            } else {
+                None
+            };
+            if let Some(result) = result {
+                let chat = &mut tab.pane.as_mut().unwrap().chat;
+                let wait = chat.staging.lines.take().unwrap();
+                match result {
+                    Err(error) => {
+                        let stamp = Stamp { epoch: chat.output_epoch, ..wait.stamp };
+                        chat.staging.recovery = Some(Recovery::Manual(stamp, wait.picture));
+                        chat.refused(error, None);
+                    }
+                    Ok(()) => submit_enter(
+                        tab,
+                        EnterOnly {
+                            stamp: wait.stamp,
+                            expected: wait.expected,
+                            completion: Completion::Message(wait.text),
+                            picture: wait.picture,
+                            allow_working: wait.allow_working,
+                        },
+                    ),
                 }
                 return true;
             }
@@ -497,11 +539,44 @@ pub(super) fn slash_bytes(line: &str) -> Option<Vec<u8>> {
     Some(line.as_bytes().to_vec())
 }
 
+/// Built-in commands that only change settings or show a panel and never start a model turn. Any
+/// other command (skills, plugins, custom prompts, unknown names) is taken to start one.
+const LOCAL_COMMANDS: [&str; 22] = [
+    "model",
+    "effort",
+    "help",
+    "context",
+    "cost",
+    "usage",
+    "status",
+    "config",
+    "tui",
+    "permissions",
+    "mcp",
+    "theme",
+    "doctor",
+    "login",
+    "logout",
+    "add-dir",
+    "agents",
+    "hooks",
+    "memory",
+    "output-style",
+    "vim",
+    "exit",
+];
+
+fn local_command(line: &str) -> bool {
+    let name = line.strip_prefix('/').and_then(|s| s.split_ascii_whitespace().next()).unwrap_or("");
+    LOCAL_COMMANDS.iter().any(|c| name.eq_ignore_ascii_case(c))
+}
+
 pub(super) fn send_bytes(chips: &[Chip], text: &str) -> Option<Vec<u8>> {
     if text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t')) {
         return None;
     }
-    let text = text.replace(['\n', '\t'], " ");
+    // Line breaks stay: the bracketed paste keeps them in one message.
+    let text = text.replace('\t', " ");
     let paths: Vec<_> = chips
         .iter()
         .filter_map(|chip| match chip {
@@ -521,7 +596,14 @@ pub(super) fn send_bytes(chips: &[Chip], text: &str) -> Option<Vec<u8>> {
     Some(if payload.is_empty() { Vec::new() } else { mdshared_term::input::encode_paste(&payload, true) })
 }
 
-fn finish(tab: &mut Tab, paste: &[u8], completion: Completion, marker: Option<String>, allow_working: bool) {
+fn finish(
+    tab: &mut Tab,
+    now: Instant,
+    paste: &[u8],
+    completion: Completion,
+    marker: Option<String>,
+    allow_working: bool,
+) {
     let stamp = Stamp::at(tab);
     let picture = marker.is_some();
     let payload = std::str::from_utf8(paste)
@@ -529,11 +611,13 @@ fn finish(tab: &mut Tab, paste: &[u8], completion: Completion, marker: Option<St
         .strip_prefix("\x1b[200~")
         .and_then(|s| s.strip_suffix("\x1b[201~"))
         .unwrap_or("")
-        .trim();
+        .trim()
+        // The paste carries line breaks as CR, as a terminal pastes them.
+        .replace('\r', "\n");
     let expected = match marker {
         Some(marker) if !payload.is_empty() => format!("{marker} {payload}"),
         Some(marker) => marker,
-        None => payload.into(),
+        None => payload,
     };
     tab.pane.as_mut().unwrap().note_composer_input();
     if !paste.is_empty()
@@ -543,6 +627,16 @@ fn finish(tab: &mut Tab, paste: &[u8], completion: Completion, marker: Option<St
         chat.queue = None;
         chat.staging.recovery = Some(Recovery::Manual(stamp, picture));
         chat.refused(error, None);
+        return;
+    }
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    if expected.contains('\n') {
+        // Several lines: Enter only once the input line shows them (or the CLI's paste marker).
+        let Completion::Message(text) = completion else { unreachable!("commands are one line") };
+        chat.error = None;
+        chat.retry = None;
+        let due = now + ECHO_TIMEOUT;
+        chat.staging.lines = Some(LinesWait { stamp, due, expected, text, picture, allow_working });
         return;
     }
     submit_enter(tab, EnterOnly { stamp, expected, completion, picture, allow_working });
@@ -570,6 +664,8 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
             chat.submitted();
         }
         Completion::Command { line, from_editor } => {
+            // A command that may start a model turn counts as the new chat's first send.
+            chat.first_sent |= chat.awaiting_transcript && !local_command(&line);
             chat.cli_report.begin(baseline.unwrap_or_default(), chat.output_epoch, chat.demo, chat.input_floor, &line);
             if from_editor {
                 chat.submitted();
@@ -603,6 +699,15 @@ pub(super) fn write(tab: &mut Tab, bytes: &[u8], demo_text: &str) -> Result<(), 
         } else if bytes.starts_with(b"/") {
             tab.term.feed(format!("\r\n❯ {demo_text}").as_bytes());
             chat.output_epoch = chat.output_epoch.wrapping_add(1);
+        } else if let Some(text) = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| s.strip_prefix("\x1b[200~"))
+            .and_then(|s| s.strip_suffix("\x1b[201~"))
+            .filter(|s| s.contains('\r'))
+        {
+            // The demo shows a pasted message of several lines as the CLI's input would.
+            tab.term.feed(format!("\r\n❯ {}", text.replace('\r', "\r\n  ")).as_bytes());
+            chat.output_epoch = chat.output_epoch.wrapping_add(1);
         } else if !bytes.starts_with(b"\x1b[200~") {
             let demo_text: String = demo_text.chars().filter(|c| !c.is_control() || *c == '\n').collect();
             tab.term.feed(
@@ -626,7 +731,9 @@ pub(super) fn stage_deadline(chat: &Chat) -> Option<Instant> {
         .as_ref()
         .map(|wait| wait.due)
         .or_else(|| chat.staging.echo.as_ref().map(|wait| wait.due))
+        .or_else(|| chat.staging.lines.as_ref().map(|wait| wait.due))
         .or_else(|| chat.question.deadline())
+        .or_else(|| chat.mode_deadline())
 }
 
 #[cfg(test)]

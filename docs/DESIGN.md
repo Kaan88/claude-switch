@@ -822,8 +822,9 @@ transcript byte watermark before writing so a buffered earlier prompt cannot rea
 **When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
 same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only an automatically
-opened drawer closes on observable turn progress; a manually opened one stays open. No
-permission responses are generated; the only dialog keys are a question card's (see Questions). Stop sends Escape at most once per freshly
+opened drawer closes on observable turn progress; a manually opened one stays open. Chat
+never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
+Permission prompts). Stop sends Escape at most once per freshly
 verified active turn.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
@@ -831,7 +832,16 @@ from the selected account, the launch folder’s `.claude` directory, and instal
 It does not execute plugins or mirror CLI policy, and caches the scan for the tab. Stars persist in
 `window.ini`. Use ↑/↓ to choose, Tab to fill, and Enter to run. Model and Effort offer inline choices
 and toolbar menus; Model can also open the native picker. Model, effort and context labels use
-reported values, not clicked values; unknown effort stays blank. Direct slash commands need a
+reported values, not clicked values. Effort is, in Claude Code's order: `CLAUDE_CODE_EFFORT_LEVEL`
+in the tab's environment (it outranks `/effort`), else the newest "Set effort level to …" reply in
+the transcript's `<local-command-stdout>` records, whoever typed the command (a newer "Set model to
+…" sets it back), else the tab's `--effort` flag, else `effortLevel` in the project's
+`settings.local.json` and `settings.json` and the account's `settings.json` (read once when the tab
+opens, never written), else the model's documented default, marked "(default)"; unknown stays
+blank. Per-model `modelSettings` and managed settings are not read. After a `compact_boundary` or
+compact summary record, Context reads "<postTokens> after compact" from the boundary's
+`compactMetadata` ("— after compact" without it) until the next answer reports a size; the Session
+view's "Context now" does the same. Direct slash commands need a
 verified, quiet, visibly empty CLI prompt, no active turn or blocking interaction, and the same
 terminal mode checks as Send. Chat writes command text first, and only writes Enter after seeing
 the exact text on the live input row, within two seconds. Compact and Clear (including Clear aliases)
@@ -851,7 +861,43 @@ second deadline; a mismatch, timeout or a question still open eight seconds afte
 why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
 stay terminal-only. While the card can answer, sends are refused with "Answer Claude's question
 above" and the drawer does not open by itself; the working line reads "Waiting for your answer".
-Permission prompts are never answered from Chat.
+
+**Permission prompts.** These used to be answered only in the terminal. The owner gave that rule up
+(2026-11-27): "give that up, otherwise all I see is that chat has stopped. convenience trumps". The
+safeguards that cost nothing stay. While the main transcript has exactly one pending tool call and
+the screen shows a permission prompt (a "Do you want to …" or "Would you like to …" row, then
+`1. Yes`/`1. Allow` down to a `No`/`Deny` choice, then the "Esc to cancel" footer), the card shows
+the call as the transcript records it (command, file and diff lines, MCP server and tool), the
+prompt's own rows above the question (warnings and countdowns included), the question and the
+screen's choices, exactly as written. Clicks are answered only if the prompt names that call (the
+command's first 40 characters, the file name, the MCP tool or the fetched host must appear in it);
+a subagent's prompt, two pending calls, or any other prompt stays terminal-only with an Open terminal
+button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
+highlight there with the same choices; nothing is pre-selected and nothing is answered without a
+click. A decline with text uses the prompt's Tab comment field when the footer offers "Tab to
+amend" (Tab, the text, then Enter once the text is visible), or its "No, and tell Claude …" choice,
+whose text then goes to the composer. Shift+Tab is never sent at a prompt. The same deadlines and
+fail-closed rules as questions apply. While the card can answer, sends are refused with "Answer
+Claude's request above", the drawer stays closed and the working line reads "Waiting for your
+approval".
+
+**Plan approval.** A pending `ExitPlanMode` call shows its plan as Markdown in the conversation, from
+the call's input (cut at 20,000 characters), always open. The card under it offers the plan menu's
+own choices, and only while the screen shows that menu: the row right above the choices reads
+"Would you like to proceed?", one choice contains "keep planning", and the menu footer is the last
+row. The same highlight, Enter and deadline rules apply. "Keep planning" with text uses the Tab field
+when the footer offers it, else the text goes to the composer for the next message.
+
+**Permission mode.** The toolbar's Mode chip names the mode from the indicator in the four rows under
+the input row ("accept edits on", "plan mode on", "auto mode on", "don't ask on", "bypass
+permissions on", "manual mode on"); no indicator under a clean prompt reads as Default, anything
+else as "—". No transcript field is used. A click writes one Shift+Tab (`CSI Z`, the CLI's own
+cycle) only under the same checks as a direct slash command (verified, quiet, visibly empty prompt,
+no turn or pending call, no menu); the next click is taken only after the indicator changed, and a
+mode that does not change or cannot be read within two seconds stops with a notice. The chip shows
+only where the toolbar row has room.
+
+Every screen pattern lives in `view/chat/question/screens.rs`.
 
 **Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
 Sessions › Classic terminal view is on (the default): Claude Code then draws on the main screen,
@@ -867,9 +913,13 @@ and waits up to four seconds for a newly displayed `[Image #n]` on the CLI input
 Chat paste the text and write one Enter. Timeout or an intervening input, permission, clipboard or
 session change retains the draft. Failed picture or command staging blocks new sends until newer
 terminal output shows a quiet, clean prompt. If paste succeeded but Enter did not, **Press Enter**
-rechecks the staged input and retries only the Enter key. The composer replaces line feeds and
-tabs with spaces for messages, refuses other control characters, and writes the text as bracketed
-paste followed by one app-generated Enter. Ordinary
+rechecks the staged input and retries only the Enter key. The composer keeps line breaks (the
+bracketed paste carries them as CR, as a terminal pastes), replaces tabs with spaces, refuses other
+control characters, and writes the text as bracketed paste followed by one app-generated Enter. A
+message of several lines gets its Enter only once newer output shows it on the input line: the rows
+from the `❯` row to the cursor equal the text (whitespace and wrapping aside), or the input is the
+CLI's `[Pasted text #n +m lines]` marker (after a picture's marker when there is one). Two seconds
+without that keep the draft, press no Enter and ask to check the terminal. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Composer Up on the
 first displayed line and Down on the last walk real prompts in the main transcript, including
 terminal input. Recall skips adjacent repeats, pages back through the transcript worker as needed,

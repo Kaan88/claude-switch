@@ -105,8 +105,8 @@ fn the_screen_must_show_the_same_question_and_every_option_in_order() {
     let q = question(false);
     let mut screen = Screen::new(70, 24, 0);
     screen.feed(menu(0, None).as_bytes());
-    let found = shown(&screen, &q).expect("the classic menu");
-    assert_eq!((found.highlight(), found.other, found.chat), (Some(0), Some(2), Some(3)));
+    let (found, other, chat) = question_menu(&screen, &q, false).expect("the classic menu");
+    assert_eq!((found.highlight(), other, chat), (Some(0), Some(2), Some(3)));
 
     let other = |change: &dyn Fn(&mut Question)| {
         let mut q = question(false);
@@ -146,7 +146,9 @@ fn an_option_moves_the_highlight_and_enter_follows_only_once_the_screen_shows_it
     let mut f = Fixture::new(vec![question(false)]);
     let now = Instant::now();
     f.screen(&menu(0, None), now);
-    assert!(f.tab().pane.as_mut().map(|p| p.chat.sync_question(&p.model)).unwrap());
+    let tab = f.tab();
+    let pane = tab.pane.as_mut().unwrap();
+    assert!(pane.chat.sync_question(&pane.model, &tab.term.screen));
     assert_eq!(f.chat().question.answerable, Some(AT));
     assert!(press(f.tab(), now, Hit::Option(1)));
     assert_eq!(f.writes(), [down(1)], "arrows only; no Enter yet");
@@ -240,8 +242,9 @@ fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
         let mut f = Fixture::new(vec![question(!answerable)]);
         let now = Instant::now();
         f.screen(&menu(0, None), now - QUIET);
-        let pane = f.tab().pane.as_mut().unwrap();
-        pane.chat.sync_question(&pane.model);
+        let tab = f.tab();
+        let pane = tab.pane.as_mut().unwrap();
+        pane.chat.sync_question(&pane.model, &tab.term.screen);
         pane.chat.observe(&pane.model.chat, now - super::super::TOOL_WAIT);
         let tab = f.tab();
         let pane = tab.pane.as_mut().unwrap();
@@ -251,4 +254,246 @@ fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
         pane.chat.react(decision.1);
         assert_eq!(pane.chat.drawer == Drawer::Closed, answerable);
     }
+}
+
+/// A permission prompt as the classic renderer draws it.
+fn prompt(command: &str, highlight: usize, comment: Option<&str>) -> String {
+    let choices = ["Yes", "Yes, and don't ask again for cargo test commands", "No"];
+    let mut rows = vec![
+        "\x1b[2J\x1b[H────────────────────".to_owned(),
+        " Bash command".to_owned(),
+        String::new(),
+        format!("   {command}"),
+        "   Run the tests".to_owned(),
+        String::new(),
+        " Do you want to proceed?".to_owned(),
+    ];
+    for (i, choice) in choices.iter().enumerate() {
+        let mark = if i == highlight { "❯" } else { " " };
+        // An open comment field shows on the decline row (a guess, to confirm live).
+        let comment = comment.filter(|_| i == 2).map_or(String::new(), |c| format!(": {c}"));
+        rows.push(format!(" {mark} {}. {choice}{comment}", i + 1));
+    }
+    rows.push(String::new());
+    rows.push(" Esc to cancel · Tab to amend".to_owned());
+    rows.join("\r\n")
+}
+
+fn shell(id: &str, command: &str) -> ItemKind {
+    ItemKind::Tool {
+        id: id.into(),
+        name: "Bash".into(),
+        summary: command.into(),
+        file_path: None,
+        state: ToolState::Running,
+        duration_ms: None,
+        pictures: vec![],
+        subagent: None,
+        card: Some(ToolCard::Shell { command: command.into(), result: vec![] }),
+    }
+}
+
+impl Fixture {
+    fn tool(command: &str) -> Self {
+        let mut f = Self::new(vec![]);
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model
+            .items
+            .insert(ItemId { offset: AT, block: 0 }, Item { kind: shell("toolu_1", command), timestamp: None });
+        f
+    }
+
+    fn sync(&mut self) -> bool {
+        let tab = self.tab();
+        let pane = tab.pane.as_mut().unwrap();
+        pane.chat.sync_question(&pane.model, &tab.term.screen)
+    }
+
+    fn decide(&mut self, now: Instant) -> Option<Reason> {
+        let tab = self.tab();
+        let pane = tab.pane.as_mut().unwrap();
+        let decision = pane.chat.decision(&pane.model.chat, &tab.term, "", now);
+        pane.chat.react(decision.1);
+        decision.1
+    }
+}
+
+#[test]
+fn a_permission_prompt_for_the_pending_call_is_answered_from_the_card() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT));
+    assert!(f.chat().question.approval);
+    assert_eq!(f.decide(now), Some(Reason::Approval));
+    assert_eq!(f.chat().drawer, Drawer::Closed, "the card answers it: no drawer");
+    let shown = f.chat().question.shown.clone().unwrap();
+    assert_eq!(shown.question, "Do you want to proceed?");
+    assert_eq!(shown.choices.len(), 3);
+    assert!(shown.body.iter().any(|row| row == "cargo test --workspace"));
+    let tab = f.tab();
+    assert_eq!(waiting_label(&tab.pane.as_ref().unwrap().model, &tab.term.screen), Some(APPROVING));
+
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)], "nothing is pre-selected: the arrows first");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    f.screen(&prompt("cargo test --workspace", 1, None), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+#[test]
+fn a_prompt_for_another_call_or_with_other_choices_is_left_to_the_terminal() {
+    // The screen names another command.
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("rm -rf target", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    assert_eq!(f.decide(now), Some(Reason::Permission));
+    assert_ne!(f.chat().drawer, Drawer::Closed);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NOT_SHOWN_TOOL));
+
+    // Two calls are pending: the prompt may be for either.
+    let mut f = Fixture::tool("cargo test --workspace");
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model
+        .items
+        .insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: shell("toolu_0", "cargo build"), timestamp: None });
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+
+    // The choices change between the click and the next step: nothing more is written.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    press(f.tab(), now, Hit::Option(2));
+    assert_eq!(f.writes(), [down(2)]);
+    f.screen(&prompt("cargo test --workspace", 2, None).replace("3. No", "3. Never"), now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(CHANGED));
+}
+
+#[test]
+fn declining_with_a_comment_opens_the_prompts_field_and_types_before_enter() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.chat().question.field.set_text("Run only the core tests");
+    press(f.tab(), now, Hit::Deny);
+    assert_eq!(f.writes(), [down(2)]);
+    f.screen(&prompt("cargo test --workspace", 2, None), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\t".to_vec()], "Tab opens the comment");
+    f.screen(&prompt("cargo test --workspace", 2, Some("")), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"Run only the core tests".to_vec()]);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the text is not on the screen yet");
+    f.screen(&prompt("cargo test --workspace", 2, Some("Run only the core tests")), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+
+    // Without a comment, the decline is a plain choice.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.screen(&prompt("cargo test --workspace", 2, None), now);
+    press(f.tab(), now, Hit::Deny);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+/// The plan approval menu (its rows to confirm in a live session).
+fn plan_menu(highlight: usize) -> String {
+    let choices = ["Yes, and use auto mode", "Yes, manually approve edits", "No, keep planning"];
+    let mut rows = vec!["\x1b[2J\x1b[H Ready to code?".to_owned(), String::new(), " Plan: build the parser".to_owned()];
+    rows.push(String::new());
+    rows.push(" Would you like to proceed?".to_owned());
+    for (i, choice) in choices.iter().enumerate() {
+        let mark = if i == highlight { "❯" } else { " " };
+        rows.push(format!(" {mark} {}. {choice}", i + 1));
+    }
+    rows.push(String::new());
+    rows.push(" Esc to cancel".to_owned());
+    rows.join("\r\n")
+}
+
+#[test]
+fn a_plan_is_approved_from_the_card_only_while_its_menu_shows() {
+    let mut f = Fixture::new(vec![]);
+    let kind = ItemKind::Tool {
+        id: "toolu_1".into(),
+        name: "ExitPlanMode".into(),
+        summary: "ExitPlanMode".into(),
+        file_path: None,
+        state: ToolState::Running,
+        duration_ms: None,
+        pictures: vec![],
+        subagent: None,
+        card: Some(ToolCard::Plan("# Build the parser\n\n1. Tokens\n2. Tree".into())),
+    };
+    f.tab().pane.as_mut().unwrap().model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });
+    let now = Instant::now();
+
+    // Not shown yet: nothing to answer, no buttons.
+    f.screen("\x1b[?2004h❯ ", now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    assert!(f.chat().question.shown.is_none());
+
+    f.screen(&plan_menu(0), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT));
+    let shown = f.chat().question.shown.clone().unwrap();
+    assert_eq!(shown.choices, ["Yes, and use auto mode", "Yes, manually approve edits", "No, keep planning"]);
+    assert_eq!(shown.deny, Some(2));
+    assert_eq!(f.decide(now), Some(Reason::Approval));
+    let tab = f.tab();
+    assert_eq!(waiting_label(&tab.pane.as_ref().unwrap().model, &tab.term.screen), Some(APPROVING));
+
+    press(f.tab(), now, Hit::Option(1));
+    assert_eq!(f.writes(), [down(1)]);
+    f.screen(&plan_menu(1), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+
+    // Keep planning with a note: no Tab field offered, so the note goes to the composer.
+    let mut f2 = Fixture::new(vec![]);
+    let kind = f.tab().pane.as_ref().unwrap().model.items.values().next().unwrap().kind.clone();
+    f2.tab().pane.as_mut().unwrap().model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });
+    f2.screen(&plan_menu(2), now);
+    f2.chat().question.field.set_text("Add error recovery first");
+    press(f2.tab(), now, Hit::Deny);
+    assert_eq!(f2.writes(), [b"\r".to_vec()]);
+    f2.resolve();
+    advance(f2.tab(), now + RESULT, true);
+    assert_eq!(f2.chat().editor.text, "Add error recovery first");
+}
+
+#[test]
+fn a_typed_row_that_loses_its_number_never_panics_and_stops_before_enter() {
+    let mut f = Fixture::new(vec![question(false)]);
+    let now = Instant::now();
+    f.screen(&menu(0, None), now);
+    f.chat().question.field.set_text("Both of us");
+    press(f.tab(), now, Hit::Answer);
+    assert_eq!(f.writes(), [down(2)]);
+    f.screen(&menu(2, None), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"Both of us".to_vec()]);
+    // The typed row is drawn without its number and there is no "Chat about this": the menu has
+    // only the two options, fewer entries than the typed row's index.
+    let screen = "\x1b[2J\x1b[H\x1b[?2004h ☐ Who builds\r\n\r\nWho builds the parser?\r\n\r\n  1. Me\r\n     I write it\r\n  \
+                  2. You\r\n     Claude writes it\r\n❯ Both of us\r\n\r\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    f.screen(screen, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty(), "no Enter");
+    assert_eq!(f.chat().question.error, Some(NOT_TYPED));
 }
