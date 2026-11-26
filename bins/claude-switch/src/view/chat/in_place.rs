@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 use crate::handover_in_place::Stage;
 use crate::state::AppState;
 
+/// The user sent something after the handover was made: clearing now would lose that exchange.
+const STALE: &str = "a message was sent in this session after the handover was made, so it would leave that \
+    out (make the handover again)";
+
 /// The gate refuses every send while Claude Code draws its full-screen view; waiting cannot help.
 const FULLSCREEN: &str = "Claude Code draws its full-screen view in this tab, where Chat cannot send \
     (type /tui default there, or set Where it continues to A new tab)";
@@ -68,8 +72,16 @@ impl AppState {
                 if pane.chat.error == Some(super::submission::FULLSCREEN) {
                     return Step::Fail(FULLSCREEN);
                 }
+                if pane.model.chat.prompt.is_some_and(|at| at >= job.basis) {
+                    return Step::Fail(STALE);
+                }
                 if !shown || !pane.chat.enabled || pane.chat.locked() || pane.chat.error.is_some() {
                     return Step::Wait; // The gate's own retry clears a refusal once the prompt is idle.
+                }
+                if !pane.chat.editor.text.trim().is_empty() || !pane.chat.chips.is_empty() {
+                    // A draft would become the cleared session's first message: never /clear under
+                    // it; wait for it to go (the deadline says why if it stays).
+                    return Step::Wait;
                 }
                 self.chat_confirm_slash(now, id, Some(from), "/clear", false);
                 let Some(tab) = self.tabs.get_mut(id) else { return Step::Wait };
@@ -173,6 +185,7 @@ mod tests {
             prompt: "## Goal\n\nContinue.".into(),
             saved: PathBuf::from("C:/handover/old-1.md"),
             cwd: PathBuf::from("C:/"),
+            basis: u64::MAX,
             stage,
             since,
         }
@@ -356,6 +369,53 @@ mod tests {
         assert!(r.tab().in_place.is_none(), "stopped with the reason");
         assert!(r.chat().editor.text.contains("## Goal"), "the gate keeps the draft for its recovery");
         assert!(!r.chat().writes.iter().any(|w| w == b"\r"), "never entered");
+    }
+
+    #[test]
+    fn a_draft_in_the_composer_holds_the_clear_so_the_session_is_never_cleared_without_the_handover() {
+        // The reviewer's case: a draft, then a tick. Before, /clear went out and the send stage
+        // then waited on the draft until its deadline, leaving the session cleared.
+        let mut r = Real::new("draft-before-clear");
+        let now = Instant::now();
+        let mut first = job(Stage::Clear, now);
+        first.from_session = OLD.into();
+        r.tab().in_place = Some(first);
+        r.chat().last_output = Some(now - super::super::QUIET);
+        r.chat().editor.set("my next question".into());
+        assert!(!r.st.in_place_tick(now));
+        assert!(r.chat().writes.is_empty(), "no /clear under a draft");
+        assert_eq!(r.stage(), Some(Stage::Clear));
+        assert!(r.st.in_place_tick(now + crate::handover_in_place::CLEAR_WAIT), "stops at the deadline");
+        assert!(r.chat().writes.is_empty() && r.tab().in_place.is_none());
+        assert_eq!(r.chat().editor.text, "my next question", "the draft is the user's");
+        assert_eq!(r.tab().resume_id.as_deref(), Some(OLD), "the session was never cleared");
+    }
+
+    #[test]
+    fn a_message_sent_after_the_handover_was_made_stops_it_before_clear() {
+        let mut r = Real::new("stale");
+        let now = Instant::now();
+        let mut first = job(Stage::Clear, now);
+        first.from_session = OLD.into();
+        first.basis = 500;
+        r.tab().in_place = Some(first);
+        r.chat().last_output = Some(now - super::super::QUIET);
+        // The newest prompt starts before the handover's basis: it is covered.
+        r.tab().pane.as_mut().unwrap().model.chat.prompt = Some(120);
+        r.st.in_place_tick(now);
+        assert_eq!(r.chat().writes.first().map(Vec::as_slice), Some(b"/clear".as_slice()));
+
+        let mut r = Real::new("stale-newer");
+        let mut first = job(Stage::Clear, now);
+        first.from_session = OLD.into();
+        first.basis = 500;
+        r.tab().in_place = Some(first);
+        r.chat().last_output = Some(now - super::super::QUIET);
+        r.tab().pane.as_mut().unwrap().model.chat.prompt = Some(500);
+        assert!(r.st.in_place_tick(now), "stops at once");
+        assert!(r.chat().writes.is_empty(), "never clears with a stale handover");
+        assert!(r.tab().in_place.is_none());
+        assert!(r.st.info.is_some() || r.st.dialog.is_some(), "says why");
     }
 
     #[test]

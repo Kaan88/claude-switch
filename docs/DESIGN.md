@@ -488,7 +488,11 @@ the name with that owner) and allows identification, not impersonation. The serv
 a client running as the same user at an integrity level no lower than its own, so a normal
 process cannot steer an elevated window; an elevated window also labels the pipe High with
 no-write-up. A client has 5 seconds to write its request, repeated connect errors back off, and a
-window that cannot create the channel says so. It carries one
+window that cannot create the channel says so. Known limit: another local user can create the
+name first (a pipe name is first come). The owner check then stops every client from writing to
+it, so no request leaks, but each window starts as a second window: it restores no tabs and
+handovers sent with `--open` fail. That is a local denial of service only, needs a second local
+account, and is not worked around. It carries one
 request kind only: a versioned list of the same validated words as the window arguments (session
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
 decoded and revalidated by the window, which then continues in place when one of its tabs runs
@@ -570,7 +574,11 @@ the old tab. The new chat is linked, not forked: it carries the handover provena
 (`handoverFrom`, `parentSessionId`), so it shows as a continuation in the list and Threads, and
 starts from the summary alone (a `--fork-session` would carry the full context). The old session
 is marked handed over (`handedOverTo` in marks): its tab title says “· handed over” and its row
-in Sessions starts with “Handed over”.
+in Sessions starts with “Handed over”. Once a session has continued in place, a failed save of
+these links (another window's lock or a damaged file) keeps them in memory: the save is tried
+again up to three times, 5 seconds apart, and the next save carries them after that. A new tab
+that fails to start removes only its own links; an earlier handover's mark on the old session
+stays.
 
 ### Continuing in place
 
@@ -583,8 +591,14 @@ continues** is A new tab, or when Switch is not running, it opens a new tab as b
 
 Switch shows that tab in the Chat view (that tab only; the saved Chat default for new tabs is
 left as it was) and goes through the Chat view's gate for every write; it
-never writes to the terminal itself. At an idle prompt it sends `/clear` with the gate's slash
-command path (up to 90 seconds for the prompt to become idle), waits until the tab has followed
+never writes to the terminal itself. Right before `/clear` it checks that the handover still
+covers the session: the transcript's length is recorded when it is read for the handover (the
+dialog's, the automatic one's and `compact --open`'s, which passes it in its request), and a
+prompt recorded at or past that offset means the user sent something since, so it stops with that
+reason before clearing. It also waits while the composer holds a draft or a picture, or anything
+is queued or staging, and never clears under them; if they stay past the deadline it stops, the
+session uncleared. At an idle prompt it then sends `/clear` with the gate's slash command path (up
+to 90 seconds for the prompt to become idle), waits until the tab has followed
 the CLI to the new session that `/clear` starts (the same following as for any `/clear`; the
 running records are read every second meanwhile, up to 30 seconds; the new session counts as
 followed once the pane is pinned to it and awaits its transcript, which the CLI writes only with
@@ -689,7 +703,9 @@ the app leaves a damaged marks file alone. Two windows may both write it: under 
 save that finds the file changed since this window read it applies only this window's own changes,
 per session or folder and field, onto the file as it is now, and the window then has the other's
 changes too. Last-seen times take the later value, the missing-since stamp the earlier, and the
-transcript path the one on disk. Only a field both changed differently (two names for the same
+transcript path the one on disk; a session one window pruned stays pruned when the other only
+updated those (its next scan marks it afresh), so an entry is never left empty. An empty (null)
+entry an earlier version wrote is dropped on load. Only a field both changed differently (two names for the same
 session, say) refuses the save with a notice naming it; the other window's value is kept, nothing
 else from that save is written, and the next change saves normally. No restart is needed. Showing details or a tab clears Unseen for its
 known transcript version. Remembered session marks expire only after the transcript has been
@@ -741,7 +757,10 @@ snapshot; neither local tab labels nor terminal contents are saved. For a new or
 identity must match the PTY’s live CLI process (or its immediate npm shim child), account and
 folder. Ambiguous or unavailable identities are not guessed. Ask is the default; Always
 starts the batch after the first scan, Never clears the snapshot. The pending offer survives
-an exit with no replacement tabs. Restoration uses the normal resume warning, process scan
+an exit with no replacement tabs. Only the window holding the handover channel restores and saves
+the snapshot; a second window started meanwhile neither restores it nor writes it on exit (its
+tabs are not saved), so the first window's tabs survive whichever window closes first.
+Restoration uses the normal resume warning, process scan
 and launch reservation, always targets embedded tabs, ignores a stale saved folder in favor of
 the indexed one, and reports skipped entries together.
 

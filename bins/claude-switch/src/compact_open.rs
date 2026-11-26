@@ -167,6 +167,7 @@ impl AppState {
         }
         // Persist under the exact UUID, never infer it from file creation time.
         let old = self.marks.clone();
+        let earlier = self.marks.handed_over_to(&request.parent).map(str::to_owned);
         if !self.marks.set_handover_from(&request.id, &request.from)
             || !self.marks.set_parent(&request.id, &request.parent)
             || !self.marks.set_handover_launch_name(&request.id, &request.name, claude_switch_core::usage::now_ms())
@@ -190,7 +191,11 @@ impl AppState {
             self.marks.clear_handover_from(&request.id);
             self.marks.clear_parent(&request.id);
             self.marks.clear_handover_launch_name(&request.id);
-            self.marks.clear_handed_over_to(&request.parent);
+            // An earlier handover of the same session keeps its mark.
+            match &earlier {
+                Some(to) => _ = self.marks.set_handed_over_to(&request.parent, to),
+                None => self.marks.clear_handed_over_to(&request.parent),
+            }
             self.save_marks();
         }
         result.map(drop).map_err(|_| "Could not start Claude Code in a terminal tab.".into())
@@ -233,9 +238,10 @@ impl AppState {
     ) -> Result<crate::handover_pipe::Outcome, String> {
         use crate::handover_pipe::Outcome;
         let account = request.explicit_account.then_some(request.account.as_str());
-        let result = if let Some(tab) = self.in_place_target(&request.session.id, account) {
+        let target = request.basis.and_then(|basis| Some((self.in_place_target(&request.session.id, account)?, basis)));
+        let result = if let Some((tab, basis)) = target {
             let names = (request.from.clone(), request.name.clone());
-            self.continue_in_place(tab, &request.session, names, &request.text, request.file.clone())
+            self.continue_in_place(tab, &request.session, names, &request.text, (request.file.clone(), basis))
                 .map(|()| Outcome::InPlace)
         } else {
             let Source::Real(roots) = &self.source else { return Err("Demo".into()) };
@@ -330,7 +336,9 @@ mod tests {
         let mut st = AppState::new(Source::Real(roots.clone()), None, Default::default());
         let parent = session_id().unwrap();
         let id = session_id().unwrap();
+        let earlier = session_id().unwrap();
         assert!(st.marks.rename(&parent, Path::new("unused"), "Source name"));
+        assert!(st.marks.set_handed_over_to(&parent, &earlier), "handed over once before");
         st.marks.save(&roots).unwrap();
         let account = st.config.current.clone();
         let mut launch = launch::shell(&root);
@@ -350,6 +358,7 @@ mod tests {
         assert_eq!(marks.handover_from(&id), None);
         assert_eq!(marks.parent(&id), None);
         assert_eq!(marks.handover_launch_names(claude_switch_core::usage::now_ms()).count(), 0);
+        assert_eq!(marks.handed_over_to(&parent), Some(earlier.as_str()), "the earlier handover's mark stays");
         std::fs::remove_dir_all(root).unwrap();
     }
 
