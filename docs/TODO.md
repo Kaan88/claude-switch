@@ -367,3 +367,8 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     and a "Default" entry. Check first what the toolkit's text stack can load (system fonts by
     family name, fallback for emoji and missing glyphs, the terminal's cell metrics after a change);
     whatever the toolkit lacks goes to the toolkit session.
+    Toolkit status (2026-11-26): the terminal font (`termview::CellFont::with_family`, metrics
+    re-measured from the font) and the conversation's family list (`gfx` rich layout, `richtext`)
+    and emoji/glyph fallback exist at 137121c. New toolkit work, waiting on the owner's yes: a list
+    of installed families with a monospace flag (`fonts::families()`), and a setter for the
+    interface font (today private consts `UI_FAMILY`/`MONO_FAMILY` in gfx.rs; touches every app).
