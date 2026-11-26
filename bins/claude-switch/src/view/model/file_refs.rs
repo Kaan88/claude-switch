@@ -15,7 +15,17 @@ pub(super) struct FileRefs {
 }
 
 impl FileRefs {
-    pub fn update(&mut self, reset: bool, items: &[(ItemId, Item)], cwd: &Path) -> Vec<(ItemId, Files)> {
+    pub fn get(&self, id: ItemId) -> Option<&Files> {
+        self.refs.get(&id).map(|(_, files)| files)
+    }
+
+    pub fn update(
+        &mut self,
+        reset: bool,
+        items: &[(ItemId, Item)],
+        cwd: &Path,
+        extra: impl Fn(ItemId) -> Vec<String>,
+    ) -> Vec<(ItemId, Files)> {
         if reset {
             *self = Self::default();
         }
@@ -51,7 +61,10 @@ impl FileRefs {
             BTreeSet::new()
         };
         for (id, item) in items {
-            let names = named_paths(item);
+            let mut names = named_paths(item);
+            names.extend(extra(*id));
+            names.sort_unstable();
+            names.dedup();
             let Some((existing, previous)) = self.refs.get_mut(id) else {
                 if !names.is_empty() {
                     let files = check(&mut checked, cwd, &self.touched, &names);
@@ -132,6 +145,40 @@ mod tests {
     use claude_switch_core::transcript::ItemKind;
 
     #[test]
+    fn saved_output_labels_do_not_grant_outside_access() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let inside = demo.cwd().join("report.txt");
+        let narrower = demo.cwd().join("session");
+        std::fs::write(&inside, "saved").unwrap();
+        std::fs::create_dir(&narrower).unwrap();
+        std::fs::write(narrower.join("inside.txt"), "saved").unwrap();
+        let outside = inside.to_str().unwrap();
+        let id = ItemId { offset: 1, block: 0 };
+        let report = Item {
+            timestamp: None,
+            kind: ItemKind::Tool {
+                id: "one".into(),
+                name: "Bash".into(),
+                summary: String::new(),
+                file_path: None,
+                state: ToolState::Ok,
+                duration_ms: None,
+                pictures: vec![],
+                subagent: None,
+                card: None,
+            },
+        };
+        let mut refs = FileRefs::default();
+        let result = claude_switch_core::transcript::ResultDetails {
+            text: format!("Saved to: `{outside}`\nWrote file: inside.txt\nLook at another.exe"),
+            timestamp: None,
+        };
+        refs.update(true, &[(id, report)], &narrower, |_| result.saved_paths().map(str::to_owned).collect());
+        let files = refs.get(id).unwrap();
+        assert_eq!(files.keys().map(String::as_str).collect::<Vec<_>>(), ["inside.txt"]);
+    }
+
+    #[test]
     fn refresh_adds_and_removes_links_without_a_new_transcript_record() {
         let demo = crate::demo::Transcript::new().unwrap();
         let cwd = demo.cwd();
@@ -139,14 +186,14 @@ mod tests {
         let id = ItemId { offset: 10, block: 0 };
         let path = "appears-later.md";
         let item = Item { kind: ItemKind::Assistant { markdown: format!("Open `{path}`.") }, timestamp: None };
-        assert!(refs.update(true, &[(id, item)], cwd).is_empty());
+        assert!(refs.update(true, &[(id, item)], cwd, |_| Vec::new()).is_empty());
         std::fs::write(cwd.join(path), "# Present now").unwrap();
-        let change = refs.update(false, &[], cwd);
+        let change = refs.update(false, &[], cwd, |_| Vec::new());
         assert_eq!(change[0].0, id);
         assert!(change[0].1.contains_key(path));
-        assert!(refs.update(false, &[], cwd).is_empty());
+        assert!(refs.update(false, &[], cwd, |_| Vec::new()).is_empty());
         std::fs::remove_file(cwd.join(path)).unwrap();
-        assert_eq!(refs.update(false, &[], cwd), [(id, Files::new())]);
+        assert_eq!(refs.update(false, &[], cwd, |_| Vec::new()), [(id, Files::new())]);
     }
 
     #[test]
@@ -177,12 +224,16 @@ mod tests {
             timestamp: None,
         };
         let mut refs = FileRefs::default();
-        assert!(refs.update(true, &[(id(1), prose.clone()), (id(2), tool("Read", ToolState::Ok))], &cwd).is_empty());
-        assert!(refs.update(false, &[(id(3), tool("Write", ToolState::Failed))], &cwd).is_empty());
-        let granted = refs.update(false, &[(id(3), tool("Write", ToolState::Ok))], &cwd);
+        let no_extra = |_| Vec::new();
+        assert!(
+            refs.update(true, &[(id(1), prose.clone()), (id(2), tool("Read", ToolState::Ok))], &cwd, no_extra)
+                .is_empty()
+        );
+        assert!(refs.update(false, &[(id(3), tool("Write", ToolState::Failed))], &cwd, no_extra).is_empty());
+        let granted = refs.update(false, &[(id(3), tool("Write", ToolState::Ok))], &cwd, no_extra);
         assert_eq!(granted.len(), 3, "the tool and already loaded rows all see the grant");
         assert!(granted.iter().all(|(_, r)| r.keys().map(String::as_str).eq([name])));
-        assert_eq!(refs.update(false, &[(id(3), tool("Write", ToolState::Failed))], &cwd).len(), 3);
-        assert!(refs.update(true, &[(id(1), prose)], &cwd).is_empty());
+        assert_eq!(refs.update(false, &[(id(3), tool("Write", ToolState::Failed))], &cwd, no_extra).len(), 3);
+        assert!(refs.update(true, &[(id(1), prose)], &cwd, no_extra).is_empty());
     }
 }

@@ -2,7 +2,7 @@
 //! until `generation` changes. Agents and tasks always describe the root.
 mod file_refs;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,11 @@ use mdshared_text::image::Image;
 use mdshared_ui::thumbs::MemoryCache;
 
 use super::links::{self, Files, NamedFile};
+use super::{
+    documents::{self, Document},
+    outputs::{self, Output},
+};
+use claude_switch_core::transcript::{BackgroundShell, ShellStatus};
 
 const CHUNK: usize = 256 * 1024;
 
@@ -127,6 +132,7 @@ enum Command {
     Picture(u64, Key, Picture),
     Open(u64, Picture),
     Markdown(u64, u64, NamedFile),
+    ShellTail(u64, ItemId),
 }
 
 #[derive(Default)]
@@ -142,12 +148,15 @@ struct Update {
     generation: u64,
     chat: claude_switch_core::transcript::ChatInfo,
     files: Vec<(ItemId, Files)>,
+    outputs: Vec<(ItemId, Vec<Output>)>,
+    shells: Option<Vec<BackgroundShell>>,
 }
 
 enum Event {
     Update(Box<Update>),
     Picture(u64, Key, io::Result<Arc<Image>>),
-    Markdown(u64, u64, io::Result<String>),
+    Markdown(u64, u64, io::Result<Document>),
+    ShellTail(u64, ItemId, Option<Vec<String>>),
     Error(Option<String>),
 }
 
@@ -164,8 +173,13 @@ pub struct Model {
     pub generation: u64,
     pub chat: claude_switch_core::transcript::ChatInfo,
     pub files: BTreeMap<ItemId, Files>,
+    pub(super) outputs: BTreeMap<ItemId, Vec<Output>>,
+    pub(super) output_list: Vec<Output>,
+    pub(super) shells: Vec<BackgroundShell>,
+    pub(super) shell_tails: BTreeMap<ItemId, Option<Vec<String>>>,
+    tail_requested: BTreeSet<ItemId>,
     markdown_ticket: u64,
-    markdown: Option<io::Result<String>>,
+    markdown: Option<io::Result<Document>>,
     session: Option<String>,
     tx: mpsc::Sender<Command>,
     rx: mpsc::Receiver<Event>,
@@ -191,6 +205,7 @@ impl Model {
                 generation: 0,
                 chat: Default::default(),
                 refs: Default::default(),
+                shells: Default::default(),
             };
             let mut error = None;
             for command in commands {
@@ -231,6 +246,11 @@ impl Model {
             generation: 0,
             chat: Default::default(),
             files: Default::default(),
+            outputs: Default::default(),
+            output_list: Vec::new(),
+            shells: Vec::new(),
+            shell_tails: Default::default(),
+            tail_requested: Default::default(),
             markdown_ticket: 0,
             markdown: None,
             session: None,
@@ -255,10 +275,27 @@ impl Model {
                     if u.reset {
                         self.items.clear();
                         self.files.clear();
+                        self.outputs.clear();
+                        self.shell_tails.clear();
+                        self.tail_requested.clear();
                         self.cancel_markdown();
                         self.cache.remove_where(|_| true);
                         self.requested.clear();
                         self.failed.clear();
+                    }
+                    if u.reset || !u.outputs.is_empty() {
+                        for (id, outputs) in u.outputs {
+                            if outputs.is_empty() {
+                                self.outputs.remove(&id);
+                            } else {
+                                self.outputs.insert(id, outputs);
+                            }
+                        }
+                        self.output_list = outputs::latest(&self.outputs);
+                    }
+                    if let Some(shells) = u.shells {
+                        self.shells = shells;
+                        self.shell_tails.retain(|id, _| self.shells.iter().any(|s| s.tool == *id));
                     }
                     for (id, files) in u.files {
                         if files.is_empty() {
@@ -310,6 +347,14 @@ impl Model {
                     self.markdown = Some(result);
                 }
                 Event::Markdown(..) => continue,
+                Event::ShellTail(g, id, lines) if g == self.generation => {
+                    self.tail_requested.remove(&id);
+                    if self.shell_tails.get(&id) == Some(&lines) {
+                        continue;
+                    }
+                    self.shell_tails.insert(id, lines);
+                }
+                Event::ShellTail(..) => continue,
                 Event::Error(e) => {
                     self.error = e;
                     self.revision += 1;
@@ -359,8 +404,18 @@ impl Model {
         }
     }
 
-    pub fn take_markdown(&mut self) -> Option<io::Result<String>> {
+    pub(super) fn take_markdown(&mut self) -> Option<io::Result<Document>> {
         self.markdown.take()
+    }
+
+    pub(super) fn running_shells(&self) -> usize {
+        self.shells.iter().take_while(|s| s.status == ShellStatus::Running).count()
+    }
+
+    pub(super) fn request_shell_tail(&mut self, id: ItemId) {
+        if self.tail_requested.insert(id) && self.tx.send(Command::ShellTail(self.generation, id)).is_err() {
+            self.tail_requested.remove(&id);
+        }
     }
 
     fn cancel_markdown(&mut self) {
@@ -378,6 +433,7 @@ struct Worker {
     generation: u64,
     chat: claude_switch_core::transcript::ChatInfo,
     refs: file_refs::FileRefs,
+    shells: Vec<BackgroundShell>,
 }
 
 fn refs(item: &Item) -> &[Picture] {
@@ -477,7 +533,16 @@ impl Worker {
                 return Ok(None);
             }
             Command::Markdown(g, ticket, file) if g == self.generation => {
-                return Ok(Some(Event::Markdown(g, ticket, file.read_markdown())));
+                return Ok(Some(Event::Markdown(g, ticket, documents::read(&file))));
+            }
+            Command::ShellTail(g, id) if g == self.generation => {
+                let lines = self
+                    .shells
+                    .iter()
+                    .find(|shell| shell.tool == id && shell.status == ShellStatus::Running)
+                    .and_then(|shell| NamedFile::shell_output(&shell.output, &self.cwd))
+                    .and_then(|file| documents::tail(&file).ok());
+                return Ok(Some(Event::ShellTail(g, id, lines)));
             }
             _ => return Ok(None),
         }
@@ -511,12 +576,36 @@ impl Worker {
             u.items =
                 change.added.union(&change.updated).filter_map(|&id| Some((id, reader.item(id)?.clone()))).collect();
         }
-        u.files = self.refs.update(reset, &u.items, &self.cwd);
+        u.files = self.refs.update(reset, &u.items, &self.cwd, |id| match reader.item(id).map(|item| &item.kind) {
+            Some(ItemKind::Tool { state: claude_switch_core::transcript::ToolState::Ok, .. }) => reader
+                .result_details(id)
+                .map(|result| result.saved_paths().map(str::to_owned).collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        });
+        let ids = u.items.iter().map(|(id, _)| *id).chain(u.files.iter().map(|(id, _)| *id)).collect::<BTreeSet<_>>();
+        u.outputs = ids
+            .into_iter()
+            .filter_map(|id| {
+                Some((id, outputs::collect(id, reader.item(id)?, reader.result_details(id), self.refs.get(id))))
+            })
+            .collect();
+        if reset
+            || change.background_changed
+            || u.items.iter().any(|(_, item)| matches!(&item.kind, ItemKind::Tool { .. }))
+        {
+            let shells = reader.background_shells();
+            if reset || self.shells != shells {
+                self.shells.clone_from(&shells);
+                u.shells = Some(shells);
+            }
+        }
         Ok((reset
             || earlier_request
             || metadata_changed
             || !u.items.is_empty()
             || !u.files.is_empty()
+            || u.shells.is_some()
             || u.tasks.is_some()
             || u.agents.is_some())
         .then(|| Event::Update(Box::new(u))))

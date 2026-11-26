@@ -23,6 +23,7 @@ pub enum Control {
     Panel,
     Side(Side),
     Detail(super::side::Hit),
+    Shells,
     Editor,
     Attach,
     Send,
@@ -46,6 +47,40 @@ pub enum Control {
 }
 
 impl AppState {
+    pub(in crate::view) fn select_shell(&mut self, id: Option<claude_switch_core::transcript::ItemId>) {
+        let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) else { return };
+        if id.is_some_and(|id| !pane.model.shells.iter().any(|shell| shell.tool == id)) {
+            return;
+        }
+        pane.chat.details.reset_scroll();
+        if let Some(id) = id {
+            pane.chat.details.select_shell(id, pane.model.generation);
+        }
+        if pane.chat.enabled {
+            pane.chat.side = Side::Shells;
+            pane.chat.side_hidden = false;
+        } else {
+            pane.ui.show_details(Side::Shells);
+        }
+    }
+
+    fn detail_control(&mut self, hit: super::side::Hit) {
+        let Some(tab) = self.tabs.shown_mut() else { return };
+        let Some(pane) = &mut tab.pane else { return };
+        let side = if pane.chat.enabled {
+            pane.chat.side
+        } else if let Some(side) = pane.ui.detail_side() {
+            side
+        } else {
+            return;
+        };
+        match super::side::activate(pane, tab.id, side, hit) {
+            super::side::Activated::None => {}
+            super::side::Activated::Focus => self.session_view.text_focus = true,
+            super::side::Activated::Stop(id) => self.ask_shell_manager(id),
+        }
+    }
+
     pub fn chat_paste(&mut self) -> bool {
         if !self.chat_takes_input() {
             return false;
@@ -350,6 +385,11 @@ impl AppState {
     pub fn chat_control(&mut self, cx: &mut Cx<'_, Msg>, control: Control) {
         match control {
             Control::Stop => return self.stop_conversation(cx, None),
+            Control::Detail(hit) => return self.detail_control(hit),
+            Control::Shells => {
+                self.select_shell(None);
+                return;
+            }
             Control::Model | Control::Effort => return self.chat_choice_menu(control),
             Control::Context => return self.chat_run_slash(cx, "/context".into(), false),
             Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
@@ -383,11 +423,6 @@ impl AppState {
             Control::Side(side) => {
                 chat.side = side;
                 chat.details.reset_scroll();
-            }
-            Control::Detail(hit) => {
-                if super::side::activate(pane, tab.id, hit) {
-                    self.session_view.text_focus = true;
-                }
             }
             Control::Remove(i) if i < chat.chips.len() && !chat.locked() => {
                 let clipboard = matches!(chat.chips.remove(i), Chip::Clipboard(_));

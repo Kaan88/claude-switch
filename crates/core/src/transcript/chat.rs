@@ -106,20 +106,17 @@ impl ToolCard {
 }
 
 pub(super) fn result_lines(content: &Value) -> Vec<String> {
-    content
-        .as_str()
-        .into_iter()
-        .chain(
-            content
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|b| (b["type"] == "text").then(|| b["text"].as_str()).flatten()),
-        )
-        .flat_map(str::lines)
-        .take(10)
-        .map(|line| short(line, 180))
-        .collect()
+    result_text(content).flat_map(str::lines).take(10).map(|line| short(line, 180)).collect()
+}
+
+pub(super) fn result_text(content: &Value) -> impl Iterator<Item = &str> {
+    content.as_str().into_iter().chain(
+        content
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|b| (b["type"] == "text").then(|| b["text"].as_str()).flatten()),
+    )
 }
 
 pub(super) fn clock_ms(raw: &str) -> Option<i64> {

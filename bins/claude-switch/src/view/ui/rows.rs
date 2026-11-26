@@ -9,6 +9,7 @@ use mdshared_ui::theme::Palette;
 
 use super::super::links::{Files, NamedFile};
 use super::super::model::{Group, Model};
+use super::super::outputs::Output;
 use super::super::preview::Preview;
 use super::super::text::TextLayout;
 
@@ -18,6 +19,7 @@ pub(super) enum Id {
     Tool(ItemId),
     Group(ItemId),
     Files(ItemId),
+    Outputs(ItemId),
     Agent(String),
     Task(usize),
     Empty,
@@ -95,6 +97,8 @@ pub(super) struct Row {
     pub body: Option<Body>,
     pub pictures: Vec<(ItemId, usize)>,
     pub files: Vec<NamedFile>,
+    pub outputs: Vec<Output>,
+    pub background: bool,
     pub target: String,
     pub duration: String,
     pub open: bool,
@@ -249,6 +253,8 @@ impl Rows<'_> {
             body: None,
             pictures: Vec::new(),
             files: Vec::new(),
+            outputs: Vec::new(),
+            background: false,
             target: String::new(),
             duration: String::new(),
             open: false,
@@ -276,7 +282,7 @@ impl Rows<'_> {
                 (row.geo.ty + content + 6.0 + if row.agent.is_some() { CHIP_H } else { 0.0 }, 4.0)
             }
             Style::Tool | Style::Group => (TOOL_H, 4.0),
-            Style::Files => (chip_rect(row.geo, row.files.len() - 1).bottom() + 3.0, 12.0),
+            Style::Files => (chip_rect(row.geo, row.files.len() + row.outputs.len() - 1).bottom() + 3.0, 12.0),
             Style::Card => (HEAD + content + 12.0, 7.0),
         };
         row.h = h;
@@ -300,6 +306,8 @@ impl Rows<'_> {
 
     pub fn conversation(&mut self, m: &Model, expanded: &BTreeSet<ItemId>, tool_expanded: &BTreeSet<ItemId>) {
         let mut writes = TurnFiles::default();
+        let backgrounds = m.shells.iter().map(|shell| shell.tool).collect::<BTreeSet<_>>();
+        let mut cards = output_cards(&m.items, &m.outputs);
         for group in &m.groups {
             let ids = match group {
                 Group::One(id) => std::slice::from_ref(id),
@@ -332,7 +340,15 @@ impl Rows<'_> {
                 }
                 writes.observe(id, item, files);
                 if !collapsible(ids.len()) || expanded.contains(&ids[0]) {
-                    self.item(id, item, tool_expanded.contains(&id), files);
+                    self.item(id, item, tool_expanded.contains(&id), files, backgrounds.contains(&id));
+                }
+            }
+            if let Some(first) = ids.first() {
+                let outputs = ids.iter().filter_map(|id| cards.remove(id)).flatten().collect::<Vec<_>>();
+                if !outputs.is_empty() {
+                    let mut row = self.row(Id::Outputs(*first), Style::Files);
+                    row.outputs = outputs;
+                    self.put(row);
                 }
             }
         }
@@ -347,7 +363,7 @@ impl Rows<'_> {
         }
     }
 
-    fn item(&mut self, id: ItemId, item: &Item, open: bool, files: Option<&Files>) {
+    fn item(&mut self, id: ItemId, item: &Item, open: bool, files: Option<&Files>, background: bool) {
         let row = match &item.kind {
             ItemKind::Prompt { text, pictures, .. } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
@@ -386,6 +402,7 @@ impl Rows<'_> {
                 row.busy = *state == ToolState::Running;
                 row.duration = duration_ms.map(duration).unwrap_or_default();
                 row.open = open;
+                row.background = background;
                 if open {
                     let (detail, kind) = tool_detail(card.as_ref(), target);
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
@@ -455,6 +472,43 @@ impl Rows<'_> {
             self.empty("No tasks yet", "The session’s current plan will appear here.");
         }
     }
+}
+
+fn output_cards(
+    items: &BTreeMap<ItemId, Item>,
+    outputs: &BTreeMap<ItemId, Vec<Output>>,
+) -> BTreeMap<ItemId, Vec<Output>> {
+    let mut next_answer = None;
+    let mut current_turn = None;
+    let mut layer = Vec::new();
+    let mut preferred = BTreeSet::new();
+    // Tool-only results sit under the next answer in the same turn, or their tool group
+    // if the turn has not produced another answer. Prefer the assistant's link label.
+    for (&id, item) in items.iter().rev() {
+        if matches!(item.kind, ItemKind::Prompt { synthetic: false, .. }) {
+            next_answer = None;
+            current_turn = Some(id);
+        }
+        let answer = matches!(item.kind, ItemKind::Assistant { .. });
+        if answer {
+            next_answer = Some(id);
+        }
+        for output in outputs.get(&id).into_iter().flatten().rev().filter(|o| !o.has_markdown_chip) {
+            let key = (current_turn, output.key());
+            if answer {
+                preferred.insert(key.clone());
+            }
+            layer.push((next_answer.unwrap_or(id), answer, key, output));
+        }
+    }
+    let mut by_row = BTreeMap::<ItemId, Vec<Output>>::new();
+    let mut seen = BTreeSet::new();
+    for (id, answer, key, output) in layer.into_iter().rev() {
+        if (answer || !preferred.contains(&key)) && seen.insert(key) {
+            by_row.entry(id).or_default().push(output.clone());
+        }
+    }
+    by_row
 }
 
 const fn collapsible(count: usize) -> bool {

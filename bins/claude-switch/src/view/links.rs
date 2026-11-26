@@ -24,6 +24,19 @@ impl NamedFile {
         is_markdown(&self.0)
     }
 
+    pub fn picture(&self) -> bool {
+        self.0.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+            ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff"].iter().any(|ext| s.eq_ignore_ascii_case(ext))
+        })
+    }
+
+    pub(super) fn shell_output(raw: &str, cwd: &Path) -> Option<Self> {
+        // This extra authority is only for a background Bash result's exact output path.
+        let path = transcript_path(raw, cwd)?;
+        let ext = path.extension()?.to_str()?;
+        ["output", "log", "txt"].iter().any(|e| e.eq_ignore_ascii_case(ext)).then_some(Self(path))
+    }
+
     pub fn supports_default_app(&self) -> bool {
         self.0
             .extension()

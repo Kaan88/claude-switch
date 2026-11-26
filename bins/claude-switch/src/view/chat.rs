@@ -8,7 +8,7 @@ mod layout;
 mod paint;
 mod recall;
 mod shortcuts;
-mod side;
+pub(super) mod side;
 mod submission;
 
 pub(crate) use commands::valid_name as valid_command_name;
@@ -114,7 +114,9 @@ pub enum Side {
     #[default]
     Tasks,
     Agents,
+    Shells,
     Files,
+    Outputs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,7 +137,8 @@ pub struct Chat {
     suppressed: Option<Reason>,
     side_hidden: bool,
     side: Side,
-    details: side::Details,
+    pub(super) details: side::Details,
+    shell_count: usize,
     editor: ComposerEditor,
     editor_drag: bool,
     chips: Vec<Chip>,
@@ -343,6 +346,18 @@ impl Chat {
     pub(super) fn open_drawer(&mut self) {
         self.drawer = Drawer::Manual;
         self.drawer_focus = true;
+    }
+
+    pub(super) fn shell_manager_focus(&mut self) -> bool {
+        if self.enabled {
+            self.open_drawer();
+            self.commands.open = false;
+        }
+        !self.locked() && self.reason.is_none() && self.recovery_notice().is_none()
+    }
+
+    pub(super) fn detail_side(&self) -> Option<Side> {
+        (self.enabled && !self.side_hidden && self.layout.side.w > 0.0).then_some(self.side)
     }
 }
 

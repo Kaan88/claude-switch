@@ -7,11 +7,11 @@ use super::{Details, Hit, Key, Model, Part, Side, task_key, task_status};
 use crate::state::Target;
 use crate::view::chat::Control;
 
-const ROW: f32 = 26.0;
+pub(super) const ROW: f32 = 26.0;
 const INDENT: f32 = 22.0;
 const BODY_SIZE: f32 = 11.5;
 
-pub(in crate::view::chat) struct Frame<'a> {
+pub(in crate::view) struct Frame<'a> {
     pub tab: u64,
     pub area: Rect,
     pub side: Side,
@@ -20,20 +20,25 @@ pub(in crate::view::chat) struct Frame<'a> {
     pub hover: Option<Target>,
 }
 
-enum Line {
+pub(super) enum Line {
     Header { label: String, index: usize, expanded: bool, active: bool, file: bool, opens: bool },
     Detail(String),
     Button { label: String, index: usize, part: Part },
+    Heading(&'static str),
+    ShellMeta(String),
+    Tail(claude_switch_core::transcript::ItemId, Vec<String>),
+    Actions(usize, Vec<(&'static str, Part)>),
+    Output(usize, String, String),
 }
 
-struct Lines {
+pub(super) struct Lines {
     lines: Vec<(f32, f32, Line)>,
-    height: f32,
-    reveal: Option<f32>,
+    pub(super) height: f32,
+    reveal: Option<(f32, f32)>,
 }
 
 impl Lines {
-    fn push(&mut self, h: f32, line: Line) {
+    pub(super) fn push(&mut self, h: f32, line: Line) {
         self.lines.push((self.height, h, line));
         self.height += h;
     }
@@ -45,13 +50,16 @@ impl Lines {
 }
 
 impl Details {
-    pub(in crate::view::chat) fn draw(&mut self, p: &mut Painter, pal: &Palette, f: Frame<'_>) -> Vec<(Rect, Target)> {
+    pub(in crate::view) fn draw(&mut self, p: &mut Painter, pal: &Palette, f: Frame<'_>) -> Vec<(Rect, Target)> {
         self.refresh(f.model, f.cwd, f.side);
+        self.visible_shells.clear();
         let area = f.area;
         let heading = match f.side {
             Side::Tasks => "Tasks",
             Side::Agents => "Agents",
             Side::Files => "Changed files · from tool results",
+            Side::Shells => "Background shells",
+            Side::Outputs => "Session outputs",
         };
         p.text(Face::Semibold, 12.0, area.x + 12.0, area.y + 53.0, heading, pal.muted, area.w - 24.0);
         let body = Rect::new(
@@ -69,8 +77,8 @@ impl Details {
         let width = (body.w - INDENT - 9.0).max(1.0);
         let rows = self.lines(p, &f, width);
         self.max = (rows.height - body.h).max(0.0);
-        if let Some(end) = rows.reveal {
-            self.offset = self.offset.max(end - body.h);
+        if let Some((start, end)) = rows.reveal {
+            self.offset = self.offset.max(end - body.h).min(start);
         }
         self.reveal = None;
         self.offset = self.offset.clamp(0.0, self.max);
@@ -157,6 +165,48 @@ impl Details {
                         (r.w - 18.0).max(0.0),
                     );
                     p.text(Face::Ui, 14.0, r.right() - 12.0, r.cy(), "›", pal.muted, 9.0);
+                }
+                Line::Heading(label) => {
+                    p.text(Face::Semibold, 11.5, r.x + 4.0, r.cy(), label, pal.muted, r.w - 8.0);
+                }
+                Line::ShellMeta(label) => {
+                    p.text(Face::Ui, 10.5, r.x + INDENT + 4.0, r.cy(), label, pal.muted, r.w - INDENT - 8.0);
+                }
+                Line::Tail(tool, lines) => {
+                    self.visible_shells.push(*tool);
+                    let box_ = Rect::new(r.x + 5.0, r.y + 2.0, r.w - 10.0, r.h - 4.0);
+                    p.rbox(box_, 5.0, pal.field);
+                    for (i, line) in lines.iter().enumerate() {
+                        p.text(
+                            Face::Mono,
+                            10.5,
+                            box_.x + 6.0,
+                            box_.y + 11.0 + i as f32 * 15.0,
+                            line,
+                            pal.text,
+                            box_.w - 12.0,
+                        );
+                    }
+                }
+                Line::Actions(index, actions) => {
+                    let mut x = r.x + 4.0;
+                    for (label, part) in actions {
+                        let w = p.measure(Face::Semibold, 10.5, label) + 12.0;
+                        let b = Rect::new(x, r.y + 2.0, w.min((r.right() - x).max(0.0)), r.h - 4.0);
+                        if b.w > 5.0 {
+                            let hot = button(b, *index, *part);
+                            p.rbox(b, 4.0, if hot { pal.hover } else { pal.bar });
+                            p.text_center(Face::Semibold, 10.5, b, label, pal.text);
+                        }
+                        x += w + 4.0;
+                    }
+                }
+                Line::Output(index, title, meta) => {
+                    let r = r.inset(2.0);
+                    let hot = button(r, *index, Part::Open);
+                    p.frame(r, 5.0, if hot { pal.hover } else { pal.bar }, pal.line);
+                    p.text(Face::Semibold, 11.5, r.x + 7.0, r.y + 10.0, title, pal.text, r.w - 14.0);
+                    p.text(Face::Ui, 10.5, r.x + 7.0, r.y + 25.0, meta, pal.muted, r.w - 14.0);
                 }
             }
         }
@@ -285,13 +335,14 @@ impl Details {
                     }
                 }
             }
+            Side::Shells | Side::Outputs => self.extra_lines(&mut out, f),
         }
         out
     }
 
-    fn reveal(&self, out: &mut Lines, key: &Key, top: f32) {
+    pub(super) fn reveal(&self, out: &mut Lines, key: &Key, top: f32) {
         if self.reveal.as_ref() == Some(key) {
-            out.reveal = Some(out.height.min(top + ROW * 2.0));
+            out.reveal = Some((top - ROW, out.height.min(top + ROW * 2.0)));
         }
     }
 }

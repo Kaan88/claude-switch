@@ -699,7 +699,30 @@ document or media type. It uses only an existing, verified transcript-named file
 activation. When a turn is active, both conversation layouts show the CLI’s working line from
 visible screen rows, not scrollback. A missing or unreadable timer falls back to time measured
 since the app observed the turn. Stop uses the same fresh-turn safety checks as the composer and
-is inactive when those checks fail. Context now uses
+is inactive when those checks fail.
+
+**Shells** uses only background `Bash` inputs whose successful paired result names a task ID and
+output path. Later task notifications or matching successful status/stop tools determine the
+finished state and exit code; a missing terminal record does not prove a shell stopped. The
+visible expanded rows read at most the final 16 KiB of the exact named log through the reader
+worker and the fixed-volume, no-reparse open, showing at most eight lines. Following is on by
+default; pausing retains the displayed lines. **Full output** opens a literal UTF-8 snapshot from
+the start (first 1 MiB). It does not interpret formatting or follow links in the log. **Stop…**
+binds confirmation to the tab, transcript generation and shell. Switch opens the terminal drawer
+and can send a single Down key only at a verified, unblocked, empty CLI prompt with the adjacent
+“↓ to manage” footer. Otherwise it explains the manual path; it never selects a menu entry or
+stops a process.
+
+**Outputs** lists the newest occurrence of each HTTPS destination or verified saved path, with
+tool-result pictures identified by their transcript references. It sorts by reported timestamps
+when available. It reads assistant prose and bounded tool-result text for links, with no fetching;
+opening requires a click and uses the default browser. Saved files use the same path authorization
+as conversation links; a tool result mentioning an arbitrary filename does not grant access. The
+shared viewer handles bounded Markdown, UTF-8 text and supported images. Cards are deduplicated per
+turn and prefer the answer over a tool result that repeated the same link. Both Chat and Session
+view share the Shells and Outputs Details rendering.
+
+Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.

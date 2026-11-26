@@ -76,6 +76,10 @@ pub(crate) enum LineKind {
 }
 
 pub(super) fn message_line(line: &[u8]) -> Option<(LineKind, Value)> {
+    message_line_with_meta(line).filter(|(_, value)| !flag(value, "isMeta"))
+}
+
+pub(super) fn message_line_with_meta(line: &[u8]) -> Option<(LineKind, Value)> {
     let kind = line_kind(line)?;
     let value: Value = serde_json::from_slice(line).ok()?;
     // In case of duplicate JSON keys, do not expose content classified by a different type.
@@ -84,7 +88,7 @@ pub(super) fn message_line(line: &[u8]) -> Option<(LineKind, Value)> {
         LineKind::Assistant => "assistant",
         LineKind::System => "system",
     };
-    (value["type"] == expected && !flag(&value, "isMeta")).then_some((kind, value))
+    (value["type"] == expected).then_some((kind, value))
 }
 
 /// Scan top-level keys without building a JSON tree or allocating for skipped values.

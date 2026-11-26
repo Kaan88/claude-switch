@@ -11,7 +11,9 @@ pub(crate) mod handover;
 const MAX_PICTURE: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_LINE: usize = 48 * 1024 * 1024;
 const MAX_SIDECAR: u64 = 1024 * 1024;
+mod background;
 mod chat;
+pub use background::{BackgroundShell, ResultDetails, ShellStatus};
 mod decode;
 pub use chat::{ChatInfo, Phase as ChatPhase, ToolCard};
 mod tail;
@@ -84,6 +86,10 @@ pub struct Item {
     pub kind: ItemKind,
 }
 
+pub fn timestamp_ms(timestamp: &str) -> Option<i64> {
+    chat::clock_ms(timestamp)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskStatus {
     Pending,
@@ -122,6 +128,7 @@ pub struct Changes {
     pub updated: BTreeSet<ItemId>,
     pub tasks_changed: bool,
     pub subagents_changed: bool,
+    pub background_changed: bool,
 }
 
 pub struct Reader {
@@ -151,6 +158,15 @@ impl Reader {
 
     pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> + ExactSizeIterator {
         self.view.items.iter().map(|(&id, item)| (id, item))
+    }
+
+    pub fn background_shells(&self) -> Vec<BackgroundShell> {
+        self.view.background.shells()
+    }
+
+    pub fn result_details(&self, id: ItemId) -> Option<&ResultDetails> {
+        let ItemKind::Tool { id: tool, .. } = &self.item(id)?.kind else { return None };
+        self.view.results.get(tool).map(|(_, r)| &r.details)
     }
 
     pub fn chat(&self) -> ChatInfo {
@@ -355,6 +371,7 @@ struct View {
     tasks: Vec<Task>,
     plans_dirty: bool,
     chat: ChatInfo,
+    background: background::Background,
 }
 
 struct ToolResult {
@@ -362,16 +379,24 @@ struct ToolResult {
     ended_ms: Option<i64>,
     pictures: Vec<Picture>,
     lines: Vec<String>,
+    details: ResultDetails,
 }
 
 impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
-        let Some((kind, value)) = message_line(line) else { return };
+        let Some((kind, value)) = message_line_with_meta(line) else { return };
         if flag(&value, "isSidechain") && !self.is_agent {
             return;
         }
         let timestamp = value["timestamp"].as_str();
         let id = |block| ItemId { offset, block };
+        if matches!(kind, LineKind::User | LineKind::System) && self.background.notification(id(0), &value) {
+            changes.background_changed = true;
+            return;
+        }
+        if flag(&value, "isMeta") {
+            return;
+        }
         let content = &value["message"]["content"];
         if flag(&value, "isCompactSummary") || flag(&value, "isApiErrorMessage") {
             self.chat.observe(offset, ChatPhase::Unknown);
@@ -418,7 +443,11 @@ impl View {
                                     .collect();
                                 let lines = chat::result_lines(&block["content"]);
                                 let ended_ms = timestamp.and_then(chat::clock_ms);
-                                results.push((tool, id(i), ToolResult { state, ended_ms, pictures, lines }));
+                                let details = ResultDetails {
+                                    text: background::bounded_text(&block["content"]),
+                                    timestamp: timestamp.filter(|s| s.len() <= 64).map(str::to_owned),
+                                };
+                                results.push((tool, id(i), ToolResult { state, ended_ms, pictures, lines, details }));
                             }
                         }
                         _ => (),
@@ -440,10 +469,16 @@ impl View {
                 if !results.is_empty() {
                     self.chat.observe(offset, ChatPhase::Active);
                 }
+                let structured = if results.len() == 1 { &value["toolUseResult"] } else { &Value::Null };
                 for (tool, at, result) in results {
                     if self.results.get(tool).is_none_or(|(previous, _)| *previous < at) {
+                        self.background.result(tool, at, &result.details, structured, result.state == ToolState::Ok);
+                        changes.background_changed = true;
                         self.results.insert(tool.into(), (at, result));
                         self.update_tool(tool, changes);
+                        if let Some(&item) = self.tools.get(tool).filter(|id| !changes.added.contains(id)) {
+                            changes.updated.insert(item);
+                        }
                     }
                 }
             }
@@ -477,6 +512,7 @@ impl View {
                         };
                         self.add(id(i), timestamp, item, changes);
                         self.tools.insert(tool.into(), id(i));
+                        self.background.tool(tool, id(i), name, input, timestamp);
                         self.update_tool(tool, changes);
                         if let Some(plan) = Plan::parse(name, input) {
                             self.plans.insert(id(i), plan);
@@ -626,6 +662,7 @@ fn tool_summary(name: &str, input: &Value) -> String {
 fn tool_path<'a>(name: &str, input: &'a Value) -> Option<&'a str> {
     match name {
         "Read" | "Write" | "Edit" => input["file_path"].as_str().or_else(|| input["path"].as_str()),
+        "NotebookEdit" => input["notebook_path"].as_str(),
         _ => None,
     }
 }

@@ -1,4 +1,5 @@
 //! Details rows are a read-only projection of the current pane's transcript.
+mod extra;
 mod paint;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,7 +12,7 @@ use super::super::links::{self, NamedFile};
 use super::super::model::Model;
 use super::Side;
 
-pub(super) use paint::Frame;
+pub(in crate::view) use paint::Frame;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Hit {
@@ -28,6 +29,9 @@ enum Part {
     Open,
     Edit(usize),
     AgentTranscript,
+    Full,
+    Follow,
+    Stop,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,6 +39,7 @@ enum Key {
     Task(usize, String),
     Agent(String),
     File(FileKey),
+    Shell(ItemId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -62,10 +67,14 @@ enum Action {
     DefaultApp(NamedFile),
     Jump(ItemId),
     AgentTranscript(String),
+    Output(super::super::outputs::Destination),
+    ShellFollow(ItemId),
+    ShellFull(ItemId),
+    ShellStop(ItemId),
 }
 
 #[derive(Default)]
-pub(super) struct Details {
+pub(in crate::view) struct Details {
     generation: Option<u64>,
     files_revision: Option<u64>,
     files: Vec<ChangedFile>,
@@ -74,6 +83,8 @@ pub(super) struct Details {
     max: f32,
     reveal: Option<Key>,
     message: Option<&'static str>,
+    frozen: BTreeMap<ItemId, Option<Vec<String>>>,
+    pub(in crate::view) visible_shells: Vec<ItemId>,
 }
 
 impl Details {
@@ -81,6 +92,7 @@ impl Details {
         self.offset = 0.0;
         self.reveal = None;
         self.message = None;
+        self.visible_shells.clear();
     }
 
     pub fn wheel(&mut self, dy: f32) {
@@ -124,6 +136,7 @@ impl Details {
                     _ => None,
                 }
             }
+            (Side::Shells | Side::Outputs, _) => self.extra_action(model, side, i, hit.part),
             _ => None,
         }
     }
@@ -138,20 +151,26 @@ impl Details {
     }
 }
 
-/// Returns true when the existing conversation input should receive Escape/copy keys.
-pub(super) fn activate(pane: &mut Pane, tab: u64, hit: Hit) -> bool {
+pub(in crate::view) enum Activated {
+    None,
+    Focus,
+    Stop(ItemId),
+}
+
+/// Shared for the Chat rail and the Session view's Details pages.
+pub(in crate::view) fn activate(pane: &mut Pane, tab: u64, side: Side, hit: Hit) -> Activated {
     let chat = &mut pane.chat;
-    if chat.side_hidden || chat.layout.side.w <= 0.0 || pane.ui.overlay_open() {
-        return false;
+    if pane.ui.overlay_open() || (chat.enabled && (chat.side_hidden || chat.layout.side.w <= 0.0)) {
+        return Activated::None;
     }
-    let Some(action) = chat.details.action(&pane.model, tab, chat.side, hit) else { return false };
+    let Some(action) = chat.details.action(&pane.model, tab, side, hit) else { return Activated::None };
     chat.details.message = None;
     match action {
         Action::Expand(key) => chat.details.toggle(key),
         Action::Preview(file) => {
             if file.available() {
                 pane.ui.open_markdown(file, &mut pane.model);
-                return true;
+                return Activated::Focus;
             }
             chat.details.message = Some("The file is no longer available.");
         }
@@ -166,8 +185,23 @@ pub(super) fn activate(pane: &mut Pane, tab: u64, hit: Hit) -> bool {
             }
         }
         Action::AgentTranscript(id) => pane.ui.open_agent(&id, &pane.model),
+        Action::Output(output) => {
+            pane.ui.open_output(output, &mut pane.model);
+            return Activated::Focus;
+        }
+        Action::ShellFollow(id) => {
+            if chat.details.frozen.remove(&id).is_none() {
+                chat.details.frozen.insert(id, pane.model.shell_tails.get(&id).cloned().flatten());
+            }
+        }
+        Action::ShellFull(id) => {
+            if extra::open_full(pane, id) {
+                return Activated::Focus;
+            }
+        }
+        Action::ShellStop(id) => return Activated::Stop(id),
     }
-    false
+    Activated::None
 }
 
 fn open_action(file: &NamedFile) -> Option<Action> {

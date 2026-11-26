@@ -26,6 +26,28 @@ fn tool(name: &str, state: ToolState, card: Option<ToolCard>) -> Item {
 }
 
 #[test]
+fn tool_only_outputs_follow_the_next_answer_and_repeated_links_use_its_label() {
+    use crate::view::outputs::collect;
+    use claude_switch_core::transcript::ResultDetails;
+    let prompt = || item(ItemKind::Prompt { text: "show outputs".into(), pictures: vec![], synthetic: false });
+    let answer = item(ItemKind::Assistant { markdown: "[Named artifact](https://claude.ai/artifacts/1)".into() });
+    let call = tool("Bash", ToolState::Ok, None);
+    let result =
+        ResultDetails { text: "https://claude.ai/artifacts/1 https://example.test/report".into(), timestamp: None };
+    let items = BTreeMap::from([(id(1), prompt()), (id(2), call), (id(3), answer), (id(4), prompt())]);
+    let outputs = BTreeMap::from([
+        (id(2), collect(id(2), &items[&id(2)], Some(&result), None)),
+        (id(3), collect(id(3), &items[&id(3)], None, None)),
+    ]);
+    let cards = output_cards(&items, &outputs);
+    assert_eq!(cards.keys().copied().collect::<Vec<_>>(), [id(3)]);
+    assert_eq!(
+        cards[&id(3)].iter().map(|o| o.title.as_str()).collect::<Vec<_>>(),
+        ["example.test/report", "Named artifact"]
+    );
+}
+
+#[test]
 fn geometry_right_aligns_bubbles_and_indents_tools_at_session_and_chat_widths() {
     for width in [240.0, 330.0, 660.0, 780.0] {
         let bubble = Geometry::new(Style::Prompt, width, 105.0);

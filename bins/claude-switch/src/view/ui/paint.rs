@@ -93,7 +93,17 @@ impl Ui {
                             );
                         }
                     }
-                    draw_tool_line(p, pal, header, row, color, if hot { pal.hover } else { ground });
+                    let badge = if row.background && header.w >= 120.0 {
+                        let badge = Rect::new(header.right() - 92.0, header.y + 3.0, 68.0, header.h - 6.0);
+                        let Id::Tool(id) = row.id else { unreachable!() };
+                        let hot = frame_hit(badge, Action::Shell(id));
+                        p.rbox(badge, 4.0, if hot { pal.hover } else { pal.on });
+                        p.text_center(Face::Semibold, 10.5, badge, "background", pal.accent);
+                        72.0
+                    } else {
+                        0.0
+                    };
+                    draw_tool_line(p, pal, header, row, color, if hot { pal.hover } else { ground }, badge);
                     self.busy_visible |= row.busy && header.bottom() > body.y;
                 }
                 Style::Files => {
@@ -115,6 +125,16 @@ impl Ui {
                             pal.text,
                             (r.w - 16.0).max(0.0),
                         );
+                    }
+                    for (i, output) in row.outputs.iter().enumerate() {
+                        let r = chip_rect(geo, i + row.files.len());
+                        let r = Rect::new(body.x + r.x, y + r.y, r.w, r.h);
+                        if intersection(r, body).is_some() {
+                            let hot = frame_hit(r, Action::Output(output.clone()));
+                            p.frame(r, 5.0, if hot { pal.hover } else { pal.bar }, pal.line);
+                            let label = format!("{} · {}", output.kind(), output.title);
+                            p.text(Face::Semibold, 11.0, r.x + 7.0, r.cy(), &label, pal.text, (r.w - 14.0).max(0.0));
+                        }
                     }
                     continue;
                 }
@@ -168,7 +188,7 @@ impl Ui {
     }
 }
 
-fn draw_tool_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, status: [u8; 3], ground: [u8; 3]) {
+fn draw_tool_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, status: [u8; 3], ground: [u8; 3], badge: f32) {
     let face = Face::Mono;
     let size = 11.5;
     let pad = 8.0_f32.min(r.w * 0.1);
@@ -184,6 +204,7 @@ fn draw_tool_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, status: [u
         p.text(face, size, end - sw, cy, &row.stamp, legible(status, ground, 4.5), sw);
         return;
     }
+    let end = (end - badge).max(x);
     let available = end - x;
     let status_w = (p.measure(face, size, &row.stamp) + 7.0).min(available * 0.41);
     let duration_w =

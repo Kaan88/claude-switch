@@ -9,6 +9,37 @@ use mdshared_ui::theme::DARK;
 
 const TAB: u64 = 7;
 
+#[test]
+fn shell_actions_are_bound_to_the_expanded_row_and_refuse_stale_or_finished_stop_hits() {
+    use claude_switch_core::transcript::{BackgroundShell, ShellStatus};
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let mut model = Model::new(Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let id = ItemId { offset: 2, block: 0 };
+    model.shells.push(BackgroundShell {
+        tool: id,
+        id: "b1".into(),
+        command: "preview".into(),
+        output: "b1.output".into(),
+        status: ShellStatus::Running,
+        start_ms: None,
+        end_ms: None,
+    });
+    let mut details = Details::default();
+    details.refresh(&model, demo.cwd(), Side::Shells);
+    let stop = hit(&model, Side::Shells, 0, Part::Stop);
+    assert_eq!(details.action(&model, TAB, Side::Shells, stop), None);
+    details.select_shell(id, model.generation);
+    assert_eq!(details.action(&model, TAB, Side::Shells, stop), Some(Action::ShellStop(id)));
+    model.revision += 1;
+    assert_eq!(details.action(&model, TAB, Side::Shells, stop), None);
+    model.shells[0].status = ShellStatus::Finished(Some(4));
+    assert_eq!(details.action(&model, TAB, Side::Shells, hit(&model, Side::Shells, 0, Part::Stop)), None);
+    assert_eq!(
+        details.action(&model, TAB, Side::Shells, hit(&model, Side::Shells, 0, Part::Full)),
+        Some(Action::ShellFull(id))
+    );
+}
+
 fn put_tool(model: &mut Model, cwd: &Path, offset: u64, name: &str, path: &str, state: ToolState) -> ItemId {
     let id = ItemId { offset, block: 0 };
     let kind = ItemKind::Tool {
@@ -147,9 +178,12 @@ fn painted_file_name_and_arrow_are_disjoint_and_removed_markdown_is_not_opened()
     let pixel = (r.cy() as usize * bmp.width as usize + (r.right() - 10.0) as usize) * 4;
     let [red, green, blue] = DARK.hover;
     assert_eq!(bmp.pixels[pixel..pixel + 4], [blue, green, red, 255], "the name independently paints the hover fill");
-    assert!(!activate(&mut pane, TAB, expand));
+    assert!(matches!(activate(&mut pane, TAB, Side::Files, expand), Activated::None));
     assert!(pane.chat.details.expanded.iter().any(|k| matches!(k, Key::File(_))));
     std::fs::remove_file(demo.cwd().join(md)).unwrap();
-    assert!(!activate(&mut pane, TAB, open), "stale metadata must not give the viewer focus");
+    assert!(
+        matches!(activate(&mut pane, TAB, Side::Files, open), Activated::None),
+        "stale metadata must not give the viewer focus"
+    );
     assert_eq!(pane.chat.details.message, Some("The file is no longer available."));
 }
