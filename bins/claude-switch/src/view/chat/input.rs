@@ -41,6 +41,10 @@ pub enum Control {
     Argument(usize, usize),
     PinCommand(usize),
     CommandBackground,
+    /// A row of the `@` or Ctrl+R pop-up.
+    Popup(usize),
+    /// The CLI's suggested next prompt.
+    NextPrompt,
     Stop,
     Remove(usize),
     MoreChips,
@@ -190,14 +194,15 @@ impl AppState {
                 continue;
             }
             let reported = chat.observe_cli(&pane.model.chat, &tab.term.screen, now);
-            let catalog = chat.commands.collect();
+            let catalog = chat.commands.collect() | chat.popups.collect();
+            let suggested = shown && chat.popups.read_next_prompt(&tab.term.screen);
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let changed = chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
             let advanced = Self::advance_submission(tab, now, may_write);
-            redraw |= shown && (changed || catalog || reported || advanced || collected || recalled);
+            redraw |= shown && (changed || catalog || suggested || reported || advanced || collected || recalled);
         }
         redraw
     }
@@ -209,7 +214,8 @@ impl AppState {
     }
 
     pub(super) fn arm_chat_tick(&self, cx: &mut Cx<'_, Msg>) {
-        if self.tabs.list.iter().any(Self::has_chat_work) {
+        let listing = self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.popups.loading_files());
+        if listing || self.tabs.list.iter().any(Self::has_chat_work) {
             cx.wake_at(cx.now() + SUBMISSION_POLL);
         }
     }
@@ -234,6 +240,12 @@ impl AppState {
         if mods.none()
             && let Some(key) = k.name.as_ref()
             && self.chat_picker_key(cx, key)
+        {
+            return true;
+        }
+        if let Some(key) = k.name.as_ref()
+            && let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut())
+            && pane.chat.popup_key(&pane.model, key, mods, k.text.as_deref())
         {
             return true;
         }
@@ -280,6 +292,9 @@ impl AppState {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+        if chat.popup_text(text) {
+            return true;
+        }
         if !chat.locked() {
             chat.insert_text(text);
             self.chat_editor_changed();
@@ -313,6 +328,9 @@ impl AppState {
             ))
         ) {
             chat.commands.open = false;
+        }
+        if !matches!(target, Some(Target::Chat(Control::Editor | Control::Popup(_) | Control::CommandBackground))) {
+            chat.popups.close();
         }
         chat.drawer_focus = target == Some(Target::Terminal);
         match target {
@@ -373,6 +391,9 @@ impl AppState {
         }
         if chat.commands.open && chat.layout.suggestions.contains(x, y) {
             chat.commands.step(&chat.editor.text, &self.win_file.chat_pins, dy < 0.0);
+        } else if chat.popups.open.is_some() && chat.layout.suggestions.contains(x, y) {
+            let count = chat.popup_items(&pane.model).map_or(0, |(_, items)| items.len());
+            chat.popups.step(count, dy < 0.0);
         } else if chat.layout.editor.contains(x, y) {
             chat.editor.wheel(dy);
         } else if chat.layout.side.w > 0.0 && chat.layout.side.contains(x, y) {
@@ -397,6 +418,18 @@ impl AppState {
             Control::Clear => return self.chat_run_slash(cx, "/clear".into(), false),
             Control::Commands | Control::Suggestion(_) | Control::Argument(_, _) | Control::PinCommand(_) => {
                 return self.chat_picker_action(cx, control);
+            }
+            Control::Popup(i) => {
+                if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+                    pane.chat.popup_choose(&pane.model, i);
+                }
+                return;
+            }
+            Control::NextPrompt => {
+                if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+                    pane.chat.fill_next_prompt();
+                }
+                return;
             }
             _ => {}
         }

@@ -2,7 +2,7 @@ use claude_switch_core::transcript::ChatInfo;
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::theme::Palette;
 
-use super::{Chat, Chip, Control, Drawer, Gate, commands, editor, paint::button, submission};
+use super::{Chat, Chip, Control, Drawer, Gate, commands, editor, paint::button, popups, submission};
 use crate::state::Target;
 
 pub(super) struct Draw<'a> {
@@ -88,7 +88,14 @@ impl Draw<'_> {
         }
     }
 
-    pub fn composer(mut self, p: &mut Painter, chat: &mut Chat, info: &ChatInfo, suggestions: Option<Suggestions>) {
+    pub fn composer(
+        mut self,
+        p: &mut Painter,
+        chat: &mut Chat,
+        info: &ChatInfo,
+        suggestions: Option<Suggestions>,
+        popup: Option<popups::Plan>,
+    ) {
         let l = chat.layout;
         let clip = p.clip(l.composer);
         p.rbox(l.box_frame, 11.0, if self.focused { self.pal.accent } else { self.pal.line });
@@ -99,10 +106,63 @@ impl Draw<'_> {
         self.notice(p, chat, info);
         self.toolbar(p, chat, info);
         p.restore(clip);
-        chat.layout.suggestions = suggestions.as_ref().map_or_else(Rect::default, |s| s.bounds);
+        chat.layout.suggestions =
+            suggestions.as_ref().map(|s| s.bounds).or(popup.as_ref().map(|s| s.bounds)).unwrap_or_default();
         if let Some(suggestions) = suggestions {
             self.suggestions(p, chat, suggestions);
+        } else if let Some(popup) = popup {
+            self.popup(p, chat, popup);
         }
+    }
+
+    /// The `@` file list or the Ctrl+R prompt search, drawn like the command list.
+    fn popup(&mut self, p: &mut Painter, chat: &Chat, plan: popups::Plan) {
+        let popups::Plan { kind, bounds: r, items, selected, first, visible } = plan;
+        p.rbox(r, 8.0, self.pal.popup_line);
+        p.rbox(r.inset(1.0), 7.0, self.pal.popup);
+        self.hits.push((r, Target::Chat(Control::CommandBackground)));
+        let clip = p.clip(r);
+        let heading = match kind {
+            popups::Kind::Files if chat.popups.loading_files() => "Files · reading the session folder…".to_owned(),
+            popups::Kind::Files => "Files · ↑↓ choose · Tab or Enter inserts · Esc closes".to_owned(),
+            popups::Kind::History => {
+                format!("Earlier prompts · search: {}▏ · Ctrl+R next · Enter fills", chat.popups.query)
+            }
+        };
+        p.text(Face::Ui, 11.0, r.x + 10.0, r.y + 11.0, &heading, self.pal.muted, r.w - 20.0);
+        if items.is_empty() {
+            let empty = match kind {
+                popups::Kind::Files if chat.popups.loading_files() => "",
+                popups::Kind::Files => "No matching file in the session folder.",
+                popups::Kind::History => "No earlier prompt matches. Up loads older history.",
+            };
+            p.text(
+                Face::Ui,
+                12.0,
+                r.x + 10.0,
+                r.y + popups::HEADER + popups::ROW / 2.0,
+                empty,
+                self.pal.muted,
+                r.w - 20.0,
+            );
+        }
+        for (n, item) in items.iter().enumerate().skip(first).take(visible) {
+            let row = Rect::new(
+                r.x + 4.0,
+                r.y + popups::HEADER + (n - first) as f32 * popups::ROW,
+                r.w - 8.0,
+                popups::ROW - 1.0,
+            );
+            let target = Target::Chat(Control::Popup(n));
+            if n == selected || self.hover == Some(target) {
+                p.rbox(row, 5.0, if n == selected { self.pal.on } else { self.pal.hover });
+            }
+            let shown = item.split_whitespace().collect::<Vec<_>>().join(" ");
+            let face = if kind == popups::Kind::Files { Face::Mono } else { Face::Ui };
+            p.text(face, 12.0, row.x + 8.0, row.cy(), &shown, self.pal.text, row.w - 16.0);
+            self.hits.push((row, target));
+        }
+        p.restore(clip);
     }
 
     fn hit(&mut self, p: &mut Painter, r: Rect, label: &str, control: Control, picked: bool) {
@@ -192,12 +252,22 @@ impl Draw<'_> {
         let c = p.clip(e);
         let x = e.x + 8.0;
         let width = editor_text_width(e);
+        let next_chip = chat.popups.next_prompt.clone().filter(|_| !chat.locked());
         let ed = &mut chat.editor;
         ed.flow(p, width, e.h);
         let selection = ed.selection();
         let caret_row = ed.caret_row();
         if ed.text.is_empty() {
             p.text(Face::Ui, 13.0, x, e.y + 14.0, "Message Claude Code…", self.pal.muted, width);
+            if let Some(next) = next_chip.as_deref() {
+                let label = format!("↳ {}  ·  Tab", short(next, 80));
+                let w = (p.measure(Face::Ui, PILL_FONT, &label) + 18.0).min(width);
+                let r = Rect::new(x - 2.0, e.y + 13.0 + editor::LINE - 10.0, w, 20.0);
+                let target = Target::Chat(Control::NextPrompt);
+                p.rbox(r, 10.0, if self.hover == Some(target) { self.pal.hover } else { self.pal.bar });
+                p.text(Face::Ui, PILL_FONT, r.x + 9.0, r.cy(), &label, self.pal.text, r.w - 14.0);
+                self.hits.push((r, target));
+            }
         }
         for (i, row) in ed.rows.iter().enumerate().skip(ed.scroll).take(ed.visible) {
             let y = e.y + 13.0 + (i - ed.scroll) as f32 * editor::LINE;
@@ -489,6 +559,7 @@ mod tests {
                 &mut chat,
                 &info,
                 suggestions,
+                None,
             );
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();
             assert_eq!(tool.len(), if width >= 900 { 10 } else { 9 });

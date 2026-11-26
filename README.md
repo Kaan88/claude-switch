@@ -288,6 +288,9 @@ the viewer. Both tabs are also available in **Session view**.
 | Ctrl+V / Ctrl+Shift+V | Paste text if available (otherwise a picture) / paste a picture explicitly |
 | **Attach…** or file drop | Choose files or **Paste picture** from the menu, or drop files into Chat |
 | `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
+| `@` in the composer | Complete a file or folder path in the session folder. ↑/↓ selects, Tab or Enter inserts |
+| Ctrl+R in the composer | Search your earlier prompts in this session (those already loaded). Ctrl+R again steps, Enter fills |
+| **↳ suggestion** chip or Tab in the empty composer | Put Claude Code’s grey next-prompt suggestion into the draft (nothing is sent) |
 | **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first |
 | **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending; the queue also runs in background tabs |
 | **Press Enter** | Retry only the Enter key after the input was staged, without pasting it again |

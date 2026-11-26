@@ -63,7 +63,9 @@ impl AppState {
         let chat = &mut pane.chat;
         let l = chat.layout;
         let suggestions = chat.suggestion_plan(&self.win_file.chat_pins);
+        let popup = if suggestions.is_none() { chat.popup_plan(&pane.model) } else { None };
         let transcript_mouse = suggestions.as_ref().map_or(mouse, |popup| popup.pointer_behind(mouse));
+        let transcript_mouse = popup.as_ref().map_or(transcript_mouse, |popup| popup.pointer_behind(transcript_mouse));
         let now = cx.now();
         let motion = cx.anim().animates();
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
@@ -160,7 +162,7 @@ impl AppState {
             hits: &mut self.hits,
             pins: &self.win_file.chat_pins,
         }
-        .composer(p, chat, &pane.model.chat, suggestions);
+        .composer(p, chat, &pane.model.chat, suggestions, popup);
     }
 }
 

@@ -7,6 +7,8 @@
 - The conversation in Chat and Session view can be selected across messages and copied with
   Ctrl+C or the right-click menu (Copy, Select all, Copy message, Copy as Markdown); code blocks
   have a Copy button.
+- Chat composer: `@` completes paths in the session folder, Ctrl+R searches earlier prompts, and
+  Claude Code's grey next-prompt suggestion appears as a chip that fills the draft.
 - The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.

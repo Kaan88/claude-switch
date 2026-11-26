@@ -742,6 +742,15 @@ Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+**Composer conveniences**, all local (`view/chat/popups.rs`). `@` at the caret opens a list of
+the session folder's files and folders, read once per tab on a worker: breadth first, at most 8
+deep and 5000 entries, without hidden folders, `node_modules`, `target` and other build folders,
+and without following links or junctions. Choosing inserts `@path` (quoted when it holds a space).
+Ctrl+R searches the prompts the transcript reader already holds, newest first, each once; it loads
+no older history. The CLI's grey suggestion for the next prompt is read from the live, empty
+prompt row (`screen::clean_prompt`) only as one unbroken faint run starting at the caret, and never
+as the CLI's fixed hints (`Try "…"`, `<…>`, an ellipsis, "for shortcuts"). It shows as a chip in
+the empty composer; the chip or Tab fills the draft. Nothing is sent: no Tab reaches the CLI.
 The message box shows three lines when empty and grows with the draft's wrapped rows up to 40% of
 the chat column, then scrolls. The terminal drawer is sized against the smallest box, so typing
 never resizes the terminal; a window too short to keep 80 px of conversation gets the two-line box.

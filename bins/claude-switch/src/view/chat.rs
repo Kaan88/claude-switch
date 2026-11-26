@@ -6,6 +6,7 @@ mod editor;
 mod input;
 mod layout;
 mod paint;
+mod popups;
 mod recall;
 mod shortcuts;
 pub(super) mod side;
@@ -150,6 +151,7 @@ pub struct Chat {
     image_wait: Option<ImageWait>,
     staging: submission::Staging,
     commands: commands::Picker,
+    popups: popups::Popups,
     cli_report: submission::CliReport,
     output_epoch: u64,
     sample: Option<(u64, Option<(u64, ChatPhase)>)>,
