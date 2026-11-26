@@ -152,7 +152,7 @@ fn run(options: Options) -> Result<(), String> {
     let file = compact::save(&roots, &session.id, &text).map_err(|e| format!("Could not keep the handover: {e}"))?;
     let exe = std::env::current_exe().map_err(|_| "Could not locate Claude Switch.")?;
     let name = file.file_name().and_then(|n| n.to_str()).ok_or("Invalid saved handover path.")?;
-    let agent = config.compact.agent_for(options.agent.as_deref());
+    let (agent, dropped) = resolve_agent(&roots, &config, account, &session.cwd, options.agent.as_deref());
     let request = Handoff {
         id: session.id.clone(),
         account: account.to_owned(),
@@ -163,14 +163,39 @@ fn run(options: Options) -> Result<(), String> {
     match handover_pipe::send(&encode_request(&request)?) {
         handover_pipe::Sent::Answered(result) => {
             result?;
-            eprintln!("Claude Switch: opened the handover tab in the running window.");
+            eprintln!("Claude Switch: opened the handover tab in the running window.{}", note(dropped.as_deref()));
         }
         handover_pipe::Sent::NotRunning => {
             window::spawn(&exe, &session.id, account, name, agent, options.name.as_deref())?;
-            eprintln!("Claude Switch: started Claude Switch with the handover tab.");
+            eprintln!("Claude Switch: started Claude Switch with the handover tab.{}", note(dropped.as_deref()));
         }
     }
     Ok(())
+}
+
+fn note(dropped: Option<&str>) -> String {
+    dropped.map(|notice| format!(" {notice}")).unwrap_or_default()
+}
+
+/// An explicit `--agent` is passed as given; the Settings default only when the target account
+/// and folder have it (otherwise none, and the notice).
+fn resolve_agent<'a>(
+    roots: &Roots,
+    config: &'a claude_switch_core::Config,
+    account: &str,
+    cwd: &Path,
+    explicit: Option<&'a str>,
+) -> (Option<&'a str>, Option<String>) {
+    if explicit.is_some() {
+        return (explicit, None);
+    }
+    let Some(default) = config.compact.default_agent.as_deref() else { return (None, None) };
+    let Ok(target) = claude_switch_core::account(config, account) else { return (None, None) };
+    let found = crate::compact_dialog::agents::discover(roots, target, cwd, || false);
+    match crate::compact_dialog::agents::checked_default(default, &found, &target.name) {
+        Ok(()) => (Some(default), None),
+        Err(notice) => (None, Some(notice)),
+    }
 }
 
 fn print(roots: &Roots, id: &str, text: &str, save: bool, mut out: impl Write) -> Result<(), String> {

@@ -45,6 +45,8 @@ pub struct Cache {
     pub demo: Option<bool>,
     pub demo_long: bool,
     pub history: Option<(String, Vec<PathBuf>)>,
+    /// Settings › Handovers' agent choice: (name, label), read when that page opens.
+    pub settings_agents: Vec<(String, String)>,
 }
 
 enum Update {
@@ -113,6 +115,28 @@ impl Drop for Compact {
 }
 
 impl AppState {
+    /// Reads every account's agents for the Settings choice (local files only, never Claude).
+    pub fn load_settings_agents(&mut self) {
+        let per_account: Vec<_> = self
+            .config
+            .accounts
+            .iter()
+            .map(|account| {
+                let found = match &self.source {
+                    Source::Real(roots) => agents::discover_account(roots, account, || false),
+                    Source::Demo => choices::demo_agents(&account.slug),
+                };
+                (account.name.clone(), found)
+            })
+            .collect();
+        self.compact.settings_agents = agents::settings_choices(&per_account);
+    }
+
+    /// The OpenCode models last listed in this window, if any.
+    pub fn listed_models(&self) -> Option<&[String]> {
+        self.compact.models.as_deref()
+    }
+
     pub fn start_compact(&mut self) {
         if let Some(request) = self.compact.startup.take() {
             let result = self.open_handover_tab(request);
@@ -455,6 +479,10 @@ impl Compact {
     }
 
     fn open(&mut self, st: &mut AppState, now: Instant) -> Result<(), String> {
+        let dropped = self.check_agents_now(st);
+        if let Some(notice) = &dropped {
+            st.toast(notice.clone(), now);
+        }
         let Some((account, _)) = self.accounts.get(self.account) else { return Err("Choose an account.".into()) };
         let name = if self.new_name.text() == self.suggested_name {
             names::suggest(&st.marks, &st.sessions, &self.name)

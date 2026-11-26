@@ -7,6 +7,10 @@
 - Handover: `/switch-handover:switch-compact` and `claude-switch compact --open` open the new chat as
   a tab in the running Claude Switch window, beside the source session's tab, instead of a window of
   its own; only when Switch is not running do they start it (with its saved tabs and the new one).
+- Settings › Handovers: **New chat starts as** is a list of the agents your accounts really have
+  (**None (plain Claude)** first) and **Summary written by** names the OpenCode model. A saved
+  agent the target account lacks is shown as missing and skipped with a notice instead of failing
+  the launch with `--agent '…' not found`.
 
 ## 0.1.1 (2026-11-26)
 

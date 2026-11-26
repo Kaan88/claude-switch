@@ -6,19 +6,9 @@ impl Compact {
         self.agents_loaded = false;
         self.agent = usize::from(self.default_agent.is_some());
         self.agent_focus = self.agent;
-        self.add_settings_agent();
-    }
-
-    fn add_settings_agent(&mut self) {
-        if let Some(name) = &self.default_agent
-            && !self.agents.iter().any(|agent| agent.name == *name)
-        {
-            // The setting names a CLI agent explicitly. Discovery is only a catalog, not proof
-            // that an agent is or isn't available to Claude (e.g. managed definitions).
-            self.agents.insert(
-                0,
-                agents::Agent { name: name.clone(), description: "From Settings; not found in the local list".into() },
-            );
+        if let Some(name) = &self.default_agent {
+            // Preselected until the account's list is read; kept only if that list has it.
+            self.agents.push(agents::Agent { name: name.clone(), description: "From Settings; checking…".into() });
         }
     }
 
@@ -26,7 +16,13 @@ impl Compact {
         let name_at = |i: usize| self.agents.get(i.checked_sub(1)?).map(|a| a.name.clone());
         let (chosen, focus) = (name_at(self.agent), name_at(self.agent_focus));
         self.agents = agents;
-        self.add_settings_agent();
+        let account = self.accounts.get(self.account).map_or("this account", |a| a.1.as_str());
+        if let Some(default) = &self.default_agent
+            && chosen.as_deref() == Some(default.as_str())
+            && let Err(notice) = agents::checked_default(default, &self.agents, account)
+        {
+            self.message = Some((notice, false));
+        }
         let index = |name: Option<String>| {
             name.and_then(|name| self.agents.iter().position(|agent| agent.name == name)).map_or(0, |i| i + 1)
         };
@@ -36,6 +32,25 @@ impl Compact {
         if self.choice == Some(Choice::Agent) {
             self.scroll = self.agent_focus.min(self.count().saturating_sub(PAGE));
         }
+    }
+
+    /// Reads the account's list now if it is not read yet, so a launch never passes an
+    /// unchecked Settings default. The notice, if the default was dropped.
+    pub(super) fn check_agents_now(&mut self, st: &AppState) -> Option<String> {
+        if self.agents_loaded || self.agent_name().is_none() {
+            return None;
+        }
+        let (slug, _) = self.accounts.get(self.account)?.clone();
+        let found = match &st.source {
+            Source::Real(roots) => {
+                let target = claude_switch_core::account(&st.config, &slug).ok()?;
+                agents::discover(roots, target, &self.session.cwd, || false)
+            }
+            Source::Demo => demo_agents(&slug),
+        };
+        let before = self.message.clone();
+        self.apply_agents(found);
+        self.message.clone().filter(|m| Some(m) != before.as_ref()).map(|(text, _)| text)
     }
 
     pub(super) fn agent_name(&self) -> Option<&str> {
@@ -79,10 +94,8 @@ impl Compact {
         }
         let Some((slug, _)) = self.accounts.get(self.account) else { return };
         let Source::Real(roots) = &st.source else {
-            self.apply_agents(vec![agents::Agent {
-                name: format!("{slug}-reviewer"),
-                description: "Synthetic demo agent that reviews changes.".into(),
-            }]);
+            let found = demo_agents(slug);
+            self.apply_agents(found);
             return;
         };
         let Ok(target) = claude_switch_core::account(&st.config, slug).cloned() else { return };
@@ -140,4 +153,11 @@ impl Compact {
         self.scroll = self.scroll.min(self.agent_focus).max((self.agent_focus + 1).saturating_sub(PAGE));
         None
     }
+}
+
+pub(crate) fn demo_agents(slug: &str) -> Vec<agents::Agent> {
+    vec![agents::Agent {
+        name: format!("{slug}-reviewer"),
+        description: "Synthetic demo agent that reviews changes.".into(),
+    }]
 }

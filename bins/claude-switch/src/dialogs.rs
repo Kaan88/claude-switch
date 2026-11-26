@@ -93,7 +93,6 @@ impl Pending {
 
 #[derive(Clone, Debug)]
 pub enum NameFor {
-    HandoverAgent,
     Add,
     Rename(String),
     Tab(u64),
@@ -237,7 +236,6 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
             let colors =
                 FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
             let placeholder = match then {
-                NameFor::HandoverAgent => "Agent name (blank uses Claude)",
                 NameFor::Tab(_) => "Tab name (blank resets it)",
                 _ => "Account name",
             };
@@ -448,9 +446,6 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
         },
         Dialog::Name { mut field, stops, then, title, error } => match id {
             OK => submit_name(st, now, field, stops, then, title),
-            CANCEL if matches!(then, NameFor::HandoverAgent) => {
-                st.dialog = Some(settings::settings(st, Some(settings::HANDOVERS)));
-            }
             CANCEL if matches!(then, NameFor::Tab(_)) => {}
             CANCEL => st.dialog = Some(accounts(st, now)),
             FIELD => {
@@ -533,15 +528,7 @@ fn account_action(st: &mut AppState, now: Instant, k: usize, act: u32) {
 
 fn submit_name(st: &mut AppState, now: Instant, field: TextField, stops: Vec<f32>, then: NameFor, title: String) {
     let name = field.text().trim().to_string();
-    if matches!(then, NameFor::HandoverAgent) {
-        st.dialog = Some(match settings::set_handover_agent(st, &name) {
-            Ok(()) => settings::settings(st, Some(settings::HANDOVERS)),
-            Err(error) => Dialog::Name { title, field, stops, then, error: Some(error.to_string()) },
-        });
-        return;
-    }
     let result = match &then {
-        NameFor::HandoverAgent => unreachable!(),
         NameFor::Add => st.source.add_account(&mut st.config, &name).map(drop),
         NameFor::Rename(slug) => st.source.rename(&mut st.config, slug, &name),
         NameFor::Tab(id) => {

@@ -360,12 +360,21 @@ uses it as the initial tab label and reads native custom-title records on scan. 
 launch reservation in `marks.json` avoids reusing names before the transcript appears; it is
 not a permanent Switch rename. A failed spawn rolls it back with the new UUID's provenance.
 
-The editor's **Agent** picker is CLI-only. **Settings → Handovers → Default CLI agent** edits
-`compact.defaultAgent` under the handover settings lock without changing provider consent or
-the model. Blank is the default and means no switch-level override. **Default (Claude)** is the
-first entry and always adds no flag. A configured name is preselected, including when the
-catalog cannot find it; the catalog is a suggestion list, not proof of CLI availability.
-Changing the target account resets to the configured default. A selected custom agent adds
+The editor's **Agent** picker is CLI-only. **Settings → Handovers → New chat starts as** is a
+choice, not a text box: **None (plain Claude)** first, then the agents every account has in its own
+`agents/` and its user-scope plugins (read when the page opens, local files only), each labelled
+with the accounts that have it when the accounts differ. A saved name that no account has is shown
+as “(missing)” until another is chosen. Saving goes through the handover settings lock and leaves
+provider consent alone. **Summary written by** names the OpenCode model (`compact.model`), with
+the models this window last listed. The two are separate settings: one is a Claude Code agent,
+the other the OpenCode model that writes the summary. **None** adds no flag. A configured name is
+preselected but passed only if the target account and launch folder's catalog has it: the dialog
+and `compact --open` read that catalog before launching (the dialog even when its picker was
+never opened) and otherwise start plain Claude with a notice, instead of a launch that Claude
+Code refuses with `--agent '<name>' not found`. An explicit `--agent` or an agent picked in the
+dialog is passed as given. Built-in and managed agents are not in the catalog, so they cannot be
+the Settings default (they can still be named with `--agent`). Changing the target account
+resets to the configured default. A selected custom agent adds
 `--agent <name>` before the first-prompt separator. Discovery runs read-only from that account's
 `agents/` and the launch project's `.claude/agents/`; project definitions take precedence.
 The reader keeps bounded frontmatter names and descriptions, not agent prompts. It also offers

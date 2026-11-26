@@ -25,7 +25,7 @@ pub(crate) fn discover(roots: &Roots, target: &Account, cwd: &Path, cancelled: i
         return Vec::new();
     }
     let project = project_folder(cwd);
-    let mut agents = plugins::discover(roots, target, &project, cwd, &cancelled);
+    let mut agents = plugins::discover(roots, target, Some((&project, cwd)), &cancelled);
     if let Some(dir) = shared_folder(roots, target, "agents") {
         agents.extend(scan(&dir, None, &cancelled));
     }
@@ -34,6 +34,53 @@ pub(crate) fn discover(roots: &Roots, target: &Account, cwd: &Path, cancelled: i
         agents.extend(scan(&cwd.join(".claude/agents"), None, &cancelled));
     }
     agents.into_values().collect()
+}
+
+/// The account's own and its user-scope plugins' agents, for a choice not tied to a folder.
+pub(crate) fn discover_account(roots: &Roots, target: &Account, cancelled: impl Fn() -> bool) -> Vec<Agent> {
+    let mut agents = plugins::discover(roots, target, None, &cancelled);
+    if let Some(dir) = shared_folder(roots, target, "agents") {
+        agents.extend(scan(&dir, None, &cancelled));
+    }
+    agents.into_values().collect()
+}
+
+/// The agent a launch passes for the Settings default: none, with a notice, when the target
+/// account and folder do not have it, rather than a launch that Claude Code refuses.
+pub(crate) fn checked_default(default: &str, found: &[Agent], account: &str) -> Result<(), String> {
+    if found.iter().any(|agent| agent.name == default) {
+        Ok(())
+    } else {
+        Err(format!(
+            "The default agent “{default}” in Settings was not found for {account}, so the new chat starts as plain Claude."
+        ))
+    }
+}
+
+/// Settings › Handovers: every account's agents, each with the accounts that have it when not all do.
+pub(crate) fn settings_choices(per_account: &[(String, Vec<Agent>)]) -> Vec<(String, String)> {
+    let mut names: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (account, agents) in per_account {
+        for agent in agents {
+            let owners = names.entry(&agent.name).or_default();
+            if !owners.contains(&account.as_str()) {
+                owners.push(account);
+            }
+        }
+    }
+    let mut out: Vec<_> = names
+        .into_iter()
+        .map(|(name, owners)| {
+            let label = if owners.len() == per_account.len() || per_account.len() < 2 {
+                name.to_owned()
+            } else {
+                format!("{name} ({})", owners.join(", "))
+            };
+            (name.to_owned(), label)
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()).then_with(|| a.0.cmp(&b.0)));
+    out
 }
 
 fn project_folder(cwd: &Path) -> PathBuf {

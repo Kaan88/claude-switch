@@ -82,8 +82,11 @@ session. The character/token estimate updates as you edit. You can also copy or 
 **New session name** starts with the source’s displayed name plus ` · continued` (then
 ` · continued 2`, ` · continued 3`, and so on if needed). Edit it before opening to set the
 Claude Code session name, not just the handover tab label.
-The editor's **Agent** picker starts with the **Default CLI agent** from **Settings → Handovers**.
-Leave the setting blank to start at **Default (Claude)**, which adds no `--agent` override.
+The editor's **Agent** picker starts with **New chat starts as** from **Settings → Handovers**, a
+list of the agents your accounts have (with the accounts named when they differ). **None (plain
+Claude)** adds no `--agent` override. If the target account and folder do not have the saved agent,
+the new chat starts as plain Claude and a notice says so; Settings marks a name no account has as
+missing. **Summary written by** in the same page is the OpenCode model that writes the handover.
 You can choose a different agent before selecting **Open in CLI**. Changing the target account
 resets the picker to your setting.
 There is no supported agent option for starting a handover in Desktop.
