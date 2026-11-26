@@ -144,7 +144,7 @@ fn stop_releases_the_queue_only_after_working_disappears_and_the_input_is_clean(
 }
 
 #[test]
-fn background_tick_advances_queue_and_image_or_expires_them_without_selecting_the_tab() {
+fn background_queue_and_image_respect_window_vetoes_but_still_progress_or_expire() {
     for picture in [false, true] {
         for timeout in [false, true].into_iter().filter(|timeout| picture || !timeout) {
             let mut app = demo();
@@ -167,7 +167,34 @@ fn background_tick_advances_queue_and_image_or_expires_them_without_selecting_th
                 pane.model.chat.prompt = Some(80);
             }
             assert!(app.tabs.activate(SESSIONS));
-            assert!(!app.progress_chat_tabs(later, false), "hidden work does not need a visible redraw");
+            let writes = app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat.writes.clone();
+            for minimized in [true, false] {
+                if !minimized {
+                    app.dialog = Some(crate::dialogs::Dialog::Confirm {
+                        title: "Test dialog".into(),
+                        text: "This dialog vetoes automatic sends.".into(),
+                        ok: "OK".into(),
+                        then: crate::dialogs::Pending::ChatSlash {
+                            tab: id,
+                            session: None,
+                            line: "/clear".into(),
+                            from_editor: false,
+                        },
+                    });
+                }
+                let allowed = app.chat_window_allows_writes(minimized);
+                assert!(!allowed);
+                assert!(!app.progress_chat_tabs(now, allowed));
+                let chat = &app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
+                assert!(chat.locked());
+                assert_eq!(chat.writes, writes);
+            }
+            if !timeout {
+                app.dialog = None;
+            }
+            let allowed = app.chat_window_allows_writes(false);
+            assert_eq!(allowed, !timeout);
+            assert!(!app.progress_chat_tabs(later, allowed), "hidden work does not need a visible redraw");
             assert_eq!(app.tabs.active, None);
             let chat = &app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
             if timeout {

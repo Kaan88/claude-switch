@@ -331,7 +331,7 @@ fn demo_refuses_an_uncertain_draft_then_sends_only_into_its_fake_screen() {
     assert!(tab.term.pty.is_none());
 }
 
-fn demo() -> crate::state::AppState {
+pub(super) fn demo() -> crate::state::AppState {
     let mut app = crate::state::AppState::new(crate::source::Source::Demo, Some(false), Default::default());
     app.start_demo_session();
     app
@@ -417,7 +417,7 @@ fn picture_timeout_and_permission_never_press_enter_and_keep_the_draft() {
     }
 }
 
-fn running(tab: &mut crate::tabs::Tab, now: Instant) {
+pub(super) fn running(tab: &mut crate::tabs::Tab, now: Instant) {
     let pane = tab.pane.as_mut().unwrap();
     tab.term = crate::term::Term::empty((80, 20));
     tab.term.feed("\x1b[?2004h❯ ".as_bytes());

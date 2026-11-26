@@ -646,7 +646,9 @@ When uncertain, Chat retains the draft and displays the refusal inside the compo
 changes. **Send anyway** is explicit and requires bracketed-paste mode outside the alternate screen.
 During an active turn, **Queue** keeps one draft in memory and locks its text and attachments until
 it sends or is cancelled. Automatic delivery waits for a newer completion and a visibly empty prompt,
-even after switching tabs. After the app's **Stop**, a fresh clean prompt with the observed working
+even after switching tabs. A minimized window, an open dialog or another blocking window overlay
+pauses automatic writes in every tab; stage deadlines still run. After the app's **Stop**, a fresh
+clean prompt with the observed working
 indicator gone (or a new interruption notice) can also release the queue. **Send now** can send
 during a turn when that prompt is visibly empty; **Cancel**
 unlocks the draft without sending. Neither path overrides a recognized permission question, pending
@@ -686,7 +688,8 @@ paste followed by one app-generated Enter. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Composer Up on the
 first displayed line and Down on the last walk real prompts in the main transcript, including
 terminal input. Recall skips adjacent repeats, pages back through the transcript worker as needed,
-and restores the original editor on Escape or Down past the newest.
+and restores the original editor on Escape or Down past the newest. Editing or attempting to send
+ends recall without restoring the old draft.
 While the slash picker is open, it keeps the arrow keys. Expanded tool rows show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
 additions, and shell output uses only its first text lines. In Chat's Details panel, Task and Agent

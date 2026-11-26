@@ -228,6 +228,7 @@ impl AppState {
     }
 
     pub(super) fn chat_run_slash(&mut self, cx: &mut Cx<'_, Msg>, line: String, from_editor: bool) {
+        self.end_chat_recall();
         self.term_woke(cx);
         let Some(tab) = self.tabs.shown_mut() else { return };
         if let Some(confirm) = Self::prepare_slash(tab, cx.now(), &line, from_editor) {
@@ -242,6 +243,7 @@ impl AppState {
         chat.commands.open = false;
         let line = line.trim_matches(' ');
         if from_editor && !chat.locked() && chat.editor.text != line {
+            chat.recall.end();
             chat.editor.set(line.to_owned());
             chat.editor.move_to(line.len(), false);
         }
@@ -298,6 +300,7 @@ impl Chat {
         }
         let line = commands::fill(&cmd.name, &self.editor.text);
         let at = line.len();
+        self.recall.end();
         self.editor.set(line);
         self.editor.move_to(at, false);
         self.commands.reset();
