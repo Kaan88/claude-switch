@@ -425,3 +425,11 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     Claude)" first; label the two rows plainly ("New chat starts as" / "Summary written by"); a saved
     name that no longer exists is shown as missing and not passed, with a notice, rather than failing
     the launch.
+    Item 14 update (toolkit session, 2026-11-26): toolkit main `7fd559f` has it (PR #55, 906d7c7):
+    `textfield::Pointer` (click, drag, Shift+click, double/triple click, edge scroll), `FieldHit::cursor`,
+    `TextField::context_menu` / `apply_context_action`, `selection_for_export`, `MAX_PASTE_BYTES`
+    (64 KiB), `clicks::ClickCounter` for the composer, and Windows clipboard writes through a real
+    owner window (may explain clipboard failures here). Also PR #56 (54a7e84) glyph bounds. To finish
+    item 14: move the pin from 137121c to 7fd559f and wire the search box, name dialogs, new session
+    and settings fields to it. Waiting for the owner's go.
+
