@@ -533,21 +533,23 @@ Terminal layout keeps its normal Session view and controls. F6 switches layouts 
 command palette is open; a focused terminal still receives its ordinary F6. Ctrl+Shift+E remains reserved by the window
 and toggles the drawer in Chat.
 
-**What counts as ready.** Chat cannot tell whether the CLI has focus in its prompt, has a
-partially typed draft, or is showing an interactive question. Calling the CLI with a prompt is not
-the same thing as writing its PTY, and even a successful write only means input was handed to the
-terminal. An automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
+**What counts as ready.** Picking out an empty Claude Code prompt on the screen is a heuristic,
+not a readiness protocol. A successful write only means input was handed to the terminal.
+An automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
 tool in the current turn, at least 750 ms without terminal output, bracketed-paste mode, and no
 alternate screen or blocking drawer signal. An old completion from a resumed transcript, missing
 stop reasons, an unrecognized title, and terminal quiet alone are not proof. The OSC title has no
 verified Claude readiness protocol: explicit busy labels only veto a send. On a transcript reset
 or after any composer send or direct terminal input, an old completion cannot rearm sending;
 a new prompt must be observed. There is still a race between observing the PTY and writing it.
-When uncertain, Chat retains the draft and says **Open the terminal to check**. **Send anyway**
-is explicit and requires bracketed-paste mode outside the alternate screen. Neither send can
-override a recognized permission question, a pending tool, a bell or the slash menu. Direct
-terminal input samples a transcript byte watermark before writing; a buffered earlier prompt
-cannot rearm Chat just because it arrives late at the UI.
+When uncertain, Chat retains the draft and displays the refusal inside the composer until its cause
+changes. **Send anyway** is explicit and requires bracketed-paste mode outside the alternate screen.
+During an active turn, **Queue** keeps one draft in memory and locks its text and attachments until
+it sends or is cancelled. Automatic delivery waits for a newer completion and a visibly empty prompt
+in the shown Chat tab. **Send now** can send during a turn when that prompt is visibly empty; **Cancel**
+unlocks the draft without sending. Neither path overrides a recognized permission question, pending
+tool, bell or slash menu. Direct terminal input cancels a queued or staged send, and samples a
+transcript byte watermark before writing so a buffered earlier prompt cannot rearm Chat.
 
 **When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
@@ -555,21 +557,33 @@ same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only a
 opened drawer closes on observable turn progress; a manually opened one stays open. No
 permission responses or dialog keys are generated. Stop sends Escape at most once per freshly
 verified active turn.
-A typed initial slash is forwarded only when ready; otherwise it stays in the draft and the
-drawer opens for inspection. Slash menus may not write a transcript event; in that case Chat
-cannot verify that the menu has closed.
+**Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
+The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
+from the selected account, the launch folder’s `.claude` directory, and installed plugin caches.
+It does not execute plugins or mirror CLI policy, and caches the scan for the tab. Stars persist in
+`window.ini`. Use ↑/↓ to choose, Tab to fill, and Enter to run. Model and Effort offer inline choices
+and toolbar menus; Model can also open the native picker. Model, effort and context labels use
+reported values, not clicked values; unknown effort stays blank. Direct slash commands need a
+verified, quiet, visibly empty CLI prompt, no active turn or blocking interaction, and the same
+terminal mode checks as Send. Compact and Clear (including Clear aliases) ask for confirmation.
+Interactive CLI results stay in the drawer. Chat does not generate answers to its menus; without
+observable progress or a quiet, empty prompt it cannot verify that the menu closed.
 
-**Local data.** File paths use the existing quoting. Clipboard pictures must be attached and
-previewed in the drawer before the user submits; Chat never queues Alt+V and Enter together.
-The composer replaces line feeds and tabs with spaces, refuses other control characters, and
-writes the resulting text in bracketed paste followed by one app-generated Enter. Ordinary
+**Local data.** File chips use the existing path quoting. Clipboard pictures get an in-memory
+thumbnail when the format is supported. A send checks the clipboard sequence, writes Alt+V alone,
+and waits up to four seconds for a newly displayed `[Image #n]` on the CLI input row. Only then does
+Chat paste the text and write one Enter. Timeout or an intervening input, permission, clipboard or
+session change retains the draft; a staged picture may remain in the CLI and should be checked there
+before retrying. The composer replaces line feeds and tabs with spaces for messages, refuses other
+control characters, and writes the text as bracketed paste followed by one app-generated Enter. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Recall uses
 loaded main-transcript prompts. Tool cards show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
 additions, and shell output uses only its first text lines. Changed files lists successful
 Edit/Write tool paths seen in loaded history, not a filesystem or Git diff. Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
-is single-line; the composer reuses the app's multiline editor with toolkit text and drawing.
+is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
+overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
 Demo shows the waiting state, and its composer writes only to the synthetic terminal screen.
 
 ## Session organization

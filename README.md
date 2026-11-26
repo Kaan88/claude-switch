@@ -223,13 +223,19 @@ to resize it, and answer permissions and other CLI dialogs there.
 | --- | --- |
 | Ctrl+Shift+K, then F6 (or choose **Switch Chat / Terminal**) | Switch layouts without sending a key to the CLI |
 | Ctrl+Shift+E | Toggle the terminal drawer in Chat or Session view in Terminal |
-| Enter / Shift+Enter in the composer | Send / insert a new line in the draft (sent as a space) |
+| Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (sent as a space) |
 | Up from an empty composer, then Up / Down | Recall earlier prompts from the loaded transcript |
-| File drop | Queue a file path as a removable attachment |
+| Click, drag or Shift+click; double- or triple-click | Place the caret, extend a selection, select a word, or select everything |
+| Right-click in the composer | Cut, Copy, Paste, Select all |
+| Ctrl+V, **Attach…**, or file drop | Paste text or attach a clipboard picture; pick or drop files. Attachments appear inside the box |
+| `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
+| **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first |
+| **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending |
 
-Chat keeps drafts when it cannot tell that the CLI is ready. **Send anyway** cannot override a
-recognized permission question or pending interaction. For clipboard images, paste and check the
-preview in the terminal drawer before submitting. A slash opens the CLI’s own menus in the drawer.
+Chat shows why it held a draft. Neither **Send anyway** nor **Send now** overrides a recognized
+permission question or pending interaction. For pictures, Chat waits for Claude Code to display a new
+image marker before pressing Enter. The command list is a local preview; Claude Code determines which
+commands and choices are available. **Model** also opens Claude Code’s own picker in the drawer.
 
 ## Grouping sessions
 

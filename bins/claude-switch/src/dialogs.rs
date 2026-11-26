@@ -63,6 +63,12 @@ pub enum Pending {
     CloseTab(u64),
     CloseOtherTabs(u64),
     RestoreTab,
+    ChatSlash {
+        tab: u64,
+        session: Option<String>,
+        line: String,
+        from_editor: bool,
+    },
     /// Close the window, with terminal tabs that run.
     Quit,
     Suggest {
@@ -408,6 +414,9 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
             (OK, Pending::CloseOtherTabs(tab)) => st.close_other_tabs(tab),
             (OK | CANCEL, Pending::RestoreTab) => st.confirm_restore_tab(now, id == OK),
+            (OK, Pending::ChatSlash { tab, session, line, from_editor }) => {
+                st.chat_confirm_slash(now, tab, session, &line, from_editor);
+            }
             (OK, Pending::Quit) => st.quit = true,
             (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
             (OK, Pending::UnarchiveAll) => st.unarchive(now, None),

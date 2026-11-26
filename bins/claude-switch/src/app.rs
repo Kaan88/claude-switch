@@ -221,6 +221,7 @@ impl AppState {
                 MenuKind::OpenAs => self.rect_of(Target::OpenAs),
                 MenuKind::Row => Some(Rect::new(self.mouse.0, self.mouse.1, 0.0, 0.0)),
                 MenuKind::Tab(tab) => return self.tab_menu_chosen(cx.now(), tab, id),
+                MenuKind::Chat(tab, mode) => return self.chat_menu_chosen(cx, tab, mode, id),
             };
             self.command(cx.now(), id, anchor);
         }
@@ -493,7 +494,7 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
-        if self.chat_end_drag(Some(y)) {
+        if self.chat_end_drag(Some((x, y))) {
             return;
         }
         if let Some(t @ Target::Chat(_)) = self.pressed {

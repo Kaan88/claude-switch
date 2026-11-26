@@ -48,6 +48,7 @@ pub struct WindowFile {
     pub session_view: Option<bool>,
     pub session_split: String,
     pub chat_default: bool,
+    pub chat_pins: Vec<String>,
 }
 
 impl Default for WindowFile {
@@ -61,6 +62,7 @@ impl Default for WindowFile {
             session_view: None,
             session_split: String::new(),
             chat_default: false,
+            chat_pins: Vec::new(),
         }
     }
 }
@@ -87,6 +89,14 @@ pub fn parse(text: &str) -> WindowFile {
             "session_view" => out.session_view = v.trim().parse().ok(),
             "session_split" => out.session_split = settings::unescape(v),
             "chat_default" => out.chat_default = v.trim().parse().unwrap_or(false),
+            "chat_pins" => {
+                out.chat_pins = v
+                    .split(',')
+                    .filter(|name| crate::view::chat::valid_command_name(name))
+                    .take(128)
+                    .map(str::to_owned)
+                    .collect();
+            }
             _ => {}
         }
     }
@@ -107,6 +117,7 @@ pub fn to_text(f: &WindowFile) -> String {
     }
     w.line("session_split", &settings::escape(&f.session_split));
     w.line("chat_default", if f.chat_default { "true" } else { "false" });
+    w.line("chat_pins", &f.chat_pins.join(","));
     w.finish()
 }
 
@@ -216,6 +227,7 @@ mod tests {
             session_view: Some(false),
             session_split: "b:450".into(),
             chat_default: true,
+            chat_pins: vec!["model".into(), "example:skill".into()],
             place: Some(saved(240)),
             restore_tabs: RestoreTabs::Always,
         };
