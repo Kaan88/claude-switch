@@ -42,8 +42,10 @@ pub(crate) const CLASSIC_RENDERER: &str = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"
 
 /// Asks a Claude tab for the classic renderer: the Chat view refuses to send to the alternate
 /// screen, where the CLI's fullscreen renderer draws. Other programs are left as they are.
+/// Handover tabs name Claude Code by its absolute path (`…\claude.exe`), so the file stem counts.
 pub(crate) fn classic_renderer(launch: &mut Launch, enabled: bool) {
-    if enabled && launch.program == std::path::Path::new("claude") {
+    let stem = launch.program.file_stem().and_then(|s| s.to_str());
+    if enabled && stem.is_some_and(|s| s.eq_ignore_ascii_case("claude")) {
         launch.env.insert(CLASSIC_RENDERER.into(), "1".into());
     }
 }

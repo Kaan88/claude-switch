@@ -14,6 +14,9 @@
   (jobs, workers, reviews and what was promised when they report); "instructions" holds only rules
   still in force; long fields are cut at a line with a visible `[cut]`; Files leaves out temporary
   paths and keeps the 30 most recent; the task list is marked possibly stale.
+- Handover tabs now get the classic renderer too (they name Claude Code by its full path), so
+  Chat can send in them; continuing in place in a tab that shows Claude Code's full-screen view
+  stops at once and says how to fix it, instead of waiting for the deadline.
 - Handover: a tab started with Claude Code's compaction off stays watched after **Hand over
   automatically** is set to Off (it then asks first), and a failed automatic handover asks with
   the dialog next time instead of leaving the session without compaction or handover.

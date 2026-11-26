@@ -6,6 +6,10 @@ use std::time::{Duration, Instant};
 use crate::handover_in_place::Stage;
 use crate::state::AppState;
 
+/// The gate refuses every send while Claude Code draws its full-screen view; waiting cannot help.
+const FULLSCREEN: &str = "Claude Code draws its full-screen view in this tab, where Chat cannot send \
+    (type /tui default there, or set Where it continues to A new tab)";
+
 /// While the tab waits to follow the CLI, the running records are read this often.
 const FOLLOW_POLL: Duration = Duration::from_secs(1);
 
@@ -61,6 +65,9 @@ impl AppState {
                 if current.as_deref() != Some(from.as_str()) {
                     return Step::Fail("the tab started another session before /clear");
                 }
+                if pane.chat.error == Some(super::submission::FULLSCREEN) {
+                    return Step::Fail(FULLSCREEN);
+                }
                 if !shown || !pane.chat.enabled || pane.chat.locked() || pane.chat.error.is_some() {
                     return Step::Wait; // The gate's own retry clears a refusal once the prompt is idle.
                 }
@@ -96,6 +103,9 @@ impl AppState {
                     return Step::Fail("the tab went back to the old session");
                 };
                 let chat = &pane.chat;
+                if chat.error == Some(super::submission::FULLSCREEN) {
+                    return Step::Fail(FULLSCREEN);
+                }
                 if !shown || !chat.enabled || chat.locked() || chat.error.is_some() {
                     return Step::Wait;
                 }
@@ -203,6 +213,20 @@ mod tests {
         assert!(tab.in_place.is_none(), "done");
         let writes = &tab.pane.as_ref().unwrap().chat.writes;
         assert!(writes.iter().any(|w| String::from_utf8_lossy(w).contains("## Goal")), "{writes:?}");
+    }
+
+    #[test]
+    fn a_tab_in_claude_codes_full_screen_view_stops_at_once() {
+        let mut st = super::super::tests::demo();
+        let id = st.tabs.shown().unwrap().id;
+        let start = Instant::now();
+        let tab = st.tabs.get_mut(id).unwrap();
+        tab.resume_id = Some("old".into());
+        tab.in_place = Some(job(Stage::Clear, start));
+        tab.pane.as_mut().unwrap().chat.error = Some(super::super::submission::FULLSCREEN);
+        assert!(st.in_place_tick(start), "no waiting for the deadline");
+        assert!(st.tabs.get(id).unwrap().in_place.is_none());
+        assert!(st.tabs.get(id).unwrap().pane.as_ref().unwrap().chat.writes.is_empty());
     }
 
     #[test]
