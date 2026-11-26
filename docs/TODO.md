@@ -164,3 +164,8 @@ and in the README, not committed, and not copied to the installed clone
    `claude --agent <name>` for the CLI. To find out: what the Desktop app accepts for this (it may take
    none, in which case the choice is CLI-only and says so), and whether the choice belongs in the
    handover editor before opening or in the "Open as…" menu. The default stays plain Claude.
+9. **After a new terminal opens, the mouse pointer sometimes stays a text caret everywhere** (owner,
+   2026-11-26), also outside the terminal. Not reproduced yet. To find out: whether the terminal
+   widget sets the text cursor on hover and the reset on leave is skipped when the tab is created
+   under the pointer (no enter/leave pair), and whether the app or the toolkit owns the cursor
+   choice each frame. Possibly related to the toolkit's cursor-shape item already noted there.
