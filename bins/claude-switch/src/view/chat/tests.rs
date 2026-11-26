@@ -419,7 +419,7 @@ fn picture_timeout_and_permission_never_press_enter_and_keep_the_draft() {
         assert!(AppState::advance_submission(tab, when, true));
         let chat = &tab.pane.as_ref().unwrap().chat;
         let err = chat.error.unwrap();
-        assert!(err.contains(if permission { "interrupted" } else { "No new CLI image marker" }));
+        assert!(err.contains(if permission { "interrupted" } else { "No image marker" }));
         assert_eq!(chat.writes, [b"\x1bv".to_vec()]);
         assert_eq!(chat.editor.text, "keep this");
         assert_eq!(chat.clipboard_sequence(), Some(42));
@@ -519,8 +519,10 @@ fn native_model_command_writes_or_names_the_gate_without_stealing_the_draft() {
     assert_eq!(pane.chat.error, Some(Reason::Bell.label()));
     pane.chat.bell = false;
     AppState::submit_slash(tab, now, "/model", false);
+    assert_eq!(tab.pane.as_ref().unwrap().chat.writes, [b"/model".to_vec()]);
+    assert!(AppState::advance_submission(tab, now, true));
     let pane = tab.pane.as_ref().unwrap();
-    assert_eq!(pane.chat.writes, [b"/model\r".to_vec()]);
+    assert_eq!(pane.chat.writes, [b"/model".to_vec(), b"\r".to_vec()]);
     assert_eq!(pane.chat.editor.text, "Unrelated draft");
     assert_ne!(pane.chat.drawer, Drawer::Closed);
 }
@@ -538,6 +540,11 @@ fn compact_and_clear_only_write_after_confirmation() {
         assert!(app.tabs.shown().unwrap().pane.as_ref().unwrap().chat.writes.is_empty());
         app.dialog = AppState::prepare_slash(app.tabs.shown_mut().unwrap(), now, command, from_editor);
         dialogs::click(&mut app, now, dialogs::OK, 0.0);
-        assert_eq!(app.tabs.shown().unwrap().pane.as_ref().unwrap().chat.writes, [format!("{command}\r").into_bytes()]);
+        let tab = app.tabs.shown_mut().unwrap();
+        assert_eq!(tab.pane.as_ref().unwrap().chat.writes, [command.as_bytes()]);
+        assert!(AppState::advance_submission(tab, now, true));
+        assert_eq!(tab.pane.as_ref().unwrap().chat.writes, [command.as_bytes(), b"\r"]);
     }
 }
+
+mod review;

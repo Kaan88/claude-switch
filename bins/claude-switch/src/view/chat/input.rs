@@ -1,12 +1,16 @@
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use claude_switch_core::transcript::ItemKind;
 use mdshared_ui::host::{Cx, KeyPress};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::platform;
 
-use super::{Chat, Chip, Drawer, Gate, Side, clipboard, recall, submission};
+use super::{Chat, Chip, Drawer, Side, clipboard, recall, submission};
 use crate::state::{AppState, Msg, Target};
+use crate::tabs::Tab;
+
+const SUBMISSION_POLL: Duration = Duration::from_millis(250);
 
 pub fn layout_shortcut(name: &KeyName, mods: Mods, palette: bool, session_tab: bool) -> bool {
     palette && session_tab && *name == KeyName::F(6) && mods.none()
@@ -25,6 +29,7 @@ pub enum Control {
     Send,
     Override,
     SendNow,
+    PressEnter,
     CancelSend,
     Model,
     Effort,
@@ -48,7 +53,7 @@ impl AppState {
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
         if !chat.locked() {
-            chat.paste_clipboard();
+            chat.paste_clipboard(false);
             self.chat_editor_changed();
         }
         true
@@ -87,44 +92,85 @@ impl AppState {
     }
 
     pub fn chat_input_tick(&mut self, cx: &mut Cx<'_, Msg>) {
-        let may_write = self.nothing_over() && !self.picture_overlay();
-        // Transcript-worker replies and periodic wakes can arrive before a pending PTY message.
-        // Drain that output before an automatic write, including any new permission footer.
-        if may_write
-            && self
-                .tabs
-                .shown()
-                .and_then(|t| t.pane.as_ref())
-                .is_some_and(|p| p.chat.enabled && p.chat.locked() && !p.chat.drawer_focus)
-        {
+        let active = self.tabs.active;
+        let may_write_shown =
+            self.nothing_over() && !self.picture_overlay() && cx.window().is_minimized() != Some(true);
+        let now = cx.now();
+        let pending = self.tabs.list.iter().any(Self::has_chat_work);
+        // A transcript worker or timer may beat the PTY wake; check the latest screen before writing.
+        if pending {
             let woke = self.pump_terms();
-            if woke.output || woke.strip {
+            if woke.output || woke.strip || woke.all {
                 cx.request_redraw_all();
             }
         }
-        let Some(tab) = self.tabs.shown_mut() else { return };
-        let Some(pane) = &mut tab.pane else { return };
-        let chat = &mut pane.chat;
-        if pane.model.error.is_some() {
-            chat.invalidate(&pane.model.chat);
-        } else if pane.model.session_id().is_some() {
-            chat.observe(&pane.model.chat, cx.now());
+        if self.progress_chat_tabs(now, may_write_shown) {
+            cx.request_redraw_all();
         }
-        if chat.enabled {
-            let reported = chat.observe_cli(&pane.model.chat, &tab.term.screen, cx.now());
-            let catalog = chat.commands.collect();
-            let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, cx.now());
-            let old_reason = chat.reason;
-            let changed = chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
-            let may_write = may_write && !chat.drawer_focus;
-            let advanced = Self::advance_submission(tab, cx.now(), may_write);
-            let chat = &tab.pane.as_ref().unwrap().chat;
-            if let Some(deadline) = submission::image_deadline(chat) {
+        for tab in &self.tabs.list {
+            let Some(pane) = &tab.pane else { continue };
+            if Self::has_chat_work(tab) || Some(tab.id) == active && pane.chat.enabled && pane.chat.commands.loading() {
+                cx.wake_at(now + SUBMISSION_POLL);
+            }
+            if let Some(deadline) = submission::stage_deadline(&pane.chat) {
                 cx.wake_at(deadline);
             }
-            if changed || catalog || reported || advanced || old_reason != chat.reason {
-                cx.request_redraw_all();
+            if Some(tab.id) == active
+                && pane.chat.recovery_notice().is_some()
+                && let Some(quiet) = pane.chat.last_output.map(|at| at + super::QUIET).filter(|at| *at > now)
+            {
+                cx.wake_at(quiet);
             }
+        }
+    }
+
+    pub(super) fn progress_chat_tabs(&mut self, now: Instant, may_write_shown: bool) -> bool {
+        let active = self.tabs.active;
+        let mut redraw = false;
+        for tab in &mut self.tabs.list {
+            let shown = Some(tab.id) == active;
+            if !shown && !Self::has_chat_work(tab) {
+                continue;
+            }
+            let Some(pane) = &mut tab.pane else { continue };
+            let collected = if !shown {
+                if pane.next.is_none_or(|at| at <= now) {
+                    pane.model.poll();
+                    pane.next = Some(now + SUBMISSION_POLL);
+                }
+                pane.model.collect()
+            } else {
+                false
+            };
+            let chat = &mut pane.chat;
+            if pane.model.error.is_some() {
+                chat.invalidate(&pane.model.chat);
+            } else if pane.model.session_id().is_some() {
+                chat.observe(&pane.model.chat, now);
+            }
+            if !chat.enabled {
+                continue;
+            }
+            let reported = chat.observe_cli(&pane.model.chat, &tab.term.screen, now);
+            let catalog = chat.commands.collect();
+            let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
+            let changed = chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
+            let may_write = !shown || may_write_shown && !chat.drawer_focus;
+            let advanced = Self::advance_submission(tab, now, may_write);
+            redraw |= shown && (changed || catalog || reported || advanced || collected);
+        }
+        redraw
+    }
+
+    fn has_chat_work(tab: &Tab) -> bool {
+        tab.pane
+            .as_ref()
+            .is_some_and(|pane| pane.chat.enabled && (pane.chat.queue.is_some() || pane.chat.waiting().is_some()))
+    }
+
+    pub(super) fn arm_chat_tick(&self, cx: &mut Cx<'_, Msg>) {
+        if self.tabs.list.iter().any(Self::has_chat_work) {
+            cx.wake_at(cx.now() + SUBMISSION_POLL);
         }
     }
 
@@ -165,7 +211,7 @@ impl AppState {
                 changed = true;
             }
             Some(KeyName::Char('v' | 'V')) if mods.ctrl && !mods.alt => {
-                chat.paste_clipboard();
+                chat.paste_clipboard(mods.shift);
                 changed = true;
             }
             Some(KeyName::Up | KeyName::Down)
@@ -315,8 +361,13 @@ impl AppState {
             }
             _ => {}
         }
-        if matches!(control, Control::Send | Control::Override | Control::SendNow | Control::Stop) {
-            self.term_woke(cx);
+        if matches!(control, Control::Send | Control::Override | Control::SendNow | Control::PressEnter | Control::Stop)
+        {
+            // Don't let a pre-click tick submit the queue before processing an explicit Stop or Send now.
+            let woke = self.pump_terms();
+            if woke.output || woke.strip || woke.all {
+                cx.request_redraw_all();
+            }
         }
         let Some(tab) = self.tabs.shown_mut() else { return };
         let Some(pane) = &mut tab.pane else { return };
@@ -354,10 +405,7 @@ impl AppState {
                 }
             }
             Control::MoreChips => chat.chip_page = (chat.chip_page + 1) % chat.attachment_pages(),
-            Control::Attach if !chat.locked() => {
-                let cwd = pane.cwd.clone();
-                self.attach_picker(Some(&cwd), true);
-            }
+            Control::Attach if !chat.locked() => self.chat_attach_menu(),
             Control::CancelSend => chat.stop_waiting(),
             Control::Send | Control::Override | Control::SendNow => {
                 if control == Control::Send
@@ -367,17 +415,11 @@ impl AppState {
                     Self::chat_send(tab, cx.now(), control != Control::Send);
                 }
             }
-            Control::Stop => {
-                let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, cx.now());
-                if decision == (Gate::Running, None) && chat.can_stop(&pane.model.chat) {
-                    chat.stopped = pane.model.chat.prompt.map(|p| (pane.model.chat.generation, p));
-                    if let Err(e) = submission::write(tab, b"\x1b", "Stopped") {
-                        tab.pane.as_mut().unwrap().chat.error = Some(e);
-                    }
-                }
-            }
+            Control::PressEnter => Self::retry_enter(tab, cx.now()),
+            Control::Stop => Self::chat_stop(tab, cx.now()),
             _ => {}
         }
+        self.arm_chat_tick(cx);
     }
 
     pub fn chat_attach(&mut self, id: u64, files: &[PathBuf]) {
@@ -421,15 +463,27 @@ impl Chat {
         self.resizing.take().is_some() | std::mem::take(&mut self.editor_drag)
     }
 
-    pub(super) fn paste_clipboard(&mut self) {
-        if let Some(picture) = clipboard::picture() {
+    pub(super) fn paste_clipboard(&mut self, picture_only: bool) {
+        self.paste_from(picture_only, platform::clipboard_text, clipboard::picture);
+    }
+
+    pub(super) fn paste_from(
+        &mut self,
+        picture_only: bool,
+        text: impl FnOnce() -> Option<String>,
+        picture: impl FnOnce() -> Option<clipboard::Picture>,
+    ) {
+        if !picture_only && let Some(text) = text().filter(|s| !s.is_empty()) {
+            self.editor.insert(&text);
+        } else if let Some(picture) = picture() {
             self.chips.retain(|c| !matches!(c, Chip::Clipboard(_)));
             self.chips.push(Chip::Clipboard(picture));
             if self.error == Some(submission::CHANGED_CLIPBOARD) {
                 self.error = None;
             }
-        } else if let Some(text) = platform::clipboard_text() {
-            self.editor.insert(&text);
+        } else if picture_only {
+            self.error = Some("The clipboard doesn’t contain an available picture.");
+            self.retry = None;
         }
         self.recall = None;
     }

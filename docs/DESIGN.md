@@ -589,9 +589,10 @@ Terminal layout keeps its normal Session view and controls. F6 switches layouts 
 command palette is open; a focused terminal still receives its ordinary F6. Ctrl+Shift+E remains reserved by the window
 and toggles the drawer in Chat.
 
-**What counts as ready.** Picking out an empty Claude Code prompt on the screen is a heuristic,
-not a readiness protocol. A successful write only means input was handed to the terminal.
-An automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
+**What counts as ready.** The screen heuristic checks the live cursor's `❯` input row, including
+boxed rows, and ignores SGR-faint placeholder characters. It rejects recognized menus, permission
+questions and the alternate screen. A successful write only means input was handed to the terminal.
+An ordinary automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
 tool in the current turn, at least 750 ms without terminal output, bracketed-paste mode, and no
 alternate screen or blocking drawer signal. An old completion from a resumed transcript, missing
 stop reasons, an unrecognized title, and terminal quiet alone are not proof. The OSC title has no
@@ -601,8 +602,10 @@ a new prompt must be observed. There is still a race between observing the PTY a
 When uncertain, Chat retains the draft and displays the refusal inside the composer until its cause
 changes. **Send anyway** is explicit and requires bracketed-paste mode outside the alternate screen.
 During an active turn, **Queue** keeps one draft in memory and locks its text and attachments until
-it sends or is cancelled. Automatic delivery waits for a newer completion and a visibly empty prompt
-in the shown Chat tab. **Send now** can send during a turn when that prompt is visibly empty; **Cancel**
+it sends or is cancelled. Automatic delivery waits for a newer completion and a visibly empty prompt,
+even after switching tabs. After the app's **Stop**, a fresh clean prompt with the observed working
+indicator gone (or a new interruption notice) can also release the queue. **Send now** can send
+during a turn when that prompt is visibly empty; **Cancel**
 unlocks the draft without sending. Neither path overrides a recognized permission question, pending
 tool, bell or slash menu. Direct terminal input cancels a queued or staged send, and samples a
 transcript byte watermark before writing so a buffered earlier prompt cannot rearm Chat.
@@ -621,17 +624,22 @@ It does not execute plugins or mirror CLI policy, and caches the scan for the ta
 and toolbar menus; Model can also open the native picker. Model, effort and context labels use
 reported values, not clicked values; unknown effort stays blank. Direct slash commands need a
 verified, quiet, visibly empty CLI prompt, no active turn or blocking interaction, and the same
-terminal mode checks as Send. Compact and Clear (including Clear aliases) ask for confirmation.
+terminal mode checks as Send. Chat writes command text first, and only writes Enter after seeing
+the exact text on the live input row, within two seconds. Compact and Clear (including Clear aliases)
+ask for confirmation.
 Interactive CLI results stay in the drawer. Chat does not generate answers to its menus; without
 observable progress or a quiet, empty prompt it cannot verify that the menu closed.
 
-**Local data.** File chips use the existing path quoting. Clipboard pictures get an in-memory
-thumbnail when the format is supported. A send checks the clipboard sequence, writes Alt+V alone,
+**Local data.** File chips use the existing path quoting. Ctrl+V prefers clipboard text. Use
+Ctrl+Shift+V or **Attach… → Paste picture** to choose the picture explicitly. Supported picture
+formats get an in-memory thumbnail. A send checks the clipboard sequence, writes Alt+V alone,
 and waits up to four seconds for a newly displayed `[Image #n]` on the CLI input row. Only then does
 Chat paste the text and write one Enter. Timeout or an intervening input, permission, clipboard or
-session change retains the draft; a staged picture may remain in the CLI and should be checked there
-before retrying. The composer replaces line feeds and tabs with spaces for messages, refuses other
-control characters, and writes the text as bracketed paste followed by one app-generated Enter. Ordinary
+session change retains the draft. Failed picture or command staging blocks new sends until newer
+terminal output shows a quiet, clean prompt. If paste succeeded but Enter did not, **Press Enter**
+rechecks the staged input and retries only the Enter key. The composer replaces line feeds and
+tabs with spaces for messages, refuses other control characters, and writes the text as bracketed
+paste followed by one app-generated Enter. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Recall uses
 loaded main-transcript prompts. Expanded tool rows show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows

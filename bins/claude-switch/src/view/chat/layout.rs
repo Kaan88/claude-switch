@@ -21,7 +21,9 @@ impl Layout {
         let panel_w = if panel && area.w >= 900.0 { (area.w * 0.24).clamp(222.0, 300.0) } else { 0.0 };
         let main_w = (area.w - panel_w).max(0.0);
         let measure = main_w.min(770.0);
-        let stacked = measure < if area.w >= 900.0 { 755.0 } else { 710.0 };
+        // Leave room for the two groups and the gap between them. At narrower measures
+        // they stay intact on two lines rather than clipping a label.
+        let stacked = measure < 750.0;
         let chips_h = if chips { 46.0 } else { 0.0 };
         let notice_h = if notice { 30.0 } else { 0.0 };
         let toolbar_h = if stacked { 53.0 } else { 26.0 };
