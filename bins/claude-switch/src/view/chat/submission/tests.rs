@@ -146,3 +146,20 @@ fn the_effort_chip_reads_the_transcripts_replies_whoever_typed_the_command() {
     chat.set_starting_effort(Start::Env("xhigh"));
     assert_eq!(chat.effort_label(&info), "xhigh");
 }
+
+#[test]
+fn several_lines_show_as_typed_or_as_the_paste_marker() {
+    let mut screen = Screen::new(60, 10, 0);
+    screen.feed("────────\r\n❯ first line\r\n  second line\r\n────────\x1b[3;14H".as_bytes());
+    assert!(screen::shows_lines(&screen, "first line\nsecond line"));
+    assert!(!screen::shows_lines(&screen, "first line\nother line"));
+    let mut marker = Screen::new(60, 10, 0);
+    marker.feed("❯ [Pasted text #2 +41 lines]".as_bytes());
+    assert!(screen::shows_lines(&marker, "a\nb"));
+    let mut picture = Screen::new(60, 10, 0);
+    picture.feed("❯ [Image #1] [Pasted text #1 +4 lines]".as_bytes());
+    assert!(screen::shows_lines(&picture, "[Image #1] a\nb"));
+    let mut other = Screen::new(60, 10, 0);
+    other.feed("❯ [Pasted text #x +4 lines]".as_bytes());
+    assert!(!screen::shows_lines(&other, "a\nb"));
+}

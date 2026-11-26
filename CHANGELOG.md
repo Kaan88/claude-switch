@@ -18,6 +18,8 @@
   settings, or the model's default) and follows `/effort` and `/model` typed in the terminal; Context
   reads "— after compact" after a compaction until the next answer.
 - Chat: a Mode chip shows the permission mode and cycles it like Shift+Tab at an idle prompt.
+- Chat: messages keep their line breaks; a message of several lines is submitted once Claude Code
+  shows it on its input line.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

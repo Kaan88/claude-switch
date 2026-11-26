@@ -33,6 +33,16 @@ pub(super) struct EchoWait {
     pub from_editor: bool,
 }
 
+/// A message of several lines, pasted and waiting to show on the input line before Enter.
+pub(super) struct LinesWait {
+    pub stamp: Stamp,
+    pub due: Instant,
+    pub expected: String,
+    pub text: String,
+    pub picture: bool,
+    pub allow_working: bool,
+}
+
 pub(super) struct EnterOnly {
     pub stamp: Stamp,
     pub expected: String,
@@ -77,6 +87,7 @@ impl Recovery {
 #[derive(Default)]
 pub(in crate::view::chat) struct Staging {
     pub(super) echo: Option<EchoWait>,
+    pub(super) lines: Option<LinesWait>,
     pub(super) retry: Option<EnterOnly>,
     pub(super) recovery: Option<Recovery>,
 }
@@ -85,6 +96,8 @@ impl Chat {
     pub(in crate::view::chat) fn waiting(&self) -> Option<&'static str> {
         if self.staging.echo.is_some() {
             Some("Waiting for Claude Code to show the command on its input line…")
+        } else if self.staging.lines.is_some() {
+            Some("Waiting for Claude Code to show the message on its input line…")
         } else if self.image_wait.is_some() {
             Some("Waiting for Claude Code to confirm the picture…")
         } else {
@@ -136,5 +149,8 @@ pub(super) fn can_confirm(tab: &Tab, now: Instant, stamp: Stamp, allow_working: 
 }
 
 pub(super) fn shown_exactly(tab: &Tab, expected: &str) -> bool {
+    if expected.contains('\n') {
+        return screen::shows_lines(&tab.term.screen, expected);
+    }
     prompt(&tab.term.screen).as_deref() == Some(expected)
 }

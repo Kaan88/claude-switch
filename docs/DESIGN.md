@@ -753,9 +753,13 @@ and waits up to four seconds for a newly displayed `[Image #n]` on the CLI input
 Chat paste the text and write one Enter. Timeout or an intervening input, permission, clipboard or
 session change retains the draft. Failed picture or command staging blocks new sends until newer
 terminal output shows a quiet, clean prompt. If paste succeeded but Enter did not, **Press Enter**
-rechecks the staged input and retries only the Enter key. The composer replaces line feeds and
-tabs with spaces for messages, refuses other control characters, and writes the text as bracketed
-paste followed by one app-generated Enter. Ordinary
+rechecks the staged input and retries only the Enter key. The composer keeps line breaks (the
+bracketed paste carries them as CR, as a terminal pastes), replaces tabs with spaces, refuses other
+control characters, and writes the text as bracketed paste followed by one app-generated Enter. A
+message of several lines gets its Enter only once newer output shows it on the input line: the rows
+from the `❯` row to the cursor equal the text (whitespace and wrapping aside), or the input is the
+CLI's `[Pasted text #n +m lines]` marker (after a picture's marker when there is one). Two seconds
+without that keep the draft, press no Enter and ask to check the terminal. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Composer Up on the
 first displayed line and Down on the last walk real prompts in the main transcript, including
 terminal input. Recall skips adjacent repeats, pages back through the transcript worker as needed,

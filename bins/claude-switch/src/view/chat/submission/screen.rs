@@ -123,3 +123,57 @@ pub(super) fn is_image_marker(text: &str) -> bool {
         !n.is_empty() && n.len() <= 9 && n.bytes().all(|b| b.is_ascii_digit()) && n.parse::<u32>().is_ok_and(|n| n > 0)
     })
 }
+
+/// How many rows a multi-line input may take on the screen.
+const INPUT_ROWS: usize = 40;
+/// How Claude Code shows a long paste on its input line (to confirm in a live session).
+const PASTE_MARKER: &str = "[Pasted text #";
+
+/// The live input from its `❯` row down to the cursor row, without box edges.
+fn input_rows(screen: &Screen) -> Option<Vec<String>> {
+    if screen.modes().alt_screen || crate::attention::screen_permission_prompt(screen) || menu(screen) {
+        return None;
+    }
+    let cursor = screen.cursor().row;
+    let rows: Vec<String> = (cursor.saturating_sub(INPUT_ROWS)..=cursor)
+        .map(|row| {
+            let text = screen.row_text(row);
+            text.trim().trim_start_matches(border).trim_end_matches(border).trim_end().to_owned()
+        })
+        .collect();
+    let start = rows.iter().rposition(|row| row.trim_start().starts_with('❯'))?;
+    // A rule between the `❯` row and the cursor is the input box's edge: the cursor is elsewhere.
+    if rows[start..].iter().any(|row| !row.is_empty() && row.chars().all(|c| matches!(c, '─' | '━' | '═'))) {
+        return None;
+    }
+    let mut rows = rows[start..].to_vec();
+    rows[0] = rows[0].trim_start().trim_start_matches('❯').to_owned();
+    Some(rows)
+}
+
+/// `[Pasted text #n +m lines]`, as the whole input.
+fn paste_marker(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix(PASTE_MARKER) else { return false };
+    let Some((n, rest)) = rest.split_once(" +") else { return false };
+    let lines = rest.strip_suffix(" lines]").or_else(|| rest.strip_suffix(" line]"));
+    let digits = |s: &str| !s.is_empty() && s.len() <= 9 && s.bytes().all(|b| b.is_ascii_digit());
+    digits(n) && lines.is_some_and(digits)
+}
+
+/// The input shows `expected`, a text of several lines: as typed (wrapping and indents aside) or
+/// as the CLI's paste marker.
+pub(super) fn shows_lines(screen: &Screen, expected: &str) -> bool {
+    let Some(rows) = input_rows(screen) else { return false };
+    let shown = rows.join("\n");
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    // A picture's marker may come first: `[Image #1] [Pasted text #1 +4 lines]`.
+    let shown_text = shown.trim();
+    let after_picture = shown_text
+        .find(']')
+        .map(|end| shown_text.split_at(end + 1))
+        .filter(|(head, _)| is_image_marker(head))
+        .map(|(_, rest)| rest.trim());
+    paste_marker(shown_text)
+        || after_picture.is_some_and(paste_marker)
+        || !squash(expected).is_empty() && squash(&shown) == squash(expected)
+}

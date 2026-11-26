@@ -237,7 +237,7 @@ fn paste_bytes_put_paths_before_control_free_prompt_without_an_image_key() {
     ];
     assert_eq!(
         send_bytes(&chips[..1], "line 1\nline 2\tword").unwrap(),
-        b"\x1b[200~\"C:\\my photo.png\" line 1 line 2 word\x1b[201~"
+        b"\x1b[200~\"C:\\my photo.png\" line 1\rline 2 word\x1b[201~"
     );
     assert_eq!(send_bytes(&chips[1..], "").unwrap(), b"");
     assert_eq!(send_bytes(&[], "just text").unwrap(), b"\x1b[200~just text\x1b[201~");
@@ -322,6 +322,9 @@ fn demo_refuses_an_uncertain_draft_then_sends_only_into_its_fake_screen() {
     assert!(!chat.demo_progress);
 
     AppState::chat_send(tab, now, true);
+    // Two lines: Enter follows once the fake input line shows them.
+    assert!(tab.pane.as_ref().unwrap().chat.waiting().is_some());
+    AppState::advance_submission(tab, now, true);
     assert!(tab.pane.as_ref().unwrap().chat.editor.text.is_empty());
     let screen = (0..tab.term.screen.rows()).map(|row| tab.term.screen.row_text(row)).collect::<Vec<_>>().join("\n");
     assert!(screen.contains("Synthetic one"));

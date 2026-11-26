@@ -212,3 +212,35 @@ fn the_alternate_screen_refusal_names_the_fix_for_a_claude_tab() {
     f.chat().classic_renderer = true;
     assert_eq!(f.send("hello", now), Some(ALTERNATE), "another full-screen program");
 }
+
+#[test]
+fn a_message_of_several_lines_keeps_its_breaks_and_waits_for_the_input_line() {
+    let mut f = Fixture::new("lines", discover);
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.chat().demo_progress = true;
+    let now = Instant::now();
+    assert_eq!(f.send("first line\nsecond line", now), None);
+    let writes = std::mem::take(&mut f.chat().writes);
+    assert_eq!(writes, [mdshared_term::input::encode_paste("first line\nsecond line", true)], "no Enter yet");
+    assert!(f.chat().waiting().is_some());
+    assert!(AppState::advance_submission(f.tab(), now, true));
+    assert_eq!(f.chat().writes, [b"\r".to_vec()], "Enter once the input line shows both lines");
+    assert!(f.chat().waiting().is_none());
+
+    // The screen never shows it: no Enter, the draft is kept and the terminal is to be checked.
+    let mut f = Fixture::new("lines-timeout", discover);
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.chat().demo_progress = true;
+    f.send("one\ntwo", now);
+    f.tab().term.feed("\x1b[2J\x1b[H\x1b[?2004h❯ ".as_bytes());
+    f.chat().writes.clear();
+    AppState::advance_submission(f.tab(), now + ECHO_TIMEOUT, true);
+    assert!(f.chat().writes.is_empty());
+    assert_eq!(f.chat().error, Some(LINES_TIMEOUT));
+    assert!(f.chat().recovery_notice().is_some());
+    assert_eq!(f.chat().editor.text, "one\ntwo");
+}

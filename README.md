@@ -301,7 +301,7 @@ the viewer. Both tabs are also available in **Session view**.
 | --- | --- |
 | Ctrl+Shift+K, then F6 (or choose **Switch Chat / Terminal**) | Switch layouts without sending a key to the CLI |
 | Ctrl+Shift+E | Toggle the terminal drawer in Chat or Session view in Terminal |
-| Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (sent as a space) |
+| Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (kept when sent) |
 | Up on the first line / Down on the last line | Browse earlier or newer prompts, including terminal prompts. Escape or Down past newest restores the draft unless you edit or send |
 | Click, drag or Shift+click; double- or triple-click | Place the caret, extend a selection, select a word, or select everything |
 | Right-click in the composer | Cut, Copy, Paste, Select all |
