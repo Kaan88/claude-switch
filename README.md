@@ -90,6 +90,11 @@ missing. **Summary written by** in the same page is the OpenCode model that writ
 You can choose a different agent before selecting **Open in CLI**. Changing the target account
 resets the picker to your setting.
 There is no supported agent option for starting a handover in Desktop.
+**Hand over automatically** (Off, Ask first, Automatic) replaces Claude Code's own compaction in
+the CLI tabs Claude Switch starts: they run with `DISABLE_AUTO_COMPACT=1`, and once the context
+reaches the set point (by default where Claude Code would compact) and the turn has ended,
+Switch asks with the handover dialog or makes the handover itself and opens the new chat in the
+same account, linked to the old one. Automatic needs the summary model's provider approved once.
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 

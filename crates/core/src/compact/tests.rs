@@ -1,4 +1,16 @@
 use super::*;
+
+#[test]
+fn auto_handover_preferences_round_trip_and_reject_out_of_range_values() {
+    let prefs = Preferences { auto: AutoHandover::Ask, auto_percent: Some(70), ..Default::default() };
+    assert_eq!(Preferences::read(&prefs.json()), prefs);
+    let read = |v: serde_json::Value| Preferences::read(&serde_json::json!({ "auto": v }));
+    assert_eq!(read(serde_json::json!({"mode": "automatic", "percent": 96})).auto_percent, None);
+    assert_eq!(read(serde_json::json!({"mode": "automatic", "percent": 39})).auto_percent, None);
+    assert_eq!(read(serde_json::json!({"mode": "automatic"})).auto, AutoHandover::Automatic);
+    assert_eq!(read(serde_json::json!({"mode": "always"})).auto, AutoHandover::Off);
+    assert_eq!(Preferences::read(&serde_json::json!({})).auto, AutoHandover::Off, "off unless chosen");
+}
 use crate::{App, Roots, config, sessions, util::testing::TempDir};
 use std::fs;
 

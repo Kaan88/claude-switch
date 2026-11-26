@@ -15,6 +15,10 @@
   tabs) and, at an idle prompt and through the Chat view's usual checks, Claude Code's own name
   with `/rename`, so other sessions can reach it by that name. Plain terminal tabs keep a
   label-only rename.
+- Handover: **Hand over automatically** (Off, Ask first, Automatic) in Settings › Handovers replaces
+  Claude Code's compaction in Claude Switch's own tabs: at the threshold, after the turn, the new
+  chat opens from a handover in the same account, linked to the old one, which stays open marked
+  handed over.
 
 ## 0.1.1 (2026-11-26)
 

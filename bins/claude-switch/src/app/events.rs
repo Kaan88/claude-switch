@@ -147,6 +147,7 @@ impl App for AppState {
                     cx.request_redraw_all();
                 }
                 self.attention_tick(cx);
+                self.auto_handover_tick(cx);
                 self.usage_warning_tick(now);
                 if self.start_conversation_search(now) {
                     cx.request_redraw_all();
@@ -225,6 +226,7 @@ impl App for AppState {
                     | self.take_opencode_job(cx.now());
                 let changed = changed | self.restore_tabs_if_always(cx.now());
                 self.attention_tick(cx);
+                self.auto_handover_tick(cx);
                 self.usage_warning_tick(cx.now());
                 if self.exit_if_requested(cx) {
                     return;

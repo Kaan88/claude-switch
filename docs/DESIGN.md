@@ -428,6 +428,42 @@ compare-and-swap for this value. An interruption after append but before recordi
 leave an untracked entry rather than let uninstall claim an entry it cannot prove it added.
 The plugin retains its fallback to the default per-user installation.
 
+### Automatic handover instead of compaction
+
+**Settings → Handovers → Hand over automatically** is Off (the default), Ask first or Automatic.
+It applies only to the CLI tabs Claude Switch starts from then on; nothing outside the app
+changes (no plugin hook, no global or account setting). While it is on, those tabs start Claude
+Code with `DISABLE_AUTO_COMPACT=1` in that process's environment only, which per Claude Code's
+docs turns off automatic (and idle) compaction and keeps manual `/compact`. Tabs started while it
+was off keep Claude Code's compaction and are not watched. Sign-in tabs never get it.
+
+A worker reads each watched tab's verified transcript tail (512 KiB, at most every 5 seconds and
+only when the file changed) for the last request's context size (input plus cache tokens, as the
+Chat view's context chip), the model and whether the turn has ended with no tool pending. The
+threshold is **When the context reaches**: either a set percentage (50–90 %; a hand-edited value
+from 40 to 95 is kept) or, by default, where Claude Code would have compacted, as far as Switch
+can read it: the window is `CLAUDE_CODE_AUTO_COMPACT_WINDOW` or `autoCompactWindow` from the
+account's `settings.json` (its `env` first, then Switch's own environment), otherwise the
+model's context window (1M for `[1m]` models and, per the model docs, Fable, Sonnet 5+, Haiku 5.5+
+and Opus 4.7+, unless `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`; 200K otherwise, and 1M once the context
+is past 200K), and the point is 95 % of it, lowered by `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (which,
+as in Claude Code, cannot raise it). Claude Code's docs give no exact default percentage (a
+native 1M window compacts at about 967K); 95 % is a little earlier, so the next turn cannot
+overflow while compaction is off. A per-session `/autocompact` or `--autocompact` is not visible
+to Switch.
+
+Once past the threshold and after the turn has ended, **Ask first** opens the handover dialog for
+that tab (same account preselected) with a notice, never over another dialog or menu (it asks
+again at the next poll). **Automatic** makes the handover with the configured summarizer
+(**Summary written by**) and focus from the transcript, keeps it like any opened handover, and
+opens the new chat in the same account beside the old tab, with the Settings default agent if
+that account and folder have it. It needs that provider's consent already recorded; otherwise it
+asks first and says so. Either way it happens once per session in a tab. The new chat is linked,
+not forked: it carries the handover provenance (`handoverFrom`, `parentSessionId`), so it shows
+as a continuation in the list and Threads, and starts from the summary alone (a
+`--fork-session` would carry the full context). The old chat is never typed into; its tab stays
+open, labelled “· handed over”.
+
 ## Pictures into the CLI
 
 Ctrl+V, Ctrl+Shift+V and the palette's Paste send clipboard text using the terminal's usual paste

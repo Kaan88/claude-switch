@@ -47,6 +47,7 @@ pub struct Cache {
     pub history: Option<(String, Vec<PathBuf>)>,
     /// Settings › Handovers' agent choice: (name, label), read when that page opens.
     pub settings_agents: Vec<(String, String)>,
+    pub auto: crate::auto_handover::Watcher,
 }
 
 enum Update {
@@ -130,6 +131,13 @@ impl AppState {
             })
             .collect();
         self.compact.settings_agents = agents::settings_choices(&per_account);
+    }
+
+    /// A notice in the open handover dialog (not an error).
+    pub fn compact_notice(&mut self, text: String) {
+        if let Some(Dialog::Compact(dialog)) = &mut self.dialog {
+            dialog.message = Some((text, false));
+        }
     }
 
     /// The OpenCode models last listed in this window, if any.
@@ -332,6 +340,11 @@ impl Compact {
         };
         this.reset_agents();
         this
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notice_text(&self) -> Option<&str> {
+        self.message.as_ref().map(|(text, _)| text.as_str())
     }
 
     fn error(&mut self, text: String) {

@@ -56,6 +56,39 @@ const SET_SUGGEST_TOPICS: u32 = 91;
 const SYNC_WORKERS: u32 = 94;
 const SET_HANDOVER_AGENT: u32 = 95;
 const SET_HANDOVER_MODEL: u32 = 96;
+const SET_AUTO_HANDOVER: u32 = 97;
+const SET_AUTO_PERCENT: u32 = 98;
+const AUTO_STEPS: [u8; 5] = [50, 60, 70, 80, 90];
+
+/// The threshold choice: Claude Code's own point first, then percentages (a saved one included).
+fn auto_percents(st: &AppState) -> Vec<Option<u8>> {
+    let mut steps: Vec<_> = std::iter::once(None).chain(AUTO_STEPS.map(Some)).collect();
+    if let Some(saved) = st.config.compact.auto_percent
+        && !steps.contains(&Some(saved))
+    {
+        let at = steps.iter().position(|step| step.is_some_and(|step| step > saved)).unwrap_or(steps.len());
+        steps.insert(at, Some(saved));
+    }
+    steps
+}
+
+fn update_handover_prefs(st: &mut AppState, change: impl FnOnce(&mut claude_switch_core::compact::Preferences)) {
+    let result = match &st.source {
+        crate::source::Source::Real(roots) => claude_switch_core::config::update_compact(roots, |prefs| {
+            change(prefs);
+            Ok(())
+        })
+        .map(|prefs| st.config.compact = prefs),
+        crate::source::Source::Demo => {
+            change(&mut st.config.compact);
+            Ok(())
+        }
+    };
+    if let Err(e) = result {
+        st.error("Handover setting was not saved", e.to_string());
+    }
+    refresh_handover_page(st);
+}
 
 pub(crate) fn settings(st: &mut AppState, category: Option<&str>) -> Dialog {
     let category = category.or(st.settings_category);
@@ -267,10 +300,27 @@ fn handovers(st: &AppState) -> Vec<Row> {
         model_ids.iter().map(String::as_str).collect()
     };
     let model_value = model_ids.iter().position(|m| *m == st.config.compact.model).unwrap_or(0);
+    let percents = auto_percents(st);
+    let percent_labels: Vec<String> = percents
+        .iter()
+        .map(|p| p.map_or_else(|| "Where Claude Code would compact".to_owned(), |p| format!("{p}%")))
+        .collect();
+    let percent_labels: Vec<&str> = percent_labels.iter().map(String::as_str).collect();
+    let percent_value = percents.iter().position(|p| *p == st.config.compact.auto_percent).unwrap_or(0);
     vec![
         Row::choice(SET_HANDOVER_AGENT, "New chat starts as", &refs, value).help(agent_help),
         Row::choice(SET_HANDOVER_MODEL, "Summary written by", &models, model_value)
             .help("The OpenCode model that writes the handover."),
+        Row::header("Instead of Claude Code's compaction"),
+        Row::choice(
+            SET_AUTO_HANDOVER,
+            "Hand over automatically",
+            &claude_switch_core::compact::AutoHandover::OPTIONS.map(|(_, _, label)| label),
+            st.config.compact.auto.index(),
+        )
+        .help("Tabs started from now on, same account."),
+        Row::choice(SET_AUTO_PERCENT, "When the context reaches", &percent_labels, percent_value)
+            .help("After the turn ends. The old chat stays open."),
         Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents"),
     ]
 }
@@ -328,6 +378,16 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
                 st.error("Default agent was not saved", e.to_string());
             }
             refresh_handover_page(st);
+        }
+        Outcome::Changed { id: SET_AUTO_HANDOVER, value: Value::Choice(i) } if !st.config_damaged => {
+            if let Some(&(mode, _, _)) = claude_switch_core::compact::AutoHandover::OPTIONS.get(i) {
+                update_handover_prefs(st, |prefs| prefs.auto = mode);
+            }
+        }
+        Outcome::Changed { id: SET_AUTO_PERCENT, value: Value::Choice(i) } if !st.config_damaged => {
+            if let Some(&percent) = auto_percents(st).get(i) {
+                update_handover_prefs(st, |prefs| prefs.auto_percent = percent);
+            }
         }
         Outcome::Changed { id: SET_HANDOVER_MODEL, value: Value::Choice(i) } if !st.config_damaged => {
             let Some(model) = model_options(st).into_iter().nth(i) else { return };
@@ -485,7 +545,7 @@ mod tests {
             ],
             &[SET_EMBEDDED, SET_ARCHIVED, SET_WORKERS_SHOWN, SET_HIDDEN, SET_ATTENTION, SET_SUGGEST_TOPICS],
             &[SET_USAGE, SET_USAGE_WARNINGS],
-            &[SET_HANDOVER_AGENT, SET_HANDOVER_MODEL, FORGET_HANDOVER_CONSENTS],
+            &[SET_HANDOVER_AGENT, SET_HANDOVER_MODEL, SET_AUTO_HANDOVER, SET_AUTO_PERCENT, FORGET_HANDOVER_CONSENTS],
             &[SET_WORKERS, opencode_rows::REFRESH, opencode_rows::RESTART, opencode_rows::STUDIO, SYNC_WORKERS],
             &[SET_TRAY, SET_CLOSE_TO_TRAY],
         ];

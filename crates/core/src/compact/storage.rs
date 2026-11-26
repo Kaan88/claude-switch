@@ -11,7 +11,40 @@ pub struct Preferences {
     pub model: String,
     pub consents: BTreeSet<String>,
     pub default_agent: Option<String>,
+    /// Handover instead of Claude Code's own compaction, in Claude Switch's tabs only.
+    pub auto: AutoHandover,
+    /// The context percentage that triggers it; `None` is where Claude Code would compact.
+    pub auto_percent: Option<u8>,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AutoHandover {
+    #[default]
+    Off,
+    Ask,
+    Automatic,
+}
+
+impl AutoHandover {
+    pub const OPTIONS: [(Self, &'static str, &'static str); 3] =
+        [(Self::Off, "off", "Off"), (Self::Ask, "ask", "Ask first"), (Self::Automatic, "automatic", "Automatic")];
+
+    pub fn index(self) -> usize {
+        Self::OPTIONS.iter().position(|(mode, _, _)| *mode == self).unwrap_or(0)
+    }
+
+    fn key(self) -> &'static str {
+        Self::OPTIONS[self.index()].1
+    }
+
+    fn parse(key: &str) -> Self {
+        Self::OPTIONS.iter().find(|(_, k, _)| *k == key).map_or(Self::Off, |(mode, _, _)| *mode)
+    }
+}
+
+/// The range a set percentage may take: below it a handover would come too early to be useful,
+/// above it Claude Code may run out of room for the summary turn.
+pub const AUTO_PERCENT: std::ops::RangeInclusive<u8> = 40..=95;
 
 impl Preferences {
     pub(crate) fn read(value: &Value) -> Self {
@@ -29,11 +62,21 @@ impl Preferences {
                 .as_str()
                 .filter(|name| crate::launch::session_agent_args(name).is_ok())
                 .map(str::to_owned),
+            auto: value["auto"]["mode"].as_str().map_or(AutoHandover::Off, AutoHandover::parse),
+            auto_percent: value["auto"]["percent"]
+                .as_u64()
+                .and_then(|n| u8::try_from(n).ok())
+                .filter(|n| AUTO_PERCENT.contains(n)),
         }
     }
 
     pub(crate) fn json(&self) -> Value {
-        json!({"model": self.model, "consents": self.consents, "defaultAgent": self.default_agent})
+        json!({
+            "model": self.model,
+            "consents": self.consents,
+            "defaultAgent": self.default_agent,
+            "auto": {"mode": self.auto.key(), "percent": self.auto_percent},
+        })
     }
 
     pub fn set_default_agent(&mut self, name: &str) -> Result<(), Refusal> {

@@ -17,6 +17,7 @@ mod app_draw;
 mod archive;
 mod archive_report;
 mod attention;
+mod auto_handover;
 mod compact_cli;
 mod compact_dialog;
 mod compact_open;
