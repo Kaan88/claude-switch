@@ -23,6 +23,9 @@ pub enum Stage {
     Clear,
     Follow,
     Prompt,
+    /// The gate took the first message and is staging it (a message of several lines waits for
+    /// the input line to show it before Enter); done once it has been entered.
+    Sending,
 }
 
 #[derive(Debug)]
@@ -43,7 +46,7 @@ impl InPlace {
             + match self.stage {
                 Stage::Clear => CLEAR_WAIT,
                 Stage::Follow => FOLLOW_WAIT,
-                Stage::Prompt => PROMPT_WAIT,
+                Stage::Prompt | Stage::Sending => PROMPT_WAIT,
             }
     }
 
@@ -53,6 +56,7 @@ impl InPlace {
             Stage::Clear => "Claude Code's prompt did not become idle for /clear in time",
             Stage::Follow => "the tab did not follow Claude Code to its new session after /clear",
             Stage::Prompt => "the handover could not be sent as the new session's first message in time",
+            Stage::Sending => "Claude Code did not show the handover on its input line in time, so it was not entered",
         }
     }
 }

@@ -586,13 +586,17 @@ left as it was) and goes through the Chat view's gate for every write; it
 never writes to the terminal itself. At an idle prompt it sends `/clear` with the gate's slash
 command path (up to 90 seconds for the prompt to become idle), waits until the tab has followed
 the CLI to the new session that `/clear` starts (the same following as for any `/clear`; the
-running records are read every second meanwhile, up to 30 seconds), then puts the handover in the
-empty composer and sends it with the composer's own send, so its checks and refusals apply (up
-to 60 seconds). A draft in the composer is never replaced. Above the command-line limit the first
+running records are read every second meanwhile, up to 30 seconds; the new session counts as
+followed once the pane is pinned to it and awaits its transcript, which the CLI writes only with
+the first message), then puts the handover in the empty composer and sends it with the
+composer's own send as that new chat's first message, so its checks, refusals and staging apply:
+a handover of several lines is entered by the gate once the input line shows it, and a staging
+the gate gives up on stops the handover with the draft left for the gate's recovery (up to 60
+seconds). A draft in the composer is never replaced. Above the command-line limit the first
 message asks the session to read the saved file, as for a new tab. When the message is taken, the
 new session gets the handover provenance and continuation name, and the old one is marked handed
-over; then, at the next idle prompt, `/rename <continuation name>` goes through the same slash
-gate, so Claude Code's own name follows as for a tab rename. A step that does not happen in time,
+over; then, once the new transcript exists and at the next idle prompt, `/rename <continuation
+name>` goes through the same slash gate (which re-checks the session right before writing), so Claude Code's own name follows as for a tab rename. A step that does not happen in time,
 a process that ends, a tab that changes session before `/clear`, or a Claude Code that draws its
 full-screen view (where Chat cannot send) stops it with the reason; nothing else is sent, and the notice names the saved
 handover file, which is kept either way.

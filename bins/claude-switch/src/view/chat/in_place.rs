@@ -82,9 +82,12 @@ impl AppState {
                 Step::Wait
             }
             Stage::Follow => {
-                let followed = current.filter(|new| !new.eq_ignore_ascii_case(&from));
-                match followed {
-                    Some(new) if pane.pinned_id().is_some_and(|pin| pin.eq_ignore_ascii_case(&new)) => {
+                if pane.chat.error.is_some() {
+                    // The gate refused or interrupted /clear (its notice says why).
+                    return Step::Fail("Claude Code did not take /clear");
+                }
+                match followed(pane, current.as_deref(), &from) {
+                    Some(_) => {
                         if let Some(job) = &mut tab.in_place {
                             job.stage = Stage::Prompt;
                             job.since = now;
@@ -98,10 +101,21 @@ impl AppState {
                 }
                 Step::Wait
             }
-            Stage::Prompt => {
-                let Some(new) = current.filter(|new| !new.eq_ignore_ascii_case(&from)) else {
+            Stage::Prompt | Stage::Sending => {
+                let Some(new) = followed(pane, current.as_deref(), &from) else {
                     return Step::Fail("the tab went back to the old session");
                 };
+                if stage == Stage::Sending {
+                    let chat = &pane.chat;
+                    if chat.error.is_some() {
+                        // The draft stays in the box for the gate's own recovery.
+                        return Step::Fail("Claude Code did not take the handover as its first message");
+                    }
+                    if !chat.locked() && chat.editor.text.is_empty() {
+                        return Step::Done(new);
+                    }
+                    return Step::Wait;
+                }
                 let chat = &pane.chat;
                 if chat.error == Some(super::submission::FULLSCREEN) {
                     return Step::Fail(FULLSCREEN);
@@ -117,16 +131,31 @@ impl AppState {
                 pane.chat.editor.set(prompt);
                 Self::chat_send(tab, now, false);
                 let chat = &mut tab.pane.as_mut().unwrap().chat;
-                if chat.error.is_none() && (chat.editor.text.is_empty() || chat.queue.is_some()) {
+                if chat.error.is_none() && chat.editor.text.is_empty() {
                     return Step::Done(new);
                 }
-                if chat.queue.is_none() {
-                    chat.editor.set(String::new()); // Refused: leave the box as it was.
+                if chat.error.is_none() && chat.locked() {
+                    // Taken: the gate stages it (or queues it behind a turn) and enters it itself.
+                    if let Some(job) = &mut tab.in_place {
+                        job.stage = Stage::Sending;
+                        job.since = now;
+                    }
+                    return Step::Wait;
                 }
+                chat.editor.set(String::new()); // Refused: leave the box as it was.
                 Step::Wait
             }
         }
     }
+}
+
+/// The session the tab followed the CLI to after `/clear`: the pane's pinned ID once it differs
+/// from the old one. Until its first message writes the transcript, the pane awaits it and the
+/// tab has no resumable ID yet; after that the tab's verified ID must agree.
+fn followed(pane: &crate::view::Pane, resume: Option<&str>, from: &str) -> Option<String> {
+    let pin = pane.pinned_id().filter(|pin| !pin.eq_ignore_ascii_case(from))?;
+    let agrees = resume.is_some_and(|id| id.eq_ignore_ascii_case(pin));
+    (pane.chat.awaiting_transcript && !pane.chat.identity_unverified || agrees).then(|| pin.to_owned())
 }
 
 #[cfg(test)]
@@ -171,54 +200,175 @@ mod tests {
         assert!(text.contains("old-1.md") && text.contains("Nothing else was sent"), "{text}");
     }
 
+    const OLD: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const NEW: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+
+    /// A Claude tab on a real transcript, as the session branch's identity tests build it: the
+    /// gate, the live-record following and the first-message rules are the real ones; only the
+    /// writes are recorded instead of reaching a process.
+    struct Real {
+        st: AppState,
+        root: PathBuf,
+        id: u64,
+    }
+
+    impl Drop for Real {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    impl Real {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("cs-in-place-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            let mut st = AppState::new(Source::Demo, Some(false), Default::default());
+            st.win_file.chat_default = false;
+            let file = Self::transcript_at(&root, OLD);
+            let mut pane = st.new_session_pane(crate::view::model::Source::File(file), root.clone());
+            pane.chat.demo = true;
+            pane.chat.demo_progress = true;
+            pane.chat.enabled = true;
+            let mut term = Term::empty((80, 12));
+            term.feed("\x1b[?2004h❯ ".as_bytes());
+            let id = st.tabs.open(NewTab { label: "t".into(), color: [0; 3], session: None, account: None }, term);
+            st.tabs.get_mut(id).unwrap().pane = Some(pane);
+            st.tabs.active = Some(id);
+            let mut real = Self { st, root, id };
+            assert!(real.tab().apply_live_identity(Some(OLD)));
+            assert_eq!(real.tab().resume_id.as_deref(), Some(OLD));
+            real
+        }
+
+        fn transcript_at(root: &std::path::Path, id: &str) -> PathBuf {
+            let file = crate::view::handover_transcript(root, root, id);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            let record = serde_json::json!({ "type": "user", "cwd": root }).to_string();
+            std::fs::write(&file, format!("{record}\n")).unwrap();
+            file
+        }
+
+        fn tab(&mut self) -> &mut crate::tabs::Tab {
+            self.st.tabs.get_mut(self.id).unwrap()
+        }
+
+        fn chat(&mut self) -> &mut super::super::Chat {
+            &mut self.tab().pane.as_mut().unwrap().chat
+        }
+
+        /// What the chat tick does between steps: the gate's own staging, on a quiet screen.
+        fn settle(&mut self, now: Instant) {
+            self.chat().last_output = Some(now - super::super::QUIET);
+            AppState::advance_submission(self.tab(), now, true);
+        }
+
+        fn stage(&mut self) -> Option<Stage> {
+            self.tab().in_place.as_ref().map(|j| j.stage)
+        }
+    }
+
     #[test]
     fn clear_then_follow_then_the_handover_as_first_message_all_through_the_gate() {
-        let mut st = super::super::tests::demo();
-        let start = Instant::now();
-        st.win_file.chat_default = false;
-        let tab = st.tabs.shown_mut().unwrap();
-        let id = tab.id;
-        let old = tab.session.clone().unwrap();
-        tab.resume_id = Some(old.clone());
-        tab.pane.as_mut().unwrap().chat.enabled = true;
-        let mut first = job(Stage::Clear, start);
-        first.from_session = old.clone();
-        tab.in_place = Some(first);
-        st.in_place_tick(start);
-        let tab = st.tabs.get(id).unwrap();
-        let chat = &tab.pane.as_ref().unwrap().chat;
-        assert_eq!(chat.writes.first().map(Vec::as_slice), Some(b"/clear".as_slice()), "{:?}", chat.error);
-        assert_eq!(tab.in_place.as_ref().map(|j| j.stage), Some(Stage::Follow));
-        // Still the old session: the tab waits for the CLI, then a new id that the pane follows.
-        assert!(!st.in_place_tick(start));
-        let tab = st.tabs.get_mut(id).unwrap();
-        let job = tab.in_place.as_mut().unwrap();
-        job.stage = Stage::Prompt;
-        tab.resume_id = Some("11111111-2222-4333-8444-555555555555".into());
-        let pane = tab.pane.as_mut().unwrap();
-        pane.chat.writes.clear();
-        pane.chat.error = None;
-        pane.chat.staging = Default::default(); // As after Claude Code echoed and took /clear.
-        pane.chat.editor.set("A draft of mine".into());
-        assert!(!st.in_place_tick(start), "never replaces a draft");
-        let chat = &mut st.tabs.get_mut(id).unwrap().pane.as_mut().unwrap().chat;
-        assert_eq!(chat.editor.text, "A draft of mine");
-        chat.editor.set(String::new());
-        // The new session's prompt is idle: a quiet screen after a finished turn.
-        let pane = st.tabs.get_mut(id).unwrap().pane.as_mut().unwrap();
-        pane.chat.fresh = true;
-        pane.chat.last_output = Some(start - super::super::QUIET);
-        pane.model.chat.latest = Some((100, claude_switch_core::transcript::ChatPhase::EndTurn));
-        assert!(st.in_place_tick(start), "{:?}", st.tabs.get(id).unwrap().pane.as_ref().unwrap().chat.error);
-        let tab = st.tabs.get(id).unwrap();
+        let mut r = Real::new("flow");
+        let now = Instant::now();
+        let mut first = job(Stage::Clear, now);
+        first.from_session = OLD.into();
+        first.cwd = r.root.clone();
+        r.tab().in_place = Some(first);
+        r.chat().last_output = Some(now - super::super::QUIET);
+
+        // 1. `/clear` through the slash gate, which re-checks the session right before writing.
+        r.st.in_place_tick(now);
+        let error = r.chat().error;
+        assert_eq!(r.chat().writes.first().map(Vec::as_slice), Some(b"/clear".as_slice()), "{error:?}");
+        assert_eq!(r.stage(), Some(Stage::Follow));
+        r.settle(now);
+        assert!(r.chat().writes.iter().any(|w| w == b"\r"), "entered once the input line shows it");
+
+        // 2. The CLI names a new session whose transcript it has yet to write: the real follow.
+        assert!(!r.st.in_place_tick(now), "still the old session");
+        assert!(r.tab().apply_live_identity(Some(NEW)));
+        let tab = r.tab();
+        assert_eq!(tab.resume_id, None, "nothing to resume before the first message");
+        assert!(tab.pane.as_ref().unwrap().chat.awaiting_transcript);
+        r.st.in_place_tick(now);
+        assert_eq!(r.stage(), Some(Stage::Prompt));
+
+        // A draft of the user's own is never replaced.
+        r.chat().editor.set("A draft of mine".into());
+        r.chat().writes.clear();
+        assert!(!r.st.in_place_tick(now));
+        assert_eq!(r.chat().editor.text, "A draft of mine");
+        assert!(r.chat().writes.is_empty());
+        r.chat().editor.set(String::new());
+
+        // 3. The handover as the new session's genuine first message: an ordinary Send of several
+        // lines, staged until the input line shows them, then entered by the gate.
+        r.chat().last_output = Some(now - super::super::QUIET);
+        let taken = r.st.in_place_tick(now);
+        let error = r.chat().error;
+        assert!(!taken, "{error:?}");
+        assert_eq!(r.stage(), Some(Stage::Sending));
+        assert!(String::from_utf8_lossy(&r.chat().writes[0]).contains("## Goal"));
+        assert!(!r.chat().writes.iter().any(|w| w == b"\r"), "no Enter before the input line shows it");
+        r.settle(now);
+        let error = r.chat().error;
+        assert!(r.chat().writes.iter().any(|w| w == b"\r"), "{error:?}");
+        assert!(r.chat().first_sent, "the gate counts it as the new chat's first message");
+        assert!(r.st.in_place_tick(now));
+        let tab = r.tab();
         assert!(tab.in_place.is_none(), "done");
-        assert_eq!(
-            tab.cli_rename,
-            Some(("11111111-2222-4333-8444-555555555555".into(), "Old · continued".into())),
-            "Claude Code's own name follows with /rename at the next idle prompt"
-        );
-        let writes = &tab.pane.as_ref().unwrap().chat.writes;
-        assert!(writes.iter().any(|w| String::from_utf8_lossy(w).contains("## Goal")), "{writes:?}");
+        assert_eq!(tab.cli_rename, Some((NEW.into(), "Old · continued".into())));
+
+        // 4. `/rename` waits while the new transcript does not exist yet, then goes through the gate.
+        r.chat().writes.clear();
+        r.chat().last_output = Some(now - super::super::QUIET);
+        assert!(!r.st.send_cli_rename(now));
+        assert!(r.tab().cli_rename.is_some(), "kept, not dropped, while the session awaits its transcript");
+        Real::transcript_at(&r.root.clone(), NEW);
+        r.tab().apply_live_identity(Some(NEW));
+        assert_eq!(r.tab().session.as_deref(), Some(NEW));
+        r.chat().last_output = Some(now - super::super::QUIET);
+        let sent = r.st.send_cli_rename(now);
+        let error = r.chat().error;
+        assert!(sent, "{error:?}");
+        assert_eq!(r.chat().writes.first().map(Vec::as_slice), Some(b"/rename Old \xc2\xb7 continued".as_slice()));
+        assert!(r.tab().cli_rename.is_none());
+    }
+
+    #[test]
+    fn a_handover_the_gate_could_not_enter_stops_and_leaves_the_draft_for_recovery() {
+        let mut r = Real::new("lines-timeout");
+        let now = Instant::now();
+        r.tab().apply_live_identity(Some(NEW));
+        let mut sending = job(Stage::Prompt, now);
+        sending.from_session = OLD.into();
+        r.tab().in_place = Some(sending);
+        r.chat().last_output = Some(now - super::super::QUIET);
+        r.st.in_place_tick(now);
+        assert_eq!(r.stage(), Some(Stage::Sending));
+        // The input line never shows the paste: the gate times out without Enter.
+        r.tab().term.feed("\x1b[2J\x1b[H\x1b[?2004h❯ ".as_bytes());
+        AppState::advance_submission(r.tab(), now + std::time::Duration::from_secs(10), true);
+        assert!(r.chat().error.is_some());
+        assert!(r.st.in_place_tick(now));
+        assert!(r.tab().in_place.is_none(), "stopped with the reason");
+        assert!(r.chat().editor.text.contains("## Goal"), "the gate keeps the draft for its recovery");
+        assert!(!r.chat().writes.iter().any(|w| w == b"\r"), "never entered");
+    }
+
+    #[test]
+    fn a_cli_menu_holds_the_clear_until_it_is_closed() {
+        let mut r = Real::new("menu");
+        let now = Instant::now();
+        let mut first = job(Stage::Clear, now);
+        first.from_session = OLD.into();
+        r.tab().in_place = Some(first);
+        r.chat().error = Some(super::super::Reason::Menu.label());
+        assert!(!r.st.in_place_tick(now));
+        assert_eq!(r.stage(), Some(Stage::Clear), "waits for the gate's own retry");
+        assert!(r.chat().writes.is_empty());
     }
 
     #[test]

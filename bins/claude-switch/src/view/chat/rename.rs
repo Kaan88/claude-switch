@@ -15,6 +15,15 @@ impl AppState {
     pub(super) fn send_cli_rename(&mut self, now: Instant) -> bool {
         let Some(tab) = self.tabs.shown_mut() else { return false };
         let Some((session, name)) = tab.cli_rename.clone() else { return false };
+        // A session followed after `/clear` has no transcript (so no verified ID) until its first
+        // message is written: wait for it rather than drop the rename.
+        let awaiting = tab.session.is_none()
+            && tab.pane.as_ref().is_some_and(|pane| {
+                pane.chat.awaiting_transcript && pane.pinned_id().is_some_and(|pin| pin.eq_ignore_ascii_case(&session))
+            });
+        if awaiting {
+            return false;
+        }
         if tab.session.as_deref() != Some(session.as_str()) {
             tab.cli_rename = None; // Another session now runs here; never rename that one.
             return false;
