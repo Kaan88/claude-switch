@@ -136,6 +136,7 @@ struct Update {
     agents: Option<Vec<Subagent>>,
     tasks: Option<Vec<Task>>,
     earlier: bool,
+    loaded_earlier: bool,
     agent: Option<String>,
     session: Option<String>,
     generation: u64,
@@ -157,6 +158,7 @@ pub struct Model {
     pub tasks: Vec<Task>,
     pub agent: Option<String>,
     pub has_earlier: bool,
+    pub earlier_version: u64,
     pub error: Option<String>,
     pub revision: u64,
     pub generation: u64,
@@ -223,6 +225,7 @@ impl Model {
             tasks: vec![],
             agent: None,
             has_earlier: false,
+            earlier_version: 0,
             error: None,
             revision: 0,
             generation: 0,
@@ -284,6 +287,9 @@ impl Model {
                         self.tasks = tasks;
                     }
                     self.has_earlier = u.earlier;
+                    if u.loaded_earlier {
+                        self.earlier_version = self.earlier_version.wrapping_add(1);
+                    }
                     self.generation = u.generation;
                     self.agent = u.agent;
                     self.session = u.session;
@@ -484,6 +490,7 @@ impl Worker {
         let mut u = Update {
             reset,
             earlier: reader.has_earlier(),
+            loaded_earlier: earlier_request,
             agent: self.child.as_ref().map(|(id, _)| id.clone()),
             session: self.session.clone(),
             generation: self.generation,

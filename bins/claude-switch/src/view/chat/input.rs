@@ -1,12 +1,11 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use claude_switch_core::transcript::ItemKind;
 use mdshared_ui::host::{Cx, KeyPress};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::platform;
 
-use super::{Chat, Chip, Drawer, Side, clipboard, recall, submission};
+use super::{Chat, Chip, Drawer, Side, clipboard, submission};
 use crate::state::{AppState, Msg, Target};
 use crate::tabs::Tab;
 
@@ -80,6 +79,7 @@ impl AppState {
             pane.chat.drawer_focus = false;
             pane.chat.resizing = None;
             pane.chat.commands.open = false;
+            pane.chat.recall.cancel_load();
             pane.chat.interrupt_submission();
             if enabled {
                 pane.ui.chat_conversation(&mut pane.model);
@@ -156,8 +156,10 @@ impl AppState {
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let changed = chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = !shown || may_write_shown && !chat.drawer_focus;
+            let recalled = !chat.locked()
+                && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
             let advanced = Self::advance_submission(tab, now, may_write);
-            redraw |= shown && (changed || catalog || reported || advanced || collected);
+            redraw |= shown && (changed || catalog || reported || advanced || collected || recalled);
         }
         redraw
     }
@@ -204,7 +206,10 @@ impl AppState {
         match k.name.as_ref() {
             Some(KeyName::Enter) if !mods.shift && !mods.ctrl && !mods.alt => self.chat_control(cx, Control::Send),
             Some(KeyName::Char('c' | 'C')) if mods.ctrl && !mods.alt => chat.editor_copy(false),
-            Some(KeyName::Char('a' | 'A')) if mods.ctrl && !mods.alt => chat.editor.select_all(),
+            Some(KeyName::Char('a' | 'A')) if mods.ctrl && !mods.alt => {
+                chat.recall.cancel_load();
+                chat.editor.select_all();
+            }
             _ if chat.locked() => {}
             Some(KeyName::Char('x' | 'X')) if mods.ctrl && !mods.alt => {
                 chat.editor_copy(true);
@@ -214,19 +219,10 @@ impl AppState {
                 chat.paste_clipboard(mods.shift);
                 changed = true;
             }
-            Some(KeyName::Up | KeyName::Down)
-                if !mods.shift && !mods.ctrl && !mods.alt && (chat.editor.text.is_empty() || chat.recall.is_some()) =>
-            {
-                let history = pane.model.items.values().rev().filter_map(|item| match &item.kind {
-                    ItemKind::Prompt { text, synthetic: false, .. } => Some(text.as_str()),
-                    _ => None,
-                });
-                if let Some(prompt) = recall(history, &mut chat.recall, k.name == Some(KeyName::Up)) {
-                    chat.editor.set(prompt.to_owned());
-                    chat.editor.move_to(prompt.len(), false);
-                }
-            }
+            Some(key @ (KeyName::Up | KeyName::Down | KeyName::Escape))
+                if mods.none() && chat.recall_key(&pane.model, key) => {}
             Some(name) => {
+                chat.recall.cancel_load();
                 chat.editor.key(name, mods, k.text.as_deref());
                 changed = chat.editor.rows.is_empty();
             }
@@ -267,6 +263,7 @@ impl AppState {
         }
         let Some(tab) = self.tabs.shown_mut() else { return false };
         let chat = &mut tab.pane.as_mut().unwrap().chat;
+        chat.recall.cancel_load();
         if !matches!(
             target,
             Some(Target::Chat(
@@ -506,7 +503,7 @@ impl Chat {
             self.error = Some("The clipboard doesn’t contain an available picture.");
             self.retry = None;
         }
-        self.recall = None;
+        self.recall.cancel_load();
     }
 
     pub(super) fn editor_copy(&mut self, cut: bool) {

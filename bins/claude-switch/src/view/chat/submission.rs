@@ -140,7 +140,7 @@ impl Chat {
         self.commands.open = false;
         self.chips.clear();
         self.chip_page = 0;
-        self.recall = None;
+        self.recall = Default::default();
     }
 }
 
