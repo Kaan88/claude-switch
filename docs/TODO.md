@@ -481,3 +481,16 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     keys only while the screen shows that same prompt for that same tool call (fail closed and say why, never a
     blind keystroke); the app never answers by itself, and nothing is pre-selected. Built on item 38's question
     card. Update DESIGN.md's rule with the owner's reason.
+43. **The composer's Context and Effort chips are stale or empty** (owner, 2026-11-27, screenshot: "Effort —",
+    "Context 275k" after a /compact, with "could not be verified" beside them, item 36).
+    - Context: the figure comes from the last assistant turn's usage, so after a compaction it keeps the
+      pre-compaction size until the next answer. On the transcript's compaction record (`compact_boundary`, with
+      `compactMetadata.preTokens`; check the real shape in a transcript, read-only) show the size as unknown
+      ("Context — after compact") or an estimate from the summary, and take the real figure from the next turn.
+      Same in the Session view and wherever "Context now" shows. Also check that /compact in a tab does not change
+      the session id (if it does, item 36 covers following it).
+    - Effort: the chip only learns the level from an `/effort` reply in this session (`submission/report.rs`
+      `reported_effort`), so a fresh session shows "—". Show the level the session started with, from the same
+      sources the CLI uses, in its order (the `--effort` flag the tab was started with, `CLAUDE_CODE_EFFORT_LEVEL`
+      or the like in the tab's environment, `effortLevel` in the account's and project's settings, else the model's
+      default, marked as default); check the names in Claude Code's docs. Read-only, never written.
