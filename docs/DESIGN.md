@@ -1009,6 +1009,11 @@ done once newer output no longer shows the hint or the call ended, and stops wit
 seconds otherwise. Stop agent is not offered: the key that opens the CLI's agent panel is unverified
 (once that panel is open, it shows as a menu card).
 
+A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click
+says so instead of writing, and it ends (or fails) in a hidden tab too. A menu that stays open after
+Enter (a toggle) is done as soon as newer output shows the chosen row changed; one that shows no
+change at all by the deadline still stops with a notice.
+
 Every screen pattern lives in `view/chat/question/screens.rs`.
 
 **Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›

@@ -779,6 +779,60 @@ fn a_cli_menu_is_answered_from_its_card_and_keeps_the_drawer_closed() {
     assert_eq!(f.chat().question.error, Some(CHANGED));
 }
 
+/// A settings menu whose rows toggle and stay open (its look to confirm in a live session).
+fn toggles(highlight: usize, verbose: bool) -> String {
+    let state = |on: bool| if on { "✔ on" } else { "off" };
+    let choices = [format!("Verbose output  {}", state(verbose)), format!("Auto-compact  {}", state(true))];
+    let mut rows = vec!["\x1b[2J\x1b[H Settings".to_owned(), String::new()];
+    for (i, choice) in choices.iter().enumerate() {
+        let mark = if i == highlight { "❯" } else { " " };
+        rows.push(format!(" {mark} {}. {choice}", i + 1));
+    }
+    rows.push(String::new());
+    rows.push(" Enter to toggle · Esc to close".to_owned());
+    rows.join("\r\n")
+}
+
+#[test]
+fn a_toggle_that_keeps_its_menu_open_is_done_once_its_row_changed() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen(&toggles(0, false), now);
+    f.sync();
+    assert!(f.chat().question.menu.is_some());
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.screen(&toggles(0, true), now);
+    assert!(advance(f.tab(), now, true));
+    assert!(f.chat().question.step.is_none());
+    assert_eq!(f.chat().question.error, None);
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+    f.sync();
+    assert!(f.chat().question.menu.as_ref().unwrap().choices[0].ends_with("✔ on"), "the card shows the new state");
+
+    // Nothing changed by the deadline: that is still a failure.
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    f.writes();
+    f.screen(&toggles(0, true), now);
+    advance(f.tab(), now + RESULT, true);
+    assert_eq!(f.chat().question.error, Some(NOT_CLOSED));
+}
+
+#[test]
+fn a_ctrl_b_in_a_hidden_tab_still_ends() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&running(true), now);
+    f.sync();
+    assert!(press(f.tab(), now, Hit::Background));
+    assert!(f.chat().waiting().is_some(), "chat work, so a hidden tab progresses too");
+    let id = f.tab;
+    assert!(f.app.tabs.activate(crate::tabs::SESSIONS));
+    f.app.progress_chat_tabs(now + STEP, true);
+    let chat = &f.app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
+    assert!(chat.question.background_step.is_none());
+}
+
 #[test]
 fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
     let mut f = Fixture::idle();
@@ -819,7 +873,9 @@ fn run_in_background_is_offered_only_with_the_clis_hint_and_waits_for_it_to_go()
     assert_eq!(f.chat().question.background.as_ref().map(|b| b.1.as_str()), Some("npm test"));
     assert!(press(f.tab(), now, Hit::Background));
     assert_eq!(f.writes(), [CTRL_B.to_vec()]);
-    assert!(!press(f.tab(), now, Hit::Background), "one at a time");
+    press(f.tab(), now, Hit::Background);
+    assert!(f.writes().is_empty(), "one at a time");
+    assert_eq!(f.chat().question.error, Some(WAITING));
     advance(f.tab(), now, true);
     assert!(f.chat().question.background_step.is_some(), "the same screen proves nothing");
     f.screen(&running(false), now);

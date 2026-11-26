@@ -100,6 +100,9 @@ impl Chat {
             Some("Waiting for Claude Code to show the message on its input line…")
         } else if self.image_wait.is_some() {
             Some("Waiting for Claude Code to confirm the picture…")
+        } else if self.mode_step.is_some() {
+            // Part of the chat's work, so it also ends in a hidden tab.
+            Some("Waiting for Claude Code to change the permission mode…")
         } else {
             self.question_notice()
         }

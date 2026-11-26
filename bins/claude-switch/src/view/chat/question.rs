@@ -329,6 +329,8 @@ pub(super) struct Card {
     /// Text a "Chat about this" or "No, and tell Claude" answer left for the composer, until it
     /// lands there (once the composer is empty).
     pub(super) held: Option<String>,
+    /// The notice a click got because other keys were on their way: it goes when they have.
+    busy: Option<&'static str>,
 }
 
 impl Card {
@@ -513,6 +515,13 @@ impl Chat {
         self.land_held();
     }
 
+    /// Drops a click's "other keys are on their way" notice once they have gone.
+    fn clear_busy(&mut self) -> bool {
+        let Some(busy) = self.question.busy.filter(|_| !self.locked()) else { return false };
+        self.question.busy = None;
+        self.question.error.take_if(|error| *error == busy).is_some()
+    }
+
     /// Puts the held text in the composer once it is empty and nothing is being sent.
     fn land_held(&mut self) -> bool {
         if self.question.held.is_none() || !self.editor.text.trim().is_empty() || self.locked() {
@@ -573,11 +582,11 @@ impl Chat {
         }
         self.question.shown = shown;
         changed |= std::mem::replace(&mut self.question.answerable, answerable) != answerable;
-        changed | self.land_held()
+        changed | self.clear_busy() | self.land_held()
     }
 
     pub(super) fn question_notice(&self) -> Option<&'static str> {
-        self.question.step.is_some().then_some(WAITING)
+        (self.question.step.is_some() || self.question.background_step.is_some()).then_some(WAITING)
     }
 
     /// The composer's notice while a card's text waits for it.
@@ -609,9 +618,12 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             return true;
         }
         _ if chat.question.step.is_some() => return false,
-        // A message on its way to the terminal: its keys and the card's must not mix.
+        // Keys on their way to the terminal (a message, a mode change, Ctrl+B): the card's must not
+        // mix with them.
         _ if chat.waiting().is_some() || chat.enter_only() => {
-            chat.question.error = Some(SENDING);
+            let busy = chat.waiting().filter(|_| !chat.enter_only()).unwrap_or(SENDING);
+            chat.question.error = Some(busy);
+            chat.question.busy = Some(busy);
             return true;
         }
         // A queued draft waits for the turn to end, which waits for this answer: the answer goes
@@ -854,6 +866,7 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_mut().expect("Chat pane");
     let changed = pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen) | advance_background(tab, now);
     let pane = tab.pane.as_mut().expect("Chat pane");
+    let changed = changed | pane.chat.clear_busy();
     let Some(mut step) = pane.chat.question.step.clone() else { return changed };
     if step.item.is_some() && pending(&pane.model).map(|p| p.item) != step.item {
         // The transcript resolved or replaced the call; `sync_question` cleared the step.
