@@ -1,7 +1,7 @@
 use mdshared_ui::gfx::mix;
 use mdshared_ui::tokens::legible;
 
-use super::rows::{CHIP_H, TOOL_H, chip_rect};
+use super::rows::{CHIP_H, TOOL_H, Thumb, chip_rect, chips_height, thumb_rect, thumbs_height};
 use super::*;
 
 impl Ui {
@@ -132,9 +132,15 @@ impl Ui {
                         if intersection(r, body).is_some() {
                             let hot = frame_hit(r, Action::Output(output.clone()));
                             p.frame(r, 5.0, if hot { pal.hover } else { pal.bar }, pal.line);
-                            let label = format!("{} · {}", output.kind(), output.title);
-                            p.text(Face::Semibold, 11.0, r.x + 7.0, r.cy(), &label, pal.text, (r.w - 14.0).max(0.0));
+                            let embed = output.embed();
+                            p.icon(embed.icon(), 13.0, r.x + 13.0, r.cy(), pal.muted);
+                            let label = output.chip();
+                            p.text(Face::Semibold, 11.0, r.x + 25.0, r.cy(), &label, pal.text, (r.w - 32.0).max(0.0));
                         }
+                    }
+                    let top = y + chips_height(row);
+                    for (r, action) in paint_thumbs(p, pal, m, &row.pictures, body.x + geo.x, top, geo.w, body) {
+                        frame_hit(r, action);
                     }
                     continue;
                 }
@@ -158,23 +164,10 @@ impl Ui {
                 text.draw(p, Rect::new(tx, py, geo.tw, text.height()), body, range, pal);
                 py += text.height();
             }
-            for &(id, i) in &row.pictures {
-                let w = geo.tw.clamp(1.0, 240.0);
-                let frame = Rect::new(tx, py + 4.0, w, PIC - 8.0);
-                py += PIC;
-                if intersection(frame, body).is_none() {
-                    continue;
-                }
-                frame_hit(frame, Action::Picture(id, i));
-                p.rbox(frame, 5.0, pal.field);
-                if let Some(image) = m.picture(id, i, false) {
-                    paint_image(p, &image, frame, 4.0, false);
-                } else {
-                    let hint =
-                        if m.picture_failed(id, i, false) { "Preview unavailable" } else { "Loading preview…" };
-                    p.text_center(Face::Ui, 12.0, frame, hint, pal.muted);
-                }
+            for (r, action) in paint_thumbs(p, pal, m, &row.pictures, tx, py, geo.tw, body) {
+                frame_hit(r, action);
             }
+            py += thumbs_height(geo.tw, row.pictures.len());
             if row.style == Style::Tool
                 && let Some(id) = &row.agent
             {
@@ -186,6 +179,58 @@ impl Ui {
         }
         p.restore(clip);
     }
+}
+
+/// Pictures as thumbnails from `(x, y)` in `width`: each keeps its aspect within its slot, framed
+/// at its own size once decoded, with its caption under it; a picture that cannot be shown keeps
+/// the slot and says why. Returns the click targets.
+#[allow(clippy::too_many_arguments)] // drawing call: a place plus the things to draw there
+fn paint_thumbs(
+    p: &mut Painter,
+    pal: &Palette,
+    m: &mut Model,
+    thumbs: &[Thumb],
+    x: f32,
+    y: f32,
+    width: f32,
+    body: Rect,
+) -> Vec<(Rect, Action)> {
+    let mut hits = Vec::new();
+    for (n, thumb) in thumbs.iter().enumerate() {
+        let slot = thumb_rect(width, n);
+        let slot = Rect::new(x + slot.x, y + slot.y, slot.w, slot.h);
+        if intersection(Rect::new(slot.x, slot.y, slot.w, slot.h + 24.0), body).is_none() {
+            continue;
+        }
+        let action = Action::Picture(thumb.id, thumb.index);
+        let shown = if let Some(image) = m.picture(thumb.id, thumb.index, false) {
+            let fit = thumb_fit(image.width as f32, image.height as f32, slot, p.scale);
+            p.rbox(fit, 5.0, pal.field);
+            paint_image(p, &image, fit, 5.0, false);
+            hits.push((fit, action));
+            fit
+        } else {
+            p.rbox(slot, 5.0, pal.field);
+            let failed = m.picture_failed(thumb.id, thumb.index, false);
+            p.icon(mdshared_ui::glyph::IMAGE, 20.0, slot.cx(), slot.cy() - 12.0, pal.muted);
+            let hint = failed.unwrap_or("Loading preview…");
+            p.text_center(Face::Ui, 11.5, Rect::new(slot.x, slot.cy() + 2.0, slot.w, 18.0), hint, pal.muted);
+            hits.push((slot, action));
+            slot
+        };
+        // The caption sits under the picture itself, in the slot's room.
+        p.text(Face::Ui, 11.0, slot.x + 2.0, shown.bottom() + 11.0, &thumb.caption, pal.muted, slot.w - 4.0);
+    }
+    hits
+}
+
+/// A decoded picture's frame in its slot: aspect kept, never enlarged past its own pixels.
+fn thumb_fit(w: f32, h: f32, slot: Rect, scale: f32) -> Rect {
+    if w <= 0.0 || h <= 0.0 {
+        return slot;
+    }
+    let k = (slot.w / w).min(slot.h / h).min(1.0 / scale.max(0.01));
+    Rect::new(slot.x, slot.y, (w * k).max(1.0), (h * k).max(1.0))
 }
 
 fn draw_tool_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, status: [u8; 3], ground: [u8; 3], badge: f32) {
@@ -217,4 +262,63 @@ fn draw_tool_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, status: [u
     x += name_w;
     p.text(face, size, x, cy, &row.target, pal.text, (rest - name_w).max(0.0));
     p.text(face, size, end - duration_w, cy, &row.duration, pal.muted, duration_w);
+}
+
+#[cfg(test)]
+mod thumb_tests {
+    use super::super::rows::THUMB_H;
+    use super::*;
+
+    #[test]
+    fn a_thumbnail_keeps_its_aspect_and_its_long_side_within_the_slot() {
+        let slot = Rect::new(10.0, 20.0, 240.0, THUMB_H);
+        let wide = thumb_fit(1920.0, 1080.0, slot, 1.0);
+        assert_eq!((wide.x, wide.y, wide.w), (10.0, 20.0, 240.0));
+        assert!((wide.h - 135.0).abs() < 0.01);
+        let tall = thumb_fit(1000.0, 2000.0, slot, 1.0);
+        assert_eq!((tall.w, tall.h), (90.0, 180.0));
+        assert_eq!(thumb_fit(40.0, 20.0, slot, 2.0).w, 20.0, "a small picture is not enlarged");
+        assert_eq!(thumb_fit(0.0, 20.0, slot, 1.0), slot);
+    }
+
+    #[test]
+    fn the_demos_pictures_show_as_captioned_thumbnails_that_open_enlarged() {
+        use mdshared_text::Bitmap;
+        use mdshared_ui::gfx::Gfx;
+
+        let demo = crate::demo::Transcript::new().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        let wait = || events.recv_timeout(std::time::Duration::from_secs(3)).expect("transcript worker wake");
+        wait();
+        assert!(model.collect());
+        let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new(1000, 2400));
+        let pal = &mdshared_ui::theme::DARK;
+        let view = Rect::new(0.0, 0.0, 1000.0, 2400.0);
+        let mut ui = Ui::default();
+        ui.set_chat(true);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        let ts = std::time::Instant::now();
+        let mut pictures = Vec::new();
+        for _ in 0..10 {
+            ui.draw(&mut p, pal, view, &mut model, (0.0, 0.0), ts, false);
+            pictures = ui.hits.iter().filter(|(_, a)| matches!(a, Action::Picture(..))).cloned().collect::<Vec<_>>();
+            if !pictures.is_empty() && pictures.iter().all(|(r, _)| r.h < THUMB_H || r.w < 240.0) {
+                break;
+            }
+            let _ = events.recv_timeout(std::time::Duration::from_millis(500));
+            model.collect();
+        }
+        assert!(!pictures.is_empty(), "a picture in the demo is drawn as a thumbnail");
+        for (r, _) in &pictures {
+            assert!(r.w <= 240.0 && r.h <= THUMB_H, "{r:?}");
+        }
+        if let Ok(path) = std::env::var("CS_SHOT") {
+            bmp.write_png(std::path::Path::new(&path)).unwrap();
+        }
+    }
 }

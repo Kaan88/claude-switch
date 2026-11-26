@@ -312,7 +312,13 @@ in answers still open in the browser; transcript attachments still use the pictu
 Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
 picture work run off the window thread; worker results wake the window rather than making it redraw
 every poll. Image bytes are decoded with `mdshared-text`'s existing PNG/JPEG decoder and cached for
-inline previews and an enlarged overlay. Opening a picture in the system viewer explicitly exports
+inline previews and an enlarged overlay. Pictures (pasted ones, those in an expanded tool row, and
+tool-result pictures under the answer, where they were a "Picture" chip before) are thumbnails in a
+fixed 240 × 180 slot so a late decode never moves the conversation; the picture keeps its aspect,
+is never enlarged past its own pixels, and is captioned (the file it read, or the tool and its
+number). A picture that cannot be shown keeps the slot and says why: too large, no longer in the
+transcript, not a supported format, or not decodable. A click opens the enlarged overlay.
+Opening a picture in the system viewer explicitly exports
 a copy to the application's temp folder. No transcript is edited. The demo supplies a synthetic
 session, writes only to temp, and appends a few updates without starting Claude Code.
 
@@ -761,7 +767,12 @@ opening requires a click and uses the default browser. Outputs and conversation 
 same host checks and reject userinfo. Saved files use the same path authorization
 as conversation links; a tool result mentioning an arbitrary filename does not grant access. The
 shared viewer handles bounded Markdown, UTF-8 text and supported images. Cards are deduplicated per
-turn and prefer the answer over a tool result that repeated the same link. Both Chat and Session
+turn and prefer the answer over a tool result that repeated the same link. Every chip and Outputs
+row says what it is with an icon and a plain kind: PDF, document, spreadsheet, presentation,
+Markdown, text file, audio, video, archive or file by extension; link, artifact or pull request
+for web destinations, with the host or `owner/repo #N`, and the folder for a file. Sizes, page
+counts and document previews are not read. The transcript reader knows no attachment blocks other
+than pictures, so nothing else is shown as an attachment. Both Chat and Session
 view share the Shells and Outputs Details rendering.
 
 Context now uses

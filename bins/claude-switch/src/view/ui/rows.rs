@@ -9,7 +9,7 @@ use mdshared_ui::theme::Palette;
 
 use super::super::links::{Files, NamedFile};
 use super::super::model::{Group, Model};
-use super::super::outputs::Output;
+use super::super::outputs::{Destination, Output};
 use super::super::preview::Preview;
 use super::super::text::TextLayout;
 
@@ -37,7 +37,12 @@ pub(super) enum Style {
 
 pub(super) const HEAD: f32 = 31.0;
 pub(super) const TOOL_H: f32 = 25.0;
-pub(super) const PIC: f32 = 104.0;
+/// A thumbnail's slot: a picture keeps its aspect within it, about 240 px on the long side.
+pub(super) const THUMB_W: f32 = 240.0;
+pub(super) const THUMB_H: f32 = 180.0;
+const THUMB_GAP: f32 = 8.0;
+/// One line of thumbnails: the slot, its caption and the gap below.
+pub(super) const PIC: f32 = THUMB_H + 30.0;
 pub(super) const CHIP_H: f32 = 26.0;
 const INSET: f32 = 12.0;
 const TOOL_INDENT: f32 = 15.0;
@@ -75,6 +80,11 @@ impl Geometry {
     }
 }
 
+/// The height of a Files row's chips, nothing when it holds only pictures.
+pub(super) fn chips_height(row: &Row) -> f32 {
+    (row.files.len() + row.outputs.len()).checked_sub(1).map_or(0.0, |last| chip_rect(row.geo, last).bottom())
+}
+
 pub(super) fn chip_rect(geo: Geometry, index: usize) -> Rect {
     let columns = (geo.w / 158.0).floor().max(1.0) as usize;
     let slot = (geo.w / columns as f32).min(178.0);
@@ -86,6 +96,40 @@ pub(super) fn chip_rect(geo: Geometry, index: usize) -> Rect {
     )
 }
 
+/// Thumbnails flow left to right in lines; `width` is the room for them.
+pub(super) fn thumb_rect(width: f32, index: usize) -> Rect {
+    let columns = ((width + THUMB_GAP) / (THUMB_W + THUMB_GAP)).floor().max(1.0) as usize;
+    Rect::new(
+        (index % columns) as f32 * (THUMB_W + THUMB_GAP),
+        4.0 + (index / columns) as f32 * PIC,
+        width.clamp(1.0, THUMB_W),
+        THUMB_H,
+    )
+}
+
+pub(super) fn thumbs_height(width: f32, count: usize) -> f32 {
+    count.checked_sub(1).map_or(0.0, |last| thumb_rect(width, last).y - 4.0 + PIC)
+}
+
+/// The width a line of `count` thumbnails needs, at most `room`.
+fn thumbs_width(room: f32, count: usize) -> f32 {
+    let columns = ((room + THUMB_GAP) / (THUMB_W + THUMB_GAP)).floor().max(1.0);
+    let n = (count as f32).min(columns);
+    if count == 0 { 0.0 } else { (n * (THUMB_W + THUMB_GAP) - THUMB_GAP).min(room) }
+}
+
+/// A picture in the conversation, with its caption.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Thumb {
+    pub id: ItemId,
+    pub index: usize,
+    pub caption: String,
+}
+
+fn thumbs(id: ItemId, count: usize, caption: impl Fn(usize) -> String) -> impl Iterator<Item = Thumb> {
+    (0..count).map(move |index| Thumb { id, index, caption: caption(index) })
+}
+
 pub(super) struct Row {
     pub id: Id,
     pub style: Style,
@@ -95,7 +139,7 @@ pub(super) struct Row {
     pub title: String,
     pub stamp: String,
     pub body: Option<Body>,
-    pub pictures: Vec<(ItemId, usize)>,
+    pub pictures: Vec<Thumb>,
     pub files: Vec<NamedFile>,
     pub outputs: Vec<Output>,
     pub background: bool,
@@ -266,23 +310,21 @@ impl Rows<'_> {
     }
 
     fn put(&mut self, mut row: Row) {
-        let content = row.body.as_ref().map_or(0.0, Body::height) + PIC * row.pictures.len() as f32;
+        let pictures = row.pictures.len();
+        if row.style == Style::Prompt {
+            let room = Geometry::prompt_max(self.width) - 2.0 * INSET;
+            let used = row.body.as_ref().map_or(0.0, Body::used_width).max(thumbs_width(room, pictures));
+            row.geo = Geometry::new(row.style, self.width, (used + 2.0 * INSET + 1.0).max(34.0));
+        }
+        let content = row.body.as_ref().map_or(0.0, Body::height) + thumbs_height(row.geo.tw, pictures);
         let (h, gap) = match row.style {
-            Style::Prompt => {
-                let used = row.body.as_ref().map_or(0.0, Body::used_width).max(if row.pictures.is_empty() {
-                    0.0
-                } else {
-                    240.0
-                });
-                row.geo = Geometry::new(row.style, self.width, (used + 2.0 * INSET + 1.0).max(34.0));
-                (row.geo.ty + content + 8.0, 15.0)
-            }
+            Style::Prompt => (row.geo.ty + content + 8.0, 15.0),
             Style::Answer => (content.max(19.0), 7.0),
             Style::Tool if row.open => {
                 (row.geo.ty + content + 6.0 + if row.agent.is_some() { CHIP_H } else { 0.0 }, 4.0)
             }
             Style::Tool | Style::Group => (TOOL_H, 4.0),
-            Style::Files => (chip_rect(row.geo, row.files.len() + row.outputs.len() - 1).bottom() + 3.0, 12.0),
+            Style::Files => (chips_height(&row) + thumbs_height(row.geo.w, pictures) + 3.0, 12.0),
             Style::Card => (HEAD + content + 12.0, 7.0),
         };
         row.h = h;
@@ -347,7 +389,15 @@ impl Rows<'_> {
                 let outputs = ids.iter().filter_map(|id| cards.remove(id)).flatten().collect::<Vec<_>>();
                 if !outputs.is_empty() {
                     let mut row = self.row(Id::Outputs(*first), Style::Files);
-                    row.outputs = outputs;
+                    // A picture shows as itself, captioned; everything else as a labelled chip.
+                    for output in outputs {
+                        match output.to {
+                            Destination::Picture(id, index) => {
+                                row.pictures.push(Thumb { id, index, caption: output.title });
+                            }
+                            _ => row.outputs.push(output),
+                        }
+                    }
                     self.put(row);
                 }
             }
@@ -368,7 +418,10 @@ impl Rows<'_> {
             ItemKind::Prompt { text, pictures, .. } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
                 row.body = (!text.is_empty()).then(|| self.shape(&row.id, text, row.geo.tw, BodyKind::Plain, files));
-                row.pictures.extend((0..pictures.len()).map(|i| (id, i)));
+                let count = pictures.len();
+                row.pictures.extend(thumbs(id, count, move |i| {
+                    if count > 1 { format!("Pasted picture {}", i + 1) } else { "Pasted picture".into() }
+                }));
                 row
             }
             ItemKind::Assistant { markdown } => {
@@ -407,7 +460,11 @@ impl Rows<'_> {
                     let (detail, kind) = tool_detail(card.as_ref(), target);
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
                     row.agent.clone_from(subagent);
-                    row.pictures.extend((0..pictures.len()).map(|i| (id, i)));
+                    let count = pictures.len();
+                    let title = row.title.clone();
+                    row.pictures.extend(thumbs(id, count, move |i| {
+                        if count > 1 { format!("{title} · picture {}", i + 1) } else { format!("{title} · picture") }
+                    }));
                 }
                 row
             }

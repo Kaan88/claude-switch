@@ -2,7 +2,7 @@
 //! until `generation` changes. Agents and tasks always describe the root.
 mod file_refs;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -192,7 +192,8 @@ pub struct Model {
     polling: Arc<AtomicBool>,
     cache: MemoryCache<Key>,
     requested: HashSet<Key>,
-    failed: HashSet<Key>,
+    /// Pictures that could not be shown, with the reason said under them.
+    failed: HashMap<Key, &'static str>,
 }
 
 impl Model {
@@ -327,7 +328,7 @@ impl Model {
                         if changed_pictures {
                             self.cache.remove_where(|k| k.offset == id.offset && k.block == id.block);
                             self.requested.retain(|k| k.offset != id.offset || k.block != id.block);
-                            self.failed.retain(|k| k.offset != id.offset || k.block != id.block);
+                            self.failed.retain(|k, _| k.offset != id.offset || k.block != id.block);
                         }
                     }
                     if regroup {
@@ -353,8 +354,8 @@ impl Model {
                     self.requested.remove(&key);
                     match result {
                         Ok(image) => self.cache.insert(key, image),
-                        Err(_) => {
-                            self.failed.insert(key);
+                        Err(error) => {
+                            self.failed.insert(key, super::pictures::reason(&error));
                         }
                     }
                 }
@@ -392,15 +393,16 @@ impl Model {
     fn reference(&self, id: ItemId, index: usize) -> Option<&Picture> {
         refs(self.items.get(&id)?).get(index)
     }
-    pub fn picture_failed(&self, id: ItemId, index: usize, large: bool) -> bool {
-        self.failed.contains(&Key::new(id, index, large))
+    /// Why a picture cannot be shown, once its decode failed.
+    pub fn picture_failed(&self, id: ItemId, index: usize, large: bool) -> Option<&'static str> {
+        self.failed.get(&Key::new(id, index, large)).copied()
     }
     pub fn picture(&mut self, id: ItemId, index: usize, large: bool) -> Option<Arc<Image>> {
         let key = Key::new(id, index, large);
         if let Some(image) = self.cache.get(&key) {
             return Some(image);
         }
-        if !self.requested.contains(&key) && !self.failed.contains(&key) {
+        if !self.requested.contains(&key) && !self.failed.contains_key(&key) {
             let pic = self.reference(id, index)?.clone();
             self.requested.insert(key);
             let _ = self.tx.send(Command::Picture(self.generation, key, pic));

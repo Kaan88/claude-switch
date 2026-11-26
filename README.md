@@ -274,7 +274,8 @@ eight lines; toggle **Following** to freeze the tail or choose **Full output** f
 Background MCP tasks are listed below the shells with their status and running time; click one
 for its result. Their last step is not shown: Claude Code does not save it.
 **Outputs** collects HTTP(S) links, artifacts, pull requests, and saved files and pictures. The
-conversation also shows output cards. Links open in the default browser; local previews open in
+conversation also shows output cards, each with an icon and its kind (PDF, document, link,
+pull request and so on); pictures show as thumbnails you can click to enlarge. Links open in the default browser; local previews open in
 the viewer. Both tabs are also available in **Session view**.
 
 | Shortcut in a session tab | Action |

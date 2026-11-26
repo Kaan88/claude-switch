@@ -20,7 +20,7 @@ use super::model::{Follow, Group, Model};
 use super::outputs::{Destination, Output};
 use super::working::{Footer, Turn};
 pub use markdown::Panel;
-use rows::{HEAD, Id, PIC, Row, Rows, Style, Tone};
+use rows::{HEAD, Id, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -450,11 +450,7 @@ impl Ui {
         if let Some(image) = &overlay.image {
             paint_image(p, image, frame, 4.0, true);
         } else {
-            let hint = if m.picture_failed(overlay.id, overlay.index, true) {
-                "This picture could not be decoded."
-            } else {
-                "Loading picture…"
-            };
+            let hint = m.picture_failed(overlay.id, overlay.index, true).unwrap_or("Loading picture…");
             p.text_center(Face::Ui, 14.0, frame, m.error.as_deref().unwrap_or(hint), pal.muted);
         }
         let y = bounds.bottom() - 41.0;

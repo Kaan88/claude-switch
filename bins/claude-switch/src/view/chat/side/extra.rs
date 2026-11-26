@@ -63,12 +63,7 @@ impl Details {
     pub(super) fn extra_lines(&self, out: &mut Lines, p: &mut Painter, f: &Frame<'_>, width: f32) {
         if f.side == Side::Outputs {
             for (i, output) in f.model.output_list.iter().enumerate() {
-                let meta = if output.time.is_empty() {
-                    output.kind().into()
-                } else {
-                    format!("{} · {}", output.kind(), output.time)
-                };
-                out.push(37.0, Line::Output(i, output.title.clone(), meta));
+                out.push(37.0, Line::Output(i, output.title.clone(), output.meta()));
             }
             return;
         }

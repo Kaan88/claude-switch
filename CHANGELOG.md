@@ -15,6 +15,10 @@
   and result (the last step is not saved by Claude Code, so it is not shown). Every row's name now
   opens its work: a task its plan update, an agent its transcript, a shell its output.
 - Chat: the working line no longer jumps sideways as its spinner animates or its counters tick.
+- Chat: pictures, including screenshots and other tool-result pictures, show as captioned thumbnails
+  (click to enlarge) instead of a "Picture" bar; a picture that cannot be shown says why. Other
+  outputs say what they are with an icon and a kind (PDF, document, link, pull request with its
+  repository and number, …), in the conversation and in Details › Outputs.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

@@ -219,8 +219,13 @@ impl Details {
                     let r = r.inset(2.0);
                     let hot = button(r, *index, Part::Open);
                     p.frame(r, 5.0, if hot { pal.hover } else { pal.bar }, pal.line);
-                    p.text(Face::Semibold, 11.5, r.x + 7.0, r.y + 10.0, title, pal.text, r.w - 14.0);
-                    p.text(Face::Ui, 10.5, r.x + 7.0, r.y + 25.0, meta, pal.muted, r.w - 14.0);
+                    let icon = f.model.output_list.get(*index).map(|o| o.embed().icon());
+                    if let Some(icon) = icon {
+                        p.icon(icon, 14.0, r.x + 14.0, r.cy(), pal.muted);
+                    }
+                    let tx = r.x + if icon.is_some() { 28.0 } else { 7.0 };
+                    p.text(Face::Semibold, 11.5, tx, r.y + 10.0, title, pal.text, r.right() - tx - 7.0);
+                    p.text(Face::Ui, 10.5, tx, r.y + 25.0, meta, pal.muted, r.right() - tx - 7.0);
                 }
             }
         }
