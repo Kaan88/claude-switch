@@ -474,3 +474,26 @@ fn a_plan_is_approved_from_the_card_only_while_its_menu_shows() {
     advance(f2.tab(), now + RESULT, true);
     assert_eq!(f2.chat().editor.text, "Add error recovery first");
 }
+
+#[test]
+fn a_typed_row_that_loses_its_number_never_panics_and_stops_before_enter() {
+    let mut f = Fixture::new(vec![question(false)]);
+    let now = Instant::now();
+    f.screen(&menu(0, None), now);
+    f.chat().question.field.set_text("Both of us");
+    press(f.tab(), now, Hit::Answer);
+    assert_eq!(f.writes(), [down(2)]);
+    f.screen(&menu(2, None), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"Both of us".to_vec()]);
+    // The typed row is drawn without its number and there is no "Chat about this": the menu has
+    // only the two options, fewer entries than the typed row's index.
+    let screen = "\x1b[2J\x1b[H\x1b[?2004h ☐ Who builds\r\n\r\nWho builds the parser?\r\n\r\n  1. Me\r\n     I write it\r\n  \
+                  2. You\r\n     Claude writes it\r\n❯ Both of us\r\n\r\nEnter to select · ↑/↓ to navigate · Esc to cancel";
+    f.screen(screen, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty(), "no Enter");
+    assert_eq!(f.chat().question.error, Some(NOT_TYPED));
+}

@@ -92,8 +92,10 @@ impl Menu {
 
     /// Non-empty rows above the first entry, nearest last, without box rules.
     pub fn above(&self, rows: usize) -> Vec<&str> {
-        let first = self.entries[0].row;
-        self.lines[first.saturating_sub(rows)..first]
+        let first = self.entries.first().map_or(0, |e| e.row);
+        self.lines
+            .get(first.saturating_sub(rows)..first)
+            .unwrap_or_default()
             .iter()
             .map(String::as_str)
             .filter(|text| !text.is_empty() && !rule(text))
@@ -101,8 +103,15 @@ impl Menu {
     }
 
     /// Rows from entry `i` to the footer, joined.
-    pub fn rows_from(&self, i: usize) -> String {
-        collapse(&self.lines[self.entries[i].row..self.footer].join(" "))
+    /// `None` for an entry the menu does not have: never an index out of bounds.
+    pub fn rows_from(&self, i: usize) -> Option<String> {
+        let rows = self.lines.get(self.entries.get(i)?.row..self.footer)?;
+        Some(collapse(&rows.join(" ")))
+    }
+
+    /// The footer row, lower case.
+    pub fn footer_text(&self) -> String {
+        self.lines.get(self.footer).map(|s| s.to_lowercase()).unwrap_or_default()
     }
 }
 

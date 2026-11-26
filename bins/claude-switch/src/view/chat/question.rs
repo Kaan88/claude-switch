@@ -322,7 +322,7 @@ fn tool_prompt(kind: &ItemKind, alone: bool, screen: &Screen) -> Option<Shown> {
     if is_plan(kind) {
         // Only the plan's own menu: the plan itself is in the conversation, from the transcript.
         let menu = screens::plan(screen)?;
-        let amend = menu.lines[menu.footer].to_lowercase().contains(screens::AMEND);
+        let amend = menu.footer_text().contains(screens::AMEND);
         return Some(Shown {
             matched: alone,
             question: screens::PLAN_ASKS.to_owned(),
@@ -335,7 +335,7 @@ fn tool_prompt(kind: &ItemKind, alone: bool, screen: &Screen) -> Option<Shown> {
     let prompt = screens::permission(screen)?;
     let needles = needles(kind);
     let deny = prompt.menu.entries.iter().rposition(|e| e.text.starts_with("No"));
-    let amend = prompt.menu.lines[prompt.menu.footer].to_lowercase().contains(screens::AMEND);
+    let amend = prompt.menu.footer_text().contains(screens::AMEND);
     Some(Shown {
         matched: alone && names(&prompt, &needles),
         question: prompt.question,
@@ -426,8 +426,8 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     }
     let Some(Pending { item, kind, alone }) = pending(&pane.model) else { return false };
     let subject = match kind {
-        Kind::Question(questions) => match questions.filter(|q| answerable(q)) {
-            Some(q) => Subject::Question(q[0].clone()),
+        Kind::Question(questions) => match questions.filter(|q| answerable(q)).and_then(<[Question]>::first) {
+            Some(q) => Subject::Question(q.clone()),
             None => {
                 pane.chat.question_failed(TERMINAL_ONLY);
                 return true;
@@ -604,7 +604,8 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
         Stage::Typing => {
             let text = typed_text.unwrap_or_default();
             let typed = read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
-                menu.highlight() == Some(step.target) && menu.rows_from(step.target).contains(text)
+                menu.highlight() == Some(step.target)
+                    && menu.rows_from(step.target).is_some_and(|rows| rows.contains(text))
             });
             if typed && may_act {
                 Action::Enter
@@ -690,7 +691,7 @@ fn tool_title(kind: &ItemKind) -> String {
 pub(super) fn place(chat: &mut Chat, model: &Model) {
     let wanted = match pending(model).map(|p| p.kind) {
         Some(Kind::Question(questions)) => {
-            let options = questions.map_or(0, |q| q[0].options.len());
+            let options = questions.and_then(<[Question]>::first).map_or(0, |q| q.options.len());
             Some(HEADER + QUESTION + options as f32 * (OPTION + 4.0))
         }
         Some(Kind::Tool(kind)) => chat.question.shown.as_ref().map(|s| {
@@ -744,12 +745,11 @@ impl Draw<'_> {
     ) {
         let pal = self.pal;
         let mut y = inner.y;
-        let Some(questions) = questions else {
+        let Some((questions, question)) = questions.and_then(|q| Some((q, q.first()?))) else {
             p.text(Face::Semibold, 12.5, inner.x, y + HEADER / 2.0, "Claude is asking a question", pal.text, inner.w);
             self.footer(p, chat, inner, false, hits);
             return;
         };
-        let question = &questions[0];
         let can_answer = chat.question.answerable.is_some() || chat.question.failed && answerable(questions);
         let more = questions.len().saturating_sub(1);
         let header = match (question.header.is_empty(), more) {
