@@ -250,6 +250,11 @@ impl AppState {
     }
 
     pub fn save_tab_restore(&mut self) -> Result<(), Refusal> {
+        // The saved tabs are the first window's: a second one neither restores nor replaces them,
+        // so they survive whichever window closes last.
+        if self.restore.second_window {
+            return Ok(());
+        }
         let Some(file) = path(&self.source) else { return Ok(()) };
         if self.win_file.restore_tabs == RestoreTabs::Never {
             return claude_switch_core::replace_if_unchanged(
@@ -277,7 +282,11 @@ impl AppState {
 
     pub fn dismiss_tab_restore(&mut self) {
         let baseline = self.restore.baseline.take();
-        self.restore = Restore { baseline, ..Restore::default() };
+        let second_window = self.restore.second_window;
+        self.restore = Restore { baseline, second_window, ..Restore::default() };
+        if second_window {
+            return;
+        }
         if let Some(file) = path(&self.source) {
             match claude_switch_core::replace_if_unchanged(
                 &file,
@@ -606,6 +615,44 @@ mod tests {
         app.apply_scan(crate::demo::scan(&app.config));
         assert!(!app.restore_tabs_if_always(Instant::now()));
         assert!(app.tabs.list.is_empty());
+    }
+
+    #[test]
+    fn a_second_window_never_replaces_the_first_windows_saved_tabs_in_any_close_order() {
+        let root = std::env::temp_dir().join(format!("cs-restore-second-{}", std::process::id()));
+        let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
+        let file = path(&disk).unwrap();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let saved = Entry { id: A.into(), account: "main".into(), cwd: "C:/a".into(), active: true, chat: None };
+        std::fs::write(&file, encode([saved.clone()])).unwrap();
+        let open = |second: bool| {
+            let mut app = AppState::new(Source::Demo, None, Default::default());
+            app.restore.second_window = second;
+            app.restore.load_snapshot(&file).unwrap();
+            app.source = disk.clone();
+            app
+        };
+        // The second window closes first, then again after the first one closed.
+        for never in [false, true] {
+            let mut second = open(true);
+            if never {
+                second.win_file.restore_tabs = RestoreTabs::Never;
+            }
+            second.save_tab_restore().unwrap();
+            second.dismiss_tab_restore();
+            assert!(second.restore.second_window, "dismissing keeps it a second window");
+            second.save_tab_restore().unwrap();
+            assert_eq!(decode(&std::fs::read_to_string(&file).unwrap()), vec![saved.clone()]);
+        }
+        let mut first = open(false);
+        let mut second = open(true);
+        first.restore.save_snapshot(&file, vec![saved.clone(), Entry { id: B.into(), ..saved.clone() }]).unwrap();
+        let written = std::fs::read_to_string(&file).unwrap();
+        second.save_tab_restore().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), written, "the first window's close survives");
+        first.restore.baseline = Some(written);
+        first.save_tab_restore().unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

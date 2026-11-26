@@ -18,6 +18,8 @@
   paths and keeps the 30 most recent; the task list is marked possibly stale.
 - Handover in place: never clears the session when you sent a message after the handover was
   made (it stops and says to make it again), and never clears under a draft in the message box.
+- Saved terminal tabs: a second window no longer replaces the first window's saved tabs with its
+  own when it closes; only the window that restored them saves them.
 - Handover channel: an elevated window refuses requests from lower-integrity processes; the
   window claims the channel before restoring tabs, so two windows starting together never both
   restore them; a client that connects and never writes no longer blocks later requests; the

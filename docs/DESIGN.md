@@ -488,7 +488,11 @@ the name with that owner) and allows identification, not impersonation. The serv
 a client running as the same user at an integrity level no lower than its own, so a normal
 process cannot steer an elevated window; an elevated window also labels the pipe High with
 no-write-up. A client has 5 seconds to write its request, repeated connect errors back off, and a
-window that cannot create the channel says so. It carries one
+window that cannot create the channel says so. Known limit: another local user can create the
+name first (a pipe name is first come). The owner check then stops every client from writing to
+it, so no request leaks, but each window starts as a second window: it restores no tabs and
+handovers sent with `--open` fail. That is a local denial of service only, needs a second local
+account, and is not worked around. It carries one
 request kind only: a versioned list of the same validated words as the window arguments (session
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
 decoded and revalidated by the window, which then continues in place when one of its tabs runs
@@ -747,7 +751,10 @@ snapshot; neither local tab labels nor terminal contents are saved. For a new or
 identity must match the PTY’s live CLI process (or its immediate npm shim child), account and
 folder. Ambiguous or unavailable identities are not guessed. Ask is the default; Always
 starts the batch after the first scan, Never clears the snapshot. The pending offer survives
-an exit with no replacement tabs. Restoration uses the normal resume warning, process scan
+an exit with no replacement tabs. Only the window holding the handover channel restores and saves
+the snapshot; a second window started meanwhile neither restores it nor writes it on exit (its
+tabs are not saved), so the first window's tabs survive whichever window closes first.
+Restoration uses the normal resume warning, process scan
 and launch reservation, always targets embedded tabs, ignores a stale saved folder in favor of
 the indexed one, and reports skipped entries together.
 
