@@ -416,3 +416,12 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     that tab), the live record names the new ID for the same process: follow it automatically and
     attach the new transcript (linked to the old one), and keep the refusal only for a change Switch
     cannot explain. Related to item 24.
+24. **The default agent in Settings › Handover accepts any name** (owner, 2026-11-26). The owner set
+    it to `deepseek-flash` meaning the model that writes the handover; the new chat then failed with
+    `--agent 'deepseek-flash' not found. Available agents: claude, claude-code-guide, Explore, …`.
+    Two settings read alike: the agent the new Claude Code chat starts as, and the OpenCode model
+    that writes the summary (`model` in config, here `deepseek/deepseek-flash`). Make the default agent
+    a list of the agents the target account really has (as the dialog's picker), with "None (plain
+    Claude)" first; label the two rows plainly ("New chat starts as" / "Summary written by"); a saved
+    name that no longer exists is shown as missing and not passed, with a notice, rather than failing
+    the launch.
