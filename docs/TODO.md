@@ -471,3 +471,13 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     with two writers: under the existing lock, re-read the file and apply only this process's own changes (per
     session and field) onto it, refusing only a true conflict (both changed the same field) with a plain message; never
     ask for a restart. Same check for settings (`config.rs`: "Settings changed on disk").
+42. **Answer permission prompts in the Chat view** (owner, 2026-11-27, decided: "give that up, otherwise all I see is
+    that chat has stopped. convenience trumps"). This replaces DESIGN.md's rule that permission prompts are answered
+    only in the terminal. Wanted: when the CLI asks to allow a tool (edit, bash, MCP, web fetch, plan approval and
+    the like), the Chat view shows a card with the tool call from the transcript (command, file and diff, MCP tool
+    and arguments) and the exact choices the CLI offers (Yes / Yes and don't ask again for ... / No, with the text
+    field for telling Claude what to do instead), and the working line says "Waiting for your approval" instead of
+    Working. Safety kept where it costs nothing: the card's choices come from the screen's own menu; a click sends
+    keys only while the screen shows that same prompt for that same tool call (fail closed and say why, never a
+    blind keystroke); the app never answers by itself, and nothing is pre-selected. Built on item 38's question
+    card. Update DESIGN.md's rule with the owner's reason.
