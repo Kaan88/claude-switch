@@ -349,9 +349,13 @@ interactive CLI documents no stdin/file argument for a first prompt, so short te
 argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file. The app uses the
 new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
 
-The editor's **Agent** picker is CLI-only. **Default (Claude)** is first and adds no CLI
-override; a selected custom agent adds `--agent <name>` before the first-prompt separator.
-Changing the target account resets the choice. Discovery runs read-only from that account's
+The editor's **Agent** picker is CLI-only. **Settings → Handovers → Default CLI agent** edits
+`compact.defaultAgent` under the handover settings lock without changing provider consent or
+the model. Blank is the default and means no switch-level override. **Default (Claude)** is the
+first entry and always adds no flag. A configured name is preselected, including when the
+catalog cannot find it; the catalog is a suggestion list, not proof of CLI availability.
+Changing the target account resets to the configured default. A selected custom agent adds
+`--agent <name>` before the first-prompt separator. Discovery runs read-only from that account's
 `agents/` and the launch project's `.claude/agents/`; project definitions take precedence.
 The reader keeps bounded frontmatter names and descriptions, not agent prompts. It also offers
 agents in standard `agents/` directories of unambiguous, explicitly enabled version-2 plugin
@@ -364,11 +368,29 @@ The CLI runs headlessly for `--print` (the default) and writes the handover only
 new tab because the app has no single-instance request channel. On Windows, the new window is
 ShellExecuted through a fixed non-interactive PowerShell bootstrap so it cannot keep the caller's
 output pipes open; only the executable path and validated identifiers reach the bootstrap.
+`compact --open --agent <name>` overrides the Settings default. An explicit name is rejected
+with `--print`. The resolved optional name is passed to the new Switch window as a separate
+word and revalidated there, then passed to Claude Code before `--`. The CLI, picker, and settings
+use the same rule: 1–128 ASCII characters, colon-separated segments starting with a letter or
+digit and continuing with letters, digits, hyphens or underscores. If no name is resolved, the
+launch is unchanged. The plugin's first-word `agent:<name>` uses the same rule; it passes focus
+via a newly created UTF-8 temp file, never by interpolating arguments into shell code.
 `--open` waits up to 30 seconds for the new window to acknowledge creating the tab. On timeout
 the outcome is unknown: check for the tab before retrying. Tab creation is not
 confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
 1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no
 handover request and launches no Claude process.
+
+Setup's optional **Add Claude Switch to PATH** task is checked by default. It appends the install
+folder to `HKCU\Environment\Path` without changing the existing value type or claiming an
+equivalent pre-existing entry. It records its own additions separately. Uninstall removes only
+an unambiguous exact match for a recorded addition and preserves other entries and edits. A
+previously missing value is removed again if Setup's entry is still the only one. Both paths
+broadcast `WM_SETTINGCHANGE` after a change; already-open shells keep their inherited environment.
+Setup checks for intervening edits before writing; Windows does not provide an atomic
+compare-and-swap for this value. An interruption after append but before recording ownership can
+leave an untracked entry rather than let uninstall claim an entry it cannot prove it added.
+The plugin retains its fallback to the default per-user installation.
 
 ## Pictures into the CLI
 

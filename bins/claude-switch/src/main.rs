@@ -106,10 +106,16 @@ fn main() {
             }
             "--demo-workers" => demo_workers = true,
             "--demo-offscreen" => demo_offscreen = true,
-            "--compact-open-window" => {
-                handoff = compact_cli::window_args(&mut args);
-                handoff_ack = args.next();
-            }
+            "--compact-open-window" => match compact_cli::window_args(&mut args) {
+                Ok((request, ack)) => {
+                    handoff = Some(request);
+                    handoff_ack = Some(ack);
+                }
+                Err(error) => {
+                    eprintln!("claude-switch compact: {error}");
+                    std::process::exit(2);
+                }
+            },
             "--usage-shape" => {
                 if args.next_if(|s| s == "--labels").is_some() {
                     usage_labels = true;

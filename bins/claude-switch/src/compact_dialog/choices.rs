@@ -1,6 +1,43 @@
 use super::*;
 
 impl Compact {
+    pub(super) fn reset_agents(&mut self) {
+        self.agents.clear();
+        self.agents_loaded = false;
+        self.agent = usize::from(self.default_agent.is_some());
+        self.agent_focus = self.agent;
+        self.add_settings_agent();
+    }
+
+    fn add_settings_agent(&mut self) {
+        if let Some(name) = &self.default_agent
+            && !self.agents.iter().any(|agent| agent.name == *name)
+        {
+            // The setting names a CLI agent explicitly. Discovery is only a catalog, not proof
+            // that an agent is or isn't available to Claude (e.g. managed definitions).
+            self.agents.insert(
+                0,
+                agents::Agent { name: name.clone(), description: "From Settings; not found in the local list".into() },
+            );
+        }
+    }
+
+    pub(super) fn apply_agents(&mut self, agents: Vec<agents::Agent>) {
+        let name_at = |i: usize| self.agents.get(i.checked_sub(1)?).map(|a| a.name.clone());
+        let (chosen, focus) = (name_at(self.agent), name_at(self.agent_focus));
+        self.agents = agents;
+        self.add_settings_agent();
+        let index = |name: Option<String>| {
+            name.and_then(|name| self.agents.iter().position(|agent| agent.name == name)).map_or(0, |i| i + 1)
+        };
+        self.agent = index(chosen);
+        self.agent_focus = index(focus);
+        self.agents_loaded = true;
+        if self.choice == Some(Choice::Agent) {
+            self.scroll = self.agent_focus.min(self.count().saturating_sub(PAGE));
+        }
+    }
+
     pub(super) fn agent_name(&self) -> Option<&str> {
         self.agent.checked_sub(1).and_then(|i| self.agents.get(i)).map(|a| a.name.as_str())
     }
@@ -24,14 +61,14 @@ impl Compact {
             return;
         }
         self.choice = Some(choice);
+        if choice == Choice::Agent {
+            self.agent_focus = self.agent;
+            self.load_agents(st);
+        }
         self.scroll = match choice {
             Choice::Model => self.model,
             Choice::Account => self.account,
-            Choice::Agent => {
-                self.agent_focus = self.agent;
-                self.load_agents(st);
-                self.agent
-            }
+            Choice::Agent => self.agent,
         }
         .min(self.count().saturating_sub(PAGE));
     }
@@ -42,11 +79,10 @@ impl Compact {
         }
         let Some((slug, _)) = self.accounts.get(self.account) else { return };
         let Source::Real(roots) = &st.source else {
-            self.agents = vec![agents::Agent {
+            self.apply_agents(vec![agents::Agent {
                 name: format!("{slug}-reviewer"),
                 description: "Synthetic demo agent that reviews changes.".into(),
-            }];
-            self.agents_loaded = true;
+            }]);
             return;
         };
         let Ok(target) = claude_switch_core::account(&st.config, slug).cloned() else { return };
@@ -82,10 +118,7 @@ impl Compact {
             }
             Some(Choice::Account) if i < self.accounts.len() && self.account != i => {
                 self.account = i;
-                self.agents.clear();
-                self.agents_loaded = false;
-                self.agent = 0;
-                self.agent_focus = 0;
+                self.reset_agents();
             }
             Some(Choice::Agent) if i <= self.agents.len() => self.agent = i,
             _ => {}

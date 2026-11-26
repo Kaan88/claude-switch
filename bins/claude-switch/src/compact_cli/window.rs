@@ -2,7 +2,8 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-fn words(id: &str, account: &str, file: &str) -> Result<String, String> {
+pub(super) fn words(id: &str, account: &str, file: &str, agent: Option<&str>) -> Result<String, String> {
+    claude_switch_core::launch::validate_session_id(id).map_err(|e| e.to_string())?;
     let word = |s: &str| {
         !s.is_empty()
             && s.len() <= 160
@@ -12,16 +13,27 @@ fn words(id: &str, account: &str, file: &str) -> Result<String, String> {
     if ![id, account, file].into_iter().all(word) {
         return Err("Invalid handover window arguments.".into());
     }
+    if let Some(agent) = agent {
+        claude_switch_core::launch::session_agent_args(agent).map_err(|e| e.to_string())?;
+    }
     Ok(format!("--compact-open-window {id} {account} {file}"))
 }
 
-pub(super) fn spawn(exe: &Path, id: &str, account: &str, file: &str) -> Result<(), String> {
+fn arguments(id: &str, account: &str, file: &str, ack: &str, agent: Option<&str>) -> Result<String, String> {
+    let words = words(id, account, file, agent)?;
+    Ok(match agent {
+        Some(name) => format!("{words} {ack} {name}"),
+        None => format!("{words} {ack}"),
+    })
+}
+
+pub(super) fn spawn(exe: &Path, id: &str, account: &str, file: &str, agent: Option<&str>) -> Result<(), String> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
     let key = format!("cs-handover-{}-{}", std::process::id(), now.as_nanos());
+    let arguments = arguments(id, account, file, &key, agent)?;
     let dir = ack_dir(&key).ok_or("Invalid handover acknowledgement")?;
     std::fs::create_dir(&dir).map_err(|_| "Could not create a handover acknowledgement directory.")?;
     let result = (|| {
-        let arguments = format!("{} {key}", words(id, account, file)?);
         let until = Instant::now() + Duration::from_secs(30);
         spawn_window(exe, &arguments, until).map_err(|error| {
             if error.kind() == std::io::ErrorKind::TimedOut {
@@ -58,11 +70,16 @@ fn unknown_outcome() -> String {
     "Timed out waiting for the handover window. The outcome is unknown; check for the tab before retrying.".into()
 }
 
+pub(super) fn valid_ack(key: &str) -> bool {
+    key.strip_prefix("cs-handover-").and_then(|tail| tail.split_once('-')).is_some_and(|(pid, nonce)| {
+        pid.parse::<u32>().is_ok()
+            && nonce.parse::<u128>().is_ok()
+            && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    })
+}
+
 fn ack_dir(key: &str) -> Option<std::path::PathBuf> {
-    let (pid, nonce) = key.strip_prefix("cs-handover-")?.split_once('-')?;
-    pid.parse::<u32>().ok()?;
-    nonce.parse::<u128>().ok()?;
-    (key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).then(|| std::env::temp_dir().join(key))
+    valid_ack(key).then(|| std::env::temp_dir().join(key))
 }
 
 fn ack_result(bytes: &[u8]) -> Result<(), String> {
@@ -159,6 +176,8 @@ fn spawn_window(exe: &Path, arguments: &str, _: Instant) -> std::io::Result<()> 
 mod tests {
     use super::*;
 
+    const ID: &str = "5eed3dde-1c2d-4e5f-8a9b-000000033232";
+
     #[test]
     fn handover_timeout_reports_unknown_and_warns_before_retry() {
         let error = await_ack(Path::new("unused-after-deadline"), Instant::now()).unwrap_err();
@@ -166,13 +185,31 @@ mod tests {
     }
 
     #[test]
-    fn handoff_accepts_only_four_fixed_native_words_and_no_path_syntax() {
-        assert_eq!(
-            words("old-id", "work", "old-id-001.md").unwrap(),
-            "--compact-open-window old-id work old-id-001.md"
-        );
+    fn handoff_round_trips_an_optional_validated_name_without_shell_or_path_syntax() {
+        let ack = "cs-handover-12-34";
+        for agent in [None, Some("plugin:nested:review_2")] {
+            let args = arguments(ID, "work", "handover-001.md", ack, agent).unwrap();
+            let mut words = args.split_ascii_whitespace();
+            assert_eq!(words.next(), Some("--compact-open-window"));
+            assert_eq!(words.clone().count(), if agent.is_some() { 5 } else { 4 });
+            let (request, key) = crate::compact_cli::window_args(words.map(str::to_owned)).unwrap();
+            assert_eq!(request.id, ID);
+            assert_eq!(request.account, "work");
+            assert_eq!(request.file, "handover-001.md");
+            assert_eq!(request.agent.as_deref(), agent);
+            assert_eq!(key, ack);
+        }
         for bad in ["one two", "../other", "a\\b", "a&b", "-option", "with\"quote", "line\nbreak"] {
-            assert!(words("old-id", "work", bad).is_err());
+            assert!(words(ID, "work", bad, None).is_err());
+        }
+        assert!(words(ID, "work", "file.md", Some("plugin:bad&name")).is_err());
+        for input in [
+            format!("{ID} work good.md {ack} --demo"),
+            format!("{ID} work good.md {ack} review extra"),
+            format!("{ID} work good.md ."),
+            format!("not-a-uuid work good.md {ack}"),
+        ] {
+            assert!(crate::compact_cli::window_args(input.split_ascii_whitespace().map(str::to_owned)).is_err());
         }
     }
 

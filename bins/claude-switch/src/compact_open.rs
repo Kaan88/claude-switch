@@ -182,9 +182,9 @@ mod tests {
         let root = fake.with_file_name("test home with spaces");
         let roots = Roots { home: root.clone(), appdata: root };
         let mut previous = None;
-        for (text, from_file) in [
-            ("## Short\n\nText with \"quotes\" and \\slashes.\n😺".to_owned(), false),
-            ("## Long\n\nlong private marker 😺\n".repeat(1000), true),
+        for (text, from_file, agent) in [
+            ("## Short\n\nText with \"quotes\" and \\slashes.\n😺".to_owned(), false, None),
+            ("## Long\n\nlong private marker 😺\n".repeat(1000), true, Some("workshop:nested:reviewer")),
         ] {
             let saved = keep(&roots, "source-id", &text, previous.as_deref()).unwrap();
             assert_ne!(previous.as_ref(), Some(&saved), "edited text needs a new revision");
@@ -193,7 +193,12 @@ mod tests {
             let mut spec = launch::shell(fake.parent().unwrap());
             spec.program = fake.clone();
             spec.args = first_args("fake-id", &text, &saved).unwrap();
-            assert_eq!(spec.args[3] != text, from_file);
+            add_agent(&mut spec.args, agent).unwrap();
+            assert_eq!(spec.args.last().unwrap() != &text, from_file);
+            spec.env_remove.push("FAKE_CLAUDE_AGENT".into());
+            if let Some(agent) = agent {
+                spec.env.insert("FAKE_CLAUDE_AGENT".into(), agent.into());
+            }
             let received = saved.with_extension("fake-result");
             spec.env.insert("FAKE_CLAUDE_OUT".into(), received.to_str().unwrap().into());
             let mut pty = mdshared_pty::Pty::spawn(&crate::term::command(&spec), 100, 30, || {}).unwrap();
