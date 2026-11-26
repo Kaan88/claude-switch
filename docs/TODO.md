@@ -494,3 +494,38 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
       sources the CLI uses, in its order (the `--effort` flag the tab was started with, `CLAUDE_CODE_EFFORT_LEVEL`
       or the like in the tab's environment, `effortLevel` in the account's and project's settings, else the model's
       default, marked as default); check the names in Claude Code's docs. Read-only, never written.
+
+Audit 2026-11-27 (read-only, cc-opus): what still sends the user to the terminal. Owner's rule for all of these: the Chat view must cover everything the CLI does; convenience over the old terminal-only rules (item 42). Each keeps the one safeguard: keys are sent only while the screen shows the matching prompt or menu, the choice is picked by its row text, and anything unexpected fails closed with a reason and an Open terminal button.
+
+Additions to item 42 from the audit: fail closed for two pending tools at once, a background-subagent prompt, or rows
+    that differ from the pending `tool_use` input; keep the dangerous-`rm` 2-minute countdown visible; the Tab comment
+    field; find out whether number keys or arrows+Enter select. `attention.rs` already recognises the prompt layout.
+44. **Plan approval card**: the ExitPlanMode plan from the transcript as Markdown with the CLI's options as buttons,
+    under item 42's gate; an option is offered only when the screen shows it.
+45. **Permission mode chip**: show the mode (footer `⏸ plan mode on`, `⏵⏵ accept edits on`, or a transcript field if
+    one exists); a click sends one Shift+Tab (`CSI Z`) at a verified idle empty prompt, the next only after the
+    indicator changed; unreadable indicator stops.
+46. **Keep line breaks in messages**: today the send turns line feeds and tabs into spaces. Paste with line feeds in
+    the bracketed paste and press Enter only after the input row shows the text or its `[Pasted text #n +N lines]`
+    marker, as the picture send does.
+47. **Command results and shell mode in the conversation**: `<local-command-stdout>` and `<bash-input>`/`<bash-stdout>`
+    records as mono cards under their command (filtered out today, `prompt_clean.rs`); interactive panels get a
+    card; a `!` toggle in the composer once shell mode by paste is verified.
+48. **CLI menus and dialogs as cards**: any menu, picker or startup dialog the CLI shows (the native /model and
+    /effort pickers, /config, /permissions, /mcp, folder trust, the fullscreen offer, settings errors, MCP sign-in
+    and elicitation, the rate-limit menu) is copied from the screen into a card with its rows as buttons, answered
+    under item 42's gate; a menu Switch cannot read shows its rows read-only with Open terminal. Replaces the
+    DESIGN.md rule that menus stay in the drawer.
+49. **Rewind from a prompt bubble**: "Rewind to here…" on user bubbles; Esc Esc at a verified empty prompt, Up until
+    the highlighted row equals the chosen prompt, the action chosen by its row text, every step re-verified; build
+    after 42 and 48 have proven the gate.
+50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
+    blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
+    records (catalogue the subtypes the current CLI writes first).
+51. **TaskCreate/TaskUpdate in the Tasks tab** beside TodoWrite, reusing `handover/native_tasks.rs`.
+52. **Composer conveniences**: `@` file autocomplete over the session folder; Ctrl+R search over earlier prompts; the
+    CLI's grey next-prompt suggestion as a chip that fills the composer (never sends Tab).
+53. **Background controls**: "Run in background" on a running Bash row (Ctrl+B, only while the CLI shows its hint and
+    that tool alone is pending); "Stop agent" through the CLI's agent panel under the same rules.
+54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
+    prompt goes through item 42/48's gate.
