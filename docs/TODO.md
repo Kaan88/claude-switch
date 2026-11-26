@@ -243,3 +243,11 @@ and in the README, not committed, and not copied to the installed clone
     transcript's background Bash calls and the output files their results name (read-only, only files
     the transcript names). Stop asks first and goes through the CLI's own shell manager (the "↓ to
     manage" menu); the app never kills processes itself. Not approved yet.
+    Approved (owner, same day): build F as drawn.
+18. **Artifacts and other outputs reachable from the chat or the Details panel** (owner, 2026-11-26).
+    Things a session produced outside the working folder should be one click away: claude.ai
+    artifact links published in the session (from tool results and Claude's text), pull requests and
+    other http(s) links Claude gave, pictures and files it saved. Proposed: an "Outputs" tab in the
+    Details panel (beside Files) listing them newest first with their kind, title and time, each
+    opening in the browser or the viewer; the same items as link cards under the answer that made
+    them. Links open only as http(s) in the default browser, files under the same rules as item 12.
