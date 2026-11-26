@@ -17,6 +17,8 @@ $ARGUMENTS
 
 Write that text, or an empty string if there were no arguments, into a newly created temporary UTF-8 file. Do not interpolate the text into shell code; use a file-write tool or a data-only literal argument.
 
-Run `claude-switch compact --session <id> --open --focus-file <temp-file>` with that UUID and the temporary file's absolute path as one argument. Omit `--cwd`: Claude Switch finds the exact transcript by ID and uses its recorded working folder. Capture stderr and wait for the process result. Remove only the temporary file you created, even if the command failed.
+Find the program: use `claude-switch` if it is on PATH; otherwise use the installed copy at `%LOCALAPPDATA%\Programs\Claude Switch\claude-switch.exe` (expand `%LOCALAPPDATA%` from the environment; in a POSIX shell that is `$LOCALAPPDATA/Programs/Claude Switch/claude-switch.exe`, quoted). If neither exists, stop and say Claude Switch is not installed.
+
+Run `<program> compact --session <id> --open --focus-file <temp-file>` with that UUID and the temporary file's absolute path as one argument. Omit `--cwd`: Claude Switch finds the exact transcript by ID and uses its recorded working folder. Capture stderr and wait for the process result. Remove only the temporary file you created, even if the command failed.
 
 Report the command's one-line result only. Do not read the transcript, make a separate summary, or retry.
