@@ -7,7 +7,11 @@ use super::*;
 use mdshared_ui::splitter::{Axis, Hold, Splitter};
 
 pub(super) struct Markdown {
-    file: NamedFile,
+    /// The named file shown, or nothing for text the transcript holds (an MCP task's result).
+    file: Option<NamedFile>,
+    title: String,
+    /// The file's full path, or where the text came from.
+    subtitle: String,
     source: Option<io::Result<Document>>,
     text_lines: (usize, Vec<usize>),
     layout: Option<(f32, f32, Palette, Preview)>,
@@ -20,9 +24,22 @@ pub(super) struct Markdown {
 
 impl Markdown {
     pub fn new(file: NamedFile) -> Self {
+        let title = file.path().file_name().and_then(|s| s.to_str()).unwrap_or("File preview").to_owned();
+        let subtitle = file.path().display().to_string();
+        Self::with(Some(file), title, subtitle, None)
+    }
+
+    /// Markdown the transcript holds, shown as it is; nothing is read from disk.
+    pub fn text(title: String, subtitle: String, markdown: String) -> Self {
+        Self::with(None, title, subtitle, Some(Ok(Document::Markdown(markdown))))
+    }
+
+    fn with(file: Option<NamedFile>, title: String, subtitle: String, source: Option<io::Result<Document>>) -> Self {
         Self {
             file,
-            source: None,
+            title,
+            subtitle,
+            source,
             text_lines: (0, Vec::new()),
             layout: None,
             error: None,
@@ -48,7 +65,9 @@ impl Markdown {
     }
 
     pub fn editor(&mut self) {
-        self.error = (!self.file.open(false)).then_some("Could not open the named file in its default app.");
+        if let Some(file) = &self.file {
+            self.error = (!file.open(false)).then_some("Could not open the named file in its default app.");
+        }
     }
 }
 
@@ -175,6 +194,12 @@ fn elide_start(path: &str, max: f32, measure: &mut impl FnMut(&str) -> f32) -> S
 }
 
 impl Ui {
+    /// The viewer's title and subtitle, when it is open.
+    #[cfg(test)]
+    pub(in crate::view) fn viewer(&self) -> Option<(&str, &str)> {
+        self.markdown.as_ref().map(|m| (m.title.as_str(), m.subtitle.as_str()))
+    }
+
     /// The window's panel settings, given to every pane. A divider in hand here keeps its own.
     pub fn set_panel(&mut self, panel: Panel) {
         if !self.panel.split.dragging() {
@@ -235,7 +260,8 @@ impl Ui {
 
     pub(super) fn draw_markdown(&mut self, p: &mut Painter, pal: &Palette, area: Rect, m: &mut Model) {
         let Some(mut pane) = self.markdown.take() else { return };
-        if let Some(result) = m.take_markdown() {
+        // A file read for an earlier pane never replaces text the transcript holds.
+        if let Some(result) = m.take_markdown().filter(|_| pane.file.is_some()) {
             pane.text_lines = (0, Vec::new());
             pane.source = Some(result);
             pane.layout = None;
@@ -244,16 +270,15 @@ impl Ui {
         pane.scroll = None;
         let clip = p.clip(area);
         p.frame(area, 7.0, pal.page, pal.line);
-        let name = pane.file.path().file_name().and_then(|s| s.to_str()).unwrap_or("File preview");
         let close = Rect::new(area.right() - 32.0, area.y + 6.0, 25.0, 25.0);
         let mut end = close.x;
         if let Some(r) = intersection(close, area) {
             self.button(p, pal, r, "×", Action::CloseMarkdown, false);
         }
-        if pane.file.supports_default_app() {
+        if let Some(file) = pane.file.as_ref().filter(|f| f.supports_default_app()) {
             let editor = Rect::new(end - 114.0, close.y, 108.0, close.h);
             if let Some(r) = intersection(editor, area) {
-                let label = if pane.file.picture() { "Open in app" } else { "Open in editor" };
+                let label = if file.picture() { "Open in app" } else { "Open in editor" };
                 self.button(p, pal, r, label, Action::Editor, false);
             }
             end = editor.x;
@@ -268,11 +293,11 @@ impl Ui {
                 end = reading.x;
             }
         }
-        p.text(Face::Semibold, 13.0, area.x + 11.0, close.cy(), name, pal.text, (end - area.x - 18.0).max(0.0));
+        p.text(Face::Semibold, 13.0, area.x + 11.0, close.cy(), &pane.title, pal.text, (end - area.x - 18.0).max(0.0));
         // The second row: where the file is, and the other file a bare name could mean.
         let row = close.bottom() + 11.0;
         let mut path_end = area.right() - 10.0;
-        if let Some(other) = pane.file.other() {
+        if let Some(other) = pane.file.as_ref().and_then(NamedFile::other) {
             let folder = other.path().parent().and_then(|d| d.file_name()).and_then(|s| s.to_str()).unwrap_or("");
             let label = format!("Also in {folder}");
             let w = (p.measure(Face::Semibold, 12.0, &label) + 18.0).ceil().min(area.w * 0.5);
@@ -281,8 +306,7 @@ impl Ui {
             path_end = r.x - 6.0;
         }
         let room = (path_end - area.x - 11.0).max(0.0);
-        let full = pane.file.path().display().to_string();
-        let shown = elide_start(&full, room, &mut |t| p.measure(Face::Ui, 11.5, t));
+        let shown = elide_start(&pane.subtitle, room, &mut |t| p.measure(Face::Ui, 11.5, t));
         p.text(Face::Ui, 11.5, area.x + 11.0, row, &shown, pal.muted, room);
         let top = row + 12.0;
         p.fill(Rect::new(area.x + 1.0, top, (area.w - 2.0).max(0.0), p.px()), pal.line);

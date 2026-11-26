@@ -19,7 +19,7 @@ use super::{
     documents::{self, Document},
     outputs::{self, Output},
 };
-use claude_switch_core::transcript::{BackgroundShell, ShellStatus};
+use claude_switch_core::transcript::{BackgroundShell, McpTask, ShellStatus};
 
 const CHUNK: usize = 256 * 1024;
 
@@ -153,6 +153,7 @@ struct Update {
     files: Vec<(ItemId, Files)>,
     outputs: Vec<(ItemId, Vec<Output>)>,
     shells: Option<Vec<BackgroundShell>>,
+    mcp_tasks: Option<Vec<McpTask>>,
 }
 
 enum Event {
@@ -179,6 +180,7 @@ pub struct Model {
     pub(super) outputs: BTreeMap<ItemId, Vec<Output>>,
     pub(super) output_list: Vec<Output>,
     pub(super) shells: Vec<BackgroundShell>,
+    pub(super) mcp_tasks: Vec<McpTask>,
     shell_logs: ShellLogs,
     pub(super) shell_tails: BTreeMap<ItemId, Option<Vec<String>>>,
     tail_requested: BTreeSet<ItemId>,
@@ -213,6 +215,7 @@ impl Model {
                 chat: Default::default(),
                 refs: Default::default(),
                 shells: Default::default(),
+                mcp_tasks: Default::default(),
                 shell_logs: worker_logs,
             };
             let mut error = None;
@@ -257,6 +260,7 @@ impl Model {
             outputs: Default::default(),
             output_list: Vec::new(),
             shells: Vec::new(),
+            mcp_tasks: Vec::new(),
             shell_logs,
             shell_tails: Default::default(),
             tail_requested: Default::default(),
@@ -301,6 +305,9 @@ impl Model {
                             }
                         }
                         self.output_list = outputs::latest(&self.outputs);
+                    }
+                    if let Some(tasks) = u.mcp_tasks {
+                        self.mcp_tasks = tasks;
                     }
                     if let Some(shells) = u.shells {
                         self.shells = shells;
@@ -447,6 +454,7 @@ struct Worker {
     chat: claude_switch_core::transcript::ChatInfo,
     refs: file_refs::FileRefs,
     shells: Vec<BackgroundShell>,
+    mcp_tasks: Vec<McpTask>,
     shell_logs: ShellLogs,
 }
 
@@ -613,6 +621,11 @@ impl Worker {
                 self.shells.clone_from(&shells);
                 u.shells = Some(shells);
             }
+            let tasks = reader.mcp_tasks();
+            if reset || self.mcp_tasks != tasks {
+                self.mcp_tasks.clone_from(&tasks);
+                u.mcp_tasks = Some(tasks);
+            }
         }
         Ok((reset
             || earlier_request
@@ -620,6 +633,7 @@ impl Worker {
             || !u.items.is_empty()
             || !u.files.is_empty()
             || u.shells.is_some()
+            || u.mcp_tasks.is_some()
             || u.tasks.is_some()
             || u.agents.is_some())
         .then(|| Event::Update(Box::new(u))))

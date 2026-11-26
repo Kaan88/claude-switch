@@ -736,6 +736,21 @@ and can send a single Down key only at a verified, unblocked, empty CLI prompt w
 “↓ to manage” footer. Otherwise it explains the manual path; it never selects a menu entry or
 stops a process.
 
+**MCP tasks** follow the shells in the same tab. An MCP tool call that Claude Code moved to the
+background is known only from what the transcript holds: the call's result naming the task
+("MCP tool "server/tool" started server-side task JOB. It was moved to the background as task
+ID"), a `<task-notification>` record when it ends (`taskKind: mcp-task`, its status, a summary and
+the result) and a TaskStop result with `task_type: "mcp_task"`. A row shows the task id, status and
+running time (from the call to the end record). The last step the server reports is kept by the
+CLI in memory only, so it is said to be unavailable rather than guessed; Claude Code writes no
+output file for these tasks. A task's name opens its result (at most 64 KiB, as the notification
+held it) in the viewer, or jumps to its call while it runs; Switch does not stop MCP tasks (the
+CLI's `/tasks` does). Nothing is fetched or asked of a tool.
+
+Every Details row opens its work from its name, the arrow still expanding it: a task jumps to the
+newest plan update, an agent opens its sidechain transcript (not the one being shown), a shell
+with a log opens its full output, a file opens as above and an output opens as below.
+
 **Outputs** lists the newest occurrence of each HTTP(S) destination or verified saved path, with
 tool-result pictures identified by their transcript references. It sorts by reported timestamps
 when available. It reads assistant prose and bounded tool-result text for links, with no fetching;

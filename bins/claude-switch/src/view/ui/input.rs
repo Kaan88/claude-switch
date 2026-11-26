@@ -315,6 +315,16 @@ impl Ui {
         self.markdown = Some(markdown::Markdown::new(file));
     }
 
+    /// Shows Markdown the transcript holds (an MCP task's result) in the viewer.
+    pub(in crate::view) fn open_text(&mut self, title: String, subtitle: String, markdown: String) {
+        if self.detail_side().is_some() {
+            self.show(Page::Conversation);
+        }
+        self.selection = None;
+        self.focused = true;
+        self.markdown = Some(markdown::Markdown::text(title, subtitle, markdown));
+    }
+
     pub(in crate::view) fn open_output(&mut self, output: Destination, m: &mut Model) {
         if self.detail_side().is_some() && !matches!(&output, Destination::Web(..)) {
             self.show(Page::Conversation);

@@ -11,6 +11,9 @@
   with the session folder's file offered beside it.
 - Settings: switching category pages cross-fades quickly (140 ms); instant with Reduce motion or
   Windows' reduced-motion setting.
+- Details panel: background MCP tasks appear in the Shells tab with their status, running time
+  and result (the last step is not saved by Claude Code, so it is not shown). Every row's name now
+  opens its work: a task its plan update, an agent its transcript, a shell its output.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

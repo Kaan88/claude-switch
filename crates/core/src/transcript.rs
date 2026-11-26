@@ -13,7 +13,7 @@ pub(crate) const MAX_LINE: usize = 48 * 1024 * 1024;
 const MAX_SIDECAR: u64 = 1024 * 1024;
 mod background;
 mod chat;
-pub use background::{BackgroundShell, ResultDetails, ShellStatus};
+pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellStatus};
 mod decode;
 pub use chat::{ChatInfo, Phase as ChatPhase, ToolCard};
 mod tail;
@@ -162,6 +162,11 @@ impl Reader {
 
     pub fn background_shells(&self) -> Vec<BackgroundShell> {
         self.view.background.shells()
+    }
+
+    /// The session's background MCP tasks, as far as the transcript records them.
+    pub fn mcp_tasks(&self) -> Vec<McpTask> {
+        self.view.background.mcp_tasks()
     }
 
     pub fn result_details(&self, id: ItemId) -> Option<&ResultDetails> {

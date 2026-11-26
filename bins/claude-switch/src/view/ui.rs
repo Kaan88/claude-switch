@@ -203,7 +203,7 @@ impl Ui {
                 (Page::Conversation, "Conversation", None),
                 (Page::Tasks, "Tasks", (width >= 365.0).then_some(m.tasks.len())),
                 (Page::Agents, "Agents", (width >= 365.0).then_some(m.agents.len())),
-                (Page::Details(Side::Shells), "Shells", Some(m.shells.len())),
+                (Page::Details(Side::Shells), "Shells", Some(m.shells.len() + m.mcp_tasks.len())),
                 (Page::Details(Side::Files), "Files", None),
                 (Page::Details(Side::Outputs), "Outputs", None),
             ];

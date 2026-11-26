@@ -2,7 +2,7 @@ use super::*;
 use crate::state::{AppState, Target};
 use crate::view::chat::Control;
 use crate::view::model::Source;
-use claude_switch_core::transcript::{Item, Subagent, Task};
+use claude_switch_core::transcript::{Item, McpStatus, McpTask, Subagent, Task};
 use mdshared_text::bitmap::Bitmap;
 use mdshared_ui::gfx::{Gfx, Painter, Rect};
 use mdshared_ui::theme::DARK;
@@ -141,18 +141,24 @@ fn task_and_agent_hits_expand_detail_and_refuse_reassigned_rows() {
     assert_eq!(side.action(&model, TAB, Side::Agents, task), None);
 
     let closed = draw(&mut side, &model, Side::Agents);
-    assert_eq!(closed.len(), 1);
+    assert_eq!(closed.len(), 2, "the arrow expands and the name opens the agent's transcript");
+    assert_eq!(
+        side.action(&model, TAB, Side::Agents, hit(&model, Side::Agents, 0, Part::Open)),
+        Some(Action::AgentTranscript("scout".into()))
+    );
     let agent = hit(&model, Side::Agents, 0, Part::Expand);
     let Some(Action::Expand(key)) = side.action(&model, TAB, Side::Agents, agent) else { panic!() };
     side.toggle(key);
     let expanded = draw(&mut side, &model, Side::Agents);
     let transcript = hit(&model, Side::Agents, 0, Part::AgentTranscript);
-    assert_eq!(expanded[1].1, Target::Chat(Control::Detail(transcript)));
+    assert_eq!(expanded[2].1, Target::Chat(Control::Detail(transcript)));
     assert_eq!(side.action(&model, TAB, Side::Agents, transcript), Some(Action::AgentTranscript("scout".into())));
     model.revision += 1;
     model.agents[0].id = "replacement".into();
     assert_eq!(side.action(&model, TAB, Side::Agents, transcript), None);
-    assert_eq!(draw(&mut side, &model, Side::Agents).len(), 1);
+    assert_eq!(draw(&mut side, &model, Side::Agents).len(), 2);
+    model.agent = Some("replacement".into());
+    assert_eq!(draw(&mut side, &model, Side::Agents).len(), 1, "the agent being shown does not open itself");
 }
 
 #[test]
@@ -193,4 +199,96 @@ fn painted_file_name_and_arrow_are_disjoint_and_removed_markdown_is_not_opened()
         "stale metadata must not give the viewer focus"
     );
     assert_eq!(pane.chat.details.message, Some("The file is no longer available."));
+}
+
+fn mcp_task(offset: u64, id: &str, status: McpStatus, result: Option<&str>) -> McpTask {
+    McpTask {
+        tool: ItemId { offset, block: 0 },
+        id: id.into(),
+        job: format!("job_{offset}"),
+        name: "fixture/long_job".into(),
+        status,
+        start_ms: Some(1_000),
+        end_ms: (status != McpStatus::Running).then_some(126_000),
+        summary: result.map(|_| format!("MCP task job_{offset} (fixture/long_job) completed.")),
+        result: result.map(str::to_owned),
+    }
+}
+
+#[test]
+fn mcp_tasks_list_after_shells_and_open_their_result_or_their_call() {
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let app = AppState::new(crate::source::Source::Demo, None, Default::default());
+    let mut pane = app.new_session_pane(Source::File(demo.path().into()), demo.cwd().into());
+    pane.chat.side = Side::Shells;
+    pane.chat.layout.side = Rect::new(0.0, 0.0, 280.0, 500.0);
+    pane.model.mcp_tasks = vec![
+        mcp_task(4, "krunning", McpStatus::Running, None),
+        mcp_task(2, "kdone", McpStatus::Completed, Some("# Report\n\nAll **done**.")),
+    ];
+    let model = &pane.model;
+    let details = &mut pane.chat.details;
+    let mut bmp = Bitmap::new(280, 500);
+    let mut gfx = Gfx::new();
+    let mut draw = |details: &mut Details, model: &Model| {
+        let frame = Frame {
+            tab: TAB,
+            area: Rect::new(0.0, 0.0, 280.0, 500.0),
+            side: Side::Shells,
+            model,
+            cwd: demo.cwd(),
+            hover: None,
+        };
+        details.draw(&mut Painter::new(&mut bmp, &mut gfx, 1.0), &DARK, frame)
+    };
+    let hits = draw(details, model);
+    assert_eq!(hits.len(), 4, "each task has an arrow and a name");
+    let action =
+        |details: &Details, i, part| details.action(model, TAB, Side::Shells, hit(model, Side::Shells, i, part));
+    assert_eq!(
+        action(details, 0, Part::Open),
+        Some(Action::Jump(ItemId { offset: 4, block: 0 })),
+        "no result yet: the call"
+    );
+    assert_eq!(action(details, 1, Part::Open), Some(Action::McpResult("kdone".into())));
+    assert_eq!(action(details, 1, Part::Full), None, "row buttons need the row open");
+    assert_eq!(action(details, 2, Part::Open), None, "past the list");
+    let Some(Action::Expand(key)) = action(details, 1, Part::Expand) else { panic!("expected a disclosure") };
+    details.toggle(key);
+    let expanded = draw(details, model);
+    let full = hit(model, Side::Shells, 1, Part::Full);
+    let call = hit(model, Side::Shells, 1, Part::Call);
+    assert!(expanded.iter().any(|(_, t)| *t == Target::Chat(Control::Detail(full))));
+    assert!(expanded.iter().any(|(_, t)| *t == Target::Chat(Control::Detail(call))));
+    assert_eq!(action(details, 1, Part::Call), Some(Action::Jump(ItemId { offset: 2, block: 0 })));
+
+    assert!(matches!(activate(&mut pane, TAB, Side::Shells, full), Activated::Focus));
+    assert_eq!(
+        pane.ui.viewer(),
+        Some(("fixture/long_job · result", "MCP task kdone · completed · from the transcript"))
+    );
+}
+
+#[test]
+fn an_mcp_tasks_running_time_and_missing_last_step_are_said_plainly() {
+    let running = mcp_task(1, "krun", McpStatus::Running, None);
+    assert_eq!(extra::mcp_status(&running, Some(61_000)), "Running · 1:00");
+    assert_eq!(extra::mcp_status(&running, None), "Running");
+    let stopped = McpTask { result: None, summary: None, ..mcp_task(1, "kstop", McpStatus::Stopped, None) };
+    assert_eq!(extra::mcp_status(&stopped, None), "Stopped · 2:05");
+}
+
+#[test]
+fn a_task_opens_the_newest_plan_update_and_only_when_there_is_one() {
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let mut model = Model::new(Source::File(demo.path().into()), demo.cwd().into(), || {});
+    model.tasks = vec![Task { content: "Plan".into(), status: TaskStatus::Pending }];
+    let mut details = Details::default();
+    details.refresh(&model, demo.cwd(), Side::Tasks);
+    let open = |model: &Model| details.action(model, TAB, Side::Tasks, hit(model, Side::Tasks, 0, Part::Open));
+    assert_eq!(open(&model), None);
+    put_tool(&mut model, demo.cwd(), 3, "TodoWrite", "plan", ToolState::Ok);
+    let newest = put_tool(&mut model, demo.cwd(), 9, "TodoWrite", "plan", ToolState::Ok);
+    put_tool(&mut model, demo.cwd(), 12, "Read", "plan", ToolState::Ok);
+    assert_eq!(open(&model), Some(Action::Jump(newest)));
 }
