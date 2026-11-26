@@ -208,3 +208,4 @@ and in the README, not committed, and not copied to the installed clone
       tool calls as the rows above. The path highlighting also marks words that are not files (seen:
       "enter/leave" inside a Bash command); only paths that exist under the session's folder should
       become links.
+    Approved (owner, same day): artboard E as drawn is the target for items 11 and 12.
