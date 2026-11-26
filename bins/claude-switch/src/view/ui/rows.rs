@@ -404,7 +404,7 @@ impl Rows<'_> {
                 row.open = open;
                 row.background = background;
                 // A plan is read before it is approved: always open.
-                if open || matches!(card, Some(ToolCard::Plan(_))) {
+                if open || matches!(card, Some(ToolCard::Plan(_) | ToolCard::Output(_))) {
                     let (detail, kind) = tool_detail(card.as_ref(), target);
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
                     row.agent.clone_from(subagent);
@@ -559,6 +559,7 @@ fn tool_detail(card: Option<&ToolCard>, summary: &str) -> (String, BodyKind) {
             BodyKind::Shell,
         ),
         Some(ToolCard::Plan(plan)) => (plan.clone(), BodyKind::Markdown),
+        Some(ToolCard::Output(text)) => (text.clone(), BodyKind::Mono),
         Some(ToolCard::Questions(_)) | None => (summary.into(), BodyKind::Mono),
     }
 }

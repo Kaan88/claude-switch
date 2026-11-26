@@ -20,6 +20,8 @@
 - Chat: a Mode chip shows the permission mode and cycles it like Shift+Tab at an idle prompt.
 - Chat: messages keep their line breaks; a message of several lines is submitted once Claude Code
   shows it on its input line.
+- Chat: slash command output and shell-mode commands (`!`) show in the conversation as rows with
+  their output.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

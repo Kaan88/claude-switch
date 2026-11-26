@@ -667,6 +667,12 @@ opened drawer closes on observable turn progress; a manually opened one stays op
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
 verified active turn.
+**Command results and shell mode.** A `<local-command-stdout>` (or `-stderr`) record becomes a finished
+row named after the slash command before it, and `<bash-input>` with its `<bash-stdout>`/`<bash-stderr>`
+becomes a "Shell" row (`! command`), both with the output as mono text, always open, cut at 60 lines or
+6,000 characters, escape sequences removed (`transcript/local.rs`). They never count as pending calls.
+Interactive panels that print their result the same way get the same row. The composer has no `!`
+toggle: whether a pasted `!` enters the CLI's shell mode is unverified.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
 from the selected account, the launch folder’s `.claude` directory, and installed plugin caches.
