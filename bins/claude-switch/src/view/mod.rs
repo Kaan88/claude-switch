@@ -138,7 +138,10 @@ impl Pane {
             return false;
         }
         let Some(source) = self.transcript_source.follow(&self.cwd, id) else { return false };
-        let previous = self.pinned_id().map(str::to_owned);
+        // Only a session this tab had attached and verified is a parent: not one it was refused
+        // for, nor a new chat whose transcript was never written.
+        let verified = self.verified_path.is_some() && !self.chat.identity_unverified;
+        let previous = self.pinned_id().filter(|_| verified).map(str::to_owned);
         let end = match source.probe(id) {
             model::Probe::Found(path) => std::fs::symlink_metadata(&path).map_or(u64::MAX, |m| m.len()),
             // A session the CLI has yet to write (`/clear`, compaction) continues this one; an

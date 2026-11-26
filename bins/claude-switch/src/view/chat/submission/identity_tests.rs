@@ -244,3 +244,32 @@ fn a_message_of_several_lines_keeps_its_breaks_and_waits_for_the_input_line() {
     assert!(f.chat().recovery_notice().is_some());
     assert_eq!(f.chat().editor.text, "one\ntwo");
 }
+
+#[test]
+fn a_followed_session_links_only_to_a_verified_one() {
+    // A new chat whose transcript was never written: `/clear` moves on, but no parent is recorded.
+    let mut f = Fixture::new("link-awaiting", discover);
+    assert!(f.tab().apply_live_identity(Some(A)));
+    assert!(f.chat().awaiting_transcript);
+    f.tab().apply_live_identity(Some(B));
+    let pane = f.tab().pane.as_ref().unwrap();
+    assert_eq!(pane.pinned_id(), Some(B));
+    assert_eq!(pane.continued, None, "A never existed");
+
+    // A tab refused for its session: the next one is not linked to the session it had left.
+    let mut f = Fixture::new("link-refused", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(None);
+    assert!(f.chat().identity_unverified);
+    f.tab().apply_live_identity(Some(B));
+    assert_eq!(f.tab().pane.as_ref().unwrap().continued, None);
+
+    // Attached and verified: linked, as before.
+    let mut f = Fixture::new("link-verified", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.tab().apply_live_identity(Some(B));
+    assert_eq!(f.tab().pane.as_ref().unwrap().continued, Some((B.to_owned(), A.to_owned())));
+}
