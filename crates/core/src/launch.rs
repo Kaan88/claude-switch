@@ -5,6 +5,8 @@ use crate::sessions::folder_name;
 use crate::util::read_json;
 #[cfg(test)]
 use crate::util::write_json;
+#[cfg(windows)]
+mod desktop;
 mod history;
 pub use history::{Reservation, record_verified_owner, reserve, with_archive_check};
 #[cfg(test)]
@@ -54,71 +56,16 @@ fn scrub_name(name: &OsStr) -> bool {
 /// How long after a launch the same session is not opened again: it may not be in `running` yet.
 const JUST_LAUNCHED_MS: u64 = 20_000;
 
-/// The program path out of a registered shell command such as `"C:\…\Claude.exe" -- "%1"`.
-fn program_of_command(command: &str) -> Option<PathBuf> {
-    let command = command.trim();
-    let program = match command.strip_prefix('"') {
-        Some(rest) => &rest[..rest.find('"')?],
-        None => command.split_whitespace().next()?,
-    };
-    Some(PathBuf::from(program)).filter(|p| !p.as_os_str().is_empty())
-}
-
-/// The default value of `HKCU\Software\Classes\claude\shell\open\command`.
-#[cfg(windows)]
-fn registered_command() -> Option<String> {
-    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
-    let key: Vec<u16> = "Software\\Classes\\claude\\shell\\open\\command\0".encode_utf16().collect();
-    let mut size: u32 = 0;
-    // SAFETY: `key` is a NUL-terminated UTF-16 string that outlives the call; a null value name asks
-    // for the default value; a null buffer with `size` asks only for the size in bytes.
-    let status = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            key.as_ptr(),
-            std::ptr::null(),
-            RRF_RT_REG_SZ,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut size,
-        )
-    };
-    if status != ERROR_SUCCESS || size == 0 || size > 64 * 1024 {
-        return None;
-    }
-    let mut buf: Vec<u16> = vec![0; (size as usize).div_ceil(2)];
-    let mut size = (buf.len() * 2) as u32;
-    // SAFETY: `buf` holds `size` bytes, as the call is told, and lives until after it returns.
-    let status = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            key.as_ptr(),
-            std::ptr::null(),
-            RRF_RT_REG_SZ,
-            std::ptr::null_mut(),
-            buf.as_mut_ptr().cast(),
-            &mut size,
-        )
-    };
-    if status != ERROR_SUCCESS {
-        return None;
-    }
-    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    Some(String::from_utf16_lossy(&buf[..len]))
-}
-
-#[cfg(not(windows))]
-fn registered_command() -> Option<String> {
+/// The verified desktop executable from a known installed layout, never a shell command or alias.
+pub fn desktop_exe() -> Option<PathBuf> {
+    #[cfg(windows)]
+    return desktop::resolve();
+    #[cfg(not(windows))]
     None
 }
 
-/// The desktop app's executable, from the command registered for the `claude:` protocol
-/// (`HKCU\Software\Classes\claude\shell\open\command`). `None` when it is not registered or the file
-/// is gone.
-pub fn desktop_exe() -> Option<PathBuf> {
-    program_of_command(&registered_command()?).filter(|p| p.is_file())
-}
+#[cfg(windows)]
+pub use desktop::guard_desktop_exe;
 
 /// The environment changes that make the CLI use the account's folder.
 fn account_env(account: &Account) -> (BTreeMap<String, String>, Vec<String>) {
@@ -246,6 +193,11 @@ pub fn login(roots: &Roots, config: &Config, account: &str) -> Result<Launch, Re
     crate::share::prepare_cli(roots, account, None)?;
     let label = format!("{} · Sign in", account.name);
     Ok(cli_launch(account, &["auth", "login"], roots.home.clone(), Place::Terminal, label))
+}
+
+/// Distinguishes a sign-in terminal from a session or shell without looking at its title or output.
+pub fn is_login(launch: &Launch) -> bool {
+    launch.place == Place::Terminal && launch.program == Path::new("claude") && launch.args == ["auth", "login"]
 }
 
 /// The launch of the desktop executable `exe` as `account`.

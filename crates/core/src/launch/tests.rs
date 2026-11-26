@@ -279,6 +279,10 @@ fn new_sessions_and_logins_are_terminal_launches() {
     assert_eq!(l.args, ["auth", "login"]);
     assert_eq!(l.place, Place::Terminal);
     assert_eq!(l.env_remove[0], "CLAUDE_CONFIG_DIR");
+    assert!(is_login(&l));
+    let mut other = l;
+    other.args[1] = "status".into();
+    assert!(!is_login(&other));
 }
 
 #[test]
@@ -297,17 +301,6 @@ fn the_desktop_app_gets_its_own_data_folder_for_a_further_account() {
         assert_eq!(launch.env_remove[1..], SESSION_VARS);
     }
     let _ = roots;
-}
-
-#[test]
-fn the_registered_command_gives_the_program() {
-    assert_eq!(
-        program_of_command(r#""C:\Program Files\Claude\Claude.exe" -- "%1""#),
-        Some(PathBuf::from(r"C:\Program Files\Claude\Claude.exe"))
-    );
-    assert_eq!(program_of_command(r"C:\x\claude.exe %1"), Some(PathBuf::from(r"C:\x\claude.exe")));
-    assert_eq!(program_of_command("\"unclosed"), None);
-    assert_eq!(program_of_command("  "), None);
 }
 
 #[test]

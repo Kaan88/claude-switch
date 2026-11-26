@@ -1,9 +1,10 @@
 //! Demand routing and result-only state for usage. Worker jobs return figures or a closed error kind.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use claude_switch_core::Roots;
 use claude_switch_core::usage::{
     Attempt, Breakdown, CACHE_NAME, Cache, Demand, Error, Limit, Reading, load_cache, now_ms, save_cache,
 };
@@ -13,12 +14,14 @@ use crate::source::Source;
 use crate::state::{AppState, Target};
 
 type FetchJob = Job<Result<Reading, Error>>;
+type Fetch = fn(&Roots, &Path, &dyn Fn() -> bool) -> Result<Reading, Error>;
 
 #[derive(Default)]
 pub struct Usage {
     readings: Cache,
     attempts: HashMap<String, Attempt>,
     jobs: HashMap<String, FetchJob>,
+    sign_in_pending: HashSet<String>,
     file: Option<PathBuf>,
     cache_job: Option<(u64, Job<std::io::Result<()>>)>,
     cache_write: CacheWrite,
@@ -99,8 +102,10 @@ impl Usage {
                         limit("seven_day_sonnet", 37.0, 4320),
                     ],
                     breakdown: vec![
-                        Breakdown { label: "Opus".into(), percent: 39.0 },
-                        Breakdown { label: "Sonnet".into(), percent: 25.0 },
+                        Breakdown { label: "Claude Code".into(), percent: Some(39.0) },
+                        Breakdown { label: "Chats".into(), percent: Some(25.0) },
+                        Breakdown { label: "Cowork".into(), percent: None },
+                        Breakdown { label: "Other".into(), percent: None },
                     ],
                 };
                 let mut work = Attempt::default();
@@ -152,6 +157,7 @@ impl Usage {
     pub fn disable(&mut self) {
         self.popup = Popup::default();
         self.repaint_at = None;
+        self.sign_in_pending.clear();
         for job in self.jobs.values() {
             job.cancel();
         }
@@ -185,6 +191,10 @@ impl AppState {
     }
 
     pub fn request_usage(&mut self, now: Instant, demand: Demand, only: Option<&str>) {
+        self.request_usage_with(now, demand, only, crate::usage_fetch::fetch);
+    }
+
+    fn request_usage_with(&mut self, now: Instant, demand: Demand, only: Option<&str>, fetch: Fetch) {
         if !usage_allowed(self.config.show_usage, &self.source) {
             return;
         }
@@ -198,13 +208,16 @@ impl AppState {
             let usage = &mut self.usage;
             let cached_age = usage.cached_age(&a.slug, clock);
             let attempt = usage.attempts.entry(a.slug.clone()).or_default();
+            if attempt.busy && matches!(demand, Demand::SignIn) {
+                usage.sign_in_pending.insert(a.slug.clone());
+            }
             if !attempt.allowed(demand, now, cached_age) {
                 continue;
             }
             attempt.start(now);
             let dir = a.cli_dir.clone();
             let roots = roots.clone();
-            match Job::start(wake, move |cancel, _| crate::usage_fetch::fetch(&roots, &dir, || !cancel.cancelled())) {
+            match Job::start(wake, move |cancel, _| fetch(&roots, &dir, &|| !cancel.cancelled())) {
                 Ok(job) => {
                     usage.jobs.insert(a.slug.clone(), job);
                 }
@@ -214,6 +227,10 @@ impl AppState {
     }
 
     pub fn take_usage_jobs(&mut self, now: Instant) -> bool {
+        self.take_usage_jobs_with(now, crate::usage_fetch::fetch)
+    }
+
+    fn take_usage_jobs_with(&mut self, now: Instant, fetch: Fetch) -> bool {
         let mut changed = self.sync_usage_setting();
         let wake = self.wake_fn();
         let usage = &mut self.usage;
@@ -254,6 +271,18 @@ impl AppState {
                 Ok(job) => usage.cache_job = Some((rev, job)),
                 Err(_) => usage.cache_write.finish(rev, false, now),
             }
+        }
+        let mut retry = Vec::new();
+        usage.sign_in_pending.retain(|slug| {
+            if usage.jobs.contains_key(slug) {
+                true
+            } else {
+                retry.push(slug.clone());
+                false
+            }
+        });
+        for slug in retry {
+            self.request_usage_with(now, Demand::SignIn, Some(&slug), fetch);
         }
         for (slug, previous) in accepted {
             self.usage_warning_reading(now, &slug, previous.as_ref());
@@ -375,7 +404,7 @@ mod tests {
     #[test]
     fn demo_and_disabled_modes_do_not_schedule_a_fetch() {
         let mut demo = AppState::new(Source::Demo, Some(true), WindowFile::default());
-        for demand in [Demand::Automatic, Demand::Refresh] {
+        for demand in [Demand::Automatic, Demand::Refresh, Demand::SignIn] {
             demo.request_usage(Instant::now(), demand, None);
             assert!(demo.usage.jobs.is_empty());
         }
@@ -452,3 +481,7 @@ mod tests {
         assert!(second.usage.jobs.is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "usage/recovery_tests.rs"]
+mod recovery_tests;

@@ -283,6 +283,15 @@ type StView<'a> = (
 const BLOCK: f32 = 96.0;
 const SHARE_BLOCK: f32 = 58.0;
 
+fn account_usage_layout(body: Rect, y: f32, h: f32) -> (Rect, Rect) {
+    let left = body.x + DIALOG_PAD - 1.0 + 18.0;
+    let right = body.right() - DIALOG_PAD - 7.0;
+    let usage = Rect::new(left, y, (right - left).max(0.0), h);
+    let width = 86.0_f32.min(usage.w);
+    let refresh = Rect::new(right - width, y + 6.0, width, 28.0);
+    (usage, refresh)
+}
+
 fn draw_accounts(
     (config, statuses, usage): StView<'_>,
     d: &mut Draw<'_>,
@@ -352,12 +361,14 @@ fn draw_accounts(
         }
         y += BLOCK;
         if let Some(u) = usage.get(k) {
-            let ar = Rect::new(x + 18.0, y - 6.0, tw - 18.0, u.height());
-            let button = u.draw(p, &pal, ar, now);
-            if !u.refresh {
-                mdshared_ui::overlay::draw_dialog_button_disabled(p, &pal, button, "Refresh", false);
-            } else if button.y >= body.y && button.bottom() <= body.bottom() {
-                d.button(p, button, "Refresh", false, base + ACT_REFRESH_USAGE);
+            let (area, button) = account_usage_layout(body, y - 6.0, u.height());
+            u.draw(p, &pal, area, button, now);
+            if button.y >= body.y && button.bottom() <= body.bottom() {
+                if u.refresh {
+                    d.button(p, button, "Refresh", false, base + ACT_REFRESH_USAGE);
+                } else {
+                    mdshared_ui::overlay::draw_dialog_button_disabled(p, &pal, button, "Refresh", false);
+                }
             }
             y += u.height();
         }
@@ -498,7 +509,10 @@ fn account_action(st: &mut AppState, now: Instant, k: usize, act: u32) {
             }
             st.dialog = Some(accounts(st, now));
         }
-        ACT_REFRESH_USAGE => st.request_usage(now, Demand::Refresh, Some(&a.slug)),
+        ACT_REFRESH_USAGE => {
+            st.refresh(now);
+            st.request_usage(now, Demand::Refresh, Some(&a.slug));
+        }
         _ => {}
     }
 }
@@ -590,3 +604,7 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
 
 mod input;
 pub use input::{text_input, wheel};
+
+#[cfg(test)]
+#[path = "dialogs/accounts_tests.rs"]
+mod accounts_tests;
