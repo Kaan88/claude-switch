@@ -472,6 +472,11 @@ mod tests {
         )
         .unwrap();
         completed.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The wake comes from inside the job, just before it marks itself finished.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while job.running() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert!(!job.running());
         second.usage.jobs.insert("main".into(), job);
         claude_switch_core::config::set_usage(&roots, false).unwrap();
