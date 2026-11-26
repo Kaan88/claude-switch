@@ -131,10 +131,7 @@ impl AppState {
                 button(p, pal, r, "Focus terminal", hover == Some(target), false);
                 self.hits.push((r, target));
             }
-        } else if chat.reason == Some(Reason::Tool)
-            && super::question::pending(&pane.model).is_none()
-            && l.conversation.h > 25.0
-        {
+        } else if chat.reason == Some(Reason::Tool) && !chat.question.visible() && l.conversation.h > 25.0 {
             let row = Rect::new(
                 l.conversation.x + 12.0,
                 l.conversation.bottom() - pane.ui.footer_height(l.conversation.w, pane.model.agent.is_none()) - 26.0,

@@ -10,6 +10,8 @@
   is shown in Threads as the continuation of the old one.
 - Chat: Claude's questions (AskUserQuestion) appear as a card you can answer from the chat; the
   working line says "Waiting for your answer".
+- Chat: permission prompts can be answered from a card in the chat, with the tool call and the
+  terminal's own choices; the working line says "Waiting for your approval".
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

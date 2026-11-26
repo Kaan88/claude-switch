@@ -253,14 +253,20 @@ Pick **Chat** or **Terminal** at the right of a Claude session’s tab strip. Th
 with each tab and sets the default for new ones. Chat shows the local conversation, a multiline
 composer, and a collapsible Details panel on wider windows.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
-to resize it, and answer permissions and other CLI dialogs there.
+to resize it, and answer other CLI dialogs there.
 
 When Claude asks a question (its AskUserQuestion tool), the question appears as a card under the
 conversation and the working line says **Waiting for your answer**. Click an option, or type an
 answer and choose **Answer**, or **Chat about this** to leave the question and send the text as
 your next message. Chat answers only while the terminal shows that same question, and only one
 single-choice question at a time; otherwise the card says why and the drawer opens for you to
-answer there. Permission questions are always answered in the terminal.
+answer there.
+
+When Claude Code asks to allow a tool (a command, an edit, an MCP tool, a web fetch), Chat shows the
+call and the terminal's own choices in a card, and the working line says **Waiting for your
+approval**. Click a choice, or type what Claude should do instead and choose **No, and tell
+Claude**. Chat answers only while the terminal shows that prompt for that same call; otherwise the
+card says so and offers **Open terminal**.
 
 Chat cannot send while Claude Code draws its full-screen view. **Settings › Sessions › Classic
 terminal view for Claude tabs** (on by default) starts new Claude tabs with Claude Code's classic

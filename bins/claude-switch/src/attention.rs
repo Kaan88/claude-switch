@@ -119,19 +119,27 @@ pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
         })
     };
     let Some(deny) = rows.next() else { return false };
-    if !option(deny, &["2. No", "3. No", "2. Deny", "3. Deny"]) {
+    let deny = deny.trim_start_matches(['❯', '>']).trim_start();
+    // The last choice declines ("N. No…"); the choices above it count down to "1. Yes" or
+    // "1. Allow" (two to five choices, such as "Yes, and switch to auto mode").
+    let Some(count) = (2..=5).find(|n| option(deny, &[&format!("{n}. No"), &format!("{n}. Deny")])) else {
         return false;
+    };
+    for n in (1..count).rev() {
+        // A long choice may wrap onto a second row; nothing else sits between choices.
+        let Some(row) = rows
+            .by_ref()
+            .take(2)
+            .map(|r| r.trim_start_matches(['❯', '>']).trim_start())
+            .find(|r| r.starts_with(&format!("{n}. ")))
+        else {
+            return false;
+        };
+        if n == 1 && !option(row, &["1. Yes", "1. Allow"]) {
+            return false;
+        }
     }
-    let Some(mut allow) = rows.next() else { return false };
-    let numbered = |row: &str, prefix: &str| row.trim_start_matches(['❯', '>']).trim_start().starts_with(prefix);
-    if numbered(deny, "3. ")
-        && numbered(allow, "2. ")
-        && let Some(previous) = rows.next()
-    {
-        allow = previous;
-    }
-    option(allow, &["1. Yes", "1. Allow"])
-        && rows.next().is_some_and(|row| row.starts_with("Do you want to ") || row.starts_with("Would you like to "))
+    rows.next().is_some_and(|row| row.starts_with("Do you want to ") || row.starts_with("Would you like to "))
 }
 
 struct Watch {
@@ -453,7 +461,7 @@ mod tests {
     fn permission_requires_a_complete_interactive_prompt_and_signals_its_appearance_once() {
         let mut tab = TabAttention::default();
         let mut screen = mdshared_term::Screen::new(90, 12, 20);
-        screen.feed(b"Do you want to proceed?\r\n1. Yes\r\n3. No\r\n");
+        screen.feed(b"Do you want to proceed?\r\n1. Yes\r\n2. No\r\n");
         tab.terminal(&mut screen, true, false);
         assert!(tab.bell.is_none(), "a question and options alone are not a permission UI");
         screen.feed(b"Esc to cancel");
@@ -461,5 +469,29 @@ mod tests {
         assert_eq!(tab.bell.take(), Some(false));
         tab.terminal(&mut screen, true, false);
         assert!(tab.bell.is_none());
+    }
+
+    #[test]
+    fn a_permission_prompt_may_offer_up_to_five_consecutive_choices() {
+        let prompt = |rows: &[&str]| {
+            let mut screen = mdshared_term::Screen::new(90, 14, 0);
+            let rows: String = rows.iter().map(|row| format!("{row}\r\n")).collect();
+            screen.feed(
+                format!(
+                    "Bash command\r\n  npm test\r\nDo you want to proceed?\r\n{rows}Esc to cancel and Tab to amend"
+                )
+                .as_bytes(),
+            );
+            screen_permission_prompt(&screen)
+        };
+        assert!(prompt(&[
+            "❯ 1. Yes",
+            "  2. Yes, and don't ask again for: npm test *",
+            "  3. Yes, and switch to auto mode",
+            "  4. No"
+        ]));
+        assert!(prompt(&["❯ 1. Yes", "  2. No"]));
+        assert!(!prompt(&["❯ 1. Yes", "  3. No"]), "a missing choice is not the CLI's menu");
+        assert!(!prompt(&["❯ 1. Maybe", "  2. No"]));
     }
 }

@@ -663,8 +663,9 @@ transcript byte watermark before writing so a buffered earlier prompt cannot rea
 **When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
 same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only an automatically
-opened drawer closes on observable turn progress; a manually opened one stays open. No
-permission responses are generated; the only dialog keys are a question card's (see Questions). Stop sends Escape at most once per freshly
+opened drawer closes on observable turn progress; a manually opened one stays open. Chat
+never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
+Permission prompts). Stop sends Escape at most once per freshly
 verified active turn.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
@@ -692,7 +693,25 @@ second deadline; a mismatch, timeout or a question still open eight seconds afte
 why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
 stay terminal-only. While the card can answer, sends are refused with "Answer Claude's question
 above" and the drawer does not open by itself; the working line reads "Waiting for your answer".
-Permission prompts are never answered from Chat.
+
+**Permission prompts.** These used to be answered only in the terminal. The owner gave that rule up
+(2026-11-27): "give that up, otherwise all I see is that chat has stopped. convenience trumps". The
+safeguards that cost nothing stay. While the main transcript has exactly one pending tool call and
+the screen shows a permission prompt (a "Do you want to …" or "Would you like to …" row, then
+`1. Yes`/`1. Allow` down to a `No`/`Deny` choice, then the "Esc to cancel" footer), the card shows
+the call as the transcript records it (command, file and diff lines, MCP server and tool), the
+prompt's own rows above the question (warnings and countdowns included), the question and the
+screen's choices, exactly as written. Clicks are answered only if the prompt names that call (the
+command's first 40 characters, the file name, the MCP tool or the fetched host must appear in it);
+a subagent's prompt, two pending calls, or any other prompt stays terminal-only with an Open terminal
+button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
+highlight there with the same choices; nothing is pre-selected and nothing is answered without a
+click. A decline with text uses the prompt's Tab comment field when the footer offers "Tab to
+amend" (Tab, the text, then Enter once the text is visible), or its "No, and tell Claude …" choice,
+whose text then goes to the composer. Shift+Tab is never sent at a prompt. The same deadlines and
+fail-closed rules as questions apply. While the card can answer, sends are refused with "Answer
+Claude's request above", the drawer stays closed and the working line reads "Waiting for your
+approval". Every screen pattern lives in `view/chat/question/screens.rs`.
 
 **Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
 Sessions › Classic terminal view is on (the default): Claude Code then draws on the main screen,

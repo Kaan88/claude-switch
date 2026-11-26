@@ -41,6 +41,8 @@ pub enum Reason {
     Ended,
     /// Claude asked a question the card in the conversation can answer.
     Question,
+    /// A permission prompt the card in the conversation can answer.
+    Approval,
 }
 
 impl Reason {
@@ -53,6 +55,7 @@ impl Reason {
             Self::Identity => "The current session could not be verified. Check the terminal.",
             Self::Ended => "Claude Code has ended.",
             Self::Question => "Answer Claude's question above.",
+            Self::Approval => "Answer Claude's request above.",
         }
     }
 }
@@ -271,7 +274,9 @@ impl Chat {
             return (Gate::Ended, Some(Reason::Ended));
         }
         if crate::attention::screen_permission_prompt(&term.screen) {
-            return (Gate::Check, Some(Reason::Permission));
+            // The card answers it when it names the pending call; the terminal otherwise.
+            let card = info.pending.is_some() && self.question.approval && self.question.answerable == info.pending;
+            return (Gate::Check, Some(if card { Reason::Approval } else { Reason::Permission }));
         }
         if self.demo
             && self.demo_progress
@@ -305,7 +310,11 @@ impl Chat {
             decision = (Gate::Check, Some(Reason::Tool));
         }
         // The card answers it: the same refusal, without sending the user to the terminal.
-        if decision.1 == Some(Reason::Tool) && info.pending.is_some() && self.question.answerable == info.pending {
+        if decision.1 == Some(Reason::Tool)
+            && info.pending.is_some()
+            && self.question.answerable == info.pending
+            && !self.question.approval
+        {
             decision.1 = Some(Reason::Question);
         }
         decision
@@ -330,8 +339,8 @@ impl Chat {
     fn react(&mut self, reason: Option<Reason>) -> bool {
         let before = (self.drawer, self.reason);
         self.reason = reason;
-        // A question the card can answer does not open the drawer, and closes one it opened.
-        let reason = reason.filter(|r| *r != Reason::Question);
+        // A question or request the card can answer does not open the drawer, and closes one it opened.
+        let reason = reason.filter(|r| !matches!(r, Reason::Question | Reason::Approval));
         match (self.drawer, reason) {
             (Drawer::Closed, Some(reason)) if Some(reason) != self.suppressed => self.drawer = Drawer::Auto(reason),
             (Drawer::Auto(_), Some(reason)) => self.drawer = Drawer::Auto(reason),
