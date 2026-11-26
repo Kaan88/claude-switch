@@ -80,7 +80,22 @@ fn cache_atomically_replaces_the_file_with_just_measurements() {
         serde_json::from_slice::<Value>(&bytes).unwrap(),
         json!({"main":{"read_at":7,"limits":[{"label":"Session","slot":"session","used":42.5,"reset":34,"severity":""}],"breakdown":[]}})
     );
-    assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    assert!(
+        !fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .any(|e| e.path().extension().is_some_and(|x| x == "tmp"))
+    );
+}
+
+#[test]
+fn stale_windows_cannot_drop_another_accounts_reading_or_roll_back_a_newer_one() {
+    let t = TempDir::new("usage-cache-merge");
+    let path = t.roots().config_file().with_file_name(CACHE_NAME);
+    let row = |read_at| Reading { read_at, limits: Vec::new(), breakdown: Vec::new() };
+    save_cache(&path, &Cache::from([("main".into(), row(9))])).unwrap();
+    save_cache(&path, &Cache::from([("main".into(), row(4)), ("work".into(), row(7))])).unwrap();
+    assert_eq!(load_cache(&path), Cache::from([("main".into(), row(9)), ("work".into(), row(7))]));
 }
 
 #[test]

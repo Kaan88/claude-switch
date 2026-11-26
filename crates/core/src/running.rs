@@ -61,7 +61,12 @@ fn cli_dirs(roots: &Roots, config: &Config, complete: &mut bool) -> Vec<(PathBuf
 /// The content of the session file of process `pid` (from its name), when it names a session. A file
 /// of a live process that does not is read again up to [`RETRIES`] times, calling `wait` before each.
 fn read_entry(path: &Path, pid: u32, mut wait: impl FnMut()) -> Option<Value> {
-    let read = || read_json(path).filter(|v| str_field(v, "sessionId").is_some());
+    let read = || {
+        read_json(path).filter(|v| {
+            v.get("pid").is_none_or(|p| p.as_u64() == Some(pid.into()))
+                && str_field(v, "sessionId").is_some_and(|id| crate::launch::validate_session_id(id).is_ok())
+        })
+    };
     let mut entry = read();
     if entry.is_none() && pid_alive(pid) {
         for _ in 0..RETRIES {
@@ -122,14 +127,20 @@ pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
             let stem_pid = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<u32>().ok());
             let Some(stem_pid) = stem_pid else { continue };
             let Some(v) = read_entry(&path, stem_pid, || std::thread::sleep(RETRY_PAUSE)) else {
-                if pid_alive(stem_pid) {
-                    complete = false;
-                }
+                complete &= pid_state(stem_pid) == Some(false);
                 continue;
             };
-            let pid = v.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()).unwrap_or(stem_pid);
+            let pid = stem_pid;
+            match pid_state(pid) {
+                Some(true) => {}
+                Some(false) => continue,
+                None => {
+                    complete = false;
+                    continue;
+                }
+            }
             let Some(session_id) = str_field(&v, "sessionId") else { continue };
-            if out.iter().any(|r| r.pid == pid && r.session_id == session_id) || !pid_alive(pid) {
+            if out.iter().any(|r| r.pid == pid && r.session_id == session_id) {
                 continue;
             }
             let app = if str_field(&v, "entrypoint") == Some("claude-desktop") { App::Desktop } else { App::Cli };
@@ -151,49 +162,61 @@ pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
 }
 
 /// Whether a process with this id exists now.
-#[cfg(windows)]
 pub fn pid_alive(pid: u32) -> bool {
-    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError, WAIT_TIMEOUT};
+    pid_state(pid) != Some(false)
+}
+
+#[cfg(windows)]
+fn pid_state(pid: u32) -> Option<bool> {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
     };
     const STILL_ACTIVE: u32 = 259;
     if pid == 0 {
-        return false;
+        return Some(false);
     }
     // SAFETY: OpenProcess takes plain values and returns a handle or null; nothing is borrowed.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, pid) };
     if !handle.is_null() {
         // A process handle is signalled once the process has ended, whatever its exit code.
         // SAFETY: `handle` was opened above with the right to wait on it; a zero timeout returns at once.
-        let alive = unsafe { WaitForSingleObject(handle, 0) } == WAIT_TIMEOUT;
+        let alive = match unsafe { WaitForSingleObject(handle, 0) } {
+            WAIT_TIMEOUT => Some(true),
+            WAIT_OBJECT_0 => Some(false),
+            _ => None,
+        };
         // SAFETY: `handle` was opened above and is closed exactly once.
         unsafe { CloseHandle(handle) };
         return alive;
     }
     // SAFETY: reads the calling thread's last error code; no pointers involved.
-    if unsafe { GetLastError() } != ERROR_ACCESS_DENIED {
-        return false;
+    match unsafe { GetLastError() } {
+        ERROR_INVALID_PARAMETER => return Some(false),
+        ERROR_ACCESS_DENIED => {}
+        _ => return None,
     }
     // Waiting was denied: ask with the right to query alone, which cannot wait.
     // SAFETY: OpenProcess takes plain values and returns a handle or null; nothing is borrowed.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
         // SAFETY: reads the calling thread's last error code; no pointers involved.
-        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
+        return None;
     }
     let mut code: u32 = 0;
     // SAFETY: `handle` is a valid process handle opened above and `code` is a live u32 to write to.
     let ok = unsafe { GetExitCodeProcess(handle, &mut code) } != 0;
     // SAFETY: `handle` was opened above and is closed exactly once.
     unsafe { CloseHandle(handle) };
-    ok && code == STILL_ACTIVE
+    ok.then_some(code == STILL_ACTIVE)
 }
 
 /// Whether a process with this id exists now.
 #[cfg(not(windows))]
-pub fn pid_alive(pid: u32) -> bool {
-    pid != 0 && std::path::Path::new("/proc").join(pid.to_string()).exists()
+fn pid_state(pid: u32) -> Option<bool> {
+    Some(pid != 0 && std::path::Path::new("/proc").join(pid.to_string()).exists())
 }
 
 /// The running entry for a session id, if it is open anywhere.
@@ -203,6 +226,22 @@ pub fn find<'a>(running: &'a [Running], session_id: &str) -> Option<&'a Running>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mismatched_pid_and_invalid_uuid_cannot_prove_scan_complete() {
+        let t = TempDir::new("run-contradictory");
+        let roots = t.roots();
+        let config = config_with(&roots, &[]);
+        let me = std::process::id();
+        let path = roots.primary_cli_dir().join("sessions").join(format!("{me}.json"));
+        for bad in [
+            json!({"pid":DEAD,"sessionId":"00000000-0000-4000-a000-000000000001"}),
+            json!({"pid":me,"sessionId":"invalid"}),
+        ] {
+            put(&path, &bad.to_string());
+            let (running, complete) = scan_checked(&roots, &config);
+            assert!(running.is_empty() && !complete);
+        }
+    }
     use super::*;
     use crate::util::testing::{TempDir, config_with, put};
     use serde_json::json;
@@ -226,16 +265,20 @@ mod tests {
         put(&sessions.join(format!("{DEAD}.json")), &json!({"pid":DEAD,"sessionId":"dead","cwd":"C:\\x"}).to_string());
         put(
             &sessions.join(format!("{me}.json")),
-            &json!({"pid":me,"sessionId":"alive","cwd":"C:\\x","entrypoint":"cli"}).to_string(),
+            &json!({"pid":me,"sessionId":"00000000-0000-4000-a000-000000000001","cwd":"C:\\x","entrypoint":"cli"})
+                .to_string(),
         );
         put(&sessions.join("notes.json"), &json!({"pid":me,"sessionId":"odd"}).to_string());
         put(&sessions.join(format!("{me}.abc.key")), "x");
         let running = scan(&roots, &config);
         assert_eq!(running.len(), 1);
         let r = &running[0];
-        assert_eq!((r.session_id.as_str(), r.pid, r.app, r.account.as_str()), ("alive", me, App::Cli, "main"));
+        assert_eq!(
+            (r.session_id.as_str(), r.pid, r.app, r.account.as_str()),
+            ("00000000-0000-4000-a000-000000000001", me, App::Cli, "main")
+        );
         assert_eq!(r.cwd, PathBuf::from("C:\\x"));
-        assert!(find(&running, "alive").is_some());
+        assert!(find(&running, "00000000-0000-4000-a000-000000000001").is_some());
         assert!(find(&running, "dead").is_none());
     }
 
@@ -253,7 +296,7 @@ mod tests {
         let t = TempDir::new("run-half");
         let me = std::process::id();
         let file = t.0.join(format!("{me}.json"));
-        let whole = json!({"pid":me,"sessionId":"late"}).to_string();
+        let whole = json!({"pid":me,"sessionId":"00000000-0000-4000-a000-000000000002"}).to_string();
         for half in ["{\"pid\":", "{}"] {
             put(&file, half);
             let mut waits = 0;
@@ -263,7 +306,10 @@ mod tests {
                     put(&file, &whole);
                 }
             });
-            assert_eq!((entry.unwrap()["sessionId"].as_str(), waits), (Some("late"), 3));
+            assert_eq!(
+                (entry.unwrap()["sessionId"].as_str(), waits),
+                (Some("00000000-0000-4000-a000-000000000002"), 3)
+            );
         }
         put(&file, "{");
         let mut waits = 0;
@@ -280,15 +326,18 @@ mod tests {
         let me = std::process::id();
         put(
             &roots.accounts_dir().join("removed").join("cli").join("sessions").join(format!("{me}.json")),
-            &json!({"pid":me,"sessionId":"left","entrypoint":"cli"}).to_string(),
+            &json!({"pid":me,"sessionId":"00000000-0000-4000-a000-000000000003","entrypoint":"cli"}).to_string(),
         );
         put(
             &config.accounts[1].cli_dir.join("sessions").join(format!("{me}.json")),
-            &json!({"pid":me,"sessionId":"known","entrypoint":"cli"}).to_string(),
+            &json!({"pid":me,"sessionId":"00000000-0000-4000-a000-000000000004","entrypoint":"cli"}).to_string(),
         );
         let running = scan(&roots, &config);
         let got: Vec<(&str, &str)> = running.iter().map(|r| (r.session_id.as_str(), r.account.as_str())).collect();
-        assert_eq!(got, [("left", "removed"), ("known", "work")]);
+        assert_eq!(
+            got,
+            [("00000000-0000-4000-a000-000000000003", "removed"), ("00000000-0000-4000-a000-000000000004", "work")]
+        );
     }
 
     #[test]
@@ -299,13 +348,16 @@ mod tests {
         let me = std::process::id();
         put(
             &config.accounts[1].cli_dir.join("sessions").join(format!("{me}.json")),
-            &json!({"pid":me,"sessionId":"left","entrypoint":"cli"}).to_string(),
+            &json!({"pid":me,"sessionId":"00000000-0000-4000-a000-000000000003","entrypoint":"cli"}).to_string(),
         );
         crate::accounts::remove(&mut config, "work").unwrap();
         assert_eq!(config.accounts.len(), 1);
         let running = scan(&roots, &config);
         assert_eq!(running.len(), 1);
-        assert_eq!((running[0].session_id.as_str(), running[0].account.as_str(), running[0].pid), ("left", "work", me));
+        assert_eq!(
+            (running[0].session_id.as_str(), running[0].account.as_str(), running[0].pid),
+            ("00000000-0000-4000-a000-000000000003", "work", me)
+        );
     }
 
     #[test]
@@ -316,7 +368,7 @@ mod tests {
         let me = std::process::id();
         put(
             &roots.primary_cli_dir().join("sessions").join(format!("{me}.json")),
-            &json!({"pid":me,"sessionId":"d1","entrypoint":"claude-desktop","hostSessionId":"local_9"}).to_string(),
+            &json!({"pid":me,"sessionId":"00000000-0000-4000-a000-000000000005","entrypoint":"claude-desktop","hostSessionId":"local_9"}).to_string(),
         );
         put(
             &config.accounts[1].desktop_dir.join("claude-code-sessions").join("a").join("o").join("local_9.json"),

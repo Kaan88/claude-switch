@@ -175,9 +175,12 @@ does not claim to know which profile received it.
 One value, `Launch`, says program, arguments, folder and environment. The window decides where it runs:
 an embedded terminal tab (`mdshared-pty` + `mdshared-term`), an external terminal window, or a detached
 process (the desktop app). Reading the account status does not launch Claude.
-Resume and fork require UUID transcript IDs. External terminals run an absolute executable directly
-in a new console with the working directory passed separately. Batch shims accept only restricted
-words and paths; there is no `cmd /c start` or Windows Terminal delegation.
+Resume and fork require UUID transcript IDs. Embedded, external, Desktop handoff and naming
+launches resolve an absolute native `.exe` before starting; batch-only CLI installations are refused.
+External terminals use a new console and pass the directory separately. There is no `cmd /c start`
+or Windows Terminal delegation. Account directory junctions use a Windows filesystem call, not a
+shell. Explorer Reveal uses the same environment scrub as other direct launches. User-requested
+document, image and URL opens use OS associations; Switch does not control their environments.
 
 **New session.** The toolbar button asks for a folder and account first. It starts with the selected
 session's folder (or home when none is selected) and the current account. The four most recent
@@ -236,8 +239,8 @@ have a pane.
 Resumed tabs use the transcript file already found by the session scan. New and forked tabs attach
 only after the terminal PID, account and working directory identify one session ID. The pane says
 when identity is unverified or ambiguous rather than selecting the newest file in a shared project.
-The verified ID must name a transcript created after launch in the launch folder's encoded directory.
-For batch shims, the live CLI PID must belong to the terminal's process tree; otherwise the pane
+For new and forked tabs the verified ID must name a fresh transcript in the launch folder's encoded
+directory. For wrapped processes, the live CLI PID must belong to the terminal's process tree; otherwise the pane
 stays unattached.
 
 Conversation, Agents and Tasks are separate views of the incremental transcript reader. Conversation
@@ -266,15 +269,18 @@ session, writes only to temp, and appends a few updates without starting Claude 
 **Compact and open** reads a full sequential snapshot through the existing JSONL decoder with no
 subagent files. A local reducer collects prompts and timestamps, the latest known task list,
 Write/Edit paths, the last 15 shell calls, and six recent turns. A prompt is capped at 4,000 Unicode
-characters with a marker. User image blocks become `[picture]`. Only assistant text and one-line
-tool summaries cross the OpenCode request boundary; the optional focus is data for emphasis only.
+characters with a marker. User image blocks become `[picture]`. Only assistant text and fixed tool
+category names cross the OpenCode request boundary; the optional focus is data for emphasis only.
+Tool arguments, paths and commands are not copied out of tool records. The assistant's own prose
+and the focus may still contain sensitive text; review the provider choice accordingly.
 Raw prompts, transcription metadata, and the full task list are assembled locally. System/meta
 records, embedded reminders, sidechains, tool results, image bytes, and thinking are not sent.
 
-The input budget is 60,000 characters per part at turn boundaries, with an oversized turn kept
-whole. Multiple parts get one additional merge request. Model replies supply only six Markdown
+Every serialized request, including a merge, is capped at 60,000 characters. The worker emits
+parts one at a time, prefers turn boundaries and splits oversized turns. Adjacent summaries
+merge in bounded stages. Model replies supply only six Markdown
 fields; the application renders the headings and all local evidence independently. Invalid or
-missing summary fields say `unknown`. A transcript record over the reader's 48 MiB safety limit
+missing summary fields say `unknown`. A transcript over 64 MiB, or a record over 48 MiB,
 fails the handover rather than silently dropping a possible user turn.
 
 Native OpenCode V2 is discovered on `PATH`. `opencode models` is cached in memory, with manual
@@ -300,8 +306,9 @@ new UUID for `marks.json` provenance. It never resumes or modifies the source tr
 The CLI runs headlessly for `--print` (the default); explicit `--open` starts a new window with the
 new tab because the app has no single-instance request channel. On Windows, the new window is
 ShellExecuted through a fixed non-interactive PowerShell bootstrap so it cannot keep the caller's
-output pipes open; only the executable path and validated handover identifiers reach the bootstrap.
-Exit codes are 0 for success,
+output pipes open; only the executable path and validated identifiers reach the bootstrap.
+`--open` waits up to 30 seconds for the new window to acknowledge creating the tab. This is not
+confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
 1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no
 handover request and launches no Claude process.
 
@@ -526,22 +533,27 @@ verified Claude readiness protocol: explicit busy labels only veto a send. On a 
 or after any composer send or direct terminal input, an old completion cannot rearm sending;
 a new prompt must be observed. There is still a race between observing the PTY and writing it.
 When uncertain, Chat retains the draft and says **Open the terminal to check**. **Send anyway**
-is explicit and still requires bracketed-paste mode outside the alternate screen.
+is explicit and requires bracketed-paste mode outside the alternate screen. Neither send can
+override a recognized permission question, a pending tool, a bell or the slash menu. Direct
+terminal input samples a transcript byte watermark before writing; a buffered earlier prompt
+cannot rearm Chat just because it arrives late at the UI.
 
 **When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
 same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. No
-permission responses or dialog keys are generated. Stop sends only Escape during a known turn.
+permission responses or dialog keys are generated. Stop sends Escape at most once per freshly
+verified active turn.
 A typed initial slash is forwarded only when ready; otherwise it stays in the draft and the
 drawer opens for inspection. Slash menus may not write a transcript event; in that case Chat
 cannot verify that the menu has closed.
 
-**Local data.** Files and clipboard pictures are queued until send. The clipboard picture uses
-the existing Alt+V path; it is not copied to disk, and a changed clipboard makes Chat refuse
-the send until the chip is removed or replaced. Files use the existing path quoting. Then
-bracketed text and exactly one final Enter are written. The editor rejects embedded terminal
-control bytes. Recall uses loaded main-transcript prompts. Tool cards show bounded previews:
+**Local data.** File paths use the existing quoting. Clipboard pictures must be attached and
+previewed in the drawer before the user submits; Chat never queues Alt+V and Enter together.
+The composer replaces line feeds and tabs with spaces, refuses other control characters, and
+writes the resulting text in bracketed paste followed by one app-generated Enter. Ordinary
+terminal paste refuses multiline clipboard text when bracketed paste is off. Recall uses
+loaded main-transcript prompts. Tool cards show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
 additions, and shell output uses only its first text lines. Changed files lists successful
 Edit/Write tool paths seen in loaded history, not a filesystem or Git diff. Context now uses
@@ -555,10 +567,15 @@ Recent, Projects, Threads and (when at least one indexed session has a label) To
 `config.json`. The old Folders setting migrates to Projects → Group by: Folder. Projects resolves each
 working folder once per run on the scan worker. It walks up to the first `.git` directory or file,
 follows `gitdir:` and `commondir` using paths relative to the files that hold them, and uses the
-main checkout's `HEAD` as the branch reference. It does not run Git. A submodule with its own gitdir
+main checkout's `HEAD` as the branch reference. It does not run Git. On Windows the starting path
+must have an ordinary drive letter mapped directly to a `\Device\HarddiskVolumeN` device and
+reported as `DRIVE_FIXED`. Git pointers must stay on that drive. Metadata and file reads use the
+validated native volume path with `OBJ_DONT_REPARSE`; UNC, mapped drives, junctions, symbolic links
+and other reparse points are not followed. A submodule with its own gitdir
 and no commondir stays separate. Missing folders, malformed markers and common directories that do
 not identify a checkout fall back to the original folder. Within a project the visible members are
-newest first; Groups containing pins are promoted in Projects, Threads and Topics without splitting
+newest first, and the header age uses the same draw-time clock and timestamp as the first row.
+Groups containing pins are promoted in Projects, Threads and Topics without splitting
 the groups. Recent and the Folder option still have a separate Pinned section.
 
 New handovers retain the display-only `handoverFrom` and store the exact source UUID in

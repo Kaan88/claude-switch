@@ -77,7 +77,9 @@ impl AppState {
     /// Opens a tab that runs `l` and shows it.
     pub fn open_tab(&mut self, l: &Launch, session: Option<&str>, account: Option<&str>) -> io::Result<u64> {
         let pane = self.pane_for_launch(l, session, account);
-        let id = self.open_command(&term::command(l), l.label.clone(), session, account)?;
+        let mut l = l.clone();
+        l.program = crate::run::native_program(&l.program)?;
+        let id = self.open_command(&term::command(&l), l.label.clone(), session, account)?;
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.cwd = pane.as_ref().and(l.cwd.clone());
             tab.pane = pane;
@@ -303,6 +305,13 @@ impl AppState {
         self.note_chat_terminal_input();
         let text = platform::clipboard_text();
         if let Some(tab) = self.tabs.shown_mut() {
+            if !tab.term.screen.modes().bracketed_paste && text.as_ref().is_some_and(|s| s.contains(['\r', '\n'])) {
+                self.warn(
+                    "Paste not sent",
+                    "Use the Chat composer for multiline input when bracketed paste is off.".into(),
+                );
+                return;
+            }
             let bytes = crate::view::attach::clipboard(text.as_deref(), &tab.term.screen.modes());
             tab.term.scroll = 0;
             tab.term.write(&bytes);
@@ -321,6 +330,9 @@ impl AppState {
                 let ev =
                     MouseEvent { kind: MouseKind::Press, button: Some(b), col, row, mods: termkeys::term_mods(mods) };
                 if let Some(bytes) = input::encode_mouse(ev, &modes) {
+                    if let Some(pane) = &mut tab.pane {
+                        pane.note_terminal_input();
+                    }
                     t.write(&bytes);
                 }
                 t.reported = Some(b);
@@ -360,6 +372,9 @@ impl AppState {
             let ev =
                 MouseEvent { kind: MouseKind::Move, button: t.reported, col, row, mods: termkeys::term_mods(mods) };
             if let Some(bytes) = input::encode_mouse(ev, &modes) {
+                if let Some(pane) = &mut tab.pane {
+                    pane.note_terminal_input();
+                }
                 t.write(&bytes);
             }
         }
@@ -377,6 +392,9 @@ impl AppState {
             let (row, col) = m.cell_clamped(area, x, y, t.screen.cols(), t.screen.rows());
             let ev = MouseEvent { kind: MouseKind::Release, button: b, col, row, mods: termkeys::term_mods(mods) };
             if let Some(bytes) = input::encode_mouse(ev, &modes) {
+                if let Some(pane) = &mut tab.pane {
+                    pane.note_terminal_input();
+                }
                 t.write(&bytes);
             }
             t.reported = None;
@@ -406,12 +424,18 @@ impl AppState {
         match termkeys::wheel(&modes, mods.shift) {
             Wheel::Scroll => t.scroll_by(lines),
             Wheel::Arrows => {
+                if let Some(pane) = &mut tab.pane {
+                    pane.note_terminal_input();
+                }
                 let key = if lines > 0 { mdshared_term::Key::Up } else { mdshared_term::Key::Down };
                 let one = input::encode_key(key, mdshared_term::Mods::NONE, &modes);
                 t.write(&one.repeat(lines.unsigned_abs() as usize));
             }
             Wheel::Report => {
                 let Some(m) = metrics else { return };
+                if let Some(pane) = &mut tab.pane {
+                    pane.note_terminal_input();
+                }
                 let (row, col) = m.cell_clamped(area, x, y, t.screen.cols(), t.screen.rows());
                 let button = if lines > 0 { MouseButton::WheelUp } else { MouseButton::WheelDown };
                 let notches = ((lines.unsigned_abs() as f32) / termkeys::WHEEL_LINES).round().max(1.0) as usize;

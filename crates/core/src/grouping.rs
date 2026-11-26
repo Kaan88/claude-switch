@@ -4,6 +4,7 @@ use crate::sessions::{folder_key, folder_name};
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+mod local;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
@@ -49,8 +50,8 @@ impl Project {
     }
 }
 
-fn small_text(path: &Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
+fn small_text(volume: &local::Volume, path: &Path) -> Option<String> {
+    let file = volume.open(path, true).ok()?;
     if !file.metadata().ok()?.is_file() {
         return None;
     }
@@ -59,26 +60,23 @@ fn small_text(path: &Path) -> Option<String> {
     (text.len() <= 8192).then_some(text)
 }
 
-fn pointer(base: &Path, value: &str) -> Option<PathBuf> {
+fn pointer(volume: &local::Volume, base: &Path, value: &str) -> Option<PathBuf> {
     let value = value.trim();
     if value.is_empty() || value.chars().any(char::is_control) {
         return None;
     }
-    let path = base.join(value).canonicalize().ok()?;
-    path.is_dir().then_some(path)
+    volume.folder(&base.join(value))
 }
 
 /// No Git invocation. A malformed repository marker is a boundary, not permission to merge into an
 /// outer repository. A submodule with its own gitdir but no commondir remains its own project.
 pub fn project(folder: &Path) -> Project {
     let fallback = || Project::folder(folder);
-    if !folder.is_absolute() || !folder.is_dir() {
-        return fallback();
-    }
-    let Ok(cwd) = folder.canonicalize() else { return fallback() };
+    let Some(volume) = local::Volume::at(folder) else { return fallback() };
+    let Some(cwd) = volume.folder(folder) else { return fallback() };
     for tree in cwd.ancestors() {
         let marker = tree.join(".git");
-        let meta = match marker.metadata() {
+        let meta = match volume.metadata(&marker) {
             Ok(meta) => meta,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => return fallback(),
@@ -86,7 +84,9 @@ pub fn project(folder: &Path) -> Project {
         let gitdir = if meta.is_dir() {
             marker
         } else if meta.is_file() {
-            let Some(dir) = small_text(&marker).and_then(|s| pointer(tree, s.trim().strip_prefix("gitdir:")?)) else {
+            let Some(dir) =
+                small_text(&volume, &marker).and_then(|s| pointer(&volume, tree, s.trim().strip_prefix("gitdir:")?))
+            else {
                 return fallback();
             };
             dir
@@ -94,10 +94,10 @@ pub fn project(folder: &Path) -> Project {
             return fallback();
         };
         let common_file = gitdir.join("commondir");
-        let (root, common) = match common_file.metadata() {
+        let (root, common) = match volume.metadata(&common_file) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (tree.to_owned(), gitdir),
             Ok(meta) if meta.is_file() => {
-                let Some(common) = small_text(&common_file).and_then(|s| pointer(&gitdir, &s)) else {
+                let Some(common) = small_text(&volume, &common_file).and_then(|s| pointer(&volume, &gitdir, &s)) else {
                     return fallback();
                 };
                 // Ordinary worktree: <main>/.git. With a separate Git directory the worktree's
@@ -109,8 +109,18 @@ pub fn project(folder: &Path) -> Project {
             }
             _ => return fallback(),
         };
-        let branch = small_text(&common.join("HEAD"))
-            .and_then(|s| s.trim().strip_prefix("ref: refs/heads/").filter(|s| !s.is_empty()).map(str::to_owned));
+        let head = common.join("HEAD");
+        let branch = match volume.open(&head, true) {
+            Ok(file) if file.metadata().is_ok_and(|m| m.is_file()) => {
+                let mut text = String::new();
+                if file.take(8193).read_to_string(&mut text).is_err() || text.len() > 8192 {
+                    return fallback();
+                }
+                text.trim().strip_prefix("ref: refs/heads/").filter(|s| !s.is_empty()).map(str::to_owned)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            _ => return fallback(),
+        };
         let relative = cwd.strip_prefix(tree).ok().filter(|p| !p.as_os_str().is_empty());
         let location = match (tree == root, relative) {
             (true, None) => None,

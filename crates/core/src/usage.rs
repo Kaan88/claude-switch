@@ -3,9 +3,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -154,7 +153,7 @@ pub enum Slot {
 }
 
 impl Slot {
-    fn id(self) -> &'static str {
+    pub fn id(self) -> &'static str {
         match self {
             Self::Session => "session",
             Self::Week => "week",
@@ -376,8 +375,15 @@ pub fn load_cache(path: &Path) -> Cache {
 }
 
 pub fn save_cache(path: &Path, readings: &Cache) -> std::io::Result<()> {
+    let _lock = crate::util::lock_beside(path).map_err(std::io::Error::other)?;
     crate::util::regular_target(path).map_err(std::io::Error::other)?;
-    let accounts: serde_json::Map<String, Value> = readings
+    let mut merged = load_cache(path);
+    for (slug, reading) in readings {
+        if merged.get(slug).is_none_or(|prior| prior.read_at < reading.read_at) {
+            merged.insert(slug.clone(), reading.clone());
+        }
+    }
+    let accounts: serde_json::Map<String, Value> = merged
         .iter()
         .map(|(slug, reading)| {
             let limits: Vec<Value> = reading
@@ -389,26 +395,9 @@ pub fn save_cache(path: &Path, readings: &Cache) -> std::io::Result<()> {
             (slug.clone(), json!({"read_at": reading.read_at, "limits": limits, "breakdown": breakdown}))
         })
         .collect();
-    // No symlink resolution of the destination; never write through an existing file or link.
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let mut name = path.as_os_str().to_owned();
-    name.push(format!(".{}.{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
-    let temp = Path::new(&name);
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let mut file = File::create_new(temp)?;
-    let written = serde_json::to_writer(&mut file, &accounts)
-        .map_err(std::io::Error::other)
-        .and_then(|()| file.write_all(b"\n"))
-        .and_then(|()| file.sync_all());
-    drop(file);
-    written
-        .and_then(|()| crate::util::regular_target(path).map_err(std::io::Error::other))
-        .and_then(|()| fs::rename(temp, path))
-        .inspect_err(|_| {
-            let _ = fs::remove_file(temp);
-        })
+    let mut bytes = serde_json::to_vec(&accounts).map_err(std::io::Error::other)?;
+    bytes.push(b'\n');
+    crate::util::write_atomic(path, &bytes).map_err(std::io::Error::other)
 }
 
 #[derive(Clone, Copy)]

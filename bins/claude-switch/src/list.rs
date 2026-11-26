@@ -86,7 +86,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
     for i in st.sections.visible() {
         let r = st.sections.rect(area, i);
         match st.sections.entry(i) {
-            Some(Entry::Heading(g)) => heading(st, p, r, g, i),
+            Some(Entry::Heading(g)) => heading(st, p, r, g, i, (now, offset)),
             Some(Entry::Row { .. }) if row(st, cx.anim(), p, r, i, cursor == Some(i), (now, offset)) => cx.animating(r),
             _ => {}
         }
@@ -94,7 +94,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
     if let Some((i, r)) = st.sections.sticky(area)
         && let Some(Entry::Heading(g)) = st.sections.entry(i)
     {
-        heading(st, p, r, g, i);
+        heading(st, p, r, g, i, (now, offset));
     }
     for (r, _) in &mut st.hits[first_hit..] {
         let bottom = r.bottom().min(area.bottom());
@@ -229,7 +229,7 @@ pub fn draw_undo(st: &mut AppState, p: &mut Painter, window: Rect) {
     st.hits.push((button, Target::UndoHide));
 }
 
-fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
+fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize, (now, offset): (u64, i32)) {
     let pal = *st.pal();
     p.fill(r, pal.pane);
     if st.hover == Some(Target::Entry(i)) {
@@ -238,7 +238,7 @@ fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
     let open = if st.sections.is_collapsed(g) { 0.0 } else { 1.0 };
     glyph::draw_disclosure(p, r.x + 16.0, r.cy(), 12.0, open, pal.muted);
     let vg = &st.groups[g];
-    let summary = st.grouping.project_summary.get(&vg.key);
+    let summary = st.project_heading_summary(vg, now, offset);
     let max_name = if summary.is_some() { r.w * 0.27 } else { r.w * 0.55 };
     let name_w = p.text(Face::Semibold, 12.5, r.x + 28.0, r.cy(), &vg.name, pal.text, max_name);
     let count = vg.rows.len().to_string();
@@ -249,7 +249,7 @@ fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
         .and_then(|_| vg.rows.first())
         .and_then(|&r| st.sessions.get(r))
         .map(|s| s.cwd.display().to_string());
-    if let Some(path) = summary.map(String::as_str).or(path.as_deref()) {
+    if let Some(path) = summary.as_deref().or(path.as_deref()) {
         let x = r.x + 43.0 + name_w + p.measure(Face::Ui, 12.0, &count);
         let color = if summary.is_some() { pal.muted } else { pal.faint };
         p.text(Face::Ui, 11.5, x, r.cy(), path, color, (r.right() - 12.0 - x).max(0.0));

@@ -103,7 +103,7 @@ impl Output {
         for part in text(message) {
             let mut hash = DefaultHasher::new();
             part.hash(&mut hash);
-            if self.seen.insert(hash.finish()) {
+            if self.seen.len() < 128 && self.seen.insert(hash.finish()) {
                 self.chars += part.chars().count() as u64;
             }
         }
@@ -119,8 +119,13 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
     let mut context = None;
     let mut estimated_output = false;
     let mut assistant_seen = false;
-    let (mut messages, mut tools) = (HashMap::<String, Output>::new(), HashSet::<String>::new());
+    const MAX_IDS: usize = 16_384;
+    let (mut messages, mut tools) = (HashMap::<u64, Output>::new(), HashSet::<u64>::new());
+    let mut exceeded = false;
     records(input, cancelled, |kind, message| {
+        if exceeded {
+            return;
+        }
         let mut pictures = 0;
         let mut prompt = false;
         for block in blocks(message) {
@@ -134,9 +139,10 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
                         block["content"].as_array().into_iter().flatten().filter(|b| b["type"] == "image").count();
                 }
                 Some("tool_use" | "server_tool_use")
-                    if kind == LineKind::Assistant && block["id"].as_str().is_none_or(|id| tools.insert(id.into())) =>
+                    if kind == LineKind::Assistant && block["id"].as_str().is_none_or(|id| tools.insert(hash(id))) =>
                 {
                     stats.tools += 1;
+                    exceeded |= tools.len() > MAX_IDS;
                 }
                 _ => {}
             }
@@ -154,8 +160,9 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
                 .filter_map(|field| usage[field].as_u64())
                 .reduce(u64::saturating_add);
             if let Some(id) = message["id"].as_str() {
-                let entry = messages.entry(id.into()).or_default();
+                let entry = messages.entry(hash(id)).or_default();
                 entry.add(message);
+                exceeded |= entry.seen.len() >= 128 || messages.len() > MAX_IDS;
             } else {
                 let mut entry = Output::default();
                 entry.add(message);
@@ -169,6 +176,12 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
             }
         }
     })?;
+    if exceeded {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Conversation exceeds the statistics deduplication budget",
+        ));
+    }
     for entry in messages.into_values() {
         assistant_chars += entry.chars;
         if let Some(count) = entry.exact {
@@ -184,6 +197,12 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
     });
     stats.output = Tokens { count: output.saturating_add(missing / 4), about: estimated_output || !assistant_seen };
     Ok(stats)
+}
+
+fn hash(text: &str) -> u64 {
+    let mut h = DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
 }
 
 #[cfg(test)]

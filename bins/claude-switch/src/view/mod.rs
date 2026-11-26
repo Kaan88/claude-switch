@@ -68,14 +68,34 @@ pub struct Pane {
 }
 
 impl Pane {
+    pub(crate) fn note_terminal_input(&mut self) {
+        let end = self.transcript_source.find_file().and_then(|p| std::fs::metadata(p).ok()).map(|m| m.len());
+        self.chat.invalidate_input(&self.model.chat, end);
+    }
     pub fn restore_chat_layout(&mut self, chat: bool) {
         self.chat.enabled = chat;
         self.ui.set_chat(chat);
     }
 
-    pub(crate) fn verify_identity(&self, id: &str) {
-        if let model::Source::Discover { verified, .. } = &self.transcript_source {
-            let _ = verified.set(id.to_owned());
+    pub(crate) fn verify_identity(&self, id: &str) -> bool {
+        match &self.transcript_source {
+            model::Source::File(path) => {
+                path.file_stem().and_then(|s| s.to_str()).is_some_and(|stem| stem.eq_ignore_ascii_case(id))
+            }
+            model::Source::Discover { verified, .. } => {
+                if let Some(previous) = verified.get() {
+                    return previous == id && self.transcript_source.find_file().is_some();
+                }
+                self.transcript_source.verify_candidate(id) && verified.set(id.to_owned()).is_ok()
+            }
+        }
+    }
+
+    pub(crate) fn identity_unverified(&mut self, changed: bool) {
+        self.chat.identity_unverified = true;
+        if changed {
+            self.model.error =
+                Some("Session changed in the terminal. Reopen the session to attach its transcript.".into());
         }
     }
 }
@@ -255,9 +275,6 @@ impl AppState {
         let Some(tab) = self.tabs.shown_mut() else { return };
         let Some(pane) = &mut tab.pane else { return };
         if pane.model.collect() {
-            if tab.session.is_none() {
-                tab.session = pane.model.session_id().map(str::to_owned);
-            }
             if pane.chat.enabled || pane.ui.overlay_open() || area.w <= 0.0 {
                 cx.request_redraw_all();
             } else {

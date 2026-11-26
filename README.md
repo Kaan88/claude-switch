@@ -22,6 +22,7 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 ## Install
 
 Download and run the installer from [Releases](https://github.com/Kaan88/claude-switch/releases). It installs for your Windows user and does not need administrator rights. Install the Claude Code CLI to use terminal sessions and the Claude desktop app to use Desktop sessions.
+Switch requires the native `claude.exe` on `PATH`; a `.cmd`- or `.bat`-only installation is not supported.
 
 To build from source on Windows, install Rust stable and run:
 
@@ -71,7 +72,7 @@ session. The character/token estimate updates as you edit. You can also copy or 
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 
-OpenCode receives assistant text, one-line tool summaries and the optional focus. The app appends
+OpenCode receives assistant text, fixed tool category names (no tool arguments or paths), and the optional focus. The app appends
 verbatim prompts locally. Tool results, pictures, thinking and system reminders are excluded from
 the OpenCode request. OpenCode archives its own run; this is not a no-retention option. To remove
 remembered permission, use **Settings → Handovers → Forget consents**.
@@ -84,7 +85,8 @@ claude-switch compact --session latest --cwd . --as work --open
 Use a session ID instead of `latest` to target one transcript; `--model provider/model` overrides
 the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requires prior provider
 consent. `--print` outputs Markdown and opens nothing; `--open` explicitly opts into starting
-the new session in a new Claude Switch window. Run it from the GUI instead to review first.
+the new session in a new Claude Switch window and waits for tab-creation confirmation. Run it
+from the GUI instead to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
 code units are saved in full; the new session's initial prompt asks it to read the saved
@@ -205,17 +207,19 @@ to resize it, and answer permissions and other CLI dialogs there.
 | --- | --- |
 | Ctrl+Shift+K, then F6 (or choose **Switch Chat / Terminal**) | Switch layouts without sending a key to the CLI |
 | Ctrl+Shift+E | Toggle the terminal drawer in Chat or Session view in Terminal |
-| Enter / Shift+Enter in the composer | Send / insert a new line |
+| Enter / Shift+Enter in the composer | Send / insert a new line in the draft (sent as a space) |
 | Up from an empty composer, then Up / Down | Recall earlier prompts from the loaded transcript |
-| Ctrl+V / file drop | Queue a clipboard image or file as a removable attachment |
+| File drop | Queue a file path as a removable attachment |
 
-Chat keeps drafts when it cannot tell that the CLI is ready. Check the terminal before using
-**Send anyway**. A slash opens the CLI’s own menus in the drawer. Chat does not answer for you.
+Chat keeps drafts when it cannot tell that the CLI is ready. **Send anyway** cannot override a
+recognized permission question or pending interaction. For clipboard images, paste and check the
+preview in the terminal drawer before submitting. A slash opens the CLI’s own menus in the drawer.
 
 ## Grouping sessions
 
 The Sessions switcher now offers **Recent**, **Projects**, **Threads**, and **Topics** when a
-session has a topic. **Projects** combines folders and worktrees of the same repository. Use
+session has a topic. **Projects** combines local folders and worktrees of the same repository,
+with the newest rows first. Remote or redirected paths fall back to folder grouping. Use
 **Group by: Project / Folder** to switch back to the original folder grouping. **Threads**
 folds proven continuations under their newest member; click **N earlier** or use Left/Right
 with the thread’s first row selected. In **Recent**, turn on **Sittings** to bracket same-day

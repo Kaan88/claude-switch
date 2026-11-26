@@ -116,10 +116,7 @@ pub fn load(path: Option<&Path>) -> WindowFile {
 
 pub fn save(path: Option<&Path>, f: &WindowFile) {
     if let Some(p) = path {
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = settings::write_atomic(p, &to_text(f));
+        let _ = claude_switch_core::write_app_file(p, to_text(f).as_bytes());
     }
 }
 

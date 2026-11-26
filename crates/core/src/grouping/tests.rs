@@ -1,6 +1,26 @@
 use super::*;
 use crate::util::testing::{TempDir, put};
 
+#[cfg(windows)]
+#[test]
+fn project_falls_back_instead_of_following_a_junction_in_cwd_or_git_metadata() {
+    let t = TempDir::new("project-junction");
+    let real = t.0.join("real");
+    put(&real.join(".git").join("HEAD"), "ref: refs/heads/main\n");
+    std::fs::create_dir(real.join("src")).unwrap();
+    assert_eq!(project(&real).branch.as_deref(), Some("main"));
+    let alias = t.0.join("alias");
+    crate::share::junction::create(&alias, &real).unwrap();
+    let child = alias.join("src");
+    assert_eq!(project(&child), Project::folder(&child));
+    let linked_git = t.0.join("linked");
+    std::fs::create_dir(&linked_git).unwrap();
+    crate::share::junction::create(&linked_git.join(".git"), &real.join(".git")).unwrap();
+    assert_eq!(project(&linked_git), Project::folder(&linked_git));
+    std::fs::remove_dir(linked_git.join(".git")).unwrap();
+    std::fs::remove_dir(alias).unwrap();
+}
+
 #[test]
 fn projects_resolve_subfolders_worktrees_and_submodules_without_a_git_program() {
     let t = TempDir::new("project-roots");

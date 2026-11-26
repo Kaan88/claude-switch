@@ -162,7 +162,7 @@ impl AppState {
 
     pub fn note_chat_terminal_input(&mut self) {
         if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
-            pane.chat.invalidate(&pane.model.chat);
+            pane.note_terminal_input();
         }
     }
 
@@ -272,11 +272,12 @@ impl AppState {
             }
             Control::Send | Control::Override => Self::chat_send(tab, cx.now(), control == Control::Override),
             Control::Stop => {
-                let (gate, _) = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, cx.now());
-                if (gate == Gate::Running || chat.reason == Some(Reason::Tool))
-                    && let Err(e) = write(tab, b"\x1b", "Stopped")
-                {
-                    tab.pane.as_mut().unwrap().chat.error = Some(e);
+                let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, cx.now());
+                if decision == (Gate::Running, None) && chat.can_stop(&pane.model.chat) {
+                    chat.stopped = pane.model.chat.prompt.map(|p| (pane.model.chat.generation, p));
+                    if let Err(e) = write(tab, b"\x1b", "Stopped") {
+                        tab.pane.as_mut().unwrap().chat.error = Some(e);
+                    }
                 }
             }
             _ => {}
@@ -289,7 +290,7 @@ impl AppState {
         if chat.editor.text.trim().is_empty() && chat.chips.is_empty() {
             return;
         }
-        let (gate, _) = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
+        let (gate, reason) = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
         let modes = tab.term.screen.modes();
         chat.error = match gate {
             Gate::Ended => Some("The session ended. Your draft is still here."),
@@ -297,14 +298,20 @@ impl AppState {
                 Some("Bracketed paste is unavailable. Open the terminal to check.")
             }
             Gate::Running => Some("A turn is running. Your draft is still here."),
+            Gate::Check if reason.is_some() => reason.map(Reason::label),
             Gate::Check if !force => Some("Open the terminal to check"),
             _ => None,
         };
         if chat.error.is_some() {
+            if reason.is_some() {
+                chat.open_drawer();
+            }
             return;
         }
-        if chat.chips.iter().any(|chip| matches!(chip, Chip::Clipboard(seq) if clipboard_picture() != Some(*seq))) {
-            chat.error = Some("The clipboard changed. Remove the picture chip and paste it again.");
+        if chat.chips.iter().any(|chip| matches!(chip, Chip::Clipboard(_))) {
+            chat.error =
+                Some("Open the terminal to attach and preview the clipboard picture. Remove this chip before sending.");
+            chat.open_drawer();
             return;
         }
         let Some(bytes) = send_bytes(&chat.chips, &chat.editor.text) else {

@@ -31,6 +31,8 @@ pub mod stats;
 pub mod transcript;
 pub mod usage;
 mod util;
+pub use util::replace_if_unchanged;
+pub use util::write_atomic as write_app_file;
 
 /// Where the files of this computer are, so that tests can point everything at a temporary folder.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -125,7 +125,10 @@ fn request_context_is_dropped_once_on_success_pre_send_failure_and_pending_read_
     });
     let drops = track_drop();
     let endpoint = Endpoint { host: "127.0.0.1", port, path: "api/oauth/usage", flags: 0 };
-    assert_eq!(request(&good.0, endpoint, TIMEOUT, || !cancelled.load(Ordering::SeqCst), reading), Err(Error::Network));
+    assert_eq!(
+        request(&good.0, endpoint, TIMEOUT, || !cancelled.load(Ordering::SeqCst), reading, None),
+        Err(Error::Network)
+    );
     stop.join().unwrap();
     verify(drops);
     drop(hold);
@@ -249,7 +252,8 @@ fn expired_or_disabled_credential_never_reaches_the_socket() {
     let sock = listener();
     let url = base(&sock);
     assert_eq!(loopback(&dir.0, &url, TIMEOUT), Err(Error::Expired));
-    assert_eq!(production(&dir.0, || false, reading), Err(Error::Network)); // Returns before opening WinHTTP or file.
+    let roots = Roots { home: dir.0.clone(), appdata: dir.0.clone() };
+    assert_eq!(production(&roots, &dir.0, || false, reading), Err(Error::Network));
     sock.set_nonblocking(true).unwrap();
     assert_eq!(sock.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
 }
@@ -306,7 +310,7 @@ fn production_requires_tls_and_plaintext_never_receives_the_bearer() {
         assert!(!hello.windows(TOKEN.len()).any(|w| w == TOKEN.as_bytes()));
         response(&mut stream, "200 OK", "", "{}");
     });
-    assert_eq!(request(&dir.0, endpoint, Duration::from_secs(4), || true, reading), Err(Error::Network));
+    assert_eq!(request(&dir.0, endpoint, Duration::from_secs(4), || true, reading, None), Err(Error::Network));
     server.join().unwrap();
 }
 

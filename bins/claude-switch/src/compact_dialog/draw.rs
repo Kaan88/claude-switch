@@ -125,7 +125,7 @@ impl Compact {
 
     fn draw_consent(&self, d: &mut Draw<'_>, p: &mut Painter, body: Rect, footer: Rect) {
         let provider = self.models.get(self.model).and_then(|m| compact::provider(m)).unwrap_or("the provider");
-        let prompt = format!("The text of this session's prompts and answers is sent to {provider} through OpenCode.");
+        let prompt = format!("Assistant text and optional focus are sent to {provider} through OpenCode.");
         let next = p.paragraph_wrapped(Face::Ui, 15.0, body.x, body.y + 43.0, body.w, &prompt, d.pal.text, Wrap::Words);
         p.paragraph_wrapped(
             Face::Ui,
@@ -133,8 +133,8 @@ impl Compact {
             body.x,
             body.y + 64.0 + next,
             body.w,
-            "The summary request includes assistant text, one-line tool summaries, and the optional focus. \
-             Verbatim user prompts are added locally, not included in that request. \
+            "The request also includes fixed tool categories, not tool arguments, command bodies or file paths from tool records. \
+             Assistant text and your focus can themselves contain private details. Verbatim user prompts are added locally. \
              You can forget this consent in Settings.",
             d.pal.muted,
             Wrap::Words,

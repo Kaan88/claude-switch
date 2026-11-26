@@ -295,7 +295,18 @@ impl AppState {
         if !self.compact.standalone_window {
             self.capture_window(cx);
             self.save_window();
-            self.save_tab_restore();
+            if !self.restore.save_failed
+                && let Err(error) = self.save_tab_restore()
+            {
+                self.restore.save_failed = true;
+                self.quit = false;
+                self.error(
+                    "Could not save terminal tabs",
+                    format!("{error} Close again to leave the saved snapshot unchanged."),
+                );
+                cx.request_redraw_all();
+                return;
+            }
         }
         cx.exit();
     }

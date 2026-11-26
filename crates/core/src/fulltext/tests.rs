@@ -5,6 +5,15 @@ use std::io::{Cursor, Read, Write};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+#[test]
+fn a_record_with_extreme_json_width_fails_instead_of_reporting_a_partial_scan() {
+    let padding = "0,".repeat(65_536);
+    let input = format!("{{\"type\":\"user\",\"message\":{{\"content\":\"hello\",\"padding\":[{padding}0]}}}}\n");
+    let error = records(input.as_bytes(), || false, |_, _| panic!("oversized structure reached parser")).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(bounded_structure(br#"{"message": "commas, braces { and escaped quote \" in a string"}"#, 2));
+}
+
 pub(crate) struct Folder(pub PathBuf);
 
 impl Folder {

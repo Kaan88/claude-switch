@@ -34,10 +34,10 @@ pub(crate) fn records(
             if end.is_some() {
                 if !over {
                     if line.is_empty() {
-                        record(part, &mut visit);
+                        record(part, &mut visit)?;
                     } else {
                         line.extend_from_slice(part);
-                        record(&line, &mut visit);
+                        record(&line, &mut visit)?;
                     }
                 }
                 line.clear();
@@ -56,9 +56,15 @@ pub(crate) fn records(
     Ok(())
 }
 
-fn record(bytes: &[u8], visit: &mut impl FnMut(LineKind, &Value)) {
-    let Some(kind @ (LineKind::User | LineKind::Assistant)) = line_kind(bytes) else { return };
-    let Ok(value) = serde_json::from_slice::<Value>(bytes) else { return };
+fn record(bytes: &[u8], visit: &mut impl FnMut(LineKind, &Value)) -> io::Result<()> {
+    let Some(kind @ (LineKind::User | LineKind::Assistant)) = line_kind(bytes) else { return Ok(()) };
+    if !bounded_structure(bytes, 65_536) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Conversation record exceeds the JSON structure budget",
+        ));
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else { return Ok(()) };
     let expected = if kind == LineKind::User { "user" } else { "assistant" };
     let message = &value["message"];
     if value["type"] == expected
@@ -68,6 +74,28 @@ fn record(bytes: &[u8], visit: &mut impl FnMut(LineKind, &Value)) {
     {
         visit(kind, message);
     }
+    Ok(())
+}
+
+fn bounded_structure(bytes: &[u8], mut remaining: usize) -> bool {
+    let (mut quoted, mut escaped) = (false, false);
+    for &b in bytes {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                quoted = false;
+            }
+        } else if b == b'"' {
+            quoted = true;
+        } else if matches!(b, b'{' | b'[' | b',' | b':') {
+            let Some(next) = remaining.checked_sub(1) else { return false };
+            remaining = next;
+        }
+    }
+    true
 }
 
 pub(crate) fn blocks(message: &Value) -> impl Iterator<Item = &Value> {

@@ -8,7 +8,7 @@ mod native_tasks;
 pub(crate) enum Entry {
     Prompt(Option<String>, String),
     Assistant(String),
-    Tool { id: String, name: String, summary: String, path: Option<String>, command: Option<String> },
+    Tool { id: String, kind: &'static str, path: Option<String>, command: Option<String> },
 }
 
 pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl FnMut(Entry)) -> io::Result<Vec<Task>> {
@@ -18,6 +18,9 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
     // Bound the snapshot to the initial file length; a simultaneous append is for the next handover.
     let file = File::open(path)?;
     let size = file.metadata()?.len();
+    if size > 64 * 1024 * 1024 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Handover transcript exceeds 64 MiB"));
+    }
     let mut reader = BufReader::new(file.take(size));
     let mut line = Vec::new();
     let mut tasks = Vec::new();
@@ -82,9 +85,16 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
                                 .flatten();
                             let command =
                                 matches!(name, "Bash" | "PowerShell").then(|| string(&input["command"])).flatten();
-                            let summary =
-                                path.clone().or_else(|| command.clone()).unwrap_or_else(|| tool_summary(name, input));
-                            visit(Entry::Tool { id: id.into(), name: name.into(), summary, path, command });
+                            let kind = match name {
+                                "Write" => "Write",
+                                "Edit" | "MultiEdit" => "Edit",
+                                "Read" => "Read",
+                                "Bash" | "PowerShell" => "Shell",
+                                "Grep" | "Glob" => "Search",
+                                "WebFetch" | "WebSearch" => "Web",
+                                _ => "Other",
+                            };
+                            visit(Entry::Tool { id: id.into(), kind, path, command });
                         }
                     }
                 }

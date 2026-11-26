@@ -9,7 +9,6 @@ fn main() {
     {
         return;
     }
-    println!("cargo:rerun-if-env-changed=PATH");
     println!("cargo:rerun-if-env-changed=ProgramFiles(x86)");
 
     let rc = find_rc().expect("Windows SDK resource compiler (rc.exe) is required");
@@ -51,11 +50,10 @@ fn main() {
 }
 
 fn find_rc() -> Option<PathBuf> {
-    let path = env::var_os("PATH").unwrap_or_default();
-    if let Some(rc) = env::split_paths(&path).map(|dir| dir.join("rc.exe")).find(|rc| rc.is_file()) {
-        return Some(rc);
-    }
     let sdk = PathBuf::from(env::var_os("ProgramFiles(x86)")?).join("Windows Kits/10/bin");
+    if !sdk.is_absolute() {
+        return None;
+    }
     fs::read_dir(sdk)
         .ok()?
         .filter_map(Result::ok)

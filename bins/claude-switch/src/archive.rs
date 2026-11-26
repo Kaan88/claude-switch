@@ -171,7 +171,7 @@ impl AppState {
         let mut n = 0;
         for id in &d.ids {
             let Some(s) = self.by_id.get(id).map(|&i| &self.sessions[i]) else { continue };
-            if busy.contains(id) || !self.can_archive(s) {
+            if busy.contains(&id.to_ascii_lowercase()) || !self.can_archive(s) {
                 continue;
             }
             let modified =

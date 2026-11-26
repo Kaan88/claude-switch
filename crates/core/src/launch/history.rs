@@ -29,6 +29,10 @@ pub struct Reservation {
 }
 
 impl Reservation {
+    pub fn finish_desktop(mut self) -> Result<(), Refusal> {
+        self.entries.insert(self.id.clone(), json!({"at": now_ms(), "previous": self.before}));
+        write_json(&self.path, &Value::Object(self.entries))
+    }
     /// Commit only after a successful start, or put the previous entry back.
     pub fn finish(mut self, started: bool) -> Result<(), Refusal> {
         self.entries.remove(&self.id);
@@ -61,6 +65,8 @@ fn valid_previous(entry: &Value) -> bool {
 fn valid_entry(entry: &Value) -> bool {
     if let Some(at) = entry.get("pending_at") {
         at.is_u64() && entry.get("previous").is_some_and(|p| p.is_null() || valid_previous(p))
+    } else if let Some(previous) = entry.get("previous") {
+        entry["at"].is_u64() && (previous.is_null() || valid_previous(previous))
     } else {
         valid_previous(entry)
     }
@@ -91,9 +97,13 @@ pub fn with_archive_check<T>(
     if !complete {
         return Err(Refusal::Invalid("The running-session check was incomplete. Nothing was archived.".into()));
     }
-    let mut busy: std::collections::HashSet<_> = running.into_iter().map(|r| r.session_id).collect();
+    let mut busy: std::collections::HashSet<_> =
+        running.into_iter().map(|r| r.session_id.to_ascii_lowercase()).collect();
     busy.extend(
-        read_entries(&path)?.into_iter().filter_map(|(id, value)| recent(&value).unwrap_or(false).then_some(id)),
+        read_entries(&path)?
+            .into_iter()
+            .filter(|(_, value)| recent(value) == Some(true))
+            .map(|(id, _)| id.to_ascii_lowercase()),
     );
     Ok(commit(&busy))
 }
@@ -124,6 +134,32 @@ fn reserve_with(
 mod tests {
     use super::*;
     use crate::util::testing::{TempDir, put};
+
+    #[test]
+    fn desktop_cooldown_never_invents_a_verified_recipient_and_archive_normalizes_ids() {
+        let t = TempDir::new("desktop-history");
+        let roots = t.roots();
+        let id = "00000000-0000-4000-ABCD-000000000001";
+        reserve_with(&roots, id, "work", || Ok(())).unwrap().finish_desktop().unwrap();
+        let entries = read_entries(&history_file(&roots)).unwrap();
+        assert!(previous(&entries[id]).is_null());
+        assert_eq!(recent(&entries[id]), Some(true));
+        assert!(reserve_with(&roots, id, "main", || Ok(())).is_err());
+        with_archive_check(&roots, &crate::config::load(&roots), |busy| {
+            assert!(busy.contains(&id.to_ascii_lowercase()));
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn unresolved_desktop_outcome_keeps_the_pending_reservation() {
+        let t = TempDir::new("desktop-pending");
+        let roots = t.roots();
+        let id = "00000000-0000-4000-a000-000000000001";
+        drop(reserve_with(&roots, id, "work", || Ok(())).unwrap());
+        assert!(reserve_with(&roots, id, "main", || Ok(())).is_err());
+        assert!(read_entries(&history_file(&roots)).unwrap()[id]["pending_at"].is_u64());
+    }
 
     #[test]
     fn an_unreadable_sessions_directory_or_unresolved_live_pid_blocks_resume() {

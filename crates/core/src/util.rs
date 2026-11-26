@@ -11,9 +11,7 @@ pub(crate) fn lock_beside(path: &Path) -> Result<std::fs::File, Refusal> {
     let mut name = path.as_os_str().to_owned();
     name.push(".lock");
     let lock = PathBuf::from(name);
-    if let Some(dir) = lock.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
-    }
+    ensure_parent(&lock)?;
     regular_target(&lock)?;
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -51,9 +49,7 @@ pub(crate) fn temp_beside(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn publish_new(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
-    }
+    ensure_parent(path)?;
     write_new_atomic(path, bytes)
 }
 
@@ -70,7 +66,7 @@ pub(crate) fn regular_target(path: &Path) -> Result<(), Refusal> {
     Ok(())
 }
 
-fn reparse(metadata: &std::fs::Metadata) -> bool {
+pub(crate) fn reparse(metadata: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -80,14 +76,49 @@ fn reparse(metadata: &std::fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
-/// Never resolves the destination; rename replaces the entry, not a link target.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
-    regular_target(path)?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
+pub(crate) fn ensure_parent(path: &Path) -> Result<(), Refusal> {
+    let dirs: Vec<_> = path.ancestors().skip(1).filter(|p| !p.as_os_str().is_empty()).collect();
+    for dir in dirs.into_iter().rev() {
+        let check = || std::fs::symlink_metadata(dir);
+        let meta = match check() {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match std::fs::create_dir(dir) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(io_refusal("create the folder", dir, &e)),
+                }
+                check().map_err(|e| io_refusal("inspect", dir, &e))?
+            }
+            Err(e) => return Err(io_refusal("inspect", dir, &e)),
+        };
+        if !meta.is_dir() || reparse(&meta) {
+            return Err(io_refusal("use the folder", dir, &"not a regular directory"));
+        }
     }
+    Ok(())
+}
+
+/// Never resolves the destination; rename replaces the entry, not a link target.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
+    ensure_parent(path)?;
+    regular_target(path)?;
     let tmp = temp_beside(path);
     write_through_temp(path, &tmp, bytes)
+}
+
+pub fn replace_if_unchanged(path: &Path, baseline: Option<&[u8]>, bytes: &[u8]) -> Result<(), Refusal> {
+    let _lock = lock_beside(path)?;
+    regular_target(path)?;
+    let current = match std::fs::read(path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(io_refusal("read", path, &e)),
+    };
+    if current.as_deref() != baseline {
+        return Err(Refusal::Invalid("Saved tabs changed in another window; the newer snapshot was kept.".into()));
+    }
+    write_atomic(path, bytes)
 }
 
 fn write_through_temp(path: &Path, tmp: &Path, bytes: &[u8]) -> Result<(), Refusal> {
@@ -117,7 +148,9 @@ pub(crate) fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), Refusal>
         publish_without_replacing(&tmp, &path)
             .map_err(|e| io_refusal("save a new file (choose an unused name)", &path, &e))
     });
-    let _ = std::fs::remove_file(&tmp);
+    if !cfg!(windows) || result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
     result
 }
 
@@ -178,6 +211,29 @@ pub(crate) fn squeeze(text: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compare_and_replace_preserves_another_windows_snapshot() {
+        let t = super::testing::TempDir::new("snapshot-revision");
+        let p = t.0.join("terminal-tabs.json");
+        super::replace_if_unchanged(&p, None, b"[1]").unwrap();
+        assert!(super::replace_if_unchanged(&p, None, b"[]").is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), b"[1]");
+        super::replace_if_unchanged(&p, Some(b"[1]"), b"[]").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"[]");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn app_file_writes_refuse_redirected_parent_directories() {
+        let t = super::testing::TempDir::new("app-write-junction");
+        let real = t.0.join("real");
+        std::fs::create_dir(&real).unwrap();
+        let alias = t.0.join("alias");
+        crate::share::junction::create(&alias, &real).unwrap();
+        assert!(super::write_atomic(&alias.join("window.ini"), b"no").is_err());
+        assert!(!real.join("window.ini").exists());
+        std::fs::remove_dir(alias).unwrap();
+    }
     use super::testing::{TempDir, put};
     use super::*;
 

@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use claude_switch_core::config::{WarningWindows, load_warning_windows, save_warning_windows};
+use claude_switch_core::config::{WarningWindows, claim_warning, load_warning_windows};
 use claude_switch_core::usage::{Demand, Limit, Reading, Slot};
 use claude_switch_core::{Account, sessions};
 use mdshared_ui::host::Cx;
@@ -114,12 +114,17 @@ impl AppState {
         }
         let Some(reading) = self.usage.reading(slug) else { return };
         let notices = self.usage_warnings.observe(slug, reading, previous);
-        if !notices.is_empty()
-            && let Source::Real(roots) = &self.source
-        {
-            let _ = save_warning_windows(roots, &self.usage_warnings.seen);
-        }
         for (limit, threshold) in notices {
+            if let Source::Real(roots) = &self.source
+                && !claim_warning(
+                    roots,
+                    (slug.into(), limit.slot.id().into(), limit.label.clone(), limit.reset),
+                    threshold,
+                )
+                .unwrap_or(false)
+            {
+                continue;
+            }
             let window = match limit.slot {
                 Slot::Session => "the session".into(),
                 Slot::Week => "the week".into(),
@@ -203,6 +208,12 @@ impl AppState {
     pub fn usage_open_as(&mut self, clock: u64) {
         let Some(account) = self.usage_switch_account(clock).map(|a| a.slug.clone()) else { return };
         let Some(tab) = self.tabs.shown() else { return };
+        if !self.source.is_demo() {
+            let id = tab.id;
+            self.usage.popup = Default::default();
+            self.ask_tab_compact(id, Some(&account));
+            return;
+        }
         let session = tab
             .session
             .as_ref()

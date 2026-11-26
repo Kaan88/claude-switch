@@ -34,6 +34,7 @@ pub struct Cache {
     models: Option<Vec<String>>,
     retiring: Vec<Work>,
     pub startup: Option<crate::compact_open::NewHandover>,
+    pub startup_ack: Option<String>,
     pub standalone_window: bool,
     pub demo: Option<bool>,
     pub demo_long: bool,
@@ -63,6 +64,7 @@ enum Phase {
 
 pub struct Compact {
     session: Session,
+    source_tab: Option<u64>,
     name: String,
     program: Option<PathBuf>,
     data: Option<std::sync::Arc<compact::Handover>>,
@@ -94,10 +96,14 @@ impl Drop for Compact {
 
 impl AppState {
     pub fn start_compact(&mut self) {
-        if let Some(request) = self.compact.startup.take()
-            && let Err(e) = self.open_handover_tab(request)
-        {
-            self.error("Could not open handover", e);
+        if let Some(request) = self.compact.startup.take() {
+            let result = self.open_handover_tab(request);
+            if let Some(key) = self.compact.startup_ack.take() {
+                crate::compact_cli::acknowledge(&key, result.is_ok());
+            }
+            if let Err(e) = result {
+                self.error("Could not open handover", e);
+            }
         }
         if let Some(preview) = self.compact.demo.take() {
             self.apply_scan(crate::demo::scan(&self.config));
@@ -146,6 +152,18 @@ impl AppState {
 
     pub fn ask_compact_session(&mut self, session: Session, history: bool) {
         self.ask_compact_for(session, None, history);
+    }
+
+    pub fn ask_tab_compact(&mut self, tab: u64, account: Option<&str>) {
+        let Some(id) = self.recheck_tab_identity(tab) else {
+            self.warn("Session not verified", "Choose the exact session from the Sessions list.".into());
+            return;
+        };
+        let Some(session) = self.by_id.get(&id).and_then(|&i| self.sessions.get(i)).cloned() else { return };
+        self.ask_compact_for(session, account, false);
+        if let Some(Dialog::Compact(dialog)) = &mut self.dialog {
+            dialog.source_tab = Some(tab);
+        }
     }
 
     pub fn ask_compact_for(&mut self, session: Session, account: Option<&str>, history: bool) {
@@ -216,6 +234,7 @@ impl Compact {
         let account = accounts.iter().position(|(slug, _)| slug == account).unwrap_or(0);
         let name = st.title_of(&session).to_owned();
         Self {
+            source_tab: None,
             session,
             name,
             accounts,
@@ -313,6 +332,12 @@ impl Compact {
 
     fn make(&mut self, st: &mut AppState, approve: bool) {
         if self.job.is_some() {
+            return;
+        }
+        if let Some(tab) = self.source_tab
+            && st.recheck_tab_identity(tab).as_deref() != Some(self.session.id.as_str())
+        {
+            self.error("The terminal's session changed or could not be verified. Nothing was sent.".into());
             return;
         }
         let Some(model) = self.models.get(self.model).cloned() else { return };

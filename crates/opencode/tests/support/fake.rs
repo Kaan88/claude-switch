@@ -20,7 +20,8 @@ fn main() {
         ["api", "session.active"] => println!(
             r#"{{"data":{{"a":{{"type":"running"}},"b":{{"type":"idle"}},"c":null,"d":{{"type":"running"}}}}}}"#
         ),
-        ["service", "restart" | "stop"] if mode == "fallback" => process::exit(1),
+        ["service", "restart"] if matches!(mode.as_str(), "fallback" | "failed-stop") => process::exit(1),
+        ["service", "stop"] if mode == "failed-stop" => process::exit(1),
         ["service", "restart" | "start" | "stop"] => {}
         ["models"] => println!("z/a\np/group/model#high\np/first\np/first\nnot-a-model\np/"),
         ["run", "--model", "p/model", ..] if mode == "private_error" => {

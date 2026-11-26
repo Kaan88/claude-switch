@@ -3,6 +3,10 @@
 ## 0.1.0 (Unreleased)
 
 - Prefer scoped subscription limits and show the weekly model breakdown when available.
+- Block Chat sends during recognized CLI interactions, require a terminal preview for clipboard
+  pictures, and make persisted usage opt-out and restore snapshots safe across cooperating windows.
+- Keep project discovery on local fixed drives and open Projects at the top instead of scrolling
+  to the old selection. Require native Claude executables and verify the session before handing it over.
 - Harden session launch and Desktop handoff, recover damaged settings without re-enabling usage,
   and protect marks, transcripts, profile files and the usage cache from unsafe updates.
 - Add Compact and open: an opt-in OpenCode handover with an editable preview, local history, new-session provenance, CLI, and a Claude Code plugin.

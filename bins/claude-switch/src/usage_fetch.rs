@@ -1,5 +1,6 @@
 //! WinHTTP transport. No configurable destination, proxy, redirects or certificate bypass.
 
+use claude_switch_core::Roots;
 use claude_switch_core::usage::{Error, Reading};
 #[cfg(windows)]
 use claude_switch_core::usage::{Token, now_ms};
@@ -15,8 +16,8 @@ pub fn local_time(secs: i64) -> Civil {
 }
 
 #[cfg(windows)]
-pub fn fetch(dir: &Path, enabled: impl Fn() -> bool) -> Result<Reading, Error> {
-    win::production(dir, enabled, reading)
+pub fn fetch(roots: &Roots, dir: &Path, enabled: impl Fn() -> bool) -> Result<Reading, Error> {
+    win::production(roots, dir, enabled, reading)
 }
 
 #[cfg(windows)]
@@ -25,12 +26,12 @@ fn reading(token: &Token, body: &[u8]) -> Result<Reading, Error> {
 }
 
 #[cfg(windows)]
-pub fn fetch_shape(dir: &Path, labels: bool) -> Result<serde_json::Value, Error> {
-    win::production(dir, || true, |token, body| token.shape(body, labels))
+pub fn fetch_shape(roots: &Roots, dir: &Path, labels: bool) -> Result<serde_json::Value, Error> {
+    win::production(roots, dir, || true, |token, body| token.shape(body, labels))
 }
 
 #[cfg(not(windows))]
-pub fn fetch_shape(_dir: &Path, _labels: bool) -> Result<serde_json::Value, Error> {
+pub fn fetch_shape(_roots: &Roots, _dir: &Path, _labels: bool) -> Result<serde_json::Value, Error> {
     Err(Error::Network)
 }
 
@@ -261,11 +262,12 @@ mod win {
     }
 
     pub(super) fn production<T>(
+        roots: &Roots,
         dir: &Path,
         enabled: impl Fn() -> bool,
         decode: impl FnOnce(&Token, &[u8]) -> Result<T, Error>,
     ) -> Result<T, Error> {
-        request(dir, production_endpoint().ok_or(Error::Network)?, TIMEOUT, enabled, decode)
+        request(dir, production_endpoint().ok_or(Error::Network)?, TIMEOUT, enabled, decode, Some(roots))
     }
 
     #[cfg(test)]
@@ -282,7 +284,7 @@ mod win {
     ) -> Result<T, Error> {
         let port = base.strip_prefix("http://127.0.0.1:").and_then(|p| p.parse::<u16>().ok()).ok_or(Error::Network)?;
         let endpoint = Endpoint { host: "127.0.0.1", port, path: "api/oauth/usage", flags: 0 };
-        request(dir, endpoint, timeout, || true, decode)
+        request(dir, endpoint, timeout, || true, decode, None)
     }
 
     fn request<T>(
@@ -291,6 +293,7 @@ mod win {
         timeout: Duration,
         enabled: impl Fn() -> bool,
         decode: impl FnOnce(&Token, &[u8]) -> Result<T, Error>,
+        roots: Option<&Roots>,
     ) -> Result<T, Error> {
         if !enabled() {
             return Err(Error::Network);
@@ -319,7 +322,15 @@ mod win {
         if !enabled() {
             return Err(Error::Network);
         }
-        let token = read_token(dir, now_ms())?;
+        let permit =
+            || roots.map(|r| claude_switch_core::config::usage_permit(r, dir).ok_or(Error::Network)).transpose();
+        let token = {
+            let _permit = permit()?;
+            if !enabled() {
+                return Err(Error::Network);
+            }
+            read_token(dir, now_ms())?
+        };
         const PREFIX: &str = "anthropic-beta: oauth-2025-04-20\r\nAccept: application/json\r\nAuthorization: Bearer ";
         let bearer = token.bearer(now_ms())?;
         let mut headers = Vec::with_capacity(PREFIX.len() + bearer.len() + 2);
@@ -337,9 +348,14 @@ mod win {
         }
         token.bearer(now_ms())?;
         // SAFETY: live request, no temporary headers or body, and the context belongs to the close callback.
-        if unsafe { WinHttpSendRequest(request.0, null(), 0, null(), 0, 0, call.id) } == 0
-            || !matches!(call.next(&enabled)?, Event::Sent)
-        {
+        let sent = {
+            let _permit = permit()?;
+            if !enabled() {
+                return Err(Error::Network);
+            }
+            unsafe { WinHttpSendRequest(request.0, null(), 0, null(), 0, 0, call.id) }
+        };
+        if sent == 0 || !matches!(call.next(&enabled)?, Event::Sent) {
             return Err(Error::Network);
         }
         // SAFETY: send has completed; the reserved parameter must be null.

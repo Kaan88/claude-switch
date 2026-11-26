@@ -1,4 +1,13 @@
 use super::*;
+
+#[test]
+fn prompt_excerpt_removes_inline_runtime_reminders_before_truncation() {
+    let value = serde_json::json!({"type":"user","message":{"content":[
+        {"type":"text","text":"Before <system-reminder>PRIVATE_RUNTIME_TEXT</system-reminder>after"},
+        {"type":"text","text":"<system-reminder>SECOND_REMINDER</system-reminder>"}
+    ]}});
+    assert_eq!(prompt_of(&value, 30).as_deref(), Some("Before after"));
+}
 use crate::util::testing::{TempDir, config_with, put};
 use serde_json::json;
 

@@ -34,7 +34,13 @@ fn path(roots: &Roots) -> std::path::PathBuf {
 
 impl Marks {
     pub fn unchanged(&self, roots: &Roots) -> bool {
-        read(&path(roots)).is_ok_and(|bytes| bytes == self.original)
+        ["sessions", "folders"].iter().all(|k| {
+            self.data.get(k).is_none_or(|v| {
+                v.as_object().is_some_and(|map| {
+                    map.values().all(|entry| entry.is_object() && entry.get("hidden").is_none_or(Value::is_boolean))
+                })
+            })
+        }) && read(&path(roots)).is_ok_and(|bytes| bytes == self.original)
     }
 
     pub fn load(roots: &Roots) -> Result<Self, Refusal> {
@@ -247,6 +253,13 @@ impl Marks {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unchanged_but_damaged_hidden_marks_do_not_authorize_batch_naming() {
+        let t = TempDir::new("marks-privacy");
+        let roots = t.roots();
+        put(&path(&roots), r#"{"sessions":{"s":{"hidden":"yes"}}}"#);
+        assert!(!Marks::load(&roots).unwrap().unchanged(&roots));
+    }
     #[test]
     fn marks_compare_and_replace_refuses_when_another_handle_holds_the_lock() {
         let t = crate::util::testing::TempDir::new("marks-locked");

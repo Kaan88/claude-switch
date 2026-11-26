@@ -61,6 +61,7 @@ fn restart_uses_fallback_only_on_failure_and_proves_response() {
     for (mode, expected) in [
         ("normal", "service restart\napi session.active\n"),
         ("fallback", "service restart\nservice stop\nservice start\napi session.active\n"),
+        ("failed-stop", "service restart\nservice stop\n"),
         ("malformed", "service restart\napi session.active\n"),
     ] {
         let log = fixture::fake_program().with_file_name(format!("{mode}.log"));
@@ -69,7 +70,9 @@ fn restart_uses_fallback_only_on_failure_and_proves_response() {
             cmd.env("FAKE_LOG", &log);
             cmd
         });
-        if mode == "malformed" {
+        if mode == "failed-stop" {
+            assert!(result.unwrap_err().contains("Could not stop"));
+        } else if mode == "malformed" {
             assert!(result.unwrap_err().contains("does not answer"));
         } else {
             assert_eq!(result.unwrap(), 2);

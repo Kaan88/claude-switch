@@ -93,9 +93,39 @@ pub fn save_warning_windows(roots: &Roots, windows: &WarningWindows) -> Result<(
     crate::util::write_json(&roots.config_file().with_file_name(FILE), &serde_json::Value::Array(rows))
 }
 
+pub fn claim_warning(
+    roots: &Roots,
+    key: (String, String, String, Option<i64>),
+    threshold: u8,
+) -> Result<bool, Refusal> {
+    let path = roots.config_file().with_file_name(FILE);
+    let _lock = crate::util::lock_beside(&path)?;
+    crate::util::regular_target(&path)?;
+    let mut windows = load_warning_windows(roots);
+    if windows.get(&key).is_some_and(|prior| *prior >= threshold) {
+        return Ok(false);
+    }
+    windows.insert(key, threshold);
+    save_warning_windows(roots, &windows)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn persisted_claims_exclude_a_second_window_without_losing_other_keys() {
+        let dir = crate::util::testing::TempDir::new("usage-claims");
+        let roots = dir.roots();
+        let a = ("main".into(), "week".into(), "Week".into(), Some(100));
+        let b = ("work".into(), "week".into(), "Week".into(), Some(200));
+        assert!(claim_warning(&roots, a.clone(), 80).unwrap());
+        assert!(claim_warning(&roots, b.clone(), 95).unwrap());
+        assert!(!claim_warning(&roots, a.clone(), 80).unwrap());
+        assert!(claim_warning(&roots, a.clone(), 95).unwrap());
+        assert_eq!(load_warning_windows(&roots), BTreeMap::from([(a, 95), (b, 95)]));
+    }
 
     #[test]
     fn defaults_and_every_attention_choice_round_trip() {

@@ -44,6 +44,19 @@ impl Relation {
 }
 
 impl AppState {
+    pub(crate) fn rebuild_after_mode_change(&mut self) {
+        self.rebuild_view();
+        self.sections.scroll = 0.0;
+        if self.list_mode() == Mode::Projects {
+            self.select_first();
+        } else {
+            self.reveal_selected();
+            if self.selected.as_deref().is_none_or(|id| self.entry_of(id).is_none()) {
+                self.select_first();
+            }
+        }
+    }
+
     pub fn list_mode(&self) -> Mode {
         match self.config.sessions_mode {
             Mode::Topics if !self.grouping.topics => Mode::Recent,
@@ -166,10 +179,7 @@ impl AppState {
                     running += usize::from(flags.running);
                     waiting += usize::from(flags.waiting);
                 }
-                let when = crate::list::ago_at(now, self.sessions[g.rows[0]].last_active_ms, offset);
-                self.grouping
-                    .project_summary
-                    .insert(g.key.clone(), format!("{when} · {running} running · {waiting} waiting"));
+                self.grouping.project_summary.insert(g.key.clone(), format!("{running} running · {waiting} waiting"));
             }
         }
         if !pinned.is_empty() {
@@ -186,6 +196,12 @@ impl AppState {
 
     pub fn project(&self, i: usize) -> Option<&Project> {
         self.grouping.projects.get(&folder_key(&self.sessions.get(i)?.cwd))
+    }
+
+    pub(crate) fn project_heading_summary(&self, group: &ViewGroup, now: u64, offset: i32) -> Option<String> {
+        let counts = self.grouping.project_summary.get(&group.key)?;
+        let newest = self.sessions[*group.rows.first()?].last_active_ms;
+        Some(format!("{} · {counts}", crate::list::ago_at(now, newest, offset)))
     }
 
     fn cluster_rows(&mut self, rows: Vec<usize>, offset: i32) -> Vec<usize> {

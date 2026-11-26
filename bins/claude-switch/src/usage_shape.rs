@@ -36,7 +36,7 @@ pub fn run(demo: bool, account: Option<&str>, labels: bool) -> i32 {
         "unavailable in demo mode"
     } else if let Some(roots) = Roots::from_env() {
         let config = claude_switch_core::config::load(&roots);
-        match probe(&config, account, io::stdout().lock(), |dir| crate::usage_fetch::fetch_shape(dir, labels)) {
+        match probe(&config, account, io::stdout().lock(), |dir| crate::usage_fetch::fetch_shape(&roots, dir, labels)) {
             Ok(()) => return 0,
             Err(Failure::Disabled) => "Show usage is off",
             Err(Failure::Account) => "unknown account slug",

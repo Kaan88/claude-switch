@@ -107,7 +107,8 @@ fn active(command: Command, timeout: Duration) -> Result<usize, String> {
 /// Restarts the service, falling back to stop/start, and returns the verified running count.
 pub fn restart_service(command: impl Fn() -> Command) -> Result<usize, String> {
     if run(command(), &["service", "restart"], SERVICE).is_err() {
-        let _ = run(command(), &["service", "stop"], Duration::from_secs(30));
+        run(command(), &["service", "stop"], Duration::from_secs(30))
+            .map_err(|e| format!("Could not stop OpenCode before restarting: {e}"))?;
         run(command(), &["service", "start"], SERVICE)?;
     }
     active(command(), SERVICE).map_err(|e| format!("OpenCode restarted but does not answer: {e}"))

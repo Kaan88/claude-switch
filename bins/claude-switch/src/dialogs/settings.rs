@@ -183,6 +183,12 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
                 (SET_EMBEDDED, Value::Bool(b)) => st.config.embedded_terminal = b,
                 (SET_SUGGEST_TOPICS, Value::Bool(b)) => st.config.suggest_topics = b,
                 (SET_USAGE, Value::Bool(b)) => {
+                    if let crate::source::Source::Real(roots) = &st.source
+                        && let Err(error) = claude_switch_core::config::set_usage(roots, b)
+                    {
+                        st.error("Usage setting was not saved", error.to_string());
+                        return;
+                    }
                     st.config.show_usage = b;
                     if !b {
                         st.usage.disable();

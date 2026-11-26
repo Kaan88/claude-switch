@@ -24,9 +24,7 @@ pub fn run(launch: &Launch) -> io::Result<()> {
     if needs_terminal(launch) {
         return Err(io::Error::other("Desktop handoff requires a worker"));
     }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let pathext = std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
-    let mut cmd = command(launch, &path, &pathext)?;
+    let mut cmd = command_for(launch, &native_program(&launch.program)?);
     if launch.place == Place::Detached {
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     }
@@ -44,7 +42,9 @@ pub fn run_unseen(launch: &Launch, cancelled: impl Fn() -> bool) -> io::Result<(
 }
 
 fn run_unseen_until(launch: &Launch, limit: Duration, cancelled: impl Fn() -> bool) -> io::Result<()> {
-    let mut pty = mdshared_pty::Pty::spawn(&crate::term::command(launch), 200, 30, || {})?;
+    let mut launch = launch.clone();
+    launch.program = native_program(&launch.program)?;
+    let mut pty = mdshared_pty::Pty::spawn(&crate::term::command(&launch), 200, 30, || {})?;
     let start = Instant::now();
     let mut printed = Vec::new();
     let mut collect = |output: Vec<u8>| {
@@ -116,24 +116,28 @@ pub fn plain_text(bytes: &[u8]) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The command [`run`] spawns, with `path` and `pathext` standing for the environment's.
+#[cfg(test)]
 fn command(launch: &Launch, path: &OsString, pathext: &OsString) -> io::Result<Command> {
-    let program = if launch.program.is_absolute() && launch.program.is_file() {
-        launch.program.clone()
+    let _ = pathext;
+    Ok(command_for(launch, &native_on_path(&launch.program, path)?))
+}
+
+pub fn native_program(program: &Path) -> io::Result<PathBuf> {
+    native_on_path(program, &std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn native_on_path(program: &Path, path: &OsString) -> io::Result<PathBuf> {
+    let native = |p: &Path| p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("exe"));
+    let found = if program.is_absolute() {
+        (native(program) && program.is_file()).then(|| program.to_owned())
+    } else if program.extension().is_none() || native(program) {
+        resolve(program, path, &".EXE".into())
     } else {
-        resolve(&launch.program, path, pathext)
-            .filter(|p| p.is_absolute())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Executable not found on absolute PATH"))?
+        None
     };
-    let ext = program.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-    match ext.as_str() {
-        "exe" | "com" => {}
-        // Rust dispatches these via its Windows batch adapter. Accept only fixed-style CLI
-        // words/UUIDs and a shim path without cmd expansion/metacharacters; cwd is not an argument.
-        "bat" | "cmd" if safe_shim(&program, &launch.args) => {}
-        _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unsupported executable or unsafe batch shim")),
-    }
-    Ok(command_for(launch, &program))
+    found.ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "A native .exe is required; batch shims are not supported")
+    })
 }
 
 /// Configure a command whose executable has already been resolved by the caller.
@@ -153,9 +157,38 @@ pub fn command_for(launch: &Launch, program: &Path) -> Command {
     cmd
 }
 
-fn safe_shim(program: &Path, args: &[String]) -> bool {
-    program.to_str().is_some_and(|s| !s.chars().any(|c| c.is_control() || "%!&^()<>|\"".contains(c)))
-        && args.iter().all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)))
+pub fn reveal(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let mut folder = [0u16; 260];
+        // SAFETY: the supplied buffer matches the capacity passed to GetWindowsDirectoryW.
+        let n = unsafe {
+            windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW(
+                folder.as_mut_ptr(),
+                folder.len() as u32,
+            )
+        } as usize;
+        if n == 0 || n >= folder.len() {
+            return Err(io::Error::last_os_error());
+        }
+        use std::os::windows::ffi::OsStringExt as _;
+        let program = PathBuf::from(OsString::from_wide(&folder[..n])).join("explorer.exe");
+        let launch = Launch {
+            program,
+            args: vec![],
+            cwd: None,
+            env: Default::default(),
+            env_remove: Vec::new(),
+            place: Place::Detached,
+            label: String::new(),
+        };
+        command_for(&launch, &native_program(&launch.program)?).arg("/select,").arg(path).spawn().map(drop)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err(io::ErrorKind::Unsupported.into())
+    }
 }
 
 #[cfg(windows)]
@@ -352,18 +385,15 @@ mod tests {
     }
 
     #[test]
-    fn a_batch_shim_refuses_unrestricted_words_even_with_windows_terminal_present() {
+    fn batch_only_is_refused_even_with_safe_arguments_and_windows_terminal_present() {
         let d = scratch("wt");
         std::fs::write(d.join("wt.exe"), b"").unwrap();
         std::fs::write(d.join("claude.cmd"), b"").unwrap();
         let mut l = launch(Place::Terminal);
         let path = d.clone().into_os_string();
-        assert_eq!(command(&l, &path, &".EXE;.CMD".into()).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        assert!(command(&l, &path, &".EXE;.CMD".into()).is_err());
         l.args = vec!["auth".into(), "login".into()];
-        let c = command(&l, &path, &".EXE;.CMD".into()).unwrap();
-        assert_eq!(c.get_program(), d.join("claude.cmd").as_os_str());
-        assert_eq!(args(&c), ["auth", "login"]);
-        assert!(envs(&c).contains(&("ANTHROPIC_API_KEY".into(), None)));
+        assert!(command(&l, &path, &".EXE;.CMD".into()).is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 

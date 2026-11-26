@@ -119,22 +119,12 @@ pub fn status(roots: &Roots, account: &Account) -> Vec<ShareState> {
 
 /// Makes a directory junction `link` pointing at `target`.
 #[cfg(windows)]
+#[path = "share/junction.rs"]
+pub(crate) mod junction;
+
+#[cfg(windows)]
 fn make_junction(link: &Path, target: &Path) -> Result<(), Refusal> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let output = std::process::Command::new("cmd")
-        .raw_arg(format!("/c mklink /J \"{}\" \"{}\"", link.display(), target.display()))
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|e| io_refusal("link", link, &e))?;
-    if output.status.success() && link.is_dir() {
-        Ok(())
-    } else {
-        let why = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let why = if why.is_empty() { "mklink failed".to_string() } else { why };
-        Err(io_refusal("link", link, &why))
-    }
+    junction::create(link, target).map_err(|e| io_refusal("link", link, &e))
 }
 
 #[cfg(unix)]

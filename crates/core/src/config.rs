@@ -24,7 +24,7 @@
 
 mod notifications;
 mod terminal;
-pub use notifications::{Attention, Notifications, WarningWindows, load_warning_windows, save_warning_windows};
+pub use notifications::{Attention, Notifications, WarningWindows, claim_warning, load_warning_windows};
 pub use terminal::*;
 
 use crate::accounts::COLORS;
@@ -157,7 +157,7 @@ fn read_settings(path: &std::path::Path) -> Result<Value, Refusal> {
             let value: Value = serde_json::from_slice(&bytes).map_err(|e| io_refusal("read settings", path, &e))?;
             if !value.is_object()
                 || value.get("showUsage").is_some_and(|v| !v.is_boolean())
-                || value.get("accounts").is_some_and(|v| !v.is_array())
+                || value.get("accounts").is_some_and(|v| !valid_accounts(v))
             {
                 return Err(io_refusal("read settings", path, &"invalid settings object"));
             }
@@ -166,6 +166,19 @@ fn read_settings(path: &std::path::Path) -> Result<Value, Refusal> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
         Err(e) => Err(io_refusal("read settings", path, &e)),
     }
+}
+
+fn valid_accounts(value: &Value) -> bool {
+    let mut slugs = std::collections::HashSet::new();
+    value.as_array().is_some_and(|entries| {
+        entries.iter().all(|entry| {
+            str_field(entry, "slug").is_some_and(|slug| valid_slug(slug) && slugs.insert(slug))
+                && entry.get("name").is_none_or(|s| s.as_str().is_some_and(|s| !s.trim().is_empty()))
+                && entry.get("color").is_none_or(|c| {
+                    c.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(|v| v.as_u64().is_some_and(|n| n <= 255)))
+                })
+        })
+    })
 }
 
 /// The second result is true when an existing config could not be trusted.
@@ -262,9 +275,24 @@ pub fn save(roots: &Roots, config: &Config) -> Result<(), Refusal> {
     let mut config = config.clone();
     // Ordinary saves from another window must never restore a forgotten provider consent.
     config.compact = crate::compact::Preferences::read(&current["compact"]);
+    config.show_usage = current["showUsage"].as_bool().unwrap_or(true);
     save_value(roots, &config)
 }
 
+pub fn set_usage(roots: &Roots, enabled: bool) -> Result<(), Refusal> {
+    let path = roots.config_file();
+    let _lock = lock_beside(&path)?;
+    let mut current = read_settings(&path)?;
+    current["showUsage"] = json!(enabled);
+    write_json(&path, &current)
+}
+
+/// Hold the configuration lock across the credential open/read or request submission.
+pub fn usage_permit(roots: &Roots, dir: &std::path::Path) -> Option<std::fs::File> {
+    let lock = lock_beside(&roots.config_file()).ok()?;
+    let (config, damaged) = load_checked(roots);
+    (!damaged && config.show_usage && config.accounts.iter().any(|a| a.cli_dir == dir)).then_some(lock)
+}
 /// Updates handover preferences under the settings lock, without changing any other setting.
 pub fn update_compact(
     roots: &Roots,
@@ -538,11 +566,25 @@ mod tests {
     fn show_usage_defaults_on_and_can_be_disabled_persistently() {
         let t = TempDir::new("cfg-usage");
         let roots = t.roots();
-        let mut config = load(&roots);
-        assert!(config.show_usage);
-        config.show_usage = false;
-        save(&roots, &config).unwrap();
+        assert!(load(&roots).show_usage);
+        set_usage(&roots, false).unwrap();
+        let stale_off = load(&roots);
+        assert!(!stale_off.show_usage);
+        set_usage(&roots, true).unwrap();
+        save(&roots, &stale_off).unwrap();
+        assert!(load(&roots).show_usage);
+    }
+
+    #[test]
+    fn stale_settings_save_does_not_reverse_an_existing_usage_opt_out() {
+        let t = TempDir::new("cfg-stale-usage");
+        let roots = t.roots();
+        let mut stale = load(&roots);
+        put(&roots.config_file(), r#"{"showUsage":false}"#);
+        stale.show_workers = true;
+        save(&roots, &stale).unwrap();
         assert!(!load(&roots).show_usage);
+        assert!(load(&roots).show_workers);
     }
 
     #[test]
@@ -554,7 +596,7 @@ mod tests {
         assert_eq!((c.accounts.len(), c.current.as_str(), c.embedded_terminal), (1, "main", true));
         put(
             &roots.config_file(),
-            r#"{"accounts":[{"slug":"Bad Slug"},{"slug":"work","color":[1,2,300]},{"slug":"work"},
+            r#"{"accounts":[{"slug":"work"},
                 {"slug":"main","name":"Home"}],
                "current":"nobody","workers":{"account":"nobody"},"embeddedTerminal":"yes","showArchived":true}"#,
         );

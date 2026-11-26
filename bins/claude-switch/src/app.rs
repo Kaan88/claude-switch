@@ -124,12 +124,7 @@ impl AppState {
             Target::ListMode(mode) if self.list_mode() != mode => {
                 self.config.sessions_mode = mode;
                 self.save_config();
-                self.rebuild_view();
-                self.sections.scroll = 0.0;
-                self.reveal_selected();
-                if self.selected.as_deref().is_none_or(|id| self.entry_of(id).is_none()) {
-                    self.select_first();
-                }
+                self.rebuild_after_mode_change();
             }
             Target::ListGrouping => {
                 use claude_switch_core::grouping::Mode;

@@ -503,8 +503,8 @@ impl AppState {
         let demo = self.source.is_demo();
         let topics = self.config.suggest_topics.then(|| {
             let mut unique = std::collections::BTreeMap::new();
-            for s in &self.sessions {
-                if let Some(label) = self.marks.topic(&s.id) {
+            for (_, _, _, label) in &sessions {
+                if !label.is_empty() {
                     unique.entry(label.to_lowercase()).or_insert_with(|| label.to_owned());
                 }
             }
@@ -544,8 +544,10 @@ impl AppState {
                     }
                 }
                 verify()?;
-                let mut suggestions = naming::suggest(&account, &excerpts, topics.as_deref(), || cancel.cancelled())
-                    .map_err(|e| e.to_string())?;
+                let program = crate::run::native_program(std::path::Path::new("claude")).map_err(|e| e.to_string())?;
+                let mut suggestions =
+                    naming::suggest(&program, &account, &excerpts, topics.as_deref(), || cancel.cancelled())
+                        .map_err(|e| e.to_string())?;
                 for (i, (id, original, old_topic)) in named.into_iter().enumerate() {
                     if let Some(item) = suggestions.remove(&i) {
                         let topic = topics.as_ref().map(|_| item.topic.unwrap_or(old_topic));

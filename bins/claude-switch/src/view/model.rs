@@ -21,6 +21,14 @@ pub enum Source {
 }
 
 impl Source {
+    pub fn verify_candidate(&self, id: &str) -> bool {
+        match self {
+            Self::Discover { config, cwd, started, .. } => {
+                discover(&project(config, cwd), cwd, *started, id).is_ok_and(|p| p.is_some())
+            }
+            Self::File(_) => false,
+        }
+    }
     pub fn find_file(&self) -> Option<PathBuf> {
         match self {
             Self::File(path) => Some(path.clone()),

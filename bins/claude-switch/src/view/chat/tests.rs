@@ -35,6 +35,35 @@ fn readiness_requires_explicit_fresh_completion_and_paste_mode() {
 }
 
 #[test]
+fn forced_send_keeps_the_draft_while_an_interaction_is_pending() {
+    use crate::{source::Source, state::AppState};
+    let mut app = AppState::new(Source::Demo, Some(false), Default::default());
+    app.start_demo_session();
+    let tab = app.tabs.shown_mut().unwrap();
+    for bell in [true, false] {
+        let chat = &mut tab.pane.as_mut().unwrap().chat;
+        chat.editor.set("Keep this draft".into());
+        chat.bell = bell;
+        chat.slash = !bell;
+        for force in [false, true] {
+            AppState::chat_send(tab, Instant::now(), force);
+            assert_eq!(tab.pane.as_ref().unwrap().chat.editor.text, "Keep this draft");
+        }
+    }
+}
+
+#[test]
+fn a_visible_permission_question_vetoes_fresh_completion() {
+    let mut term = crate::term::Term::empty((60, 20));
+    term.feed(b"\x1b[?2004hDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel");
+    let now = Instant::now();
+    let chat = Chat { demo: true, fresh: true, last_output: Some(now - QUIET), ..Chat::default() };
+    let mut info = ChatInfo::default();
+    info.latest = Some((100, ChatPhase::EndTurn));
+    assert_ne!(chat.decision(&info, &term, "", now).0, Gate::Ready);
+}
+
+#[test]
 fn a_tool_needs_both_age_and_quiet_to_open_the_drawer() {
     let base = ready();
     let age = Some(TOOL_WAIT);
@@ -123,16 +152,41 @@ fn a_send_or_manual_input_cannot_reuse_the_previous_completion() {
 }
 
 #[test]
-fn bytes_put_pictures_before_the_multiline_paste_and_bare_enter() {
+fn bytes_put_paths_before_control_free_prompt_and_refuse_clipboard_pictures() {
     let chips = [Chip::Path(PathBuf::from(r"C:\my photo.png")), Chip::Clipboard(1)];
     assert_eq!(
-        send_bytes(&chips, "line 1\nline 2").unwrap(),
-        b"\x1bv\x1b[200~\"C:\\my photo.png\"\x1b[201~ \x1b[200~line 1\rline 2\x1b[201~\r"
+        send_bytes(&chips[..1], "line 1\nline 2\tword").unwrap(),
+        b"\x1b[200~\"C:\\my photo.png\"\x1b[201~ \x1b[200~line 1 line 2 word\x1b[201~\r"
     );
-    assert_eq!(send_bytes(&chips[1..], "").unwrap(), b"\x1bv\r");
+    assert!(send_bytes(&chips, "some text").is_none());
     assert_eq!(send_bytes(&[], "just text").unwrap(), b"\x1b[200~just text\x1b[201~\r");
     assert!(send_bytes(&[], "line\x1b[201~\rmenu").is_none());
+    for control in ['\0', '\x07', '\x1b', '\x7f', '\u{009b}', '\r'] {
+        assert!(send_bytes(&[], &format!("prompt{control}[201~")).is_none());
+    }
     assert!(send_bytes(&[], "").is_none());
+}
+
+#[test]
+fn direct_input_discards_unsampled_old_prompt_and_stop_cannot_reuse_a_turn() {
+    let now = Instant::now();
+    let mut chat = Chat::default();
+    let mut info = ChatInfo::default();
+    info.latest = Some((50, ChatPhase::Active));
+    info.prompt = Some(20);
+    chat.observe(&info, now);
+    assert!(!chat.can_stop(&info));
+    chat.invalidate_input(&info, Some(100));
+    info.latest = Some((95, ChatPhase::EndTurn));
+    info.prompt = Some(75);
+    chat.observe(&info, now);
+    assert!(!chat.fresh);
+    info.latest = Some((130, ChatPhase::Active));
+    info.prompt = Some(110);
+    chat.observe(&info, now);
+    assert!(chat.can_stop(&info));
+    chat.stopped = Some((info.generation, 110));
+    assert!(!chat.can_stop(&info));
 }
 
 #[test]

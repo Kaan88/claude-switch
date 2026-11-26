@@ -35,6 +35,8 @@ struct Entry {
 
 #[derive(Default)]
 pub struct Restore {
+    pub save_failed: bool,
+    baseline: Option<String>,
     pending: VecDeque<Entry>,
     waiting: Option<Entry>,
     failures: Vec<String>,
@@ -76,13 +78,6 @@ fn encode(rows: impl IntoIterator<Item = Entry>) -> String {
 
 fn path(source: &Source) -> Option<PathBuf> {
     source.window_file().map(|p| p.with_file_name("terminal-tabs.json"))
-}
-
-fn save(path: &Path, rows: impl IntoIterator<Item = Entry>) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    settings::write_atomic(path, &encode(rows))
 }
 
 fn snapshot(tabs: &Tabs) -> Vec<Entry> {
@@ -172,25 +167,34 @@ impl AppState {
     pub fn identify_tabs(&mut self) {
         let mut processes = None;
         for tab in &mut self.tabs.list {
-            if tab.resume_id.is_some() || !tab.term.running() {
+            if !tab.term.running() {
                 continue;
             }
-            if let (Some(pty), Some(account), Some(cwd)) = (&tab.term.pty, &tab.account, &tab.cwd)
-                && let Some(id) = {
-                    let processes = processes.get_or_insert_with(process::Processes::current);
-                    live_id(&self.running, account, cwd, |pid| pid == pty.pid() || processes.wraps(pty.pid(), pid))
+            let (Some(pty), Some(account), Some(cwd)) = (&tab.term.pty, &tab.account, &tab.cwd) else { continue };
+            let processes = processes.get_or_insert_with(process::Processes::current);
+            let found = live_id(&self.running, account, cwd, |pid| pid == pty.pid() || processes.wraps(pty.pid(), pid));
+            let indexed = found.and_then(|id| self.by_id.get(id)).and_then(|&i| self.sessions.get(i));
+            let verified = found.filter(|id| tab.pane.as_ref().is_some_and(|pane| pane.verify_identity(id)));
+            if verified.is_some() && tab.session.as_deref().is_none_or(|id| Some(id) == verified) {
+                tab.resume_id = verified.map(str::to_owned);
+                tab.session = tab.resume_id.clone();
+                if let Some(pane) = &mut tab.pane {
+                    pane.chat.identity_unverified = false;
                 }
-            {
-                if let Some(pane) = &tab.pane {
-                    pane.verify_identity(id);
+            } else {
+                // Do not silently switch the pane or send its draft to a different session.
+                tab.resume_id = None;
+                if let Some(pane) = &mut tab.pane {
+                    pane.identity_unverified(indexed.is_some());
                 }
-                tab.resume_id = Some(id.into());
-                tab.session = Some(id.into());
             }
         }
     }
 
     pub fn load_tab_restore(&mut self) {
+        if let Some(file) = path(&self.source) {
+            self.restore.baseline = settings::read(&file).ok().flatten();
+        }
         if self.win_file.restore_tabs == RestoreTabs::Never {
             return;
         }
@@ -203,35 +207,65 @@ impl AppState {
                 .enumerate()
                 .map(|(i, s)| Entry { id: s.id, account: "main".into(), cwd: s.cwd, active: i == 1, chat: None })
                 .collect();
-        } else if let Some(file) = path(&self.source)
-            && let Ok(Some(text)) = settings::read(&file)
-        {
-            self.restore.pending = decode(&text);
+        } else if let Some(text) = &self.restore.baseline {
+            self.restore.pending = decode(text);
         }
     }
 
-    pub fn save_tab_restore(&mut self) {
-        let Some(file) = path(&self.source) else { return };
-        if self.win_file.restore_tabs == RestoreTabs::Never {
-            let _ = save(&file, []);
-            return;
+    pub fn recheck_tab_identity(&mut self, tab: u64) -> Option<String> {
+        if let Source::Real(roots) = &self.source {
+            let (running, complete) = claude_switch_core::running::scan_checked(roots, &self.config);
+            if !complete {
+                return None;
+            }
+            self.running = running;
+            self.index_running();
         }
-        if self.tabs.list.iter().any(|tab| tab.resume_id.is_none() && tab.cwd.is_some()) {
-            self.running = self.source.running(&self.config);
+        self.tabs.get(tab).filter(|t| self.source.is_demo() || t.term.running())?.resume_id.clone()
+    }
+
+    pub fn save_tab_restore(&mut self) -> Result<(), Refusal> {
+        let Some(file) = path(&self.source) else { return Ok(()) };
+        if self.win_file.restore_tabs == RestoreTabs::Never {
+            return claude_switch_core::replace_if_unchanged(
+                &file,
+                self.restore.baseline.as_deref().map(str::as_bytes),
+                b"[]",
+            );
+        }
+        if self.tabs.list.iter().any(|tab| tab.cwd.is_some())
+            && let Source::Real(roots) = &self.source
+        {
+            let (running, complete) = claude_switch_core::running::scan_checked(roots, &self.config);
+            if !complete {
+                return Err(Refusal::Invalid("The current terminal sessions could not be verified.".into()));
+            }
+            self.running = running;
             self.identify_tabs();
         }
         let rows = snapshot(&self.tabs);
         if !rows.is_empty() || self.restore.pending.is_empty() && self.restore.waiting.is_none() {
-            let _ = save(&file, rows);
+            return claude_switch_core::replace_if_unchanged(
+                &file,
+                self.restore.baseline.as_deref().map(str::as_bytes),
+                encode(rows).as_bytes(),
+            );
         }
+        Ok(())
     }
 
     pub fn dismiss_tab_restore(&mut self) {
-        self.restore = Restore::default();
-        if let Some(file) = path(&self.source)
-            && let Err(e) = save(&file, [])
-        {
-            self.error("Could not clear the saved tabs", e.to_string());
+        let baseline = self.restore.baseline.take();
+        self.restore = Restore { baseline, ..Restore::default() };
+        if let Some(file) = path(&self.source) {
+            match claude_switch_core::replace_if_unchanged(
+                &file,
+                self.restore.baseline.as_deref().map(str::as_bytes),
+                b"[]",
+            ) {
+                Ok(()) => self.restore.baseline = Some("[]".into()),
+                Err(e) => self.error("Could not clear the saved tabs", e.to_string()),
+            }
         }
     }
 

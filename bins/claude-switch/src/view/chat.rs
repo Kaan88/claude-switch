@@ -24,6 +24,8 @@ pub enum Reason {
     Tool,
     Bell,
     Slash,
+    Permission,
+    Identity,
     Ended,
 }
 
@@ -33,6 +35,8 @@ impl Reason {
             Self::Tool => "Waiting for your answer in the terminal",
             Self::Bell => "The terminal rang its bell. Check the terminal.",
             Self::Slash => "Claude Code commands are shown in the terminal.",
+            Self::Permission => "Answer the permission question in the terminal.",
+            Self::Identity => "The current session could not be verified. Check the terminal.",
             Self::Ended => "Claude Code has ended.",
         }
     }
@@ -111,6 +115,7 @@ enum Chip {
 #[derive(Default)]
 pub struct Chat {
     pub enabled: bool,
+    pub(crate) identity_unverified: bool,
     drawer: Drawer,
     drawer_height: Option<f32>,
     resizing: Option<(f32, f32)>,
@@ -131,6 +136,8 @@ pub struct Chat {
     sample: Option<(u64, Option<(u64, ChatPhase)>)>,
     fresh: bool,
     require_prompt: Option<Option<u64>>,
+    input_floor: Option<u64>,
+    stopped: Option<(u64, u64)>,
     pending: Option<(u64, Instant)>,
     bell: bool,
     slash: bool,
@@ -161,6 +168,11 @@ impl Chat {
         self.require_prompt = Some(info.prompt);
     }
 
+    pub(super) fn invalidate_input(&mut self, info: &ChatInfo, end: Option<u64>) {
+        self.invalidate(info);
+        self.input_floor = Some(end.unwrap_or(u64::MAX));
+    }
+
     fn observe(&mut self, info: &ChatInfo, now: Instant) {
         let sample = (info.generation, info.latest);
         if self.sample != Some(sample) {
@@ -168,8 +180,11 @@ impl Chat {
                 Some((generation, prior))
                     if generation == sample.0 && sample.1.map(|(at, _)| at) > prior.map(|(at, _)| at) =>
                 {
-                    if self.require_prompt.is_some_and(|old| info.prompt > old) {
+                    if self.require_prompt.is_some_and(|old| info.prompt > old)
+                        && self.input_floor.is_none_or(|floor| info.prompt.is_some_and(|p| p >= floor))
+                    {
                         self.require_prompt = None;
+                        self.input_floor = None;
                     }
                     self.fresh = self.require_prompt.is_none();
                     if self.reason == Some(Reason::Bell) || self.suppressed == Some(Reason::Bell) {
@@ -182,6 +197,7 @@ impl Chat {
                     self.fresh = false;
                     self.require_prompt = Some(info.prompt);
                     self.pending = None;
+                    self.input_floor = None;
                 }
             }
             self.sample = Some(sample);
@@ -199,13 +215,23 @@ impl Chat {
 
     fn decision(&self, info: &ChatInfo, term: &crate::term::Term, title: &str, now: Instant) -> (Gate, Option<Reason>) {
         let modes = term.screen.modes();
-        if self.demo && self.demo_progress {
+        if self.identity_unverified {
+            return (Gate::Check, Some(Reason::Identity));
+        }
+        if crate::attention::screen_permission_prompt(&term.screen) {
+            return (Gate::Check, Some(Reason::Permission));
+        }
+        if self.demo && self.demo_progress && !self.bell && !self.slash && info.pending.is_none() {
             return (Gate::Ready, None);
         }
         let mut decision = assess(Signals {
             phase: info.latest.map(|(_, phase)| phase),
             fresh: self.fresh,
-            pending_for: self.pending.map(|(_, at)| now.saturating_duration_since(at)),
+            pending_for: info.pending.map(|id| {
+                self.pending
+                    .filter(|(known, _)| *known == id)
+                    .map_or(Duration::ZERO, |(_, at)| now.saturating_duration_since(at))
+            }),
             quiet_for: self.last_output.map_or(Duration::ZERO, |at| now.saturating_duration_since(at)),
             title,
             bell: self.bell,
@@ -226,7 +252,10 @@ impl Chat {
         match (self.drawer, reason) {
             (Drawer::Closed, Some(reason)) if Some(reason) != self.suppressed => self.drawer = Drawer::Auto(reason),
             (Drawer::Auto(_), Some(reason)) => self.drawer = Drawer::Auto(reason),
-            (Drawer::Auto(Reason::Tool | Reason::Bell | Reason::Slash), None) => {
+            (
+                Drawer::Auto(Reason::Tool | Reason::Bell | Reason::Slash | Reason::Permission | Reason::Identity),
+                None,
+            ) => {
                 self.drawer = Drawer::Closed;
                 self.drawer_focus = false;
                 self.resizing = None;
@@ -234,6 +263,15 @@ impl Chat {
             _ => {}
         }
         before != (self.drawer, self.reason)
+    }
+
+    fn can_stop(&self, info: &ChatInfo) -> bool {
+        self.fresh
+            && !self.identity_unverified
+            && self.reason.is_none()
+            && info.pending.is_none()
+            && info.latest.is_some_and(|(_, phase)| phase == ChatPhase::Active)
+            && info.prompt.is_some_and(|prompt| self.stopped != Some((info.generation, prompt)))
     }
 
     fn toggle_drawer(&mut self) {
@@ -271,13 +309,13 @@ fn recall<'a>(history: impl Iterator<Item = &'a str>, cursor: &mut Option<usize>
 
 fn send_bytes(chips: &[Chip], text: &str) -> Option<Vec<u8>> {
     // Never let pasted content smuggle control sequences out of a bracketed paste.
-    if text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t')) {
+    if text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+        || chips.iter().any(|chip| matches!(chip, Chip::Clipboard(_)))
+    {
         return None;
     }
+    let text = text.replace(['\n', '\t'], " ");
     let mut bytes = Vec::new();
-    if chips.iter().any(|chip| matches!(chip, Chip::Clipboard(_))) {
-        bytes.extend(super::attach::clipboard(None, &mdshared_term::Modes::default()));
-    }
     let paths: Vec<_> = chips
         .iter()
         .filter_map(|chip| match chip {
@@ -293,7 +331,7 @@ fn send_bytes(chips: &[Chip], text: &str) -> Option<Vec<u8>> {
         }
     }
     if !text.is_empty() {
-        bytes.extend(mdshared_term::input::encode_paste(text, true));
+        bytes.extend(mdshared_term::input::encode_paste(&text, true));
     }
     if bytes.is_empty() {
         return None;

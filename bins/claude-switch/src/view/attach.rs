@@ -55,7 +55,7 @@ impl AppState {
             let text = paths(files);
             if !text.is_empty() {
                 if let Some(pane) = &mut tab.pane {
-                    pane.chat.invalidate(&pane.model.chat);
+                    pane.note_terminal_input();
                 }
                 let redraw = tab.term.scroll != 0 && shown;
                 tab.term.scroll = 0;

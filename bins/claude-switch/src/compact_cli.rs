@@ -118,7 +118,7 @@ fn run(options: Options) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|_| "Could not locate Claude Switch.")?;
     let name = file.file_name().and_then(|n| n.to_str()).ok_or("Invalid saved handover path.")?;
     window::spawn(&exe, &session.id, account, name)?;
-    eprintln!("Claude Switch: opening the handover in a new window.");
+    eprintln!("Claude Switch: opened the handover tab in a new window.");
     Ok(())
 }
 
@@ -155,6 +155,10 @@ pub fn handoff(roots: &Roots, args: (String, String, String)) -> Result<compact_
 
 pub fn window_args(args: &mut impl Iterator<Item = String>) -> Option<(String, String, String)> {
     Some((args.next()?, args.next()?, args.next()?))
+}
+
+pub(crate) fn acknowledge(key: &str, opened: bool) {
+    window::acknowledge(key, opened);
 }
 
 #[cfg(test)]

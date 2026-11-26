@@ -41,7 +41,7 @@ impl Lines {
         let len = f.metadata().ok()?.len();
         if len <= head_len + CHUNK {
             let mut all = Vec::with_capacity(len as usize);
-            f.read_to_end(&mut all).ok()?;
+            f.take(len).read_to_end(&mut all).ok()?;
             return Some(Lines { head: all, tail: Vec::new(), whole: true });
         }
         let mut head = vec![0; head_len as usize];
@@ -139,10 +139,28 @@ fn prompt_text(v: &Value) -> Option<String> {
         return None;
     }
     let parts = texts(v);
-    if parts.iter().any(|s| s.trim_start().starts_with('<')) {
+    if parts.iter().any(|s| {
+        let text = s.trim_start();
+        text.starts_with('<') && !text.starts_with("<system-reminder")
+    }) {
         return None;
     }
-    Some(parts.join(" ")).filter(|t| !t.trim().is_empty())
+    let mut clean = String::new();
+    for mut part in parts {
+        while let Some((head, body)) = part.split_once("<system-reminder") {
+            clean.push_str(head);
+            let Some((_, tail)) = body.split_once("</system-reminder>") else {
+                part = "";
+                break;
+            };
+            part = tail;
+        }
+        clean.push_str(part);
+        if !clean.is_empty() && !clean.ends_with(' ') {
+            clean.push(' ');
+        }
+    }
+    Some(clean.trim_end().to_owned()).filter(|t| !t.trim().is_empty())
 }
 
 fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {

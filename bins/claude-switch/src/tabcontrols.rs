@@ -117,11 +117,7 @@ impl AppState {
             }
             CLOSE => self.ask_close_tab(id),
             COMPACT => {
-                if let Some(session) =
-                    tab.resume_id.as_ref().and_then(|id| self.by_id.get(id)).map(|&i| self.sessions[i].clone())
-                {
-                    self.ask_compact_session(session, false);
-                }
+                self.ask_tab_compact(id, None);
             }
             CLOSE_OTHERS => {
                 if self.tabs.list.iter().any(|tab| tab.id != id && tab.term.running()) {
@@ -137,7 +133,7 @@ impl AppState {
             }
             copy => {
                 if let (Some(session), Some(account)) =
-                    (tab.resume_id.clone(), self.config.accounts.get((copy - COPY_BASE) as usize))
+                    (self.recheck_tab_identity(id), self.config.accounts.get((copy - COPY_BASE) as usize))
                 {
                     self.open_copy_as(now, &session, account.slug.clone());
                 }

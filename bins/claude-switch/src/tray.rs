@@ -53,7 +53,7 @@ impl Tray {
         // SAFETY: HWND belongs to this UI thread; the callback and registered name have static lifetime.
         unsafe {
             let restart = RegisterWindowMessageW(wide("TaskbarCreated").as_ptr());
-            if SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, 0) == 0 {
+            if restart == 0 || SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, 0) == 0 {
                 return;
             }
             CALLBACKS.with(|callbacks| callbacks.borrow_mut().insert(hwnd as usize, (restart, Box::new(send))));
@@ -74,9 +74,6 @@ impl Tray {
             self.remove_icon();
             return;
         }
-        if self.added && self.tip == tip {
-            return;
-        }
         let mut data = self.data();
         data.uFlags = NIF_TIP | NIF_SHOWTIP;
         fill(&mut data.szTip, &tip);
@@ -85,8 +82,9 @@ impl Tray {
             if self.added {
                 if Shell_NotifyIconW(NIM_MODIFY, &data) != 0 {
                     self.tip = tip;
+                    return;
                 }
-                return;
+                self.explorer_restarted();
             }
             data.uFlags |= NIF_MESSAGE | NIF_ICON;
             data.uCallbackMessage = CALLBACK;

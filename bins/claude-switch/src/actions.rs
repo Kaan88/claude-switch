@@ -321,17 +321,12 @@ impl AppState {
                 self.warn("Desktop handoff pending", "Wait for the current handoff to finish.".into());
                 return false;
             }
-            match note.map(|(id, account)| self.source.reserve(&self.config, id, account)).transpose() {
-                Ok(reservation) => {
-                    self.start_desktop_handoff(l.clone(), reservation.flatten(), done);
-                    self.desktop_folder_open = self
-                        .desktop_job
-                        .as_ref()
-                        .and(folder.zip(account))
-                        .map(|((cwd, app), slug)| (cwd.to_owned(), slug.to_owned(), app));
-                }
-                Err(error) => self.error("Not opened", error.to_string()),
-            }
+            self.start_desktop_handoff(l.clone(), note.map(|(id, account)| (id.to_owned(), account.to_owned())), done);
+            self.desktop_folder_open = self
+                .desktop_job
+                .as_ref()
+                .and(folder.zip(account))
+                .map(|((cwd, app), slug)| (cwd.to_owned(), slug.to_owned(), app));
             return false; // Pending is not success; do not persist a folder preference yet.
         }
         let in_tab = self.config.embedded_terminal && l.place == Place::Terminal;
@@ -357,18 +352,26 @@ impl AppState {
         success
     }
 
-    fn start_desktop_handoff(
-        &mut self,
-        launch: Launch,
-        reservation: Option<claude_switch_core::launch::Reservation>,
-        done: String,
-    ) {
-        use std::sync::{Arc, Mutex};
-        let reservation = Arc::new(Mutex::new(reservation));
-        let worker = Arc::clone(&reservation);
+    fn start_desktop_handoff(&mut self, launch: Launch, note: Option<(String, String)>, done: String) {
+        let source = self.source.clone();
+        let config = self.config.clone();
         match mdshared_app::job::Job::start(self.wake_fn(), move |cancel, _| {
+            let reservation = note
+                .as_ref()
+                .map(|(id, account)| source.reserve(&config, id, account))
+                .transpose()
+                .map_err(|e| e.to_string())?
+                .flatten();
             let result = crate::run::run_unseen(&launch, || cancel.cancelled()).map(|()| done);
-            let history = worker.lock().unwrap().take().map(|r| r.finish(result.is_ok())).transpose();
+            let history = reservation
+                .map(|r| match &result {
+                    Ok(_) => r.finish_desktop(),
+                    Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {
+                        Ok(())
+                    }
+                    Err(_) => r.finish(false),
+                })
+                .transpose();
             match (result, history) {
                 (Ok(done), Ok(_)) => Ok(done),
                 (Err(error), Ok(_)) => Err(error.to_string()),
@@ -377,11 +380,7 @@ impl AppState {
             }
         }) {
             Ok(job) => self.desktop_job = Some(job),
-            Err(error) => {
-                let rollback = reservation.lock().unwrap().take().and_then(|r| r.finish(false).err());
-                let message = rollback.map_or_else(|| error.to_string(), |r| format!("{error}; {r}"));
-                self.error("Could not start desktop handoff", message);
-            }
+            Err(error) => self.error("Could not start desktop handoff", error.to_string()),
         }
     }
 
@@ -563,7 +562,7 @@ impl AppState {
                 let path = s.file.clone();
                 if !path.is_file() {
                     self.warn("Transcript not found", path.display().to_string());
-                } else if let Err(e) = std::process::Command::new("explorer.exe").arg("/select,").arg(path).spawn() {
+                } else if let Err(e) = crate::run::reveal(&path) {
                     self.error("Could not open Explorer", e.to_string());
                 }
             }

@@ -99,12 +99,14 @@ impl AppState {
         if area.w >= 900.0 {
             hit(p, Rect::new(x + 223.0, y, 65.0, 25.0), "Details", Control::Panel, !chat.side_hidden);
         }
-        let running = chat.last_gate == Some(Gate::Running) || chat.reason == Some(Reason::Tool);
+        let running = chat.last_gate == Some(Gate::Running) && chat.can_stop(&pane.model.chat);
         if running {
             hit(p, Rect::new(right - 108.0, y, 50.0, 25.0), "Stop", Control::Stop, false);
         }
         hit(p, Rect::new(right - 54.0, y, 54.0, 25.0), "Send", Control::Send, chat.last_gate == Some(Gate::Ready));
-        let override_button = chat.error == Some("Open the terminal to check") && chat.last_gate == Some(Gate::Check);
+        let override_button = chat.error == Some("Open the terminal to check")
+            && chat.last_gate == Some(Gate::Check)
+            && chat.reason.is_none();
         if override_button {
             hit(p, Rect::new(right - 103.0, y + 27.0, 103.0, 19.0), "Send anyway", Control::Override, false);
         }

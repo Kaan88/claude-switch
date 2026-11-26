@@ -154,6 +154,7 @@ impl AppState {
         if !usage_allowed(self.config.show_usage, &self.source) {
             return;
         }
+        let crate::source::Source::Real(roots) = &self.source else { return };
         let clock = now_ms();
         for a in &self.config.accounts {
             if only.is_some_and(|slug| slug != a.slug) {
@@ -168,7 +169,8 @@ impl AppState {
             }
             attempt.start(now);
             let dir = a.cli_dir.clone();
-            match Job::start(wake, move |cancel, _| crate::usage_fetch::fetch(&dir, || !cancel.cancelled())) {
+            let roots = roots.clone();
+            match Job::start(wake, move |cancel, _| crate::usage_fetch::fetch(&roots, &dir, || !cancel.cancelled())) {
                 Ok(job) => {
                     usage.jobs.insert(a.slug.clone(), job);
                 }

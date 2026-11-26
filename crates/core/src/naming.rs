@@ -143,12 +143,13 @@ impl Drop for WorkDir {
 }
 
 pub fn suggest(
+    program: &Path,
     account: &Account,
     items: &[Excerpts],
     topics: Option<&[String]>,
     cancelled: impl Fn() -> bool,
 ) -> io::Result<BTreeMap<usize, Suggestion>> {
-    run(account, items, topics, cancelled, Path::new("claude"), &[])
+    run(account, items, topics, cancelled, program, &[])
 }
 
 fn run(
@@ -232,6 +233,15 @@ fn run(
     let status = status?;
     if !status.success() {
         return Err(io::Error::other(format!("Claude exited with {status}")));
+    }
+    while !writer.is_finished() || !reader.is_finished() {
+        if cancelled() {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Cancelled"));
+        }
+        if started.elapsed() >= Duration::from_secs(120) {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "Claude's output pipes did not close in time"));
+        }
+        std::thread::sleep(Duration::from_millis(30));
     }
     writer.join().map_err(|_| io::Error::other("Request writer stopped"))??;
     let answer = reader.join().map_err(|_| io::Error::other("Response reader stopped"))??;

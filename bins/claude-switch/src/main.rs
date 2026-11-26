@@ -77,6 +77,7 @@ fn main() {
     let mut demo_compact_long = false;
     let (mut shell, mut typed, mut list_tab) = (None, Vec::new(), false);
     let mut args = std::env::args().skip(1).peekable();
+    let mut handoff_ack = None;
     if args.next_if(|a| a == "compact").is_some() {
         std::process::exit(compact_cli::entry(args));
     }
@@ -99,7 +100,10 @@ fn main() {
             }
             "--demo-workers" => demo_workers = true,
             "--demo-offscreen" => demo_offscreen = true,
-            "--compact-open-window" => handoff = compact_cli::window_args(&mut args),
+            "--compact-open-window" => {
+                handoff = compact_cli::window_args(&mut args);
+                handoff_ack = args.next();
+            }
             "--usage-shape" => {
                 if args.next_if(|s| s == "--labels").is_some() {
                     usage_labels = true;
@@ -133,6 +137,9 @@ fn main() {
         match compact_cli::handoff(roots, args) {
             Ok(request) => Some(request),
             Err(e) => {
+                if let Some(key) = handoff_ack.as_deref() {
+                    compact_cli::acknowledge(key, false);
+                }
                 eprintln!("claude-switch compact: {e}");
                 std::process::exit(1);
             }
@@ -149,6 +156,7 @@ fn main() {
     }
     state.compact.standalone_window = startup.is_some();
     state.compact.startup = startup;
+    state.compact.startup_ack = handoff_ack;
     state.compact.demo = demo_compact.filter(|_| demo);
     state.compact.demo_long = demo && demo_compact_long;
     if demo && demo_workers {

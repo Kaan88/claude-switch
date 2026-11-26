@@ -24,6 +24,36 @@ fn project_rows_include_the_worktree_and_pins_but_the_folder_option_splits_them(
 }
 
 #[test]
+fn project_rows_and_heading_use_current_time_and_the_newest_row_even_with_scrambled_input() {
+    let mut st = demo();
+    st.config.sessions_mode = Mode::Projects;
+    let key = format!("project:{}", st.project(0).unwrap().key);
+    st.sessions.reverse();
+    st.rebuild_view();
+    let group = st.groups.iter().find(|g| g.key == key).unwrap();
+    let times: Vec<_> = group.rows.iter().map(|&i| st.sessions[i].last_active_ms).collect();
+    assert!(times.len() > 3 && times.windows(2).all(|w| w[0] >= w[1]));
+    for minutes in [3, 8] {
+        let now = times[0] + minutes * 60_000;
+        assert!(st.project_heading_summary(group, now, 0).unwrap().starts_with(&format!("{minutes} min ago")));
+    }
+}
+
+#[test]
+fn entering_projects_does_not_scroll_past_the_newest_rows_to_reveal_an_old_selection() {
+    let mut st = demo();
+    st.sections.view = 240.0;
+    let old = st.sessions[180].id.clone();
+    st.select(&old);
+    st.config.sessions_mode = Mode::Projects;
+    st.rebuild_after_mode_change();
+    assert_eq!(st.sections.scroll, 0.0);
+    let top = st.sections.nav(None, mdshared_ui::rows::Nav::Home).and_then(|e| st.session_at(e)).unwrap();
+    assert_eq!(st.selected.as_deref(), Some(st.sessions[top].id.as_str()));
+    assert_ne!(st.selected.as_deref(), Some(old.as_str()));
+}
+
+#[test]
 fn threads_fold_only_earlier_matches_and_related_navigation_reveals_them() {
     let mut st = demo();
     st.config.sessions_mode = Mode::Threads;

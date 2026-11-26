@@ -47,8 +47,7 @@ impl TabAttention {
         let bell = screen.take_bell();
         let mut waiting = bell;
         if output {
-            let rows = (screen.rows().saturating_sub(18)..screen.rows()).map(|row| screen.row_text(row));
-            let permission = permission_prompt(rows);
+            let permission = screen_permission_prompt(screen);
             waiting |= permission && !self.permission_visible;
             self.permission_visible = permission;
         }
@@ -89,6 +88,10 @@ impl TabAttention {
         self.marked = true;
         mode == Attention::ToastAndMark
     }
+}
+
+pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
+    permission_prompt((0..screen.rows()).map(|row| screen.row_text(row)))
 }
 
 fn permission_prompt(rows: impl IntoIterator<Item = String>) -> bool {

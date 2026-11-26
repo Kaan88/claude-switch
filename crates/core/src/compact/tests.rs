@@ -84,6 +84,8 @@ fn filter_boundary_drops_private_record_types_even_across_chunks_and_keeps_local
         "IMAGE_ONLY",
         "THINKING_ONLY",
         "TOOL_INPUT_BODY",
+        r"C:\\A B\\one.rs",
+        "say  'hi' again",
         "OUTPUT_ONLY",
         "AGENT_FILE_ONLY",
         "REMINDER_IN_USER",
@@ -95,7 +97,7 @@ fn filter_boundary_drops_private_record_types_even_across_chunks_and_keeps_local
         assert!(!sent.contains(excluded), "outbound request contained {excluded}");
     }
     assert!(sent.contains("untrusted DATA"));
-    assert!(sent.contains(r"Tool Write: C:\\A B\\one.rs"));
+    assert!(sent.contains("Tool Write"));
     assert!(sent.contains("EXACT_ASSISTANT"));
     assert!(rendered.contains("\n  <code> USER_ONLY\nwith spaces  \n[picture]\n"));
     assert!(rendered.contains("2026-11-26T09:00:00Z"));
@@ -110,7 +112,7 @@ fn filter_boundary_drops_private_record_types_even_across_chunks_and_keeps_local
 }
 
 #[test]
-fn turns_are_never_split_parts_merge_once_and_local_recent_history_is_bounded() {
+fn small_turns_stay_intact_merges_are_bounded_and_local_recent_history_is_bounded() {
     let t = TempDir::new("compact-turns");
     let mut lines = vec![];
     for i in 0..18 {
@@ -134,8 +136,9 @@ fn turns_are_never_split_parts_merge_once_and_local_recent_history_is_bounded() 
             Ok::<_, ()>(r#"{"goal":"part"}"#.into())
         })
         .unwrap();
-    assert_eq!(calls.len(), 19);
-    for (i, call) in calls[..18].iter().enumerate() {
+    let leaf: Vec<_> = calls.iter().filter(|s| s.contains("assistant work between prompts")).collect();
+    assert_eq!(leaf.len(), 18);
+    for (i, call) in leaf.iter().enumerate() {
         assert!(call.contains(&format!("answer_{i}_start")) && call.contains(&format!("answer_{i}_end")));
         assert!(!call.contains("prompt_"));
     }
@@ -148,6 +151,29 @@ fn turns_are_never_split_parts_merge_once_and_local_recent_history_is_bounded() 
     assert!(result.contains("prompt_0"));
     assert_eq!(result.matches('😺').count(), 4000);
     assert!(result.contains("[prompt cut at 4000 characters]"));
+}
+
+#[test]
+fn oversized_evidence_and_escaped_merges_fit_the_request_budget_without_losing_the_tail() {
+    let t = TempDir::new("compact-budget");
+    let text = format!("{}TAIL_MARK", "\\\"".repeat(60_000));
+    let (s, _) = fixture(&t, &[message("assistant", json!(text))]);
+    let data = Handover::read(s, "fixture".into()).unwrap();
+    let mut leaves = 0;
+    let mut tail = false;
+    data.make(&"\\".repeat(20_000), PART_CHARS, |request| {
+        assert!(request.chars().count() <= PART_CHARS);
+        assert!(!request.contains("additional evidence omitted"));
+        if request.contains("assistant work between prompts") {
+            leaves += 1;
+            tail |= request.contains("TAIL_MARK");
+        }
+        let response: serde_json::Map<String, Value> =
+            KEYS.into_iter().map(|key| (key.into(), json!("\\".repeat(800)))).collect();
+        Ok::<_, ()>(Value::Object(response).to_string())
+    })
+    .unwrap();
+    assert!(leaves > 1 && tail);
 }
 
 #[test]
