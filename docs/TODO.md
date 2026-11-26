@@ -300,3 +300,13 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` (classic renderer) as a setting; (c) both, with (b) as
     a fallback. On Windows the docs also suggest `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT=1` against
     stale text under ConPTY. Not started (owner: record first).
+24. **A fresh chat refuses its first message: "The current session could not be verified"** (owner,
+    2026-11-26, after switching that session to the classic renderer). Cause found in code, not yet
+    seen live: a new session's tab is verified by matching the CLI's live session record to its
+    transcript file (`view/mod.rs` `update_identity` → `view/model.rs` `discover`), and `discover`
+    needs `<session-id>.jsonl` to exist; Claude Code writes that file only with the first prompt. So
+    the Chat view refuses exactly the message that would create it: the first message of every new
+    chat must be typed in the terminal. In fullscreen mode item 23's veto hid this. Fix direction, not
+    decided: treat "live record names this tab's process and a valid new session ID, no transcript
+    yet" as verified-for-the-first-send (pin that ID, then require the file to appear with it), keeping
+    the refusal for a mismatching or missing record.
