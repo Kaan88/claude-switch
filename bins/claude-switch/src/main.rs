@@ -66,6 +66,7 @@ fn main() {
     let mut demo_notifications = false;
     let mut demo_usage_hover = false;
     let mut demo_permission = false;
+    let mut demo_working = false;
     let mut demo_terminal = None;
     let mut demo_terminal_settings = false;
     let mut forced_dark = None;
@@ -89,6 +90,7 @@ fn main() {
             "--demo-notifications" => demo_notifications = true,
             "--demo-usage-hover" => demo_usage_hover = true,
             "--demo-permission" => demo_permission = true,
+            "--demo-working" => demo_working = true,
             "--demo-terminal" => demo_terminal = args.next().as_deref().and_then(demo_terminal::Preview::parse),
             "--demo-terminal-settings" => demo_terminal_settings = true,
             "--theme" => forced_dark = args.next().as_deref().and_then(termtheme::window_dark),
@@ -154,6 +156,7 @@ fn main() {
     let mut state = AppState::new(source, forced_dark, win_file.clone());
     state.usage.demo_echo = demo && demo_usage_hover;
     state.session_view.demo_permission = demo && demo_permission;
+    state.session_view.demo_working = demo && demo_working && !demo_permission;
     if let Some(preview) = demo_terminal {
         preview.apply(&mut state);
     }

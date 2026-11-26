@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{Read, Seek, SeekFrom};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
@@ -15,14 +15,17 @@ use windows_sys::Win32::Security::WinTrust::*;
 use windows_sys::Win32::Storage::FileSystem::*;
 use windows_sys::Win32::Storage::Packaging::Appx::*;
 use windows_sys::Win32::System::Com::CoTaskMemFree;
-use windows_sys::Win32::System::WindowsProgramming::{DRIVE_FIXED, SCS_32BIT_BINARY, SCS_64BIT_BINARY};
+use windows_sys::Win32::System::WindowsProgramming::DRIVE_FIXED;
 use windows_sys::Win32::UI::Shell::{
     FOLDERID_LocalAppData, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
 };
 use windows_sys::core::{GUID, w};
 
 const EXE: &str = "Claude.exe";
+const FAMILY_NAME: &str = "Claude_pzs8sxrjxfjjc";
 const FAMILY: *const u16 = w!("Claude_pzs8sxrjxfjjc");
+pub(super) const REQUEST: &str = EXE;
+mod alias;
 
 fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain([0]).collect()
@@ -83,7 +86,7 @@ fn package_version(name: &str) -> Option<[u32; 4]> {
     matches!(arch, "x64" | "arm64" | "x86").then(|| self::version(version)).flatten()
 }
 
-fn packages() -> Vec<PathBuf> {
+fn packages() -> Vec<Package> {
     let (mut count, mut len) = (0, 0);
     // SAFETY: the first call asks for sizes only; the family is the fixed NUL-terminated identifier.
     if unsafe {
@@ -122,7 +125,7 @@ fn packages() -> Vec<PathBuf> {
     }
     let mut found = Vec::new();
     for (name, properties) in names.into_iter().zip(props).take(count as usize) {
-        if name.is_null() || properties & PACKAGE_PROPERTY_DEVELOPMENT_MODE != 0 {
+        if name.is_null() {
             continue;
         }
         // SAFETY: a successful call provides NUL-terminated names residing in the live `buf`.
@@ -132,10 +135,24 @@ fn packages() -> Vec<PathBuf> {
             && let Some(dir) = package_path(name)
             && dir.file_name().is_some_and(|s| s.eq_ignore_ascii_case(&name_text))
         {
-            found.push((version, dir.join("app").join(EXE)));
+            let mut origin = PackageOrigin_Unknown;
+            // SAFETY: registered name is NUL-terminated and origin is writable.
+            let known = unsafe { GetStagedPackageOrigin(name, &mut origin) } == ERROR_SUCCESS;
+            let signed = known && signed_origin(origin) && properties & PACKAGE_PROPERTY_DEVELOPMENT_MODE == 0;
+            found.push((version, Package { exe: dir.join("app").join(EXE), signed }));
         }
     }
-    newest_first(found)
+    found.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.exe.cmp(&b.1.exe)));
+    found.into_iter().map(|(_, pkg)| pkg).collect()
+}
+
+struct Package {
+    exe: PathBuf,
+    signed: bool,
+}
+
+fn signed_origin(origin: PackageOrigin) -> bool {
+    [PackageOrigin_Store, PackageOrigin_DeveloperSigned].contains(&origin)
 }
 
 fn package_path(name: *const u16) -> Option<PathBuf> {
@@ -174,27 +191,20 @@ fn squirrel(root: &Path) -> Vec<PathBuf> {
     )
 }
 
-fn candidates(packages: Vec<PathBuf>, local: Option<&Path>, program_files: &[PathBuf]) -> Vec<(PathBuf, bool)> {
-    let mut found: Vec<_> = packages.into_iter().map(|path| (path, true)).collect();
+fn standalone(local: Option<&Path>, program_files: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
     if let Some(local) = local {
         let root = local.join("AnthropicClaude");
-        found.extend(squirrel(&root).into_iter().map(|path| (path, false)));
-        found.push((root.join(EXE), false));
+        found.extend(squirrel(&root));
+        found.push(root.join(EXE));
         found.extend(flat(&local.join("Programs")));
     }
     found.extend(program_files.iter().flat_map(|root| flat(root)));
     found
 }
 
-fn flat(root: &Path) -> impl Iterator<Item = (PathBuf, bool)> + '_ {
-    ["Claude", "AnthropicClaude"].into_iter().map(move |name| (root.join(name).join(EXE), false))
-}
-
-fn installed() -> Vec<(PathBuf, bool)> {
-    let local = known_folder(&FOLDERID_LocalAppData);
-    let dirs: Vec<_> =
-        [&FOLDERID_ProgramFiles, &FOLDERID_ProgramFilesX86].into_iter().filter_map(known_folder).collect();
-    candidates(packages(), local.as_deref(), &dirs)
+fn flat(root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    ["Claude", "AnthropicClaude"].into_iter().map(move |name| root.join(name).join(EXE))
 }
 
 fn lock_dirs(path: &Path) -> Option<Vec<File>> {
@@ -221,17 +231,33 @@ fn lock_dirs(path: &Path) -> Option<Vec<File>> {
 /// Keeps the verified file open, denying writes and replacement through process creation.
 #[must_use]
 pub struct DesktopGuard {
+    program: PathBuf,
+    _alias: Option<File>,
     _dirs: Vec<File>,
     _file: File,
 }
 
-fn verify(path: &Path, packaged: bool) -> Option<DesktopGuard> {
+impl DesktopGuard {
+    pub fn program(&self) -> &Path {
+        &self.program
+    }
+}
+
+fn verify(path: &Path, package: Option<&Package>, local: Option<&Path>) -> Option<DesktopGuard> {
     if !fixed_path(path) || !path.file_name().is_some_and(|name| name.eq_ignore_ascii_case(EXE)) {
         return None;
     }
     // MSIX directories are controlled by Windows package deployment. Do not try to open/enumerate
     // the protected WindowsApps root; use the registered package's exact executable path.
-    let dirs = if packaged { Vec::new() } else { lock_dirs(path.parent()?)? };
+    let (program, dirs, alias) = if let Some(p) = package {
+        if !p.signed || p.exe != path {
+            return None;
+        }
+        let (alias_path, parents, alias) = alias::guard(local?, path)?;
+        (alias_path, parents, Some(alias))
+    } else {
+        (path.to_owned(), lock_dirs(path.parent()?)?, None)
+    };
     let file = OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ)
@@ -242,14 +268,49 @@ fn verify(path: &Path, packaged: bool) -> Option<DesktopGuard> {
     if !meta.is_file() || meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return None;
     }
-    let name = wide(path);
-    let mut kind = 0;
-    // SAFETY: `name` is NUL-terminated, and `kind` is a writable DWORD.
-    if unsafe { GetBinaryTypeW(name.as_ptr(), &mut kind) } == 0 || !matches!(kind, SCS_32BIT_BINARY | SCS_64BIT_BINARY)
-    {
+    let embedded = native_pe(&file)?;
+    let trusted = if embedded { signed_by_anthropic(&wide(path), &file) } else { package.is_some() };
+    trusted.then_some(DesktopGuard { program, _alias: alias, _dirs: dirs, _file: file })
+}
+
+/// GetBinaryTypeW can return access denied for a protected WindowsApps path even though
+/// we have a readable, locked file. Read the bounded PE headers from that same handle.
+fn native_pe(mut file: &File) -> Option<bool> {
+    let mut dos = [0; 64];
+    file.read_exact(&mut dos).ok()?;
+    if &dos[..2] != b"MZ" {
         return None;
     }
-    signed_by_anthropic(&name, &file).then_some(DesktopGuard { _dirs: dirs, _file: file })
+    file.seek(SeekFrom::Start(u32::from_le_bytes(dos[60..64].try_into().ok()?) as u64)).ok()?;
+    let mut pe = [0; 26];
+    file.read_exact(&mut pe).ok()?;
+    let word = |i| pe.get(i..i + 2).and_then(|b| b.try_into().ok()).map(u16::from_le_bytes);
+    let machine = word(4)?;
+    let characteristics = word(22)?;
+    let directory = match (machine, word(24)?) {
+        (0x014c, 0x10b) => 96,
+        (0x8664 | 0xaa64, 0x20b) => 112,
+        _ => return None,
+    };
+    if &pe[..4] != b"PE\0\0" || characteristics & 0x2002 != 2 || usize::from(word(20)?) < directory + 40 {
+        return None;
+    }
+    file.seek(SeekFrom::Current(directory as i64 - 6)).ok()?; // NumberOfRvaAndSizes
+    let mut directories = [0; 44];
+    file.read_exact(&mut directories).ok()?;
+    let dword = |i| directories.get(i..i + 4).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes);
+    if dword(0)? < 5 {
+        return None;
+    }
+    match (dword(36)?, dword(40)?) {
+        (0, 0) => Some(false),
+        (offset, size)
+            if offset > 0 && size > 0 && u64::from(offset) + u64::from(size) <= file.metadata().ok()?.len() =>
+        {
+            Some(true)
+        }
+        _ => None,
+    }
 }
 
 fn signed_by_anthropic(name: &[u16], file: &File) -> bool {
@@ -308,14 +369,29 @@ unsafe fn anthropic_signer(state: windows_sys::Win32::Foundation::HANDLE) -> boo
 }
 
 pub(super) fn resolve() -> Option<PathBuf> {
-    installed().into_iter().find_map(|(path, packaged)| verify(&path, packaged).map(|_| path))
+    guard_desktop_exe().ok().map(|g| g.program)
 }
 
-pub fn guard_desktop_exe(path: &Path) -> io::Result<DesktopGuard> {
-    installed()
-        .into_iter()
-        .find_map(|(candidate, packaged)| (candidate == path).then(|| verify(path, packaged)).flatten())
-        .ok_or_else(|| io::Error::other("Claude Desktop is no longer a verified installed executable."))
+pub fn guard_desktop_exe() -> Result<DesktopGuard, crate::Refusal> {
+    let local = known_folder(&FOLDERID_LocalAppData);
+    let packages = packages();
+    let mut found = !packages.is_empty();
+    for package in &packages {
+        if let Some(guard) = verify(&package.exe, Some(package), local.as_deref()) {
+            return Ok(guard);
+        }
+    }
+    let dirs: Vec<_> =
+        [&FOLDERID_ProgramFiles, &FOLDERID_ProgramFilesX86].into_iter().filter_map(known_folder).collect();
+    for path in standalone(local.as_deref(), &dirs) {
+        if let Some(guard) = verify(&path, None, None) {
+            return Ok(guard);
+        }
+        // Attribute query only, rejecting redirects before touching the next component.
+        found |= lock_dirs(path.parent().expect("candidate has parent"))
+            .is_some_and(|_parents| fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_dir()));
+    }
+    Err(if found { crate::Refusal::UnverifiedDesktopApp } else { crate::Refusal::NoDesktopApp })
 }
 
 #[cfg(test)]
@@ -346,20 +422,18 @@ mod tests {
             put(&squirrel.join(folder).join(EXE), "");
         }
         put(&squirrel.join("app-100.1.0"), "not a directory");
-        let package = temp.0.join("WindowsApps/Claude_2.0.0.0_x64__pzs8sxrjxfjjc/app").join(EXE);
         let machine = temp.0.join("Program Files");
-        let found = candidates(vec![package.clone()], Some(&temp.0), std::slice::from_ref(&machine));
+        let found = standalone(Some(&temp.0), std::slice::from_ref(&machine));
         assert_eq!(
             found,
             [
-                (package, true),
-                (squirrel.join("app-1.10.0").join(EXE), false),
-                (squirrel.join("app-1.9.0").join(EXE), false),
-                (squirrel.join(EXE), false),
-                (temp.0.join("Programs/Claude").join(EXE), false),
-                (temp.0.join("Programs/AnthropicClaude").join(EXE), false),
-                (machine.join("Claude").join(EXE), false),
-                (machine.join("AnthropicClaude").join(EXE), false),
+                squirrel.join("app-1.10.0").join(EXE),
+                squirrel.join("app-1.9.0").join(EXE),
+                squirrel.join(EXE),
+                temp.0.join("Programs/Claude").join(EXE),
+                temp.0.join("Programs/AnthropicClaude").join(EXE),
+                machine.join("Claude").join(EXE),
+                machine.join("AnthropicClaude").join(EXE),
             ]
         );
     }
@@ -369,13 +443,12 @@ mod tests {
         let t = TempDir::new("desktop-signature");
         let exe = t.0.join(EXE);
         fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
-        let mut kind = 0;
-        // SAFETY: the path is NUL-terminated; `kind` is a writable DWORD.
-        assert_ne!(unsafe { GetBinaryTypeW(wide(&exe).as_ptr(), &mut kind) }, 0);
+        assert_eq!(native_pe(&File::open(&exe).unwrap()), Some(false));
         assert!(lock_dirs(&t.0).is_some());
-        assert!(verify(&exe, false).is_none());
+        assert!(verify(&exe, None, None).is_none());
         put(&exe, "not a Windows executable");
-        assert!(verify(&exe, false).is_none());
+        assert_eq!(native_pe(&File::open(&exe).unwrap()), None);
+        assert!(verify(&exe, None, None).is_none());
         assert!(!fixed_path(Path::new(r"\\server\share\Claude.exe")));
     }
 
@@ -384,7 +457,41 @@ mod tests {
     fn current_users_claude_package_resolves_to_the_manifest_layout() {
         let known = packages();
         assert!(!known.is_empty());
-        assert!(known.iter().all(|p| p.ends_with(r"app\Claude.exe") && fixed_path(p)));
-        println!("{known:?}");
+        assert!(known.iter().all(|p| p.exe.ends_with(r"app\Claude.exe") && fixed_path(&p.exe)));
+        for p in known {
+            println!("{} signed-package-origin={}", p.exe.display(), p.signed);
+        }
+    }
+
+    #[test]
+    #[ignore = "read-only verification of this Windows user's installed Claude executable"]
+    fn current_users_claude_desktop_resolves_as_verified() {
+        for p in packages() {
+            let file = File::open(&p.exe).unwrap();
+            println!(
+                "native PE (embedded cert): {:?}, Anthropic trust: {}, package alias matched: {}",
+                native_pe(&file),
+                signed_by_anthropic(&wide(&p.exe), &file),
+                known_folder(&FOLDERID_LocalAppData).is_some_and(|local| alias::guard(&local, &p.exe).is_some())
+            );
+        }
+        let desktop = resolve();
+        println!("{desktop:?}");
+        assert!(desktop.is_some(), "no verified Claude Desktop installation");
+    }
+
+    #[test]
+    fn only_store_or_developer_signed_install_origin_can_attest_an_unsigned_inner_exe() {
+        assert!(signed_origin(PackageOrigin_Store));
+        assert!(signed_origin(PackageOrigin_DeveloperSigned));
+        for origin in [
+            PackageOrigin_Unknown,
+            PackageOrigin_DeveloperUnsigned,
+            PackageOrigin_Unsigned,
+            PackageOrigin_LineOfBusiness,
+        ] {
+            assert!(!signed_origin(origin));
+        }
+        assert_ne!(crate::Refusal::NoDesktopApp.to_string(), crate::Refusal::UnverifiedDesktopApp.to_string());
     }
 }

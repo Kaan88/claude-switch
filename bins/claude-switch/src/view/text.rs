@@ -106,7 +106,7 @@ mod tests {
     fn only_verified_file_ranges_are_underlined_and_hit_testable() {
         let demo = crate::demo::Transcript::new().unwrap();
         let name = "field-notes.md";
-        let files = links::Files::from([(name.into(), links::resolve(name, demo.cwd()).unwrap())]);
+        let files = links::Files::from([(name.into(), links::resolve(name, demo.cwd(), &Default::default()).unwrap())]);
         let raw = "enter/leave field-notes.md";
         for scale in [1.0, 1.5] {
             let pal = &mdshared_ui::theme::DARK;

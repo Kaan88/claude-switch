@@ -1,6 +1,6 @@
 //! Transcript references are resolved by the reader worker. Paint never probes a path.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
@@ -78,10 +78,17 @@ pub fn markdown_destination(s: &str) -> Option<String> {
     (local(&path) && is_markdown(Path::new(&path))).then_some(path)
 }
 
-pub fn resolve(s: &str, cwd: &Path) -> Option<NamedFile> {
+pub fn resolve(s: &str, cwd: &Path, touched: &BTreeSet<PathBuf>) -> Option<NamedFile> {
     let normalized = transcript_path(s, cwd)?;
+    if !inside(&normalized, cwd) && !touched.contains(&normalized) {
+        return None;
+    }
     open_local_file(&normalized, false)?;
     Some(NamedFile(normalized))
+}
+
+pub(super) fn inside(path: &Path, cwd: &Path) -> bool {
+    absolute(cwd).is_some_and(|root| path.starts_with(root))
 }
 
 /// Lexical identity only. A caller must never treat this as evidence that a file can be opened.
@@ -90,36 +97,24 @@ pub fn transcript_path(s: &str, cwd: &Path) -> Option<PathBuf> {
         return None;
     }
     let path = Path::new(s);
-    let file = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        if !cwd.is_absolute() {
-            return None;
-        }
-        let mut depth = 0;
-        for component in path.components() {
-            match component {
-                Component::Normal(_) => depth += 1,
-                Component::ParentDir if depth > 0 => depth -= 1,
-                Component::CurDir => {}
-                _ => return None,
-            }
-        }
-        cwd.join(path)
-    };
-    // Keep the exact normalized name that is checked; the shell must not reinterpret a
-    // discarded `..` component through a different filesystem path.
-    let mut normalized = PathBuf::new();
-    for component in file.components() {
-        if component == Component::ParentDir {
-            if !normalized.pop() {
-                return None;
-            }
-        } else {
-            normalized.push(component.as_os_str());
+    if path.is_absolute() {
+        return absolute(path);
+    }
+    // Never drop a parent hop: `alias/../x` can resolve differently through a junction.
+    let mut file = absolute(cwd)?;
+    for part in path.components() {
+        match part {
+            Component::Normal(name) => file.push(name),
+            Component::CurDir => {}
+            _ => return None,
         }
     }
-    Some(normalized)
+    Some(file)
+}
+
+fn absolute(path: &Path) -> Option<PathBuf> {
+    (path.is_absolute() && !path.components().any(|part| part == Component::ParentDir))
+        .then(|| path.components().collect())
 }
 
 pub fn url(s: &str) -> bool {
@@ -229,13 +224,14 @@ mod tests {
     fn checks_named_regular_files_and_does_not_highlight_command_words() {
         let demo = crate::demo::Transcript::new().unwrap();
         let cwd = demo.cwd();
-        let file = resolve("field-notes.md", cwd).unwrap();
+        let resolve = |name| super::resolve(name, cwd, &BTreeSet::new());
+        let file = resolve("field-notes.md").unwrap();
         assert_eq!(file.path(), cwd.join("field-notes.md"));
-        assert_eq!(resolve(file.path().to_str().unwrap(), cwd), Some(file.clone()));
-        assert!(resolve("../field-notes.md", cwd).is_none());
-        assert!(resolve("not-created.md", cwd).is_none());
+        assert_eq!(resolve(file.path().to_str().unwrap()), Some(file.clone()));
+        assert!(resolve("../field-notes.md").is_none());
+        assert!(resolve("not-created.md").is_none());
         std::fs::create_dir(cwd.join("directory.md")).unwrap();
-        assert!(resolve("directory.md", cwd).is_none());
+        assert!(resolve("directory.md").is_none());
         let files = Files::from([("field-notes.md".into(), file)]);
         let raw = "echo enter/leave then field-notes.md";
         let hits = existing(raw, &files);
@@ -246,7 +242,7 @@ mod tests {
     fn editor_preview_is_bounded_and_reads_only_the_named_file() {
         let demo = crate::demo::Transcript::new().unwrap();
         let cwd = demo.cwd();
-        let file = resolve("field-notes.md", cwd).unwrap();
+        let file = resolve("field-notes.md", cwd, &BTreeSet::new()).unwrap();
         assert!(file.read_markdown().unwrap().starts_with("# North ridge"));
         std::fs::write(file.path(), vec![b'x'; MAX_MARKDOWN as usize + 1]).unwrap();
         assert!(file.read_markdown().unwrap_err().to_string().contains("limit"));
@@ -260,5 +256,57 @@ mod tests {
         for s in ["https://example.test/Read.md", "%5c%5cfoo/bar.md", "a%00.md", "foo.txt", "%oops.md"] {
             assert!(markdown_destination(s).is_none(), "{s}");
         }
+    }
+
+    #[test]
+    fn plain_paths_stay_inside_the_working_folder_and_never_walk_parent_hops() {
+        let demo = crate::demo::Transcript::new().unwrap();
+        let cwd = demo.cwd().join("project");
+        let sibling = demo.cwd().join("project-other");
+        std::fs::create_dir(&cwd).unwrap();
+        std::fs::create_dir(&sibling).unwrap();
+        let inside = cwd.join("notes.md");
+        let outside = sibling.join("notes.md");
+        for file in [&inside, &outside] {
+            std::fs::write(file, "# Fixture").unwrap();
+        }
+        let resolve = |name: &str| resolve(name, &cwd, &BTreeSet::new());
+        assert!(resolve("notes.md").is_some());
+        assert!(resolve(inside.to_str().unwrap()).is_some());
+        assert!(resolve(outside.to_str().unwrap()).is_none());
+        assert!(resolve("../project-other/notes.md").is_none());
+        assert!(resolve(cwd.join("../project-other/notes.md").to_str().unwrap()).is_none());
+        assert!(resolve("./notes.md").is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn even_a_touched_path_is_refused_through_a_junction() {
+        let demo = crate::demo::Transcript::new().unwrap();
+        let cwd = demo.cwd().join("project");
+        let target = demo.cwd().join("outside");
+        std::fs::create_dir(&cwd).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("note.md"), "# Outside").unwrap();
+        let junction = cwd.join("alias");
+        let shell =
+            Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let status = std::process::Command::new(shell)
+            .args([
+                "-NoProfile", "-NonInteractive", "-Command",
+                "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:CS_JUNCTION -Target $env:CS_TARGET | Out-Null",
+            ])
+            .env("CS_JUNCTION", &junction)
+            .env("CS_TARGET", &target)
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "{}", String::from_utf8_lossy(&status.stderr));
+        let pointed = junction.join("note.md");
+        assert!(pointed.is_file(), "the fixture really leads to a file outside the session");
+        let ordinary = resolve("alias/note.md", &cwd, &BTreeSet::new());
+        let touched = resolve(pointed.to_str().unwrap(), &cwd, &BTreeSet::from([pointed.clone()]));
+        std::fs::remove_dir(junction).unwrap();
+        assert!(ordinary.is_none());
+        assert!(touched.is_none());
     }
 }

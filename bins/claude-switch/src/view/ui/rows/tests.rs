@@ -47,7 +47,7 @@ fn geometry_right_aligns_bubbles_and_indents_tools_at_session_and_chat_widths() 
 fn both_views_expand_tools_and_put_only_successful_named_markdown_under_the_turn() {
     let demo = crate::demo::Transcript::new().unwrap();
     let name = "field-notes.md";
-    let file = crate::view::links::resolve(name, demo.cwd()).unwrap();
+    let file = crate::view::links::resolve(name, demo.cwd(), &Default::default()).unwrap();
     let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
     let edit = || ToolCard::Edit { path: name.into(), added: 1, removed: 1, lines: vec!["+hi".into(), "-bye".into()] };
     let shell = ToolCard::Shell { command: "echo enter/leave".into(), result: vec!["enter/leave".into()] };

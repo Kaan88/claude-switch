@@ -56,15 +56,19 @@ that pid is alive.
   in it). The Accounts dialog reads these per-account records directly and checks that the credentials
   file exists without opening it. Usage is a separate path described below. `claude auth login` signs in.
 - Desktop: Switch checks Windows' registration of `Claude_pzs8sxrjxfjjc` for the current user and
-  uses the package's `app\Claude.exe` (Store, standalone MSIX or enterprise provisioning). It also
+  its exact `app\Claude.exe` in a Store or developer-signed package, never a development-mode
+  registration. A present embedded signature must pass offline Authenticode validation for
+  Anthropic, PBC; when absent, trust comes from Windows' signed-package registration. Switch
+  starts its verified **package-specific** execution alias, not the inner executable or the
+  user-selectable alias on `PATH`. That activates the package with native arguments and the
+  explicitly scrubbed child environment. Switch also
   checks the per-user Squirrel install (`%LOCALAPPDATA%\AnthropicClaude\app-<version>\Claude.exe`,
   newest version first) and fixed `Claude` or `AnthropicClaude` folders under Local AppData's
-  Programs and Program Files. It does not run the `claude:` protocol command, an updater, a PATH
-  alias, or a shell. The chosen file must be an absolute native executable on a local fixed drive
-  with a Windows-trusted Authenticode signature from Anthropic, PBC. Verification uses local trust
-  data only, with no online revocation check, and the verified file is held through process creation.
-  Started with
-  `--user-data-dir=<dir>` it runs as a second, separate copy with its own login, beside the normal one.
+  Programs and Program Files. Standalone executables require an embedded, Windows-trusted
+  Authenticode signature from Anthropic, PBC. The desktop launch worker verifies the chosen
+  candidate once and holds the checked files through process creation. It does not run the
+  `claude:` protocol, an updater, or a shell. A further account passes its own
+  `--user-data-dir=<dir>` argument, not a different `CLAUDE_CONFIG_DIR`.
   The Code tab of every copy writes transcripts to `%USERPROFILE%\.claude\projects`.
 - `claude --resume <id>` continues a session (it finds it from any folder, but run it in the session's
   folder). `claude --desktop --resume <id>` hands a CLI session to the desktop app and exits.
@@ -286,8 +290,9 @@ details and any output pictures; a group can be expanded independently of its ro
 The embedded Markdown viewer renders assistant answers and named Markdown files. Conversation row
 heights are cached and only visible slices are rasterized. Bare or inline-code Markdown paths and
 explicit Markdown link destinations are actionable when the reader worker finds a regular file.
-Relative paths resolve inside the session folder; absolute fixed-volume paths are also accepted.
-Device and network paths, redirects, and nonexistent files are not actionable. Bash command text
+Relative and absolute file paths stay inside the session’s working folder, except for exact paths
+named by a successful Write/Edit in the currently loaded transcript. Parent hops (`..`), device
+and network paths, redirects (including junctions), and nonexistent files are not actionable. Bash command text
 and output do not infer file links. Successful Write/Edit paths to existing Markdown files get one
 button per file at the end of the loaded turn. Click a path or button to preview up to 1 MiB of
 UTF-8 Markdown on the right in wide Chat or in place of the reading body when narrow. The preview
@@ -642,7 +647,10 @@ The disclosure arrow expands a file's edits newest first, even if the file is un
 jumps to its exact tool row and expands its group and detail, pausing follow. Clicking the file name
 separately opens the embedded Markdown viewer or asks the system for the default app for a supported
 document or media type. It uses only an existing, verified transcript-named file and rechecks at
-activation. Context now uses
+activation. When a turn is active, both conversation layouts show the CLI’s working line from
+visible screen rows, not scrollback. A missing or unreadable timer falls back to time measured
+since the app observed the turn. Stop uses the same fresh-turn safety checks as the composer and
+is inactive when those checks fail. Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.

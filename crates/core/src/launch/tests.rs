@@ -303,6 +303,18 @@ fn the_desktop_app_gets_its_own_data_folder_for_a_further_account() {
     let _ = roots;
 }
 
+#[cfg(windows)]
+#[test]
+fn desktop_open_plans_arguments_without_verifying_an_installation() {
+    let t = TempDir::new("desktop-plan");
+    let (_, config) = setup(&t);
+    let work = open_desktop(&config, "work").unwrap();
+    assert!(is_desktop_request(&work));
+    assert_eq!(work.args, [format!("--user-data-dir={}", config.accounts[1].desktop_dir.display())]);
+    assert!(work.env.is_empty());
+    assert!(work.env_remove.iter().any(|name| name == "CLAUDE_CONFIG_DIR"));
+}
+
 #[test]
 fn the_shell_is_the_first_one_on_the_path() {
     let t = TempDir::new("lau-shell");

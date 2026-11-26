@@ -300,12 +300,25 @@ impl Chat {
     }
 
     fn can_stop(&self, info: &ChatInfo) -> bool {
+        self.reason.is_none() && self.fresh_turn_to_stop(info)
+    }
+
+    fn fresh_turn_to_stop(&self, info: &ChatInfo) -> bool {
         self.fresh
             && !self.identity_unverified
-            && self.reason.is_none()
             && info.pending.is_none()
             && info.latest.is_some_and(|(_, phase)| phase == ChatPhase::Active)
             && info.prompt.is_some_and(|prompt| self.stopped != Some((info.generation, prompt)))
+    }
+
+    pub(super) fn is_demo(&self) -> bool {
+        self.demo
+    }
+
+    pub(super) fn stop_ready(&self, info: &ChatInfo, term: &crate::term::Term, title: &str, now: Instant) -> bool {
+        self.fresh_turn_to_stop(info)
+            && !term.screen.modes().alt_screen
+            && self.decision(info, term, title, now) == (Gate::Running, None)
     }
 
     fn toggle_drawer(&mut self) {

@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, VecDeque};
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::{Path, PathBuf};
 
-use claude_switch_core::transcript::{Item, ItemId};
+use claude_switch_core::transcript::{Item, ItemId, ItemKind, ToolState};
 
 use super::super::links::{self, Files, NamedFile};
 use super::named_paths;
@@ -10,6 +10,8 @@ use super::named_paths;
 pub(super) struct FileRefs {
     refs: BTreeMap<ItemId, (Vec<String>, Files)>,
     refresh: VecDeque<ItemId>,
+    grants: BTreeMap<ItemId, PathBuf>,
+    touched: BTreeSet<PathBuf>,
 }
 
 impl FileRefs {
@@ -18,14 +20,43 @@ impl FileRefs {
             *self = Self::default();
         }
         let mut checked = BTreeMap::new();
-        let mut changed = Vec::new();
+        let mut changed = BTreeMap::new();
+        // Learn successful writes before resolving any references in this batch. Keep the grants
+        // scoped to the displayed reader; a reset (including switching agents) discards them.
+        let mut grants_changed = false;
+        for (id, item) in items {
+            let path = match &item.kind {
+                ItemKind::Tool { name, file_path: Some(path), state: ToolState::Ok, .. }
+                    if matches!(name.as_str(), "Write" | "Edit") =>
+                {
+                    links::transcript_path(path, cwd).filter(|p| !links::inside(p, cwd))
+                }
+                _ => None,
+            };
+            match path {
+                Some(path) if self.grants.get(id) != Some(&path) => {
+                    self.grants.insert(*id, path);
+                    grants_changed = true;
+                }
+                None => grants_changed |= self.grants.remove(id).is_some(),
+                _ => {}
+            }
+        }
+        let affected = if grants_changed {
+            let next: BTreeSet<_> = self.grants.values().cloned().collect();
+            let affected = self.touched.symmetric_difference(&next).cloned().collect::<BTreeSet<_>>();
+            self.touched = next;
+            affected
+        } else {
+            BTreeSet::new()
+        };
         for (id, item) in items {
             let names = named_paths(item);
             let Some((existing, previous)) = self.refs.get_mut(id) else {
                 if !names.is_empty() {
-                    let files = check(&mut checked, cwd, &names);
+                    let files = check(&mut checked, cwd, &self.touched, &names);
                     if !files.is_empty() {
-                        changed.push((*id, files.clone()));
+                        changed.insert(*id, files.clone());
                     }
                     self.refs.insert(*id, (names, files));
                     self.refresh.push_back(*id);
@@ -33,10 +64,19 @@ impl FileRefs {
                 continue;
             };
             *existing = names;
-            let next = check(&mut checked, cwd, existing);
+            let next = check(&mut checked, cwd, &self.touched, existing);
             if *previous != next {
-                changed.push((*id, next.clone()));
+                changed.insert(*id, next.clone());
                 *previous = next;
+            }
+        }
+        if !affected.is_empty() {
+            for (&id, (names, previous)) in &mut self.refs {
+                if !changed.contains_key(&id)
+                    && names.iter().any(|name| links::transcript_path(name, cwd).is_some_and(|p| affected.contains(&p)))
+                {
+                    update(&mut checked, cwd, &self.touched, &mut changed, id, names, previous);
+                }
             }
         }
         // A file can appear/disappear without a new transcript entry. Recheck a
@@ -48,22 +88,39 @@ impl FileRefs {
                 self.refs.remove(&id);
                 continue;
             }
-            let next = check(&mut checked, cwd, names);
-            if *previous != next {
-                changed.push((id, next.clone()));
-                *previous = next;
-            }
+            update(&mut checked, cwd, &self.touched, &mut changed, id, names, previous);
             self.refresh.push_back(id);
         }
-        changed
+        changed.into_iter().collect()
     }
 }
 
-fn check(checked: &mut BTreeMap<String, Option<NamedFile>>, cwd: &Path, names: &[String]) -> Files {
+fn update(
+    checked: &mut BTreeMap<String, Option<NamedFile>>,
+    cwd: &Path,
+    touched: &BTreeSet<PathBuf>,
+    changed: &mut BTreeMap<ItemId, Files>,
+    id: ItemId,
+    names: &[String],
+    previous: &mut Files,
+) {
+    let next = check(checked, cwd, touched, names);
+    if *previous != next {
+        changed.insert(id, next.clone());
+        *previous = next;
+    }
+}
+
+fn check(
+    checked: &mut BTreeMap<String, Option<NamedFile>>,
+    cwd: &Path,
+    touched: &BTreeSet<PathBuf>,
+    names: &[String],
+) -> Files {
     names
         .iter()
         .filter_map(|name| {
-            let file = checked.entry(name.clone()).or_insert_with(|| links::resolve(name, cwd));
+            let file = checked.entry(name.clone()).or_insert_with(|| links::resolve(name, cwd, touched));
             Some((name.clone(), file.clone()?))
         })
         .collect()
@@ -90,5 +147,42 @@ mod tests {
         assert!(refs.update(false, &[], cwd).is_empty());
         std::fs::remove_file(cwd.join(path)).unwrap();
         assert_eq!(refs.update(false, &[], cwd), [(id, Files::new())]);
+    }
+
+    #[test]
+    fn only_the_current_transcripts_successful_write_or_edit_grants_an_exact_outside_path() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let cwd = demo.cwd().join("session");
+        std::fs::create_dir(&cwd).unwrap();
+        let outside = demo.cwd().join("field-notes.md");
+        let other = demo.cwd().join("other.md");
+        std::fs::write(&other, "# Unrelated").unwrap();
+        let name = outside.to_str().unwrap();
+        let other = other.to_str().unwrap();
+        let id = |offset| ItemId { offset, block: 0 };
+        let prose =
+            Item { kind: ItemKind::Assistant { markdown: format!("Open `{name}` or `{other}`.") }, timestamp: None };
+        let tool = |name_of_tool: &str, state| Item {
+            kind: ItemKind::Tool {
+                id: "tool".into(),
+                name: name_of_tool.into(),
+                summary: name.into(),
+                file_path: Some(name.into()),
+                state,
+                duration_ms: None,
+                pictures: vec![],
+                subagent: None,
+                card: None,
+            },
+            timestamp: None,
+        };
+        let mut refs = FileRefs::default();
+        assert!(refs.update(true, &[(id(1), prose.clone()), (id(2), tool("Read", ToolState::Ok))], &cwd).is_empty());
+        assert!(refs.update(false, &[(id(3), tool("Write", ToolState::Failed))], &cwd).is_empty());
+        let granted = refs.update(false, &[(id(3), tool("Write", ToolState::Ok))], &cwd);
+        assert_eq!(granted.len(), 3, "the tool and already loaded rows all see the grant");
+        assert!(granted.iter().all(|(_, r)| r.keys().map(String::as_str).eq([name])));
+        assert_eq!(refs.update(false, &[(id(3), tool("Write", ToolState::Failed))], &cwd).len(), 3);
+        assert!(refs.update(true, &[(id(1), prose)], &cwd).is_empty());
     }
 }

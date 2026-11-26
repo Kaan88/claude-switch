@@ -17,6 +17,7 @@ use mdshared_ui::theme::Palette;
 
 use super::links::NamedFile;
 use super::model::{Follow, Group, Model};
+use super::working::{Footer, Turn};
 use rows::{HEAD, Id, PIC, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface};
 
@@ -34,6 +35,7 @@ enum Action {
     Attach,
     Earlier,
     Latest,
+    Stop(Turn),
     Agent(String),
     Back,
     Group(ItemId),
@@ -84,6 +86,14 @@ pub struct Ui {
     busy_visible: bool,
     epoch: Option<Instant>,
     mouse: (f32, f32),
+    working: Option<Footer>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Release {
+    Miss,
+    Handled,
+    Stop(Turn),
 }
 
 const PAD: f32 = 12.0;
@@ -100,6 +110,25 @@ impl Ui {
         self.set_chat(true);
         self.show(Page::Conversation);
         model.select_agent(None);
+    }
+
+    pub(super) fn set_working(&mut self, footer: Option<Footer>) -> bool {
+        if self.working == footer {
+            false
+        } else {
+            self.working = footer;
+            true
+        }
+    }
+
+    pub(super) fn footer_height(&self, width: f32, main: bool) -> f32 {
+        if self.page == Page::Conversation && main && self.working.is_some() && width - 2.0 * PAD < 440.0 {
+            49.0
+        } else if self.chat {
+            25.0
+        } else {
+            40.0
+        }
     }
 
     #[allow(clippy::too_many_arguments)] // Frame inputs from the host; the pane does not hold the host context.
@@ -176,7 +205,7 @@ impl Ui {
             top += 24.0;
         }
         // The track must retain its length when paging or dragging toggles follow.
-        let footer = area.bottom() - if self.chat { 25.0 } else { 40.0 };
+        let footer = area.bottom() - self.footer_height(area.w, m.agent.is_none());
         if self.page == Page::Conversation && m.has_earlier && !(self.markdown.is_some() && width < 640.0) {
             let h = if self.chat { 21.0 } else { 26.0 };
             self.button(p, pal, Rect::new(x, top, 106.0, h), "Load earlier", Action::Earlier, false);
@@ -214,19 +243,15 @@ impl Ui {
             self.draw_markdown(p, pal, dock, m);
         }
         p.fill(Rect::new(x, footer, width, p.px()), pal.line);
-        if self.page == Page::Conversation && visible {
-            let r = Rect::new(
-                area.right() - PAD - 110.0,
-                footer + if self.chat { 1.0 } else { 7.0 },
-                110.0,
-                if self.chat { 23.0 } else { 26.0 },
+        if self.page == Page::Conversation {
+            self.conversation_footer(
+                p,
+                pal,
+                Rect::new(x, footer, width, area.bottom() - footer),
+                visible,
+                m.agent.is_none(),
             );
-            if self.follow.active() {
-                p.text_center(Face::Ui, 12.0, r, "Following latest", pal.muted);
-            } else {
-                self.button(p, pal, r, "Jump to latest", Action::Latest, false);
-            }
-        } else if self.page != Page::Conversation {
+        } else {
             let count = if self.page == Page::Agents { m.agents.len() } else { m.tasks.len() };
             p.text(
                 Face::Ui,

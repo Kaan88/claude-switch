@@ -5,7 +5,7 @@ use mdshared_ui::host::{Cx, KeyPress};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::platform;
 
-use super::{Chat, Chip, Drawer, Gate, Side, clipboard, recall, submission};
+use super::{Chat, Chip, Drawer, Side, clipboard, recall, submission};
 use crate::state::{AppState, Msg, Target};
 
 pub fn layout_shortcut(name: &KeyName, mods: Mods, palette: bool, session_tab: bool) -> bool {
@@ -306,6 +306,7 @@ impl AppState {
 
     pub fn chat_control(&mut self, cx: &mut Cx<'_, Msg>, control: Control) {
         match control {
+            Control::Stop => return self.stop_conversation(cx, None),
             Control::Model | Control::Effort => return self.chat_choice_menu(control),
             Control::Context => return self.chat_run_slash(cx, "/context".into(), false),
             Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
@@ -315,7 +316,7 @@ impl AppState {
             }
             _ => {}
         }
-        if matches!(control, Control::Send | Control::Override | Control::SendNow | Control::Stop) {
+        if matches!(control, Control::Send | Control::Override | Control::SendNow) {
             self.term_woke(cx);
         }
         let Some(tab) = self.tabs.shown_mut() else { return };
@@ -359,24 +360,40 @@ impl AppState {
                 self.attach_picker(Some(&cwd), true);
             }
             Control::CancelSend => chat.stop_waiting(),
-            Control::Send | Control::Override | Control::SendNow => {
+            Control::Send | Control::Override | Control::SendNow
                 if control == Control::Send
                     || (control == Control::SendNow && chat.queue.is_some())
-                    || (control == Control::Override && chat.queue.is_none() && chat.error == Some(submission::CHECK))
-                {
-                    Self::chat_send(tab, cx.now(), control != Control::Send);
-                }
-            }
-            Control::Stop => {
-                let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, cx.now());
-                if decision == (Gate::Running, None) && chat.can_stop(&pane.model.chat) {
-                    chat.stopped = pane.model.chat.prompt.map(|p| (pane.model.chat.generation, p));
-                    if let Err(e) = submission::write(tab, b"\x1b", "Stopped") {
-                        tab.pane.as_mut().unwrap().chat.error = Some(e);
-                    }
-                }
+                    || (control == Control::Override
+                        && chat.queue.is_none()
+                        && chat.error == Some(submission::CHECK)) =>
+            {
+                Self::chat_send(tab, cx.now(), control != Control::Send);
             }
             _ => {}
+        }
+    }
+
+    pub(in crate::view) fn stop_conversation(
+        &mut self,
+        cx: &mut Cx<'_, Msg>,
+        expected: Option<crate::view::working::Turn>,
+    ) {
+        self.term_woke(cx);
+        if !self.nothing_over() || self.picture_overlay() || self.usage.popup.open {
+            return;
+        }
+        let Some(tab) = self.tabs.shown_mut() else { return };
+        let Some(pane) = &mut tab.pane else { return };
+        let info = &pane.model.chat;
+        if pane.model.error.is_none()
+            && expected.is_none_or(|key| key.0 == info.generation && Some(key.1) == info.prompt)
+            && pane.chat.stop_ready(info, &tab.term, &tab.program_title, cx.now())
+        {
+            pane.chat.stopped = info.prompt.map(|p| (info.generation, p));
+            if let Err(e) = submission::write(tab, b"\x1b", "Stopped") {
+                tab.pane.as_mut().unwrap().chat.error = Some(e);
+            }
+            self.update_working(cx);
         }
     }
 

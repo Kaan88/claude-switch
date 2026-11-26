@@ -322,7 +322,7 @@ impl AppState {
         done: String,
         folder: Option<(&Path, App)>,
     ) -> bool {
-        if !self.source.is_demo() && crate::run::needs_terminal(l) {
+        if !self.source.is_demo() && crate::run::needs_desktop_worker(l) {
             if self.desktop_job.is_some() {
                 self.warn("Desktop handoff pending", "Wait for the current handoff to finish.".into());
                 return false;
@@ -368,7 +368,12 @@ impl AppState {
                 .transpose()
                 .map_err(|e| e.to_string())?
                 .flatten();
-            let result = crate::run::run_unseen(&launch, || cancel.cancelled()).map(|()| done);
+            let result = if crate::run::needs_terminal(&launch) {
+                crate::run::run_unseen(&launch, || cancel.cancelled())
+            } else {
+                crate::run::run_cancellable(&launch, || cancel.cancelled())
+            }
+            .map(|()| done);
             let history = reservation
                 .map(|r| match &result {
                     Ok(_) => r.finish_desktop(),
