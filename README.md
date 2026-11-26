@@ -222,8 +222,12 @@ palette. Pick 2, 4, 8, or 12 weeks and optionally one folder. The preview shows 
 sessions and their transcript size. Right-click a session or folder for a targeted archive.
 Pinned and running sessions are skipped. The session menu shows the reason; folder archive
 can still preview other eligible sessions. Archived sessions stay on disk and still appear in
-search, labelled **Archived**. Use the **Archived** chip to browse them, and the Archive menu
+search, labelled **Archived**. Use the **Archived here** chip to browse them, and the Archive menu
 to unarchive a selection or all. **Hide** remains a separate local mark.
+
+Claude Desktop has its own archive, separate from this one. Sessions archived there are left out
+unless **Settings → Sessions → Show sessions archived in the desktop app** is on; their details
+then say **Desktop archive: yes**. Unarchive them in the desktop app.
 
 **Summary report…** saves a local Markdown file, including prompt excerpts. Its suggested
 location is `Documents\Claude Switch\archive-<date>.md`. The app asks before saving or opening it

@@ -570,12 +570,16 @@ Open action uses the session’s last app when there is no folder preference; Ne
 CLI in that case. A removed account falls back to the selected account without changing the
 preferred app. Defaults do not change the global account selection.
 
-Archive is independent of Hide and of the Desktop app’s archive flag. An age threshold counts
+Archive is independent of Hide and of the Desktop app’s archive flag (`isArchived`). The UI keeps
+the two apart by name: "Archived" alone always means Switch's archive (the **Archived here** chip,
+the row's Archived mark); the desktop app's flag is **Show sessions archived in the desktop app**
+in Settings → Sessions (off by default; such rows are dimmed when shown) and **Desktop archive: yes**
+in the details. An age threshold counts
 back whole weeks from now, excluding the boundary itself and unknown ages. The preview shows
 the eligible IDs and their indexed transcript bytes. Commit considers only those IDs, rechecks
 pins, live sessions, embedded tabs, recent launch reservations and transcript modification
 times, then saves the marks as one update. An incomplete running scan refuses the operation.
-Archived rows are omitted from ordinary views but found in searches; the Archived chip
+Archived rows are omitted from ordinary views but found in searches; the Archived here chip
 appears only while there are archived sessions in the index. Unarchiving preserves Hide marks.
 No archive operation relocates, deletes, or edits a transcript.
 The session menu explains why a pinned or running row cannot be archived. Folder archive

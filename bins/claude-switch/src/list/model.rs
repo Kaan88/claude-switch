@@ -27,7 +27,7 @@ impl Filter {
             Self::Pinned => "Pinned",
             Self::Unseen => "Unseen",
             Self::Hidden => "Hidden",
-            Self::Archived => "Archived",
+            Self::Archived => "Archived here",
         }
     }
 }

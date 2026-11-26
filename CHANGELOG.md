@@ -10,6 +10,9 @@
 - Chat composer: `@` completes paths in the session folder, Ctrl+R searches earlier prompts, and
   Claude Code's grey next-prompt suggestion appears as a chip that fills the draft.
 - The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
+- The two archives have distinct names: the **Archived here** chip is Switch's own archive;
+  **Show sessions archived in the desktop app** and the details row **Desktop archive: yes** are
+  Claude Desktop's.
 - Colour pickers in Settings have Apply and Cancel: Enter or a click outside applies the colour,
   Escape restores the old one. Before, the chosen colour was not applied.
 - Unknown command-line options are refused with a short usage text instead of being ignored (an

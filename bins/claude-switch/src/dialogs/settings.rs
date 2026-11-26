@@ -164,7 +164,8 @@ fn sessions(st: &AppState) -> Vec<Row> {
     vec![
         Row::toggle(SET_EMBEDDED, "Open CLI sessions in a tab of this window", st.config.embedded_terminal)
             .help("Off: they open in a separate console window."),
-        Row::toggle(SET_ARCHIVED, "Show archived sessions", st.config.show_archived),
+        Row::toggle(SET_ARCHIVED, "Show sessions archived in the desktop app", st.config.show_archived)
+            .help("Claude Desktop's own archive. Switch's Archive is separate."),
         Row::toggle(SET_WORKERS_SHOWN, "Show sessions started by tools", st.config.show_workers)
             .help("Sessions that tools and subagents started through the SDK, not you."),
         Row::toggle(SET_HIDDEN, "Show hidden", st.config.show_hidden)
@@ -375,6 +376,17 @@ mod tests {
 
     fn navigate(st: &mut AppState, key: KeyName) {
         assert!(super::super::key(st, Instant::now(), &key, Mods::default(), None));
+    }
+
+    #[test]
+    fn the_two_archives_have_distinct_names() {
+        let st = AppState::new(Source::Demo, None, WindowFile::default());
+        let rows = sessions(&st);
+        let desktop = rows.iter().find(|r| r.id() == Some(SET_ARCHIVED)).unwrap();
+        assert!(matches!(desktop, Row::Toggle { label, help, .. }
+            if label == "Show sessions archived in the desktop app"
+                && help == "Claude Desktop's own archive. Switch's Archive is separate."));
+        assert_eq!(crate::list::model::Filter::Archived.label(), "Archived here");
     }
 
     #[test]
