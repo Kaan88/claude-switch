@@ -56,14 +56,14 @@ impl AppState {
         // Use the last painted rectangles, including when a single motion crosses several tabs.
         // After a move, old hits are discarded until the strip paints at its new positions.
         let mut to = at;
-        for j in (0..at).rev() {
-            if !hit(self.tabs.list[j].id).is_some_and(|r| crossed(x, y, r, false)) {
+        for (j, tab) in self.tabs.list.iter().enumerate().take(at).rev() {
+            if !hit(tab.id).is_some_and(|r| crossed(x, y, r, false)) {
                 break;
             }
             to = j;
         }
-        for j in at + 1..self.tabs.list.len() {
-            if !hit(self.tabs.list[j].id).is_some_and(|r| crossed(x, y, r, true)) {
+        for (j, tab) in self.tabs.list.iter().enumerate().skip(at + 1) {
+            if !hit(tab.id).is_some_and(|r| crossed(x, y, r, true)) {
                 break;
             }
             to = j;
