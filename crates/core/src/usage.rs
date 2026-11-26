@@ -60,6 +60,36 @@ impl Token {
     pub fn limits(&self, body: &[u8]) -> Result<Vec<Limit>, Error> {
         decode(body, self.value())
     }
+
+    /// A diagnostic tree, not the response: only member names, types and array lengths.
+    pub fn shape(&self, body: &[u8]) -> Result<Value, Error> {
+        let raw = serde_json::from_slice(body).map_err(|_| Error::NotUnderstood)?;
+        Ok(shape(raw, self.value()))
+    }
+}
+
+fn shape(raw: Value, bearer: &str) -> Value {
+    fn object<const N: usize>(fields: [(&str, Value); N]) -> Value {
+        Value::Object(fields.into_iter().map(|(key, value)| (key.to_owned(), value)).collect())
+    }
+    match raw {
+        Value::Object(raw) => {
+            let members = raw.into_iter().map(|(name, value)| {
+                let name = if name.contains(bearer) { "<redacted>".into() } else { name };
+                object([("name", Value::String(name)), ("shape", shape(value, bearer))])
+            });
+            object([("type", "object".into()), ("members", Value::Array(members.collect()))])
+        }
+        Value::Array(raw) => {
+            let len = raw.len();
+            let items = raw.into_iter().map(|value| shape(value, bearer)).collect();
+            object([("type", "array".into()), ("length", json!(len)), ("items", Value::Array(items))])
+        }
+        Value::Number(_) => json!({"type": "number"}),
+        Value::String(_) => json!({"type": "string"}),
+        Value::Bool(_) => json!({"type": "bool"}),
+        Value::Null => json!({"type": "null"}),
+    }
 }
 
 impl Drop for Token {

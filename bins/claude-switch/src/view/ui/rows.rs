@@ -37,9 +37,17 @@ pub(super) struct Row {
 /// across incremental transcript updates, even when earlier history shifts their positions.
 pub(super) struct Body {
     raw: String,
-    rich: bool,
+    kind: BodyKind,
     width: f32,
     layout: Layout,
+    visible_prefix: Option<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BodyKind {
+    Plain,
+    Markdown,
+    Compact,
 }
 
 enum Layout {
@@ -50,7 +58,7 @@ enum Layout {
 impl Body {
     pub fn text(&self) -> &str {
         match &self.layout {
-            Layout::Plain(t) => t.text(),
+            Layout::Plain(_) => &self.raw,
             Layout::Markdown(t) => t.text(),
         }
     }
@@ -64,7 +72,7 @@ impl Body {
 
     pub fn point(&self, x: f32, y: f32) -> (usize, Option<&str>) {
         match &self.layout {
-            Layout::Plain(t) => (t.at(x, y), t.link(x, y)),
+            Layout::Plain(t) => (t.at(x, y).min(self.visible_prefix.unwrap_or(self.raw.len())), t.link(x, y)),
             Layout::Markdown(t) => t.point(x, y),
         }
     }
@@ -78,7 +86,11 @@ impl Body {
         pal: &Palette,
     ) {
         match &self.layout {
-            Layout::Plain(t) => t.draw(p, area.x, area.y, selection, pal),
+            Layout::Plain(t) => {
+                let end = self.visible_prefix.unwrap_or(self.raw.len());
+                let shown = selection.map(|r| r.start.min(end)..r.end.min(end));
+                t.draw(p, area.x, area.y, shown, pal);
+            }
             Layout::Markdown(t) => t.draw(p, area, clip, selection, pal),
         }
     }
@@ -108,6 +120,25 @@ pub(super) enum Tone {
 pub(super) const HEAD: f32 = 31.0;
 pub(super) const PIC: f32 = 104.0;
 
+/// Coordinates are relative to the row's left edge; drawing, shaping and pointer hits agree.
+pub(super) struct CompactHead {
+    pub text_x: f32,
+    pub text_w: f32,
+    pub stamp_x: f32,
+    pub stamp_w: f32,
+}
+
+impl CompactHead {
+    pub fn new(width: f32) -> Self {
+        let inset = super::INSET.min(width * 0.125);
+        let inner = (width - 2.0 * inset).max(0.0);
+        let stamp_w = inner.min(58.0);
+        let stamp_x = inset + inner - stamp_w;
+        let text_w = (inner - stamp_w - 10.0).max(0.0); // Also leave room for the activity dot.
+        Self { text_x: inset, text_w, stamp_x, stamp_w }
+    }
+}
+
 pub(super) struct Rows<'a> {
     pub previous: BTreeMap<Id, Body>,
     pub list: Vec<Row>,
@@ -118,24 +149,29 @@ pub(super) struct Rows<'a> {
 }
 
 impl Rows<'_> {
-    fn shape(&mut self, id: &Id, raw: &str, width: f32, rich: bool) -> Body {
+    fn shape(&mut self, id: &Id, raw: &str, width: f32, kind: BodyKind) -> Body {
         if let Some(body) = self.previous.remove(id)
-            && body.rich == rich
+            && body.kind == kind
             && body.width == width
             && body.raw == raw
         {
             return body;
         }
-        let layout = if rich {
-            Layout::Markdown(Box::new(Preview::new(raw, self.pal, self.scale, width)))
-        } else {
-            Layout::Plain(Box::new(TextLayout::new(raw, self.pal, self.scale, width)))
+        let (layout, visible_prefix) = match kind {
+            BodyKind::Markdown => (Layout::Markdown(Box::new(Preview::new(raw, self.pal, self.scale, width))), None),
+            BodyKind::Plain => (Layout::Plain(Box::new(TextLayout::new(raw, self.pal, self.scale, width))), None),
+            BodyKind::Compact => {
+                let (line, prefix) = TextLayout::compact(raw, self.pal, self.scale, width);
+                (Layout::Plain(Box::new(line)), Some(prefix))
+            }
         };
-        Body { raw: raw.to_owned(), rich, width, layout }
+        Body { raw: raw.to_owned(), kind, width, layout, visible_prefix }
     }
 
     fn add(&mut self, id: Id, title: &str, stamp: &str, text: &str, rich: bool, tone: Tone) -> &mut Row {
-        let body = (!text.is_empty()).then(|| self.shape(&id, text, self.width, rich));
+        let kind = if rich { BodyKind::Markdown } else { BodyKind::Plain };
+        let width = (self.width - 2.0 * super::INSET).max(1.0);
+        let body = (!text.is_empty()).then(|| self.shape(&id, text, width, kind));
         let h = HEAD + body.as_ref().map_or(0.0, |t| t.height()) + 12.0;
         self.list.push(Row {
             id,
@@ -246,8 +282,9 @@ impl Rows<'_> {
                     }
                 };
                 let label = if subagent.is_some() { format!("{name} ›") } else { name.to_owned() };
-                let text = format!("{label}   {}", summary.replace(['\n', '\r'], " "));
-                let body = self.shape(&Id::Message(id), &text, 1_000_000.0, false);
+                let text = format!("{label}   {}", summary.replace(['\n', '\r', '\u{2028}', '\u{2029}'], " "));
+                let width = CompactHead::new(self.width).text_w;
+                let body = self.shape(&Id::Message(id), &text, width, BodyKind::Compact);
                 let row = self.add(Id::Message(id), "", status, "", false, tone);
                 row.compact = true;
                 row.busy = status == "Running";
@@ -342,4 +379,23 @@ fn seconds(s: &str) -> Option<i64> {
         0
     };
     Some(86400 * days + n(11, 13)? * 3600 + n(14, 16)? * 60 + n(17, 19)? - offset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_summary_stops_before_the_activity_dot_and_stamp_at_every_width() {
+        for width in (0..=2400).map(|n| n as f32 / 2.0) {
+            let r = CompactHead::new(width);
+            assert!(r.text_x >= 0.0 && r.text_w >= 0.0 && r.stamp_w >= 0.0);
+            assert!(r.stamp_x >= r.text_x && r.stamp_x + r.stamp_w <= width);
+            if r.text_w > 0.0 {
+                assert!(r.text_x + r.text_w <= r.stamp_x - 10.0, "width {width}");
+            }
+        }
+        let r = CompactHead::new(300.0);
+        assert_eq!((r.text_x, r.text_w, r.stamp_x, r.stamp_w), (12.0, 208.0, 230.0, 58.0));
+    }
 }

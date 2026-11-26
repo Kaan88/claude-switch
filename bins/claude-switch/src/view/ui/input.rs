@@ -19,17 +19,23 @@ impl Ui {
         let i = self.rows.partition_point(|r| r.top + r.h < yy);
         let row = self.rows.get(i)?;
         let layout = row.body.as_ref()?;
-        let dx = x - self.body.x - INSET;
+        let (start, width) = self.text_span(row);
+        let dx = x - start;
         let dy = yy - row.top - if row.compact { 7.0 } else { HEAD };
-        if dx < 0.0
-            || dx > self.body.w - 2.0 * INSET - if row.compact { 58.0 } else { 0.0 }
-            || dy < 0.0
-            || dy > layout.height()
-        {
+        if dx < 0.0 || dx >= width || dy < 0.0 || dy > layout.height() {
             return None;
         }
         let (at, link) = layout.point(dx, dy);
         Some((row, at, link))
+    }
+
+    fn text_span(&self, row: &Row) -> (f32, f32) {
+        if row.compact {
+            let head = CompactHead::new(self.body.w);
+            (self.body.x + head.text_x, head.text_w)
+        } else {
+            (self.body.x + INSET, self.body.w - 2.0 * INSET)
+        }
     }
 
     pub fn blur(&mut self) {
@@ -84,15 +90,17 @@ impl Ui {
             if self.start.as_ref().is_some_and(|(sx, sy, _)| (x - sx).abs() + (y - sy).abs() > 4.0) {
                 self.start = None;
             }
-            if let Some((id, _, caret)) = &mut self.selection
+            if let Some((id, _, caret)) = &self.selection
                 && let Some(row) = self.rows.iter().find(|r| r.id == *id)
                 && let Some(text) = &row.body
             {
-                let dx = x - self.body.x - INSET;
+                let (start, width) = self.text_span(row);
+                let dx = x - start;
+                let dx = if row.compact { dx.clamp(0.0, width) } else { dx };
                 let dy = y - self.body.y + self.offset - row.top - if row.compact { 7.0 } else { HEAD };
                 let next = text.point(dx, dy).0;
                 if next != *caret {
-                    *caret = next;
+                    self.selection.as_mut().unwrap().2 = next;
                     changed = true;
                     self.start = None;
                     self.pressed = None;

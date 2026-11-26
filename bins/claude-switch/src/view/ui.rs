@@ -13,7 +13,7 @@ use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::theme::Palette;
 
 use super::model::{Follow, Model};
-use rows::{HEAD, Id, PIC, Row, Rows, Tone};
+use rows::{CompactHead, HEAD, Id, PIC, Row, Rows, Tone};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Page {
@@ -145,6 +145,7 @@ impl Ui {
         self.body = Rect::new(x, top, width, (footer - top).max(0.0));
         self.layout(m, pal, p.scale);
         let body_clip = p.clip(self.body);
+        let compact = CompactHead::new(width);
         let start = self.rows.partition_point(|r| r.top + r.h < self.offset);
         for row in &self.rows[start..] {
             let y = self.body.y + row.top - self.offset;
@@ -174,7 +175,7 @@ impl Ui {
             };
             let stamp = row.status();
             let sw = if row.compact {
-                58.0
+                compact.stamp_w
             } else if stamp.is_empty() {
                 0.0
             } else {
@@ -185,21 +186,25 @@ impl Ui {
             if !row.compact {
                 p.text(Face::Semibold, 13.0, tx, y + HEAD / 2.0, &label, color, (width - 2.0 * INSET - sw).max(1.0));
             }
-            let stamp_x = x + width - INSET - sw;
+            let stamp_x = x + if row.compact { compact.stamp_x } else { width - INSET - sw };
             p.text(Face::Ui, 11.5, stamp_x, y + HEAD / 2.0, &stamp, if row.compact { color } else { pal.muted }, sw);
             if row.busy && y + HEAD > self.body.y && !self.overlay_open() {
                 self.busy_visible = true;
                 let a = if motion { 0.70 + 0.30 * (phase * 4.0).sin() } else { 1.0 };
-                p.rbox_a(Rect::new(stamp_x - 7.0, y + HEAD / 2.0 - 2.0, 4.0, 4.0), 2.0, pal.accent, a);
+                if stamp_x - 7.0 >= x {
+                    p.rbox_a(Rect::new(stamp_x - 7.0, y + HEAD / 2.0 - 2.0, 4.0, 4.0), 2.0, pal.accent, a);
+                }
             }
             let mut py = y + HEAD;
             if let Some(body) = &row.body {
                 let range = selection(&self.selection, &row.id, body.text());
                 if row.compact {
-                    let bounds = Rect::new(tx, y, (width - INSET * 2.0 - sw - 8.0).max(1.0), HEAD);
-                    let c = p.clip(bounds);
-                    body.draw(p, Rect::new(tx, y + 7.0, bounds.w, body.height()), bounds, range, pal);
-                    p.restore(c);
+                    if compact.text_w > 0.0 {
+                        let bounds = Rect::new(x + compact.text_x, y, compact.text_w, HEAD);
+                        let c = p.clip(bounds);
+                        body.draw(p, Rect::new(bounds.x, y + 7.0, bounds.w, body.height()), bounds, range, pal);
+                        p.restore(c);
+                    }
                 } else {
                     body.draw(
                         p,
@@ -276,8 +281,7 @@ impl Ui {
                 } else {
                     Default::default()
                 };
-            let mut r =
-                Rows { previous, list: Vec::new(), end: 0.0, width: (self.body.w - INSET * 2.0).max(1.0), pal, scale };
+            let mut r = Rows { previous, list: Vec::new(), end: 0.0, width: self.body.w, pal, scale };
             match self.page {
                 Page::Conversation => {
                     r.conversation(m, &self.expanded);

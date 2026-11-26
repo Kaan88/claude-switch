@@ -104,6 +104,11 @@ processes or saved on exit. There are no periodic requests. Turning the setting
 off cancels pending work and prevents new credential reads; a request already sent cannot be unsent.
 Demo uses synthetic figures and does not read or write the usage cache, open credentials or use the network.
 
+For local debugging, `--usage-shape [account]` makes one request without a window or cache access.
+Use the account slug, or omit it for the selected account. It still requires **Show usage** and is
+unavailable in demo mode. Stdout contains only member names, JSON types and array lengths; a member
+name containing the bearer is redacted, and values and headers are never printed.
+
 `%APPDATA%\claude-switch\usage.json` holds only limit names, percentages, normalized reset times and the
 reading time by account. It is replaced via a separate temporary file and rename. The plan name
 comes from the existing account status (`oauthAccount.planDisplayName`); there is no renewal date.

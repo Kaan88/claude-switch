@@ -31,6 +31,7 @@ mod termtheme;
 mod topbar;
 mod usage;
 mod usage_fetch;
+mod usage_shape;
 mod usage_ui;
 mod view;
 mod windowlook;
@@ -45,8 +46,9 @@ use crate::state::AppState;
 fn main() {
     let mut demo = false;
     let mut forced_dark = None;
+    let mut usage_shape = None;
     let (mut shell, mut typed, mut list_tab) = (None, Vec::new(), false);
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--demo" => demo = true,
@@ -54,8 +56,15 @@ fn main() {
             "--shell" => shell = args.next(),
             "--type" => typed.extend(args.next()),
             "--sessions-tab" => list_tab = true,
+            "--usage-shape" => {
+                let account = if args.peek().is_some_and(|s| !s.starts_with('-')) { args.next() } else { None };
+                usage_shape = Some(account);
+            }
             _ => {}
         }
+    }
+    if let Some(account) = usage_shape {
+        std::process::exit(usage_shape::run(demo, account.as_deref()));
     }
     let source = if demo {
         Source::Demo

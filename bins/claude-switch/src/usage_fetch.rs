@@ -1,6 +1,8 @@
 //! WinHTTP transport. No configurable destination, proxy, redirects or certificate bypass.
 
 use claude_switch_core::usage::{Error, Reading};
+#[cfg(windows)]
+use claude_switch_core::usage::{Token, now_ms};
 use mdshared_app::fmt::Civil;
 use std::path::Path;
 
@@ -14,7 +16,40 @@ pub fn local_time(secs: i64) -> Civil {
 
 #[cfg(windows)]
 pub fn fetch(dir: &Path, enabled: impl Fn() -> bool) -> Result<Reading, Error> {
-    win::production(dir, enabled)
+    win::production(dir, enabled, reading)
+}
+
+#[cfg(windows)]
+fn reading(token: &Token, body: &[u8]) -> Result<Reading, Error> {
+    Ok(Reading { read_at: now_ms(), limits: token.limits(body)? })
+}
+
+#[cfg(windows)]
+pub fn fetch_shape(dir: &Path) -> Result<serde_json::Value, Error> {
+    win::production(dir, || true, Token::shape)
+}
+
+#[cfg(not(windows))]
+pub fn fetch_shape(_dir: &Path) -> Result<serde_json::Value, Error> {
+    Err(Error::Network)
+}
+
+/// The GUI subsystem may start without standard handles. Keep inherited redirects untouched.
+pub fn attach_diagnostic_console() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Console::{
+            ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_OUTPUT_HANDLE,
+        };
+        // SAFETY: these calls take only Win32 constants and do not dereference caller memory.
+        unsafe {
+            let out = GetStdHandle(STD_OUTPUT_HANDLE);
+            if out.is_null() || out == INVALID_HANDLE_VALUE {
+                AttachConsole(ATTACH_PARENT_PROCESS);
+            }
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -25,7 +60,7 @@ pub fn fetch(_dir: &Path, _enabled: impl Fn() -> bool) -> Result<Reading, Error>
 #[cfg(windows)]
 mod win {
     use super::*;
-    use claude_switch_core::usage::{now_ms, read_token};
+    use claude_switch_core::usage::read_token;
     use std::cell::UnsafeCell;
     use std::ffi::c_void;
     use std::ptr::{null, null_mut};
@@ -200,23 +235,38 @@ mod win {
         Some(Endpoint { host, port: 443, path, flags: WINHTTP_FLAG_SECURE })
     }
 
-    pub(super) fn production(dir: &Path, enabled: impl Fn() -> bool) -> Result<Reading, Error> {
-        request(dir, production_endpoint().ok_or(Error::Network)?, TIMEOUT, enabled)
+    pub(super) fn production<T>(
+        dir: &Path,
+        enabled: impl Fn() -> bool,
+        decode: impl FnOnce(&Token, &[u8]) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        request(dir, production_endpoint().ok_or(Error::Network)?, TIMEOUT, enabled, decode)
     }
 
     #[cfg(test)]
     fn loopback(dir: &Path, base: &str, timeout: Duration) -> Result<Reading, Error> {
-        let port = base.strip_prefix("http://127.0.0.1:").and_then(|p| p.parse::<u16>().ok()).ok_or(Error::Network)?;
-        let endpoint = Endpoint { host: "127.0.0.1", port, path: "api/oauth/usage", flags: 0 };
-        request(dir, endpoint, timeout, || true)
+        loopback_with(dir, base, timeout, reading)
     }
 
-    fn request(
+    #[cfg(test)]
+    fn loopback_with<T>(
+        dir: &Path,
+        base: &str,
+        timeout: Duration,
+        decode: impl FnOnce(&Token, &[u8]) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let port = base.strip_prefix("http://127.0.0.1:").and_then(|p| p.parse::<u16>().ok()).ok_or(Error::Network)?;
+        let endpoint = Endpoint { host: "127.0.0.1", port, path: "api/oauth/usage", flags: 0 };
+        request(dir, endpoint, timeout, || true, decode)
+    }
+
+    fn request<T>(
         dir: &Path,
         endpoint: Endpoint<'_>,
         timeout: Duration,
         enabled: impl Fn() -> bool,
-    ) -> Result<Reading, Error> {
+        decode: impl FnOnce(&Token, &[u8]) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         if !enabled() {
             return Err(Error::Network);
         }
@@ -308,7 +358,7 @@ mod win {
             }
             body.extend(chunk);
         }
-        Ok(Reading { read_at: now_ms(), limits: token.limits(&body)? })
+        decode(&token, &body)
     }
 
     #[cfg(test)]

@@ -57,6 +57,7 @@ fn server(listener: TcpListener, respond: impl FnOnce(TcpStream) + Send + 'stati
                 Err(e) => panic!("test server accept: {e}"),
             }
         };
+        sock.set_nonblocking(false).unwrap();
         sock.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
         let mut reader = BufReader::new(sock);
         let mut headers = String::new();
@@ -108,12 +109,63 @@ fn request_headers_and_usage_are_verified_without_logging_the_token() {
 }
 
 #[test]
+fn one_shot_stdout_contains_only_the_nested_shape_from_loopback() {
+    let dir = Fixture::new(now_ms() + 60_000);
+    let sock = listener();
+    let extra = sock.try_clone().unwrap();
+    let url = base(&sock);
+    let job = server(sock, |mut stream| {
+        response(
+            &mut stream,
+            "200 OK",
+            "X-Test-Secret: test-secret-header\r\n",
+            r#"{"limits":[{"model":"sk-ant-secret-body","pct":87.12345,"enabled":true},null,["Bearer not-for-stdout"],[]],
+             "\u0073ynthetic-loopback-token":{"other":"synthetic-loopback-token"}}"#,
+        )
+    });
+    let mut cfg = crate::demo::config();
+    cfg.accounts[0].cli_dir = dir.0.clone();
+    let mut out = Vec::new();
+    crate::usage_shape::probe(&cfg, Some("main"), &mut out, |dir| loopback_with(dir, &url, TIMEOUT, Token::shape))
+        .unwrap();
+    job.join().unwrap();
+    extra.set_nonblocking(true).unwrap();
+    assert_eq!(extra.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    let stdout = String::from_utf8(out).unwrap();
+    for secret in [TOKEN, "sk-ant-secret-body", "87.12345", "true", "Bearer", "not-for-stdout", "test-secret-header"] {
+        assert!(!stdout.contains(secret));
+    }
+    let actual: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        actual,
+        serde_json::json!({
+            "type": "object",
+            "members": [
+                {"name": "limits", "shape": {"type": "array", "length": 4, "items": [
+                    {"type": "object", "members": [
+                        {"name": "enabled", "shape": {"type": "bool"}},
+                        {"name": "model", "shape": {"type": "string"}},
+                        {"name": "pct", "shape": {"type": "number"}}
+                    ]},
+                    {"type": "null"},
+                    {"type": "array", "length": 1, "items": [{"type": "string"}]},
+                    {"type": "array", "length": 0, "items": []}
+                ]}},
+                {"name": "<redacted>", "shape": {"type": "object", "members": [
+                    {"name": "other", "shape": {"type": "string"}}
+                ]}}
+            ]
+        })
+    );
+}
+
+#[test]
 fn expired_or_disabled_credential_never_reaches_the_socket() {
     let dir = Fixture::new(now_ms() - 1);
     let sock = listener();
     let url = base(&sock);
     assert_eq!(loopback(&dir.0, &url, TIMEOUT), Err(Error::Expired));
-    assert_eq!(production(&dir.0, || false), Err(Error::Network)); // Returns before opening WinHTTP or file.
+    assert_eq!(production(&dir.0, || false, reading), Err(Error::Network)); // Returns before opening WinHTTP or file.
     sock.set_nonblocking(true).unwrap();
     assert_eq!(sock.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
 }
@@ -160,6 +212,7 @@ fn production_requires_tls_and_plaintext_never_receives_the_bearer() {
                 Err(e) => panic!("test TLS accept: {e}"),
             }
         };
+        stream.set_nonblocking(false).unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
         let mut header = [0; 5];
         stream.read_exact(&mut header).unwrap();
@@ -169,7 +222,7 @@ fn production_requires_tls_and_plaintext_never_receives_the_bearer() {
         assert!(!hello.windows(TOKEN.len()).any(|w| w == TOKEN.as_bytes()));
         response(&mut stream, "200 OK", "", "{}");
     });
-    assert_eq!(request(&dir.0, endpoint, Duration::from_secs(4), || true), Err(Error::Network));
+    assert_eq!(request(&dir.0, endpoint, Duration::from_secs(4), || true, reading), Err(Error::Network));
     server.join().unwrap();
 }
 
