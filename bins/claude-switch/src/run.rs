@@ -24,6 +24,14 @@ pub fn run(launch: &Launch) -> io::Result<()> {
     if needs_terminal(launch) {
         return Err(io::Error::other("Desktop handoff requires a worker"));
     }
+    #[cfg(windows)]
+    let _desktop_guard = if launch.place == Place::Detached
+        && launch.program.file_name().is_some_and(|name| name.eq_ignore_ascii_case("Claude.exe"))
+    {
+        Some(claude_switch_core::launch::guard_desktop_exe(&launch.program)?)
+    } else {
+        None
+    };
     let mut cmd = command_for(launch, &native_program(&launch.program)?);
     if launch.place == Place::Detached {
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());

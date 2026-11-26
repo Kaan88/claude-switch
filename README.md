@@ -10,7 +10,7 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 - Start a new CLI session in a chosen folder or open a copy of an existing session.
 - Make an editable handover with an OpenCode model and open it in a brand-new Claude Code session.
 - Keep separate logins while sharing transcripts and settings.
-- Check OpenCode’s version and active sessions in **Settings → Workers**, confirm a service restart, or open OpenCode Config Studio when installed.
+- Check OpenCode’s version and active sessions in **Settings → OpenCode**, confirm a service restart, or open OpenCode Config Studio when installed.
 - Open handovers that are too long for the command line by asking the new session to read the saved Markdown file.
 
 ## Screenshots
@@ -39,6 +39,11 @@ The executable is `target\release\claude-switch.exe`. The [markdown-shared-rs](h
 
 The first account uses your existing Claude CLI and Desktop profiles. Each extra account gets separate profile folders and sign-ins. Switch links CLI transcripts, skills, agents, plugins, and settings from the first account where there is no conflict. It seeds user-level MCP server settings in a missing secondary `.claude.json`, not in an existing profile file. Credentials and running-session records stay separate.
 
+**Open Desktop as this account** searches the installed Claude MSIX or known per-user and Program Files locations. It starts only the native executable with a trusted Anthropic signature, not a protocol handler or updater.
+
+Settings shows one page at a time. Use ↑/↓ in the category list, Tab to enter the page, and Escape
+to close. Reopening Settings in the same window returns to the last category. Changes apply as you make them.
+
 ## Duplicate-session safeguard
 
 Claude Switch checks its tabs and the running-session records across accounts before resuming. If the session is already running, it will not start another instance. If the session is already open in one of its tabs, it switches to that tab instead. A short cooldown also prevents a second launch before the running record appears.
@@ -58,13 +63,15 @@ Claude Switch checks its tabs and the running-session records across accounts be
 
 You can also middle-click a terminal tab to close it.
 
-The OpenCode controls are in **Settings → Workers**; there is no separate keyboard shortcut.
+The OpenCode controls are in **Settings → OpenCode**; there is no separate keyboard shortcut.
 Use `--demo --demo-workers` or `--demo --demo-compact-long` to preview those screens without
 starting OpenCode or Claude.
 
 ## Privacy
 
-Claude Switch has no telemetry. When **Show usage** is on (the default), a usage refresh reads the relevant account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Accounts to stop new token reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
+Claude Switch has no telemetry. When **Show usage** is on (the default), a usage refresh reads the relevant account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Usage to stop new token reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
+
+If usage says **Not signed in** after an external CLI login, choose **Refresh**. An embedded sign-in tab ending checks its account automatically. `—` in the usage figures means Claude did not report a usable value; it does not mean zero.
 
 ## Compact and open
 
@@ -72,6 +79,10 @@ Right-click a session and choose **Compact and open…**, or use the command pal
 pane’s **Open as…** menu. Pick a model from OpenCode and the account to start Claude Code as.
 After the first-use consent for that provider, review and edit the handover before starting the new
 session. The character/token estimate updates as you edit. You can also copy or export it as Markdown.
+The editor's **Agent** picker starts at **Default (Claude)**, with no `--agent` override.
+Choose a custom CLI agent from the target account, the project, or supported installed plugins
+before selecting **Open in CLI**. Changing the target account resets the choice.
+There is no supported agent option for starting a handover in Desktop.
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 
@@ -182,7 +193,8 @@ selected account takes its place. Without a default, **Open** uses the session�
 Choose **Archive older sessions…** from the Sessions list’s **Archive** menu or the command
 palette. Pick 2, 4, 8, or 12 weeks and optionally one folder. The preview shows the number of
 sessions and their transcript size. Right-click a session or folder for a targeted archive.
-Pinned and running sessions are skipped. Archived sessions stay on disk and still appear in
+Pinned and running sessions are skipped. The session menu shows the reason; folder archive
+can still preview other eligible sessions. Archived sessions stay on disk and still appear in
 search, labelled **Archived**. Use the **Archived** chip to browse them, and the Archive menu
 to unarchive a selection or all. **Hide** remains a separate local mark.
 
@@ -201,7 +213,7 @@ and never overwrites an existing file. Treat the report as private conversation 
 - Background Claude tabs get a Waiting mark. Choose **Toast and mark**, **Mark only**, or
   **Off** in Settings → Sessions. With the tray icon enabled, a Windows notice can open
   the waiting tab; otherwise **Toast and mark** uses the mark and a taskbar flash.
-- Settings → Accounts can warn at 80% and 95% usage. If another account has room, the usage
+- Settings → Usage can warn at 80% and 95% usage. If another account has room, the usage
   pop-up offers **Open this session as …** to start a handover with that account selected.
 - Settings → Notification area enables the tray icon and optionally **Close to tray**.
   The tooltip shows usage, and the menu opens running sessions, starts a new session,
@@ -234,13 +246,19 @@ edit jumps to that tool call in the conversation.
 | --- | --- |
 | Ctrl+Shift+K, then F6 (or choose **Switch Chat / Terminal**) | Switch layouts without sending a key to the CLI |
 | Ctrl+Shift+E | Toggle the terminal drawer in Chat or Session view in Terminal |
-| Enter / Shift+Enter in the composer | Send / insert a new line in the draft (sent as a space) |
+| Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (sent as a space) |
 | Up from an empty composer, then Up / Down | Recall earlier prompts from the loaded transcript |
-| File drop | Queue a file path as a removable attachment |
+| Click, drag or Shift+click; double- or triple-click | Place the caret, extend a selection, select a word, or select everything |
+| Right-click in the composer | Cut, Copy, Paste, Select all |
+| Ctrl+V, **Attach…**, or file drop | Paste text or attach a clipboard picture; pick or drop files. Attachments appear inside the box |
+| `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
+| **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first |
+| **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending |
 
-Chat keeps drafts when it cannot tell that the CLI is ready. **Send anyway** cannot override a
-recognized permission question or pending interaction. For clipboard images, paste and check the
-preview in the terminal drawer before submitting. A slash opens the CLI’s own menus in the drawer.
+Chat shows why it held a draft. Neither **Send anyway** nor **Send now** overrides a recognized
+permission question or pending interaction. For pictures, Chat waits for Claude Code to display a new
+image marker before pressing Enter. The command list is a local preview; Claude Code determines which
+commands and choices are available. **Model** also opens Claude Code’s own picker in the drawer.
 
 ## Grouping sessions
 

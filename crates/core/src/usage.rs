@@ -239,7 +239,10 @@ fn modern_limit(item: &Value, bearer: &str) -> Option<Limit> {
         let weekly = [&lower, &group].into_iter().any(|name| name.contains("week") || name.contains("seven"));
         let prefix = if weekly { "Week".into() } else { humanise(kind) };
         (Slot::Model, format!("{prefix}, {model}"))
-    } else if lower.contains("five_hour") || lower.contains("session") {
+    } else if [&lower, &group].into_iter().any(|name| {
+        let name = name.replace(['-', ' '], "_");
+        name.contains("five_hour") || name.contains("session")
+    }) {
         (Slot::Session, "Session".into())
     } else if lower.contains("seven_day") || lower.contains("week") {
         (Slot::Week, "Week".into())
@@ -260,7 +263,18 @@ fn decode(body: &[u8], bearer: &str, read_at: u64) -> Result<Reading, Error> {
         return Err(Error::NotUnderstood);
     };
     let mut limits: Vec<_> = if let Some(items) = raw["limits"].as_array().filter(|items| !items.is_empty()) {
-        items.iter().filter_map(|item| modern_limit(item, bearer)).collect()
+        let mut limits: Vec<_> = items.iter().filter_map(|item| modern_limit(item, bearer)).collect();
+        // Some responses still carry the five-hour window only in the legacy field.
+        if !limits.iter().any(|limit| limit.slot == Slot::Session)
+            && let Some(used) = percent(&raw["five_hour"]["utilization"])
+        {
+            let reset = raw["five_hour"]["resets_at"].as_str().and_then(timestamp);
+            let limit = Limit::legacy("five_hour", used, reset);
+            if valid_label(&limit.label, bearer) {
+                limits.push(limit);
+            }
+        }
+        limits
     } else {
         object
             .iter()
@@ -284,11 +298,13 @@ fn breakdown(rows: &Value, bearer: Option<&str>, name: &str, measure: &str) -> V
         .filter_map(|row| {
             let label =
                 if let Some(bearer) = bearer { report_text(&row[name], bearer)? } else { row[name].as_str()? };
-            let percent = row[measure].as_f64().filter(|p| p.is_finite())?;
+            let percent = row[measure].as_f64().filter(|p| p.is_finite() && *p >= 0.0);
             Some(Breakdown { label: label.into(), percent })
         })
         .collect();
-    rows.sort_by(|a, b| b.percent.total_cmp(&a.percent).then_with(|| a.label.cmp(&b.label)));
+    rows.sort_by(|a, b| {
+        b.percent.unwrap_or(-1.0).total_cmp(&a.percent.unwrap_or(-1.0)).then_with(|| a.label.cmp(&b.label))
+    });
     rows.truncate(6);
     rows
 }
@@ -346,7 +362,7 @@ pub struct Reading {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Breakdown {
     pub label: String,
-    pub percent: f64,
+    pub percent: Option<f64>,
 }
 
 pub const CACHE_NAME: &str = "usage.json";
@@ -419,6 +435,7 @@ pub fn save_cache(path: &Path, readings: &Cache) -> std::io::Result<()> {
 pub enum Demand {
     Automatic,
     Refresh,
+    SignIn,
 }
 
 #[derive(Default)]
@@ -432,7 +449,15 @@ impl Attempt {
     pub fn allowed(&self, demand: Demand, now: Instant, cached_age: Option<Duration>) -> bool {
         let auto = matches!(demand, Demand::Automatic);
         let floor = Duration::from_secs(if auto { 300 } else { 30 });
-        if self.busy || ((auto || self.started.is_none()) && cached_age.is_some_and(|age| age < floor)) {
+        if self.busy {
+            return false;
+        }
+        // These errors occur before HTTP submission. An explicit Refresh or a completed local
+        // sign-in may have new credentials now, so the previous attempt is not a rate limit.
+        if !auto && matches!(self.error(), Some(Error::NoFile | Error::NotLoggedIn | Error::Expired)) {
+            return true;
+        }
+        if (auto || self.started.is_none()) && cached_age.is_some_and(|age| age < floor) {
             return false;
         }
         if let Some((finished, Err(error))) = self.finished

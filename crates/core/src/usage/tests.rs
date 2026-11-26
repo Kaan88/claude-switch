@@ -160,13 +160,68 @@ fn modern_limits_win_and_breakdown_and_severity_survive_the_cache() {
         ]
     );
     assert_eq!((reading.limits[3].reset, reading.limits[3].severity.as_str()), (Some(86400), "close"));
-    assert_eq!(reading.breakdown.iter().map(|r| r.percent).collect::<Vec<_>>(), [30.0, 10.0, 6.0, 5.0, 4.0, 3.0]);
+    assert_eq!(
+        reading.breakdown.iter().filter_map(|r| r.percent).collect::<Vec<_>>(),
+        [30.0, 10.0, 6.0, 5.0, 4.0, 3.0]
+    );
     let dir = TempDir::new("modern-usage-cache");
     let path = dir.roots().config_file().with_file_name(CACHE_NAME);
     let cache = Cache::from([("main".into(), reading)]);
     save_cache(&path, &cache).unwrap();
     assert_eq!(load_cache(&path), cache);
     assert!(!fs::read_to_string(&path).unwrap().contains("synthetic-token"));
+}
+
+#[test]
+fn a_legacy_session_fills_only_a_gap_in_the_modern_limits() {
+    let read = |limits: Value| {
+        decode(
+            json!({
+                "five_hour": {"utilization": 0, "resets_at": "1970-01-02T00:00:00Z"},
+                "seven_day": {"utilization": 99},
+                "limits": limits
+            })
+            .to_string()
+            .as_bytes(),
+            "fixture-token",
+            0,
+        )
+        .unwrap()
+        .limits
+    };
+    let modern_week = json!({"kind":"rolling_week", "percent":32});
+    let fallback = read(json!([modern_week]));
+    assert_eq!(fallback[0], Limit::legacy("five_hour", 0.0, Some(86_400)));
+    assert_eq!((fallback[1].slot, fallback[1].used), (Slot::Week, 32.0));
+    let modern = read(json!([
+        modern_week, {"kind":"quota", "group":"five-hour", "percent":17, "is_active":false}
+    ]));
+    assert_eq!(modern.len(), 2);
+    assert_eq!(modern[0], Limit::legacy("five_hour", 17.0, None));
+}
+
+#[test]
+fn breakdown_retains_names_without_guessing_percentages_and_caches_them() {
+    let reading = decode(
+        br#"{"seven_day_breakdown":{"rows":[
+            {"display_name":"Chats","percent_of_limit":12.8},
+            {"display_name":"Claude Code","percent_of_limit":0},
+            {"display_name":"Cowork","percent_of_limit":null,"percent":85},
+            {"display_name":"Other","percent_of_limit":"not numeric"}
+        ]}}"#,
+        "fixture-token",
+        42,
+    )
+    .unwrap();
+    assert_eq!(
+        reading.breakdown.iter().map(|r| (r.label.as_str(), r.percent)).collect::<Vec<_>>(),
+        [("Chats", Some(12.8)), ("Claude Code", Some(0.0)), ("Cowork", None), ("Other", None)]
+    );
+    let dir = TempDir::new("usage-without-breakdown-figures");
+    let path = dir.roots().config_file().with_file_name(CACHE_NAME);
+    let cache = Cache::from([("main".into(), reading)]);
+    save_cache(&path, &cache).unwrap();
+    assert_eq!(load_cache(&path), cache);
 }
 
 #[test]
@@ -199,13 +254,27 @@ fn on_demand_throttle_has_distinct_automatic_manual_and_failure_floors() {
     assert!(a.allowed(manual, later(30), Some(Duration::ZERO)));
     assert!(!a.allowed(auto, later(299), None));
     assert!(a.allowed(auto, later(300), None));
-    for (failure, seconds) in [(Error::Expired, 300), (Error::Network, 300), (Error::Http(429), 1800)] {
+    for (failure, seconds) in [(Error::Network, 300), (Error::Http(429), 1800)] {
         let mut b = Attempt::default();
         b.start(now);
         b.finish(later(10), Err(failure));
-        for demand in [auto, manual] {
+        for demand in [auto, manual, Demand::SignIn] {
             assert!(!b.allowed(demand, later(seconds + 9), None));
             assert!(b.allowed(demand, later(seconds + 10), None));
         }
+    }
+}
+
+#[test]
+fn only_explicit_demands_bypass_the_cooldown_for_local_login_misses() {
+    let now = Instant::now();
+    for error in [Error::NoFile, Error::NotLoggedIn, Error::Expired] {
+        let mut attempt = Attempt::default();
+        attempt.start(now);
+        attempt.finish(now, Err(error));
+        let fresh_cache = Some(Duration::ZERO);
+        assert!(!attempt.allowed(Demand::Automatic, now, fresh_cache));
+        assert!(attempt.allowed(Demand::Refresh, now, fresh_cache));
+        assert!(attempt.allowed(Demand::SignIn, now, fresh_cache));
     }
 }

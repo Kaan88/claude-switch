@@ -1,4 +1,6 @@
 //! Handover dialog state, consent, and worker lifecycle. Drawing lives in `draw`.
+pub(crate) mod agents;
+mod choices;
 mod draw;
 pub(crate) mod editor;
 mod save_reply;
@@ -21,12 +23,13 @@ pub const LABEL: &str = "Compact and open…";
 const MODEL: u32 = 10;
 const ACCOUNT: u32 = 11;
 const REFRESH: u32 = 12;
-const EDITOR: u32 = 13;
+pub(crate) const EDITOR: u32 = 13;
 const BACK: u32 = 14;
 const COPY: u32 = 15;
 const SAVE: u32 = 16;
 const PREV: u32 = 17;
 const NEXT: u32 = 18;
+const AGENT: u32 = 19;
 const OPTION: u32 = 100;
 const PAGE: usize = 7;
 
@@ -45,6 +48,7 @@ pub struct Cache {
 enum Update {
     Loaded(Option<std::sync::Arc<compact::Handover>>, Result<Vec<String>, String>),
     Preview(String),
+    Agents(String, Vec<agents::Agent>),
 }
 
 type Work = Job<Result<Update, String>>;
@@ -53,6 +57,7 @@ type Work = Job<Result<Update, String>>;
 enum Choice {
     Model,
     Account,
+    Agent,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -73,6 +78,10 @@ pub struct Compact {
     model: usize,
     accounts: Vec<(String, String)>,
     account: usize,
+    agents: Vec<agents::Agent>,
+    agents_loaded: bool,
+    agent: usize,
+    agent_focus: usize,
     focus: Editor,
     preview: Editor,
     saved: Option<PathBuf>,
@@ -255,6 +264,10 @@ impl Compact {
             name,
             accounts,
             account,
+            agents: Vec::new(),
+            agents_loaded: false,
+            agent: 0,
+            agent_focus: 0,
             program: None,
             data: None,
             models: Vec::new(),
@@ -335,6 +348,15 @@ impl Compact {
                 self.phase = Phase::Preview;
                 self.saved = None;
             }
+            Ok(Update::Agents(slug, agents)) if self.accounts.get(self.account).is_some_and(|a| a.0 == slug) => {
+                self.agents = agents;
+                self.agents_loaded = true;
+                self.agent_focus = self.agent;
+                if self.choice == Some(Choice::Agent) {
+                    self.scroll = self.agent.min(self.count().saturating_sub(PAGE));
+                }
+            }
+            Ok(Update::Agents(..)) => {}
             Err(e) => self.error(e),
         }
     }
@@ -430,39 +452,10 @@ impl Compact {
             account,
             &self.preview.text,
             &saved,
-        )?;
+        )?
+        .with_agent(self.agent_name())?;
         self.saved = Some(saved);
         st.open_handover_tab(request)
-    }
-
-    fn count(&self) -> usize {
-        match self.choice {
-            Some(Choice::Model) => self.models.len(),
-            Some(Choice::Account) => self.accounts.len(),
-            None => self.history.len(),
-        }
-    }
-
-    fn choose(&mut self, st: &mut AppState, i: usize) {
-        match self.choice.take() {
-            Some(Choice::Model) if i < self.models.len() => {
-                self.model = i;
-                let model = self.models[i].clone();
-                if let Source::Real(roots) = &st.source {
-                    match claude_switch_core::config::update_compact(roots, |prefs| {
-                        prefs.model = model;
-                        Ok(())
-                    }) {
-                        Ok(prefs) => st.config.compact = prefs,
-                        Err(e) => self.error(format!("Could not remember the model: {e}")),
-                    }
-                } else {
-                    st.config.compact.model = model;
-                }
-            }
-            Some(Choice::Account) if i < self.accounts.len() => self.account = i,
-            _ => {}
-        }
     }
 
     pub fn click(&mut self, st: &mut AppState, now: Instant, id: u32, x: f32) -> bool {
@@ -476,10 +469,11 @@ impl Compact {
             }
             OK if self.phase == Phase::Setup => self.make(st, false),
             OK if self.phase == Phase::Consent => self.make(st, true),
-            OK if self.phase == Phase::Preview => match self.open(st, now) {
+            OK if self.phase == Phase::Preview && self.choice.is_none() => match self.open(st, now) {
                 Ok(()) => return false,
                 Err(e) => self.error(e),
             },
+            BACK if self.choice.take().is_some() => {}
             BACK if matches!(self.phase, Phase::Consent | Phase::Preview) => {
                 self.phase = Phase::Setup;
                 self.message = None;
@@ -490,12 +484,11 @@ impl Compact {
             }
             SAVE if self.phase == Phase::Preview => self.export(st),
             REFRESH if self.phase == Phase::Setup => self.load(st, true),
-            MODEL | ACCOUNT if self.phase == Phase::Setup && self.job.is_none() => {
-                let choice = if id == MODEL { Choice::Model } else { Choice::Account };
-                self.choice = (self.choice != Some(choice)).then_some(choice);
-                self.scroll = if id == MODEL { self.model } else { self.account };
-                self.scroll = self.scroll.min(self.count().saturating_sub(PAGE));
+            MODEL if self.phase == Phase::Setup && self.job.is_none() => self.pick(Choice::Model, st),
+            ACCOUNT if matches!(self.phase, Phase::Setup | Phase::Preview) && self.job.is_none() => {
+                self.pick(Choice::Account, st);
             }
+            AGENT if self.phase == Phase::Preview => self.pick(Choice::Agent, st),
             EDITOR => {
                 let px = self.edit_area.x;
                 let py = self.edit_area.y;
@@ -505,7 +498,12 @@ impl Compact {
                 let byte = editor.row_byte(editor.scroll + row, col);
                 editor.move_to(byte, false);
             }
-            NEXT | PREV => self.page(id == NEXT),
+            NEXT | PREV => {
+                self.page(id == NEXT);
+                if self.choice == Some(Choice::Agent) {
+                    self.agent_focus = self.scroll;
+                }
+            }
             id if id >= OPTION && self.phase == Phase::History => {
                 if let Some(path) = self.history.get((id - OPTION) as usize)
                     && !platform::open_file(path, &["md"])
@@ -526,6 +524,9 @@ impl Compact {
             }
             return Some(if self.phase == Phase::Consent { BACK } else { CANCEL });
         }
+        if self.choice == Some(Choice::Agent) {
+            return self.agent_key(k);
+        }
         if self.choice.is_some() || self.phase == Phase::History {
             match k {
                 KeyName::PageUp | KeyName::Up => self.page(false),
@@ -533,6 +534,8 @@ impl Compact {
                 KeyName::Enter if self.choice.is_some() => return Some(OPTION + self.scroll as u32),
                 _ => {}
             }
+        } else if self.phase == Phase::Preview && matches!(k, KeyName::Char('a' | 'A')) && mods.alt && !mods.ctrl {
+            return Some(AGENT);
         } else if *k == KeyName::Enter && mods.ctrl && self.phase == Phase::Setup {
             return Some(OK);
         } else if self.phase == Phase::Preview || (self.phase == Phase::Setup && self.job.is_none()) {
@@ -567,6 +570,9 @@ impl Compact {
             } else {
                 (self.scroll + 1).min(self.count().saturating_sub(PAGE))
             };
+            if self.choice == Some(Choice::Agent) {
+                self.agent_focus = self.agent_focus.clamp(self.scroll, self.scroll + PAGE - 1);
+            }
         } else {
             self.editor().wheel(dy);
         }

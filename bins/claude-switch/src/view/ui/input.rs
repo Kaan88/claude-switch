@@ -142,14 +142,14 @@ impl Ui {
         false
     }
 
-    pub fn moved(&mut self, x: f32, y: f32) -> (Option<Cursor>, bool) {
+    pub fn moved(&mut self, x: f32, y: f32) -> bool {
         if let Some(drag) = self.scroll_drag {
-            return (Some(Cursor::Default), self.drag_to(drag, y));
+            return self.drag_to(drag, y);
         }
         let track = self.scroll_surface(x, y);
         let hot = self.hit(x, y);
         let mut changed = self.hot != hot || self.scroll_hot != track;
-        self.hot = hot.clone();
+        self.hot = hot;
         self.scroll_hot = track;
         if self.dragging {
             if self.start.as_ref().is_some_and(|(sx, sy, _)| (x - sx).abs() + (y - sy).abs() > 4.0) {
@@ -169,10 +169,23 @@ impl Ui {
                     self.pressed = None;
                 }
             }
-            return (Some(Cursor::Text), changed);
+        }
+        changed
+    }
+
+    pub fn owns_pointer(&self, x: f32, y: f32) -> bool {
+        self.dragging || self.scroll_dragging() || self.overlay_open() || self.area.contains(x, y)
+    }
+
+    pub fn pointer_cursor(&self, x: f32, y: f32) -> Option<Cursor> {
+        if self.scroll_dragging() || self.scroll_surface(x, y).is_some() {
+            return Some(Cursor::Default);
+        }
+        if self.dragging {
+            return Some(Cursor::Text);
         }
         let text = self.text_at(x, y);
-        let cursor = if hot.is_some() || text.as_ref().is_some_and(|(_, _, link)| link.is_some()) {
+        if self.hit(x, y).is_some() || text.as_ref().is_some_and(|(_, _, link)| link.is_some()) {
             Some(Cursor::Hand)
         } else if text.is_some() {
             Some(Cursor::Text)
@@ -180,8 +193,7 @@ impl Ui {
             Some(Cursor::Default)
         } else {
             None
-        };
-        (cursor, changed)
+        }
     }
 
     pub fn release(&mut self, x: f32, y: f32, mods: Mods, m: &mut Model) -> bool {
@@ -403,12 +415,16 @@ mod tests {
             // and release outside the pane below the track.
             ui.press(295.0, 240.0, 1, Mods::default(), &mut model);
             assert!(ui.scroll_dragging());
-            assert!(ui.moved(100.0, 120.0).1);
+            assert!(ui.owns_pointer(800.0, 500.0));
+            assert!(matches!(ui.pointer_cursor(800.0, 500.0), Some(Cursor::Default)));
+            assert!(ui.moved(100.0, 120.0));
             assert_eq!(ui.offset, 0.0);
             assert!(ui.release(800.0, 500.0, Mods::default(), &mut model));
             assert_eq!(ui.offset, 800.0);
             assert!(ui.follow.active());
             assert!(!ui.scroll_dragging());
+            assert!(!ui.owns_pointer(800.0, 500.0));
+            assert!(ui.pointer_cursor(800.0, 500.0).is_none());
         }
     }
 

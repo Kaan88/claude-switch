@@ -77,12 +77,14 @@ impl AppState {
     /// Opens a tab that runs `l` and shows it.
     pub fn open_tab(&mut self, l: &Launch, session: Option<&str>, account: Option<&str>) -> io::Result<u64> {
         let pane = self.pane_for_launch(l, session, account);
+        let signing_in = claude_switch_core::launch::is_login(l);
         let mut l = l.clone();
         l.program = crate::run::native_program(&l.program)?;
         let id = self.open_command(&term::command(&l), l.label.clone(), session, account)?;
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.cwd = pane.as_ref().and(l.cwd.clone());
             tab.pane = pane;
+            tab.signing_in = signing_in;
         }
         self.see_shown();
         Ok(id)
@@ -204,12 +206,19 @@ impl AppState {
     /// ends. What the tab shown needs redrawn.
     pub fn pump_terms(&mut self) -> Woken {
         let mut w = Woken::default();
+        let mut sign_ins = Vec::new();
         let shown = self.tabs.active;
         let focused = self.window_focused && !self.notifications.hidden;
         let (area, metrics) = (self.term_area, self.metrics);
         for tab in &mut self.tabs.list {
             let had_selection = tab.term.selection.is_some();
             let r = tab.term.pump();
+            if r.ended
+                && tab.signing_in
+                && let Some(slug) = &tab.account
+            {
+                sign_ins.push(slug.clone());
+            }
             if let Some(pane) = &mut tab.pane {
                 let bell = tab.attention.terminal(&mut tab.term.screen, r.output, focused && shown == Some(tab.id));
                 pane.chat.output(Instant::now(), r.output, bell);
@@ -240,6 +249,14 @@ impl AppState {
                 }
                 _ => w.all = true,
             }
+        }
+        if !sign_ins.is_empty() {
+            let now = Instant::now();
+            self.refresh(now);
+            for slug in sign_ins {
+                self.request_usage(now, claude_switch_core::usage::Demand::SignIn, Some(&slug));
+            }
+            w.all = true;
         }
         w
     }

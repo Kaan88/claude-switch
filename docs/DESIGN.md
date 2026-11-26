@@ -55,8 +55,15 @@ that pid is alive.
   `%USERPROFILE%\.claude`, and its `.claude.json` is `%USERPROFILE%\.claude.json` (beside the folder, not
   in it). The Accounts dialog reads these per-account records directly and checks that the credentials
   file exists without opening it. Usage is a separate path described below. `claude auth login` signs in.
-- Desktop: the app is an MSIX package; its executable is in the command registered for the `claude:`
-  protocol (`HKCU\Software\Classes\claude\shell\open\command`). Started with
+- Desktop: Switch checks Windows' registration of `Claude_pzs8sxrjxfjjc` for the current user and
+  uses the package's `app\Claude.exe` (Store, standalone MSIX or enterprise provisioning). It also
+  checks the per-user Squirrel install (`%LOCALAPPDATA%\AnthropicClaude\app-<version>\Claude.exe`,
+  newest version first) and fixed `Claude` or `AnthropicClaude` folders under Local AppData's
+  Programs and Program Files. It does not run the `claude:` protocol command, an updater, a PATH
+  alias, or a shell. The chosen file must be an absolute native executable on a local fixed drive
+  with a Windows-trusted Authenticode signature from Anthropic, PBC. Verification uses local trust
+  data only, with no online revocation check, and the verified file is held through process creation.
+  Started with
   `--user-data-dir=<dir>` it runs as a second, separate copy with its own login, beside the normal one.
   The Code tab of every copy writes transcripts to `%USERPROFILE%\.claude\projects`.
 - `claude --resume <id>` continues a session (it finds it from any folder, but run it in the session's
@@ -91,7 +98,7 @@ files (only numeric `<pid>.json` is read); entrypoints seen are `cli`, `sdk-cli`
 
 ## Usage
 
-**Show usage** (Settings → Accounts, on by default) controls both the figures and the credential read.
+**Show usage** (Settings → Usage, on by default) controls both the figures and the credential read.
 On demand, a worker reads only `claudeAiOauth.accessToken` and `expiresAt` from each account's
 CLI `.credentials.json`. Claude Switch never refreshes, writes or deletes credentials. Expired
 tokens are never sent; the window keeps any previous figures and says “Open a session to refresh.”
@@ -103,9 +110,13 @@ part of app state, error details, logs, UI, clipboard or storage. Responses are 
 fields described below; errors carry only a kind, never response bodies or headers.
 
 Opening the window, account selector or Accounts page can request a reading if it is at least five
-minutes old. The selected-account usage popup can do the same for that account. The manual Refresh
-button allows a successful reading to be updated after 30 seconds. After a failure both paths wait
-at least five minutes, or 30 minutes for HTTP 429. Failure cooldowns are in memory, not shared across
+  minutes old. The selected-account usage popup can do the same for that account. The manual Refresh
+  button allows a successful reading to be updated after 30 seconds. After a failure both paths wait
+  at least five minutes, or 30 minutes for HTTP 429. If the account is not signed in or its local
+  login has expired, Refresh and an embedded sign-in tab ending can retry immediately, because
+  the previous attempt never sent a request. If a usage read is in flight when the tab ends, Switch
+  rechecks after that read finishes; normal HTTP cooldowns still apply. External sign-ins can use
+  Refresh. Failure cooldowns are in memory, not shared across
 processes or saved on exit. Only [background usage warnings](#background-notices-and-notification-area)
 can request a periodic refresh. Turning the setting
 off cancels pending work and prevents new credential reads; a request already sent cannot be unsent.
@@ -119,12 +130,14 @@ With `--labels`, the diagnostic may also print short simple strings for `kind`, 
 `key` and `display_name` (up to 40 ASCII letters, digits, spaces, dots, dashes or underscores),
 never a string containing the bearer. Without `--labels` no values are printed.
 
-The app uses the nonempty `limits` array in preference to the older named limits. It deliberately
-keeps valid inactive entries: a limit still belongs in the display even when it is not the one
-currently binding.
+The app uses the nonempty `limits` array in preference to the older named limits. If it has no
+usable Session limit, a numeric legacy `five_hour` can fill that gap; if neither has a figure, the
+usage panels show Session as not reported. Valid inactive entries are kept: a limit still belongs
+in the display even when it is not the one currently binding.
 Both 80% usage and non-normal severity trigger the warning colour. “This week by app” shows up
-to six rows, largest first, using `percent_of_limit`. This is a guess about the undocumented field:
-we interpret it as a share of the weekly allowance, not a share of the usage so far.
+to six named rows, numeric `percent_of_limit` values largest first, followed by named rows without
+a figure (`—`, not reported). We interpret the undocumented field as a share of the weekly allowance,
+not a share of the usage so far; Switch does not substitute a differently named measure.
 
 `%APPDATA%\claude-switch\usage.json` keeps limit labels, slots, percentages, normalized reset times,
 severity, the displayed breakdown and the reading time by account. It is replaced via a separate
@@ -225,6 +238,10 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   the mouse, and is arrow keys on the alternate screen of one that did not. Drag selects (double click a
   word, triple click a line, Alt a block); with mouse reporting on, Shift+drag selects. The drag requests
   a redraw only when the selected cells change. Copying is by key only, not on release.
+  The window chooses the mouse pointer from the current frame's hit map, including when a tab or
+  overlay changes under a stationary pointer. Leaving the client resets the app pointer to the
+  arrow; the host still supplies native resize cursors at window edges. Only the front layer
+  receives hover while a menu, dialog or command palette is open.
 
 **The safeguard, for tabs.** A session open in a tab counts as running at once, before any
 `sessions/<pid>.json` says so: opening it again shows its running tab ("Already open in a tab"), and the list
@@ -327,6 +344,16 @@ interactive CLI documents no stdin/file argument for a first prompt, so short te
 argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file. The app uses the
 new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
 
+The editor's **Agent** picker is CLI-only. **Default (Claude)** is first and adds no CLI
+override; a selected custom agent adds `--agent <name>` before the first-prompt separator.
+Changing the target account resets the choice. Discovery runs read-only from that account's
+`agents/` and the launch project's `.claude/agents/`; project definitions take precedence.
+The reader keeps bounded frontmatter names and descriptions, not agent prompts. It also offers
+agents in standard `agents/` directories of unambiguous, explicitly enabled version-2 plugin
+cache installs. It does not guess at managed policy, custom manifest paths or registry formats.
+Discovery does not start Claude. The documented Desktop launch path takes neither an agent
+flag nor a first prompt, so the handover editor continues to open new sessions in the CLI.
+
 The CLI runs headlessly for `--print` (the default) and writes the handover only to stdout unless
 `--save` is supplied. Explicit `--open` keeps the handover and starts a new window with the
 new tab because the app has no single-instance request channel. On Windows, the new window is
@@ -349,16 +376,16 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 ## Appearance
 
-Settings has navigable Appearance, Terminal, and Custom colours sections (as well as Workers and
-Sessions). The window theme is System, Light or Dark; `--theme light|dark` overrides that preference.
+The Appearance page controls the window. The window theme is System, Light or Dark;
+`--theme light|dark` overrides that preference.
 Windows high contrast takes priority. The toolkit's appearance model supplies the accent (clay by
 default, or system or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
 Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
 compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
 
 Automatic terminal colours use Dark (`#101010`) or Light according to the effective window theme.
-Match window uses the window bar background. Custom lets the user pick the background, text and
-accent; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
+Match window uses the window bar background. Custom uses the background, text and accent picked on
+the Terminal page; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
 changes resize all open screens and pseudo-terminals. Cursor shape and background opacity are
 described under [Terminal cursor and backdrop](#terminal-cursor-and-backdrop).
 
@@ -366,6 +393,18 @@ Tab marks, hover, menu entrances, the dialog dimmer, sessions-list selection and
 animate briefly. Reduce motion snaps them to their targets, as does the system setting. Tab content
 switches instantly; terminal text never cross-fades. Real-mode running-session scans are unchanged,
 but a polling tick no longer redraws the window unless visible state changes.
+
+## Settings pages
+
+The category list at left selects one page at right: Appearance, Terminal, Sessions, Usage,
+Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
+categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
+closing Settings. Each window remembers the last page while it runs; category selection is not saved.
+
+Controls still apply live. An ordinary config save merges only the top-level fields edited against
+the window's loaded baseline, refusing a conflicting change to the same field. It never republishes
+the separately persisted usage opt-in or handover consent; the tab-restore preference still uses
+`window.ini`. Switching categories does not write settings.
 
 ## Recent sessions and local marks
 
@@ -474,6 +513,8 @@ times, then saves the marks as one update. An incomplete running scan refuses th
 Archived rows are omitted from ordinary views but found in searches; the Archived chip
 appears only while there are archived sessions in the index. Unarchiving preserves Hide marks.
 No archive operation relocates, deletes, or edits a transcript.
+The session menu explains why a pinned or running row cannot be archived. Folder archive
+remains available because its preview can include other eligible rows.
 
 The Markdown report covers all currently indexed archived sessions. It uses bounded
 transcript heads/tails for the first dated conversation record and first/last prompt excerpts,
@@ -524,7 +565,7 @@ Switch still supplies its sanitized child environment and the handover-only stan
 policy. `opencode models` supplies provider/model IDs; richer model catalog data remains available
 via the generic runner. The library doesn't use GUI APIs or connect to the service itself.
 
-Settings → Workers probes OpenCode off the UI thread. It checks `service status` before
+Settings → OpenCode shows the results of background probes. The probe checks `service status` before
 `session.active`, because the direct API command can auto-start the service. The restart
 confirmation counts only `running` sessions, warns that jobs will be cut off, and identifies
 an unavailable count as unknown. Cancel is the default. The worker asks again if the count
@@ -548,21 +589,23 @@ Terminal layout keeps its normal Session view and controls. F6 switches layouts 
 command palette is open; a focused terminal still receives its ordinary F6. Ctrl+Shift+E remains reserved by the window
 and toggles the drawer in Chat.
 
-**What counts as ready.** Chat cannot tell whether the CLI has focus in its prompt, has a
-partially typed draft, or is showing an interactive question. Calling the CLI with a prompt is not
-the same thing as writing its PTY, and even a successful write only means input was handed to the
-terminal. An automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
+**What counts as ready.** Picking out an empty Claude Code prompt on the screen is a heuristic,
+not a readiness protocol. A successful write only means input was handed to the terminal.
+An automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
 tool in the current turn, at least 750 ms without terminal output, bracketed-paste mode, and no
 alternate screen or blocking drawer signal. An old completion from a resumed transcript, missing
 stop reasons, an unrecognized title, and terminal quiet alone are not proof. The OSC title has no
 verified Claude readiness protocol: explicit busy labels only veto a send. On a transcript reset
 or after any composer send or direct terminal input, an old completion cannot rearm sending;
 a new prompt must be observed. There is still a race between observing the PTY and writing it.
-When uncertain, Chat retains the draft and says **Open the terminal to check**. **Send anyway**
-is explicit and requires bracketed-paste mode outside the alternate screen. Neither send can
-override a recognized permission question, a pending tool, a bell or the slash menu. Direct
-terminal input samples a transcript byte watermark before writing; a buffered earlier prompt
-cannot rearm Chat just because it arrives late at the UI.
+When uncertain, Chat retains the draft and displays the refusal inside the composer until its cause
+changes. **Send anyway** is explicit and requires bracketed-paste mode outside the alternate screen.
+During an active turn, **Queue** keeps one draft in memory and locks its text and attachments until
+it sends or is cancelled. Automatic delivery waits for a newer completion and a visibly empty prompt
+in the shown Chat tab. **Send now** can send during a turn when that prompt is visibly empty; **Cancel**
+unlocks the draft without sending. Neither path overrides a recognized permission question, pending
+tool, bell or slash menu. Direct terminal input cancels a queued or staged send, and samples a
+transcript byte watermark before writing so a buffered earlier prompt cannot rearm Chat.
 
 **When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
@@ -570,14 +613,25 @@ same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only a
 opened drawer closes on observable turn progress; a manually opened one stays open. No
 permission responses or dialog keys are generated. Stop sends Escape at most once per freshly
 verified active turn.
-A typed initial slash is forwarded only when ready; otherwise it stays in the draft and the
-drawer opens for inspection. Slash menus may not write a transcript event; in that case Chat
-cannot verify that the menu has closed.
+**Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
+The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
+from the selected account, the launch folder’s `.claude` directory, and installed plugin caches.
+It does not execute plugins or mirror CLI policy, and caches the scan for the tab. Stars persist in
+`window.ini`. Use ↑/↓ to choose, Tab to fill, and Enter to run. Model and Effort offer inline choices
+and toolbar menus; Model can also open the native picker. Model, effort and context labels use
+reported values, not clicked values; unknown effort stays blank. Direct slash commands need a
+verified, quiet, visibly empty CLI prompt, no active turn or blocking interaction, and the same
+terminal mode checks as Send. Compact and Clear (including Clear aliases) ask for confirmation.
+Interactive CLI results stay in the drawer. Chat does not generate answers to its menus; without
+observable progress or a quiet, empty prompt it cannot verify that the menu closed.
 
-**Local data.** File paths use the existing quoting. Clipboard pictures must be attached and
-previewed in the drawer before the user submits; Chat never queues Alt+V and Enter together.
-The composer replaces line feeds and tabs with spaces, refuses other control characters, and
-writes the resulting text in bracketed paste followed by one app-generated Enter. Ordinary
+**Local data.** File chips use the existing path quoting. Clipboard pictures get an in-memory
+thumbnail when the format is supported. A send checks the clipboard sequence, writes Alt+V alone,
+and waits up to four seconds for a newly displayed `[Image #n]` on the CLI input row. Only then does
+Chat paste the text and write one Enter. Timeout or an intervening input, permission, clipboard or
+session change retains the draft; a staged picture may remain in the CLI and should be checked there
+before retrying. The composer replaces line feeds and tabs with spaces for messages, refuses other
+control characters, and writes the text as bracketed paste followed by one app-generated Enter. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Recall uses
 loaded main-transcript prompts. Expanded tool rows show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
@@ -590,7 +644,8 @@ separately opens the embedded Markdown viewer or asks the system for the default
 document or media type. It uses only an existing, verified transcript-named file and rechecks at
 activation. Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
-is single-line; the composer reuses the app's multiline editor with toolkit text and drawing.
+is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
+overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
 Demo shows the waiting state, and its composer writes only to the synthetic terminal screen.
 
 ## Session organization
@@ -689,7 +744,7 @@ transcript can be resumed or forked only when the chosen CLI can reach that same
 launch or sign-in refuses an independent tree rather than silently splitting transcript history.
 
 The Workers bridge is synchronized from committed settings, including after reset. Switch serializes
-its updates to the bridge file and preserves unrelated keys. If sync fails, use **Settings → Workers
+its updates to the bridge file and preserves unrelated keys. If sync fails, use **Settings → OpenCode
 → Sync bridge account settings** to retry. An unrecognized active-session response gives an unknown
 count. If a confirmed restart is in progress, normal exit waits for its completion, including the
 stop/start fallback and verification.

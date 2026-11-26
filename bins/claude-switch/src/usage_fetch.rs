@@ -16,7 +16,7 @@ pub fn local_time(secs: i64) -> Civil {
 }
 
 #[cfg(windows)]
-pub fn fetch(roots: &Roots, dir: &Path, enabled: impl Fn() -> bool) -> Result<Reading, Error> {
+pub fn fetch(roots: &Roots, dir: &Path, enabled: &dyn Fn() -> bool) -> Result<Reading, Error> {
     win::production(roots, dir, enabled, reading)
 }
 
@@ -54,7 +54,7 @@ pub fn attach_diagnostic_console() {
 }
 
 #[cfg(not(windows))]
-pub fn fetch(_dir: &Path, _enabled: impl Fn() -> bool) -> Result<Reading, Error> {
+pub fn fetch(_roots: &Roots, _dir: &Path, _enabled: &dyn Fn() -> bool) -> Result<Reading, Error> {
     Err(Error::Network)
 }
 

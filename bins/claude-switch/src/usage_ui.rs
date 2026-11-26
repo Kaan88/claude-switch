@@ -13,6 +13,9 @@ use crate::topbar::Bar;
 
 const ROW: f32 = 25.0;
 const HAIR_W: f32 = 22.0;
+const VALUE_INSET: f32 = 8.0;
+const NO_SESSION: &str = "Session · — (not reported by Claude)";
+const NO_APP_FIGURE: &str = "— = percentage not reported by Claude";
 
 pub fn hairlines(reading: Option<&Reading>) -> Vec<&Limit> {
     let Some(reading) = reading else { return Vec::new() };
@@ -114,12 +117,17 @@ impl AccountUsage<'_> {
     }
 
     pub fn height(&self) -> f32 {
-        53.0 + self.limits().len() as f32 * (ROW + 4.0) + breakdown_height(breakdown(self.reading))
+        53.0 + self.limit_rows() as f32 * (ROW + 4.0) + breakdown_height(breakdown(self.reading))
     }
 
-    pub fn draw(&self, p: &mut Painter, pal: &Palette, r: Rect, now: u64) -> Rect {
+    fn limit_rows(&self) -> usize {
+        self.limits().len() + usize::from(missing_session(self.reading))
+    }
+
+    pub fn draw(&self, p: &mut Painter, pal: &Palette, r: Rect, button: Rect, now: u64) {
         let plan = self.plan.unwrap_or("Plan unavailable");
         let noun = if self.running == 1 { "session" } else { "sessions" };
+        let header_w = button.x - r.x - 12.0;
         p.text(
             Face::Semibold,
             12.0,
@@ -127,7 +135,7 @@ impl AccountUsage<'_> {
             r.y + 10.0,
             &format!("{plan} · {} {noun} running", self.running),
             pal.text,
-            r.w - 100.0,
+            header_w,
         );
         p.text(
             Face::Ui,
@@ -136,24 +144,24 @@ impl AccountUsage<'_> {
             r.y + 30.0,
             &state(self.reading, self.attempt, self.signed_in, now),
             pal.muted,
-            r.w - 100.0,
+            header_w,
         );
+        let missing = missing_session(self.reading);
+        if missing {
+            p.text(Face::Ui, 12.0, r.x, r.y + 51.0, NO_SESSION, pal.muted, r.w);
+        }
         for (i, limit) in self.limits().iter().enumerate() {
-            let y = r.y + 51.0 + i as f32 * (ROW + 4.0);
+            let y = r.y + 51.0 + (i + usize::from(missing)) as f32 * (ROW + 4.0);
             let label = format!("{} · {:.0}% used · {}", limit.label, limit.used, reset(limit, now));
             p.text(Face::Ui, 12.0, r.x, y, &label, pal.text, r.w);
             meter(p, pal, Rect::new(r.x, y + 9.0, r.w, 4.0), limit);
         }
-        draw_breakdown(
-            p,
-            pal,
-            r.x,
-            r.y + 48.0 + self.limits().len() as f32 * (ROW + 4.0),
-            r.w,
-            breakdown(self.reading),
-        );
-        Rect::new(r.right() - 86.0, r.y + 6.0, 86.0, 28.0)
+        draw_breakdown(p, pal, r.x, r.y + 48.0 + self.limit_rows() as f32 * (ROW + 4.0), r.w, breakdown(self.reading));
     }
+}
+
+fn missing_session(reading: Option<&Reading>) -> bool {
+    reading.is_some_and(|r| !r.limits.iter().any(|l| l.slot == Slot::Session))
 }
 
 fn breakdown(reading: Option<&Reading>) -> &[Breakdown] {
@@ -161,7 +169,15 @@ fn breakdown(reading: Option<&Reading>) -> &[Breakdown] {
 }
 
 fn breakdown_height(rows: &[Breakdown]) -> f32 {
-    if rows.is_empty() { 0.0 } else { 25.0 + rows.len() as f32 * 18.0 }
+    if rows.is_empty() { 0.0 } else { 25.0 + (rows.len() + usize::from(has_missing_figure(rows))) as f32 * 18.0 }
+}
+
+fn has_missing_figure(rows: &[Breakdown]) -> bool {
+    rows.iter().any(|row| row.percent.is_none())
+}
+
+fn breakdown_value(row: &Breakdown) -> String {
+    row.percent.map_or_else(|| "—".into(), |value| format!("{value:.0}%"))
 }
 
 fn draw_breakdown(p: &mut Painter, pal: &Palette, x: f32, y: f32, w: f32, rows: &[Breakdown]) {
@@ -172,8 +188,17 @@ fn draw_breakdown(p: &mut Painter, pal: &Palette, x: f32, y: f32, w: f32, rows: 
     for (i, row) in rows.iter().enumerate() {
         let y = y + 32.0 + i as f32 * 18.0;
         p.text(Face::Ui, 12.0, x, y, &row.label, pal.muted, w - 74.0);
-        p.text_right(Face::Ui, 12.0, x + w, y, &format!("{:.0}%", row.percent), pal.muted);
+        p.text_right(Face::Ui, 12.0, x + w - VALUE_INSET, y, &breakdown_value(row), pal.muted);
     }
+    if has_missing_figure(rows) {
+        p.text(Face::Ui, 12.0, x, y + 32.0 + rows.len() as f32 * 18.0, NO_APP_FIGURE, pal.muted, w);
+    }
+}
+
+fn popup_card(window: Rect, field: Rect, height: f32) -> Rect {
+    let w = 355.0_f32.min((window.w - 16.0).max(0.0));
+    let x = field.x.min(window.right() - 8.0 - w);
+    Rect::new(x, field.bottom(), w, height)
 }
 
 pub fn draw_popup(st: &mut AppState, p: &mut Painter, window: Rect, now: Instant) {
@@ -199,10 +224,11 @@ pub fn draw_popup(st: &mut AppState, p: &mut Painter, window: Rect, now: Instant
     let switch = st.usage_switch_account(clock).map(|a| format!("Open this session as {}", a.name));
     let extra = if switch.is_some() { 36.0 } else { 0.0 };
     let rows = breakdown(reading);
-    let limit_height = limits.len() as f32 * ROW;
+    let missing = missing_session(reading);
+    let limit_height = (limits.len() + usize::from(missing)) as f32 * ROW;
     let content = limit_height + breakdown_height(rows);
     let view_h = content.min((window.h - field.bottom() - 108.0 - extra).max(ROW));
-    let card = Rect::new(field.x, field.bottom(), 355.0, 90.0 + view_h + extra);
+    let card = popup_card(window, field, 90.0 + view_h + extra);
     let x = card.x + 14.0;
     let w = card.w - 28.0;
     p.frame(card, st.appearance.radius, pal.popup, pal.popup_line);
@@ -210,8 +236,11 @@ pub fn draw_popup(st: &mut AppState, p: &mut Painter, window: Rect, now: Instant
     let view = Rect::new(x, card.y + 34.0, w, view_h);
     let scroll = st.usage.popup.scroll.clamp(0.0, (content - view_h).max(0.0));
     let old = p.clip(view);
+    if missing {
+        p.text(Face::Ui, 12.0, x, view.y + ROW / 2.0 - scroll, NO_SESSION, pal.muted, w);
+    }
     for (i, limit) in limits.iter().enumerate() {
-        let y = view.y + i as f32 * ROW + ROW / 2.0 - scroll;
+        let y = view.y + (i + usize::from(missing)) as f32 * ROW + ROW / 2.0 - scroll;
         let description = format!("{:.0}% left · {}", 100.0 - limit.used, reset(limit, clock));
         p.text(Face::Ui, 12.0, x, y, &limit.label, pal.text, 132.0);
         p.text(
@@ -283,6 +312,32 @@ mod tests {
             ["Session", "Week", "Week, Sonnet"]
         );
         assert!(hairlines(None).is_empty());
+    }
+
+    #[test]
+    fn missing_session_is_explained_after_a_read_and_missing_app_values_are_not_zero() {
+        let only_week = Reading { read_at: 0, limits: vec![Limit::legacy("seven_day", 69.0, None)], breakdown: vec![] };
+        assert!(missing_session(Some(&only_week)));
+        let mut with_session = only_week;
+        with_session.limits.push(Limit::legacy("five_hour", 0.0, None));
+        assert!(!missing_session(Some(&with_session)));
+        assert!(!missing_session(None));
+
+        let missing = Breakdown { label: "Cowork".into(), percent: None };
+        let zero = Breakdown { label: "Chats".into(), percent: Some(0.0) };
+        assert_eq!(breakdown_value(&missing), "—");
+        assert_eq!(breakdown_value(&zero), "0%");
+        assert_eq!(breakdown_height(&[zero, missing]), 25.0 + 3.0 * 18.0);
+    }
+
+    #[test]
+    fn usage_popup_keeps_its_right_edge_inside_a_narrow_window() {
+        for width in [300.0, 467.0, 760.0] {
+            let window = Rect::new(0.0, 0.0, width, 500.0);
+            let card = popup_card(window, Bar::layout(width).account, 160.0);
+            assert!(card.x >= 8.0 && card.right() <= width - 8.0, "{card:?}");
+            assert_eq!(card.w, 355.0_f32.min(width - 16.0));
+        }
     }
 
     #[test]

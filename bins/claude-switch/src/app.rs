@@ -3,14 +3,12 @@
 
 use claude_switch_core::usage::Demand;
 use mdshared_ui::chrome::{TITLE_H, WinButton};
-use mdshared_ui::cursor::Cursor;
 use mdshared_ui::dropdown::Outcome as DdOutcome;
 use mdshared_ui::gfx::Rect;
 use mdshared_ui::host::{Button, Cx, KeyPress};
 use mdshared_ui::keys::KeyName;
 use mdshared_ui::palette::Outcome as PalOutcome;
 use mdshared_ui::splitter::Axis;
-use mdshared_ui::tooltip::Over;
 
 use crate::actions;
 use crate::dialogs::{self, Dialog};
@@ -20,6 +18,7 @@ use crate::topbar::{self, Bar};
 use crate::{list, winfile};
 
 mod events;
+mod pointer;
 
 impl AppState {
     fn resume_polling(&mut self, now: std::time::Instant) {
@@ -221,6 +220,7 @@ impl AppState {
                 MenuKind::OpenAs => self.rect_of(Target::OpenAs),
                 MenuKind::Row => Some(Rect::new(self.mouse.0, self.mouse.1, 0.0, 0.0)),
                 MenuKind::Tab(tab) => return self.tab_menu_chosen(cx.now(), tab, id),
+                MenuKind::Chat(tab, mode) => return self.chat_menu_chosen(cx, tab, mode, id),
             };
             self.command(cx.now(), id, anchor);
         }
@@ -416,7 +416,7 @@ impl AppState {
         }
         if let Some(Dialog::Settings(form)) = &mut self.dialog {
             let o = form.press(x, y, cx.mods(), clicks.min(3) as u8);
-            dialogs::settings_outcome(self, o);
+            dialogs::settings_event(self, o);
             return;
         }
         if self.dialog.is_some() {
@@ -493,7 +493,7 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
-        if self.chat_end_drag(Some(y)) {
+        if self.chat_end_drag(Some((x, y))) {
             return;
         }
         if let Some(t @ Target::Chat(_)) = self.pressed {
@@ -545,7 +545,7 @@ impl AppState {
         }
         if let Some(Dialog::Settings(form)) = &mut self.dialog {
             let o = form.release(x, y);
-            dialogs::settings_outcome(self, o);
+            dialogs::settings_event(self, o);
             return;
         }
         if let Some(t) = self.pressed.take()
@@ -553,71 +553,5 @@ impl AppState {
         {
             self.activate(cx, t, x);
         }
-    }
-
-    /// The pointer moved. True when something shows a change.
-    fn moved(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> bool {
-        self.mouse = (x, y);
-        if let Some(changed) = self.chat_move(cx, x, y) {
-            return changed;
-        }
-        if self.tabs.drag.is_some() {
-            return self.move_tab_drag(x, y);
-        }
-        let terminal_drag = self.tabs.shown().is_some_and(|tab| tab.term.selecting || tab.term.reported.is_some());
-        if !terminal_drag
-            && !self.usage.popup.open
-            && y >= TITLE_H
-            && let Some(changed) = self.session_move(cx, x, y)
-        {
-            return changed;
-        }
-        let area = self.main_area(cx);
-        if self.splitter.dragging() {
-            cx.set_cursor(Cursor::ResizeEw);
-            return self.splitter.drag(area, Axis::Horizontal, x, y);
-        }
-        let mut changed = false;
-        if self.terminal_shown() && self.nothing_over() {
-            changed |= self.term_move(x, y, cx.mods());
-        }
-        if let Some(p) = &mut self.palette {
-            changed |= p.pointer_move(x, y);
-        }
-        if self.accounts_dd.is_open() {
-            changed |= self.accounts_dd.pointer(x, y);
-        }
-        if let Some((_, menu)) = &mut self.menu {
-            changed |= menu.pointer(x, y);
-        }
-        if let Some(Dialog::Settings(form)) = &mut self.dialog {
-            changed |= form.pointer_move(x, y);
-        }
-        let hover = self.hit(x, y);
-        changed |= self.usage_hover(cx.now(), hover);
-        if hover != self.hover {
-            self.hover = hover;
-            changed = true;
-        }
-        let over = hover
-            .and_then(|t| Some((t, topbar::tip_of(t)?, self.rect_of(t)?)))
-            .filter(|_| self.menu.is_none() && self.dialog.is_none() && self.palette.is_none())
-            .map(|(key, text, anchor)| Over { key, text: text.to_string(), anchor });
-        changed |= self.tip.hover_at(cx.now(), over, (x, y));
-        let on_split =
-            self.dialog.is_none() && !self.terminal_shown() && self.splitter.hit(area, Axis::Horizontal, x, y);
-        let program_mouse =
-            self.tabs.shown().is_some_and(|t| termkeys::mouse_to_program(&t.term.screen.modes(), cx.mods().shift));
-        cx.set_cursor(match hover {
-            _ if on_split => Cursor::ResizeEw,
-            Some(Target::Terminal) if !program_mouse => Cursor::Text,
-            Some(Target::Chat(crate::view::chat::Control::Editor)) => Cursor::Text,
-            Some(Target::Chat(crate::view::chat::Control::Grip)) => Cursor::ResizeNs,
-            Some(Target::Chat(crate::view::chat::Control::Detail(_))) => Cursor::Hand,
-            Some(Target::Search) if self.dialog.is_none() => Cursor::Text,
-            Some(Target::Dialog(dialogs::FIELD)) => Cursor::Text,
-            _ => Cursor::Default,
-        });
-        changed
     }
 }

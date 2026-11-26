@@ -1,4 +1,5 @@
 //! Reject remote/device/redirected paths before repository discovery probes them.
+use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 #[cfg(windows)]
@@ -68,7 +69,8 @@ fn normalize(path: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
-pub(super) struct Volume {
+/// A local fixed volume. Absolute file and directory reads do not follow reparse points on Windows.
+pub struct Volume {
     #[cfg(windows)]
     letter: u8,
     #[cfg(windows)]
@@ -76,7 +78,7 @@ pub(super) struct Volume {
 }
 
 impl Volume {
-    pub(super) fn at(path: &Path) -> Option<Self> {
+    pub fn at(path: &Path) -> Option<Self> {
         if !path.is_absolute() {
             return None;
         }
@@ -96,7 +98,7 @@ impl Volume {
         path.is_absolute()
     }
 
-    pub(super) fn folder(&self, path: &Path) -> Option<PathBuf> {
+    pub fn folder(&self, path: &Path) -> Option<PathBuf> {
         if !self.accepts(path) {
             return None;
         }
@@ -104,7 +106,7 @@ impl Volume {
         self.metadata(&path).ok()?.is_dir().then_some(path)
     }
 
-    pub(super) fn metadata(&self, path: &Path) -> std::io::Result<std::fs::Metadata> {
+    pub fn metadata(&self, path: &Path) -> std::io::Result<std::fs::Metadata> {
         self.open(path, false)?.metadata()
     }
 
@@ -114,7 +116,8 @@ impl Volume {
     }
 
     #[cfg(not(windows))]
-    pub(super) fn open(&self, path: &Path, _: bool) -> std::io::Result<std::fs::File> {
+    pub fn open(&self, path: &Path, _: bool) -> std::io::Result<std::fs::File> {
+        let path = normalize(path).filter(|p| self.accepts(p)).ok_or(std::io::ErrorKind::InvalidInput)?;
         for at in path.ancestors() {
             if crate::util::reparse(&std::fs::symlink_metadata(at)?) {
                 return Err(std::io::ErrorKind::PermissionDenied.into());
@@ -124,7 +127,7 @@ impl Volume {
     }
 
     #[cfg(windows)]
-    pub(super) fn open(&self, path: &Path, read: bool) -> std::io::Result<std::fs::File> {
+    pub fn open(&self, path: &Path, read: bool) -> std::io::Result<std::fs::File> {
         use std::io::{Error, ErrorKind};
         use std::os::windows::io::FromRawHandle;
         use std::ptr::{null, null_mut};
@@ -141,6 +144,7 @@ impl Volume {
         if !self.accepts(path) {
             return Err(ErrorKind::PermissionDenied.into());
         }
+        let path = normalize(path).ok_or(ErrorKind::InvalidInput)?;
         let tail = path.to_str().and_then(|s| s.get(2..)).ok_or(ErrorKind::InvalidInput)?;
         let mut wide = self.device.encode_utf16().chain(tail.encode_utf16()).collect::<Vec<_>>();
         let len = u16::try_from(wide.len() * 2).map_err(|_| ErrorKind::InvalidInput)?;
@@ -182,11 +186,101 @@ impl Volume {
         }
         Ok(file)
     }
+
+    /// Bounded directory listing. On Windows the enumeration uses the validated handle, not a
+    /// second open by path that could follow a junction swapped in after validation.
+    #[cfg(windows)]
+    pub fn entries(&self, path: &Path, max: usize) -> std::io::Result<Vec<OsString>> {
+        use std::io::{Error, ErrorKind};
+        use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+        use windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FULL_DIR_INFO, FileFullDirectoryInfo, GetFileInformationByHandleEx,
+        };
+
+        let dir = self.open(path, true)?;
+        if !dir.metadata()?.is_dir() {
+            return Err(ErrorKind::NotADirectory.into());
+        }
+        let mut entries = Vec::new();
+        let mut buffer = [0_u64; 1024];
+        while entries.len() < max {
+            // SAFETY: an owned directory handle and an aligned writable buffer of the stated size.
+            let ok = unsafe {
+                GetFileInformationByHandleEx(
+                    dir.as_raw_handle(),
+                    FileFullDirectoryInfo,
+                    buffer.as_mut_ptr().cast(),
+                    size_of_val(&buffer) as u32,
+                )
+            };
+            if ok == 0 {
+                let err = Error::last_os_error();
+                if err.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                    break;
+                }
+                return Err(err);
+            }
+            let mut offset = 0;
+            loop {
+                let name_at = offset + std::mem::offset_of!(FILE_FULL_DIR_INFO, FileName);
+                if !offset.is_multiple_of(align_of::<FILE_FULL_DIR_INFO>())
+                    || offset + size_of::<FILE_FULL_DIR_INFO>() > size_of_val(&buffer)
+                {
+                    return Err(ErrorKind::InvalidData.into());
+                }
+                // SAFETY: the aligned record prefix fits in the initialized buffer.
+                let entry = unsafe { &*buffer.as_ptr().cast::<u8>().add(offset).cast::<FILE_FULL_DIR_INFO>() };
+                let bytes = entry.FileNameLength as usize;
+                if bytes == 0 || !bytes.is_multiple_of(2) || name_at + bytes > size_of_val(&buffer) {
+                    return Err(ErrorKind::InvalidData.into());
+                }
+                // SAFETY: the UTF-16 name starts at an aligned offset and is within the buffer.
+                let name =
+                    unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>().add(name_at).cast(), bytes / 2) };
+                let name = OsString::from_wide(name);
+                let mut components = Path::new(&name).components();
+                if matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none() {
+                    entries.push(name);
+                }
+                let next = entry.NextEntryOffset as usize;
+                if next == 0 || entries.len() == max {
+                    break;
+                }
+                if offset + next < name_at + bytes {
+                    return Err(ErrorKind::InvalidData.into());
+                }
+                offset += next;
+            }
+        }
+        Ok(entries)
+    }
+
+    #[cfg(not(windows))]
+    pub fn entries(&self, path: &Path, max: usize) -> std::io::Result<Vec<OsString>> {
+        self.open(path, true)?;
+        std::fs::read_dir(path)?.take(max).map(|row| row.map(|entry| entry.file_name())).collect()
+    }
 }
 
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entries_cross_native_batches_without_exceeding_the_bound() {
+        let test = crate::util::testing::TempDir::new("volume-entries");
+        let dir = &test.0;
+        let expected: Vec<_> = (0..113).map(|i| format!("{i:03}-{}.md", "x".repeat(70))).collect();
+        for name in &expected {
+            std::fs::write(dir.join(name), "").unwrap();
+        }
+        let volume = Volume::at(dir).unwrap();
+        assert_eq!(volume.entries(dir, 75).unwrap().len(), 75);
+        let mut all: Vec<_> = volume.entries(dir, 200).unwrap().into_iter().map(|s| s.into_string().unwrap()).collect();
+        all.sort();
+        assert_eq!(all, expected);
+    }
 
     #[test]
     fn network_device_and_wrong_drive_are_refused_without_opening_them() {

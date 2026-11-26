@@ -20,6 +20,10 @@ pub struct ChatInfo {
 }
 
 impl ChatInfo {
+    pub fn usage_offset(&self) -> Option<u64> {
+        self.usage_at
+    }
+
     pub(super) fn observe(&mut self, at: u64, phase: Phase) {
         if self.latest.is_none_or(|(old, _)| at >= old) {
             self.latest = Some((at, phase));

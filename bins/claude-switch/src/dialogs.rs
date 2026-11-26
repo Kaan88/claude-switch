@@ -1,5 +1,5 @@
 //! The modal dialogs: a confirmation, the accounts, a name to type, the settings and About. Each
-//! is drawn with the toolkit's dialog pieces (`overlay`) or is a `settings::Form`; their
+//! is drawn with the toolkit's dialog pieces (`overlay`) or contains a `settings::Form`; their
 //! controls are recorded as [`Target::Dialog`] hits with the numbers below.
 
 use std::time::Instant;
@@ -14,7 +14,6 @@ use mdshared_ui::overlay::{
     DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_backdrop_presence, draw_dialog_button,
     draw_dialog_card_with,
 };
-use mdshared_ui::settings::{Form, Style};
 use mdshared_ui::textfield::{FieldColors, TextField};
 use mdshared_ui::theme::Palette;
 
@@ -28,7 +27,7 @@ mod opencode_rows;
 mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
-pub use settings::{settings, settings_outcome};
+pub(crate) use settings::{OPENCODE, TERMINAL, settings, settings_event};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
@@ -63,6 +62,12 @@ pub enum Pending {
     CloseTab(u64),
     CloseOtherTabs(u64),
     RestoreTab,
+    ChatSlash {
+        tab: u64,
+        session: Option<String>,
+        line: String,
+        from_editor: bool,
+    },
     /// Close the window, with terminal tabs that run.
     Quit,
     Suggest {
@@ -98,7 +103,7 @@ pub enum Dialog {
     ArchiveReport(crate::archive_report::Report),
     Compact(Box<crate::compact_dialog::Compact>),
     Session(Box<Panel>),
-    Settings(Box<Form>),
+    Settings(Box<settings::Settings>),
     About,
 }
 
@@ -168,14 +173,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     let look = st.appearance;
     let shadow = if st.high_contrast { 0.0 } else { look.shadow };
     if let Dialog::Settings(form) = &mut dialog {
-        let mut style = Style::CLASSIC;
-        style.radius = look.radius;
-        style.soft_shadow = Some(shadow);
-        style.backdrop = t;
-        form.set_style(style);
-        form.set_high_contrast(st.high_contrast);
-        terminal_appearance::sync(form, &st.config.appearance, st.high_contrast, p.frost_key().is_some());
-        form.draw_animated(p, st.pal(), window, true, cx.anim(), "settings");
+        form.draw(p, st, window, t, cx.anim());
         st.dialog = Some(dialog);
         return;
     }
@@ -283,6 +281,15 @@ type StView<'a> = (
 const BLOCK: f32 = 96.0;
 const SHARE_BLOCK: f32 = 58.0;
 
+fn account_usage_layout(body: Rect, y: f32, h: f32) -> (Rect, Rect) {
+    let left = body.x + DIALOG_PAD - 1.0 + 18.0;
+    let right = body.right() - DIALOG_PAD - 7.0;
+    let usage = Rect::new(left, y, (right - left).max(0.0), h);
+    let width = 86.0_f32.min(usage.w);
+    let refresh = Rect::new(right - width, y + 6.0, width, 28.0);
+    (usage, refresh)
+}
+
 fn draw_accounts(
     (config, statuses, usage): StView<'_>,
     d: &mut Draw<'_>,
@@ -352,12 +359,14 @@ fn draw_accounts(
         }
         y += BLOCK;
         if let Some(u) = usage.get(k) {
-            let ar = Rect::new(x + 18.0, y - 6.0, tw - 18.0, u.height());
-            let button = u.draw(p, &pal, ar, now);
-            if !u.refresh {
-                mdshared_ui::overlay::draw_dialog_button_disabled(p, &pal, button, "Refresh", false);
-            } else if button.y >= body.y && button.bottom() <= body.bottom() {
-                d.button(p, button, "Refresh", false, base + ACT_REFRESH_USAGE);
+            let (area, button) = account_usage_layout(body, y - 6.0, u.height());
+            u.draw(p, &pal, area, button, now);
+            if button.y >= body.y && button.bottom() <= body.bottom() {
+                if u.refresh {
+                    d.button(p, button, "Refresh", false, base + ACT_REFRESH_USAGE);
+                } else {
+                    mdshared_ui::overlay::draw_dialog_button_disabled(p, &pal, button, "Refresh", false);
+                }
             }
             y += u.height();
         }
@@ -408,6 +417,9 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
             (OK, Pending::CloseOtherTabs(tab)) => st.close_other_tabs(tab),
             (OK | CANCEL, Pending::RestoreTab) => st.confirm_restore_tab(now, id == OK),
+            (OK, Pending::ChatSlash { tab, session, line, from_editor }) => {
+                st.chat_confirm_slash(now, tab, session, &line, from_editor);
+            }
             (OK, Pending::Quit) => st.quit = true,
             (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
             (OK, Pending::UnarchiveAll) => st.unarchive(now, None),
@@ -498,7 +510,10 @@ fn account_action(st: &mut AppState, now: Instant, k: usize, act: u32) {
             }
             st.dialog = Some(accounts(st, now));
         }
-        ACT_REFRESH_USAGE => st.request_usage(now, Demand::Refresh, Some(&a.slug)),
+        ACT_REFRESH_USAGE => {
+            st.refresh(now);
+            st.request_usage(now, Demand::Refresh, Some(&a.slug));
+        }
         _ => {}
     }
 }
@@ -538,7 +553,7 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
         Dialog::Settings(form) => {
             let o = form.key(k, mods, text);
             st.dialog = Some(dialog);
-            settings_outcome(st, o);
+            settings_event(st, o);
             return true;
         }
         Dialog::Name { field, .. } => {
@@ -590,3 +605,7 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
 
 mod input;
 pub use input::{text_input, wheel};
+
+#[cfg(test)]
+#[path = "dialogs/accounts_tests.rs"]
+mod accounts_tests;

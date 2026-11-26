@@ -4,7 +4,7 @@ use crate::sessions::{folder_key, folder_name};
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-mod local;
+pub mod local;
 
 /// Open a named regular file on a local fixed volume, refusing reparse points on Windows.
 /// `read` is false for existence checks that do not need access to the file's contents.

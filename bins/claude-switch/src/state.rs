@@ -115,6 +115,7 @@ pub enum MenuKind {
     OpenAs,
     Row,
     Tab(u64),
+    Chat(u64, crate::view::chat::MenuMode),
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.
@@ -185,6 +186,7 @@ pub struct AppState {
     pub toasts: Stack<String>,
     pub info: Option<InfoBar>,
     pub dialog: Option<Dialog>,
+    pub settings_category: Option<&'static str>,
     pub confirm_scroll: f32,
     pub compact: crate::compact_dialog::Cache,
     pub opencode: crate::opencode_workers::Workers,
@@ -295,6 +297,7 @@ impl AppState {
             toasts: Stack::new(),
             info: None,
             dialog: None,
+            settings_category: None,
             confirm_scroll: 0.0,
             compact: Default::default(),
             opencode: Default::default(),
