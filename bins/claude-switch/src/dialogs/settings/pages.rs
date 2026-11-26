@@ -505,6 +505,7 @@ mod tests {
         ));
         assert!(!settings.colour_open());
         assert!(matches!(settings.release(second.cx(), second.cy()), SettingsEvent::Form(_)));
+    }
 
     #[test]
     fn a_category_switch_cross_fades_briefly_and_not_at_all_with_reduced_motion() {
