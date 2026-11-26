@@ -535,3 +535,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     that tool alone is pending); "Stop agent" through the CLI's agent panel under the same rules.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
+55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·
+    ↓ 1.1k tokens)"). The CLI's spinner glyphs (· ✢ ✳ ✶ ✻ ✽) have different widths in the interface font, so the
+    word after them moves with each frame; the counters (seconds, tokens) shift the rest too. Draw the glyph in a
+    fixed-width slot (the widest glyph of the set, centred) and start the text at a fixed x; use tabular figures, or a
+    fixed slot per counter, so changing digits do not move what follows (`view/working.rs`, and the Session view's
+    copy of the line).
