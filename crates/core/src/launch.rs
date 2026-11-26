@@ -204,8 +204,12 @@ pub fn resume(
 /// [`resume`]. The copy is a new session, so this is safe while the original runs anywhere and does
 /// not refuse a running session, nor note a start of the original's id; it refuses
 /// [`Refusal::NotLoggedIn`] when the account's CLI has no login.
-pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str) -> Result<Launch, Refusal> {
+pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str, new_id: &str) -> Result<Launch, Refusal> {
     validate_session_id(&session.id)?;
+    validate_session_id(new_id)?;
+    if session.id.eq_ignore_ascii_case(new_id) {
+        return Err(Refusal::Invalid("A copy requires a different session ID.".into()));
+    }
     let account = find_account(config, account)?;
     if !crate::accounts::status(roots, account).cli_logged_in {
         return Err(Refusal::NotLoggedIn(account.name.clone()));
@@ -213,7 +217,13 @@ pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str) ->
     refresh_shared(roots, account);
     let cwd = if session.cwd.is_dir() { session.cwd.clone() } else { roots.home.clone() };
     let label = format!("{} · {} · Copy", account.name, folder_name(&session.cwd));
-    Ok(cli_launch(account, &["--resume", &session.id, "--fork-session"], cwd, Place::Terminal, label))
+    Ok(cli_launch(
+        account,
+        &["--resume", &session.id, "--fork-session", "--session-id", new_id],
+        cwd,
+        Place::Terminal,
+        label,
+    ))
 }
 
 pub fn validate_session_id(id: &str) -> Result<(), Refusal> {

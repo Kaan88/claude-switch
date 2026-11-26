@@ -121,12 +121,33 @@ impl AppState {
             Target::OpenAs => self.command(now, actions::OPEN_AS, self.rect_of(t)),
             Target::OpenCopy => self.command(now, actions::OPEN_COPY, None),
             Target::Handovers => self.ask_compact(true),
-            Target::ListMode(folders) if self.config.folders_view != folders => {
-                self.config.folders_view = folders;
+            Target::ListMode(mode) if self.list_mode() != mode => {
+                self.config.sessions_mode = mode;
                 self.save_config();
                 self.rebuild_view();
                 self.sections.scroll = 0.0;
                 self.reveal_selected();
+                if self.selected.as_deref().is_none_or(|id| self.entry_of(id).is_none()) {
+                    self.select_first();
+                }
+            }
+            Target::ListGrouping => {
+                use claude_switch_core::grouping::Mode;
+                match self.list_mode() {
+                    Mode::Projects => self.config.group_by_folder ^= true,
+                    Mode::Recent => self.config.show_sittings ^= true,
+                    _ => return,
+                }
+                self.save_config();
+                self.rebuild_view();
+                self.reveal_selected();
+            }
+            Target::ThreadToggle(i) => self.toggle_thread(i),
+            Target::Related(i) if self.selected == self.grouping.related_id => {
+                if let Some((id, _)) = self.grouping.related.get(i).cloned() {
+                    self.select(&id);
+                    self.reveal_selected();
+                }
             }
             Target::ListFilter(filter) => {
                 if filter != self.filter {

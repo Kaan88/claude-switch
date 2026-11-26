@@ -77,7 +77,10 @@ pub enum Target {
     /// An entry of the list (heading or row), by its index in [`AppState::sections`].
     Entry(usize),
     Pin(usize),
-    ListMode(bool),
+    ListMode(claude_switch_core::grouping::Mode),
+    ListGrouping,
+    ThreadToggle(usize),
+    Related(usize),
     ListFilter(Filter),
     ArchiveMenu,
     ArchivePick(usize),
@@ -145,6 +148,8 @@ pub struct AppState {
     /// The core's groups of all sessions, newest first.
     pub all_groups: Vec<claude_switch_core::sessions::Group>,
     pub groups: Vec<ViewGroup>,
+    pub grouping: crate::list::grouping::Grouping,
+    pub details_scroll: crate::details::Scroll,
     pub row_locations: HashMap<usize, (usize, usize)>,
     pub filter: Filter,
     pub recent_local_day: Option<(i64, i32)>,
@@ -253,6 +258,8 @@ impl AppState {
             notifications: Default::default(),
             all_groups: Vec::new(),
             groups: Vec::new(),
+            grouping: Default::default(),
+            details_scroll: Default::default(),
             row_locations: HashMap::new(),
             filter: Filter::All,
             recent_local_day: None,
@@ -381,7 +388,11 @@ impl AppState {
         }
         let (source, config) = (self.source.clone(), self.config.clone());
         self.last_scan = Some(now);
-        self.scan_job = Job::start(self.wake_fn(), move |_, _| source.scan(&config)).ok();
+        let cache = self.grouping.cache.clone();
+        self.scan_job = Job::start(self.wake_fn(), move |_, _| {
+            source.scan(&config, &mut cache.lock().unwrap_or_else(|e| e.into_inner()))
+        })
+        .ok();
     }
 
     /// Starts the cheap scan of running sessions, unless a scan runs.
@@ -432,6 +443,7 @@ impl AppState {
             changed = true;
         }
         changed |= self.take_conversation_search();
+        changed |= self.take_related();
         let selected = self.selected_session().map(|s| s.file.clone());
         self.take_naming_job() | self.session_size.take(selected.as_deref()) | changed
     }
@@ -446,6 +458,7 @@ impl AppState {
                     })
                 }));
         self.sessions = scan.sessions;
+        self.grouping.projects = scan.projects;
         self.running = scan.running;
         self.index_running();
         self.statuses = scan.statuses.into_iter().collect();
@@ -455,6 +468,7 @@ impl AppState {
             crate::demo::seed_marks(&mut self.marks, &self.sessions);
         }
         self.prune_marks();
+        self.rebuild_threads();
         self.scanned = true;
         self.rebuild_accounts();
         if search_changed {
@@ -505,6 +519,7 @@ impl AppState {
                 self.selected = None;
                 self.preview = None;
                 self.session_size.cancel();
+                self.cancel_related();
             }
         }
     }
@@ -515,6 +530,7 @@ impl AppState {
             return;
         }
         self.selected = Some(id.to_string());
+        self.details_scroll.offset = 0.0;
         self.load_details(id, false);
         self.see_shown();
     }
@@ -522,6 +538,7 @@ impl AppState {
     pub(crate) fn load_details(&mut self, id: &str, again: bool) {
         let Some(&i) = self.by_id.get(id) else { return };
         let session = self.sessions[i].clone();
+        self.load_related(i);
         self.load_handover_history(id);
         let wake = self.wake_fn();
         self.session_size.start(&session, self.source.is_demo(), wake);
@@ -538,13 +555,6 @@ impl AppState {
         let source = self.source.clone();
         let job = Job::start(self.wake_fn(), move |_, _| source.preview(&session, PREVIEW_LINES)).ok();
         self.preview_job = job.map(|j| (id.to_string(), j));
-    }
-
-    /// Brings the selected row into view.
-    pub fn reveal_selected(&mut self) {
-        if let Some(e) = self.selected.clone().and_then(|id| self.entry_of(&id)) {
-            self.sections.scroll = self.sections.reveal(e);
-        }
     }
 
     pub fn running_of(&self, id: &str) -> Option<&Running> {

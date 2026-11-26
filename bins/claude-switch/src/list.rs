@@ -1,8 +1,10 @@
-//! The session list: folders as sticky headings, sessions as two-line rows, laid out by
+//! The session list: group headings and session rows, laid out by
 //! `sections::Sections` so only the rows in view are drawn. Also the relative times.
 
+pub mod grouping;
 pub mod model;
 
+use claude_switch_core::grouping::Mode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mdshared_ui::anim::{Animator, document};
@@ -16,6 +18,16 @@ use mdshared_ui::tokens::legible;
 
 use crate::state::{AppState, Focus, Msg, Target};
 use model::Filter;
+
+const CONTROLS_H: f32 = 101.0;
+
+fn control_rects(r: Rect) -> (Rect, Rect, Rect) {
+    (
+        Rect::new(r.x + 12.0, r.y + 8.0, r.w - 24.0, 28.0),
+        Rect::new(r.x + 12.0, r.y + 40.0, 148.0, 28.0),
+        Rect::new(r.right() - 111.0, r.y + 40.0, 99.0, 28.0),
+    )
+}
 
 pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
@@ -46,7 +58,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
     let pal = *st.pal();
     p.fill(area, pal.pane);
     controls(st, p, area);
-    let area = Rect::new(area.x, area.y + 70.0, area.w, (area.h - 70.0).max(0.0));
+    let area = Rect::new(area.x, area.y + CONTROLS_H, area.w, (area.h - CONTROLS_H).max(0.0));
     st.list_area = area;
     st.list_scroll_track = None;
     st.sections.view = area.h;
@@ -98,9 +110,8 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
 
 fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
     let pal = *st.pal();
-    p.fill(Rect::new(r.x, r.y, r.w, 70.0), pal.bar);
-    let seg = Rect::new(r.x + 12.0, r.y + 8.0, 151.0, 28.0);
-    let menu = Rect::new(r.right() - 111.0, seg.y, 99.0, seg.h);
+    p.fill(Rect::new(r.x, r.y, r.w, CONTROLS_H), pal.bar);
+    let (seg, grouping, menu) = control_rects(r);
     let target = Target::ArchiveMenu;
     let label = if st.filter == Filter::Archived && !st.archive_picks.is_empty() {
         format!("Archive · {} ▾", st.archive_picks.len())
@@ -120,19 +131,39 @@ fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
     let searching = st.conversation_search.on;
     if searching {
         let count = st.groups.first().map_or(0, |g| g.rows.len());
-        crate::conversation_draw::search_status(st, p, Rect::new(r.x, r.y, r.w - 104.0, r.h), count);
+        crate::conversation_draw::search_status(st, p, Rect::new(r.x, r.y, r.w, r.h), count);
     } else {
         p.frame(seg, 7.0, pal.field, pal.line);
+        let mode = st.list_mode();
+        if matches!(mode, Mode::Projects | Mode::Recent) {
+            let (label, on) = if mode == Mode::Projects {
+                (if st.config.group_by_folder { "Group by: Folder" } else { "Group by: Project" }, false)
+            } else {
+                ("Sittings", st.config.show_sittings)
+            };
+            let target = Target::ListGrouping;
+            mdshared_ui::overlay::draw_dialog_button(
+                p,
+                &pal,
+                grouping,
+                label,
+                on,
+                st.hover == Some(target),
+                st.pressed == Some(target),
+            );
+            st.hits.push((grouping, target));
+        }
     }
-    for (i, label) in ["Recent", "Folders"].into_iter().enumerate().filter(|_| !searching) {
-        let folders = i == 1;
-        let target = Target::ListMode(folders);
-        let selected = st.config.folders_view == folders;
-        let pill = Rect::new(seg.x + 2.0 + i as f32 * 74.0, seg.y + 2.0, 73.0, 24.0);
+    let modes = if st.grouping.topics { 4 } else { 3 };
+    let pill_w = (seg.w - 4.0) / modes as f32;
+    for (i, mode) in Mode::ALL.into_iter().take(modes).enumerate().filter(|_| !searching) {
+        let target = Target::ListMode(mode);
+        let selected = st.list_mode() == mode;
+        let pill = Rect::new(seg.x + 2.0 + i as f32 * pill_w, seg.y + 2.0, pill_w, 24.0);
         if selected || st.hover == Some(target) {
             p.rbox(pill, 5.0, if selected { pal.on } else { pal.hover });
         }
-        p.text_center(Face::Semibold, 12.0, pill, label, if selected { pal.text } else { pal.muted });
+        p.text_center(Face::Semibold, 12.0, pill, mode.label(), if selected { pal.text } else { pal.muted });
         st.hits.push((pill, target));
     }
     let visible: Vec<_> = Filter::ALL
@@ -149,7 +180,7 @@ fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
     let scale = ((r.w - 24.0) / total).clamp(0.0, 1.0);
     let mut x = r.x + 12.0;
     for (&filter, width) in visible.iter().zip(widths) {
-        let rect = Rect::new(x, r.y + 43.0, width * scale, 22.0);
+        let rect = Rect::new(x, r.y + 74.0, width * scale, 22.0);
         let target = Target::ListFilter(filter);
         let on = st.filter == filter;
         p.frame(
@@ -168,7 +199,7 @@ fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
         st.hits.push((rect, target));
         x += (width + gap) * scale;
     }
-    p.fill(Rect::new(r.x, r.y + 70.0 - p.px(), r.w, p.px()), pal.line);
+    p.fill(Rect::new(r.x, r.y + CONTROLS_H - p.px(), r.w, p.px()), pal.line);
 }
 
 pub fn draw_undo(st: &mut AppState, p: &mut Painter, window: Rect) {
@@ -207,7 +238,9 @@ fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
     let open = if st.sections.is_collapsed(g) { 0.0 } else { 1.0 };
     glyph::draw_disclosure(p, r.x + 16.0, r.cy(), 12.0, open, pal.muted);
     let vg = &st.groups[g];
-    let name_w = p.text(Face::Semibold, 12.5, r.x + 28.0, r.cy(), &vg.name, pal.text, r.w * 0.55);
+    let summary = st.grouping.project_summary.get(&vg.key);
+    let max_name = if summary.is_some() { r.w * 0.27 } else { r.w * 0.55 };
+    let name_w = p.text(Face::Semibold, 12.5, r.x + 28.0, r.cy(), &vg.name, pal.text, max_name);
     let count = vg.rows.len().to_string();
     p.text(Face::Ui, 12.0, r.x + 36.0 + name_w, r.cy(), &count, pal.muted, 60.0);
     let path = vg
@@ -216,9 +249,10 @@ fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
         .and_then(|_| vg.rows.first())
         .and_then(|&r| st.sessions.get(r))
         .map(|s| s.cwd.display().to_string());
-    if let Some(path) = path {
-        let x = r.x + 52.0 + name_w + p.measure(Face::Ui, 12.0, &count);
-        p.text(Face::Ui, 11.5, x, r.cy(), &path, pal.faint, (r.right() - 12.0 - x).max(0.0));
+    if let Some(path) = summary.map(String::as_str).or(path.as_deref()) {
+        let x = r.x + 43.0 + name_w + p.measure(Face::Ui, 12.0, &count);
+        let color = if summary.is_some() { pal.muted } else { pal.faint };
+        p.text(Face::Ui, 11.5, x, r.cy(), path, color, (r.right() - 12.0 - x).max(0.0));
     }
     p.fill(Rect::new(r.x + 10.0, r.bottom() - p.px(), r.w - 20.0, p.px()), pal.line);
     st.hits.push((r, Target::Entry(i)));
@@ -260,6 +294,19 @@ fn row(
     let line1 = rr.y + 13.0;
     let line2 = rr.y + 31.0;
     let snippets = st.conversation_search.hits(&s.id);
+    let grouping = !st.conversation_search.on;
+    if grouping && let Some(&(first, last)) = st.grouping.brackets.get(&si) {
+        let top = if first { r.y + 6.0 } else { r.y };
+        let end = if last { r.bottom() - 6.0 } else { r.bottom() };
+        let x = r.x + 8.0;
+        p.fill(Rect::new(x, top, p.px(), end - top), pal.muted);
+        if first {
+            p.fill(Rect::new(x, top, 5.0, p.px()), pal.muted);
+        }
+        if last {
+            p.fill(Rect::new(x, end - p.px(), 5.0, p.px()), pal.muted);
+        }
+    }
     let line3 = if snippets.is_some() { rr.bottom() - 10.0 } else { rr.y + 48.0 };
     if flags.running || flags.unseen {
         let c = st
@@ -299,12 +346,46 @@ fn row(
     let status = states.join("  ·  ");
     let status_w =
         if status.is_empty() { 0.0 } else { p.text_right(Face::Semibold, 11.0, right, line3, &status, fg) + 12.0 };
-    let folder = st.marks.handover_from(&s.id).map_or_else(
-        || crate::session_marks::folder_label(s),
-        |name| format!("From {name}  ·  {}", crate::session_marks::folder_label(s)),
-    );
-    p.text(Face::Ui, 11.0, x, line3, &folder, pal.muted, (right - status_w - x).max(0.0));
+    let mut x = x;
     st.hits.push((r, Target::Entry(i)));
+    if grouping && let Some(&count) = st.grouping.earlier.get(&si) {
+        let search = !st.search.text().trim().is_empty();
+        let expanded = search || st.thread_key(si).is_some_and(|key| st.grouping.expanded.contains(&key));
+        let label = format!("{count} earlier");
+        let target = Target::ThreadToggle(si);
+        glyph::draw_disclosure(p, x + 5.0, line3, 9.0, f32::from(u8::from(expanded)), pal.muted);
+        let label_w = p.text(
+            Face::Semibold,
+            11.0,
+            x + 14.0,
+            line3,
+            &label,
+            if st.hover == Some(target) { pal.accent } else { pal.text },
+            95.0,
+        );
+        if !search {
+            st.hits.push((Rect::new(x - 4.0, line3 - 9.0, label_w + 23.0, 20.0), target));
+        }
+        x += label_w + 25.0;
+    }
+    let mut location = crate::session_marks::folder_label(s);
+    if grouping
+        && st.list_mode() == Mode::Projects
+        && !st.config.group_by_folder
+        && let Some(project) = st.project(si)
+    {
+        location = project.location.clone().unwrap_or_default();
+        if let Some(branch) = s.branch.as_deref().filter(|b| Some(*b) != project.branch.as_deref()) {
+            if !location.is_empty() {
+                location.push_str(" · ");
+            }
+            location.push_str(branch);
+        }
+    }
+    let label = st.marks.handover_from(&s.id).map_or(location.clone(), |from| {
+        if location.is_empty() { format!("From {from}") } else { format!("From {from} · {location}") }
+    });
+    p.text(Face::Ui, 11.0, x, line3, &label, pal.muted, (right - status_w - x).max(0.0));
     if archived && st.filter == Filter::Archived {
         let target = Target::ArchivePick(i);
         let checked = st.archive_picks.contains(&s.id);
@@ -337,6 +418,19 @@ fn row(
 /// A key for the list. True when it was used.
 pub fn key(st: &mut AppState, k: &mdshared_ui::keys::KeyName) -> bool {
     use mdshared_ui::keys::KeyName;
+    if matches!(k, KeyName::Left | KeyName::Right)
+        && st.list_mode() == Mode::Threads
+        && !st.conversation_search.on
+        && st.search.text().trim().is_empty()
+        && let Some(i) = st.selected.as_ref().and_then(|id| st.by_id.get(id)).copied()
+        && st.grouping.earlier.contains_key(&i)
+        && let Some(key) = st.thread_key(i)
+    {
+        if st.grouping.expanded.contains(&key) != (*k == KeyName::Right) {
+            st.toggle_thread(i);
+        }
+        return true;
+    }
     let nav = match k {
         KeyName::Up => Nav::Up,
         KeyName::Down => Nav::Down,
@@ -418,5 +512,32 @@ mod tests {
         assert!(s.collapsed.contains(&s.groups[0].key));
         click(&mut s, 0);
         assert!(!s.sections.is_collapsed(0));
+    }
+
+    #[test]
+    fn controls_and_virtual_rows_fit_at_760_by_480_in_every_mode() {
+        use mdshared_ui::splitter::Axis;
+        let mut s = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+        s.apply_scan(crate::demo::scan(&s.config));
+        // Title bar, tab strip, and demo restore offer are all visible at this size.
+        let top = mdshared_ui::chrome::TITLE_H + crate::tabs::STRIP_H + 38.0;
+        let pane = s.splitter.rects(Rect::new(0.0, top, 760.0, 480.0 - top), Axis::Horizontal).0;
+        let (mode, option, archive) = control_rects(pane);
+        assert!(mode.bottom() < option.y && option.right() < archive.x);
+        assert!(archive.right() <= pane.right() && (mode.w - 4.0) / 4.0 >= 60.0);
+        let rows = Rect::new(pane.x, pane.y + CONTROLS_H, pane.w, pane.h - CONTROLS_H);
+        assert_eq!(rows.bottom(), 480.0);
+        for mode in Mode::ALL {
+            s.config.sessions_mode = mode;
+            s.sections.view = rows.h;
+            s.rebuild_view();
+            let visible = s.sections.visible();
+            assert!((3..=10).contains(&visible.len()), "{mode:?}: {visible:?}");
+            assert!(visible.iter().copied().all(|i| {
+                let r = s.sections.rect(rows, i);
+                r.bottom() > rows.y && r.y < rows.bottom() && r.h > 0.0
+            }));
+            assert!(s.sections.len() > visible.len() * 20);
+        }
     }
 }

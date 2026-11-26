@@ -195,9 +195,7 @@ impl AppState {
             return;
         }
         if self.source.is_demo() {
-            self.restore.pending = self
-                .source
-                .scan(&self.config)
+            self.restore.pending = crate::demo::scan(&self.config)
                 .sessions
                 .into_iter()
                 .filter(|s| s.desktop_id.is_none())
@@ -466,7 +464,7 @@ mod tests {
         let now = Instant::now();
         app.load_tab_restore();
         assert!(!app.restore_tabs_if_always(now));
-        let scan = app.source.scan(&app.config);
+        let scan = crate::demo::scan(&app.config);
         let mut missing = app.restore.pending[0].clone();
         missing.id = A.into();
         app.restore.pending.push_back(missing);
@@ -486,7 +484,7 @@ mod tests {
         app.load_tab_restore();
         app.restore.pending[1].account = "work".into();
         let remaining = app.restore.pending[2].id.clone();
-        app.apply_scan(app.source.scan(&app.config));
+        app.apply_scan(crate::demo::scan(&app.config));
         assert!(!app.restore_tabs_if_always(now));
         assert!(app.tabs.is_empty());
         app.begin_tab_restore(now);

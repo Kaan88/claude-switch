@@ -67,15 +67,49 @@ impl Marks {
         self.data["sessions"][id]["handoverFrom"].as_str()
     }
 
+    pub fn parent(&self, id: &str) -> Option<&str> {
+        self.data["sessions"][id]["parentSessionId"]
+            .as_str()
+            .filter(|p| crate::launch::validate_session_id(p).is_ok() && !p.eq_ignore_ascii_case(id))
+    }
+
+    pub fn set_parent(&mut self, id: &str, parent: &str) -> bool {
+        crate::launch::validate_session_id(id).is_ok()
+            && crate::launch::validate_session_id(parent).is_ok()
+            && !id.eq_ignore_ascii_case(parent)
+            && self.parent(id).is_none()
+            && self.set("sessions", id, "parentSessionId", json!(parent.to_ascii_lowercase()))
+    }
+
+    pub fn clear_parent(&mut self, id: &str) {
+        self.clear_session_key(id, "parentSessionId");
+    }
+
+    pub fn topic(&self, id: &str) -> Option<&str> {
+        crate::grouping::valid_topic(self.data["sessions"][id]["topic"].as_str()?)
+    }
+
+    pub fn set_topic(&mut self, id: &str, file: &Path, topic: &str) -> bool {
+        if !topic.trim().is_empty() && crate::grouping::valid_topic(topic).is_none() {
+            return false;
+        }
+        let topic = crate::grouping::valid_topic(topic).map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "));
+        self.session(id, file, "topic", json!(topic))
+    }
+
     pub fn set_handover_from(&mut self, id: &str, name: &str) -> bool {
         self.set("sessions", id, "handoverFrom", json!(name))
     }
 
     pub fn clear_handover_from(&mut self, id: &str) {
+        self.clear_session_key(id, "handoverFrom");
+    }
+
+    fn clear_session_key(&mut self, id: &str, key: &str) {
         if let Some(sessions) = self.data["sessions"].as_object_mut()
             && let Some(entry) = sessions.get_mut(id).and_then(Value::as_object_mut)
         {
-            entry.remove("handoverFrom");
+            entry.remove(key);
             if entry.is_empty() {
                 sessions.remove(id);
             }

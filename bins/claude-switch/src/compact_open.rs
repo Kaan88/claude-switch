@@ -9,6 +9,7 @@ pub struct NewHandover {
     pub id: String,
     pub account: String,
     pub from: String,
+    pub parent: String,
 }
 
 pub fn validate_prompt(text: &str) -> Result<(), String> {
@@ -59,7 +60,7 @@ fn first_args(id: &str, text: &str, saved: &Path) -> Result<Vec<String>, String>
     Ok(vec!["--session-id".into(), id.into(), "--".into(), prompt])
 }
 
-fn session_id() -> Result<String, String> {
+pub(crate) fn session_id() -> Result<String, String> {
     let mut b = compact_runner::nonce()?;
     b[6] = b[6] & 0x0f | 0x40;
     b[8] = b[8] & 0x3f | 0x80;
@@ -97,7 +98,7 @@ pub fn prepare(
     let mut launch = launch::new_session(roots, config, account, App::Cli, &session.cwd).map_err(|e| e.to_string())?;
     launch.program = program;
     launch.args = args;
-    Ok(NewHandover { launch, id, account: account.into(), from })
+    Ok(NewHandover { launch, id, account: account.into(), from, parent: session.id.clone() })
 }
 
 impl AppState {
@@ -109,7 +110,10 @@ impl AppState {
         }
         // Persist under the exact UUID, never infer it from file creation time.
         let old = self.marks.clone();
-        if !self.marks.set_handover_from(&request.id, &request.from) {
+        if !self.marks.set_handover_from(&request.id, &request.from)
+            || !self.marks.set_parent(&request.id, &request.parent)
+        {
+            self.marks = old;
             return Err("Could not record the new session's provenance.".into());
         }
         if let Err(e) = self.marks.save(roots) {
@@ -120,6 +124,7 @@ impl AppState {
         if result.is_err() {
             // Roll back only the mark we added. The original session was never touched.
             self.marks.clear_handover_from(&request.id);
+            self.marks.clear_parent(&request.id);
             self.save_marks();
         }
         result.map(drop).map_err(|_| "Could not start Claude Code in a terminal tab.".into())

@@ -23,7 +23,9 @@
 //! Folders are not stored: they follow from the slug and [`Roots`].
 
 mod notifications;
+mod terminal;
 pub use notifications::{Attention, Notifications, WarningWindows, load_warning_windows, save_warning_windows};
+pub use terminal::*;
 
 use crate::accounts::COLORS;
 use crate::util::{io_refusal, lock_beside, str_field, write_json};
@@ -44,6 +46,8 @@ pub struct AppearancePrefs {
     pub soft_shadows: bool,
     pub reduce_motion: bool,
     pub cursor_blink: bool,
+    pub cursor_shape: TerminalCursor,
+    pub terminal_opacity: u8,
     pub terminal_background: Option<String>,
     pub terminal_foreground: Option<String>,
     pub terminal_accent: Option<String>,
@@ -59,6 +63,8 @@ impl Default for AppearancePrefs {
             soft_shadows: true,
             reduce_motion: false,
             cursor_blink: false,
+            cursor_shape: TerminalCursor::Block,
+            terminal_opacity: TERMINAL_OPACITY_MAX as u8,
             terminal_background: None,
             terminal_foreground: None,
             terminal_accent: None,
@@ -87,6 +93,11 @@ impl AppearancePrefs {
             soft_shadows: flag("softShadows", d.soft_shadows),
             reduce_motion: flag("reduceMotion", d.reduce_motion),
             cursor_blink: flag("cursorBlink", d.cursor_blink),
+            cursor_shape: str_field(v, "cursorShape").and_then(TerminalCursor::parse).unwrap_or_default(),
+            terminal_opacity: v
+                .get("terminalOpacity")
+                .and_then(Value::as_i64)
+                .map_or(d.terminal_opacity, terminal_opacity),
             terminal_background: colour("terminalBackground"),
             terminal_foreground: colour("terminalForeground"),
             terminal_accent: colour("terminalAccent"),
@@ -102,6 +113,8 @@ impl AppearancePrefs {
             "softShadows": self.soft_shadows,
             "reduceMotion": self.reduce_motion,
             "cursorBlink": self.cursor_blink,
+            "cursorShape": self.cursor_shape.key(),
+            "terminalOpacity": self.terminal_opacity,
             "terminalBackground": self.terminal_background,
             "terminalForeground": self.terminal_foreground,
             "terminalAccent": self.terminal_accent,
@@ -225,7 +238,13 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
         show_usage: !damaged && flag("showUsage", true),
         notifications: Notifications::read(&file["notifications"]),
         show_hidden: flag("showHidden", false),
-        folders_view: flag("foldersView", false),
+        sessions_mode: crate::grouping::Mode::ALL
+            .into_iter()
+            .find(|m| file["sessionsMode"].as_str().is_some_and(|s| s.eq_ignore_ascii_case(m.label())))
+            .unwrap_or(if flag("foldersView", false) { crate::grouping::Mode::Projects } else { Default::default() }),
+        group_by_folder: flag("groupByFolder", flag("foldersView", false)),
+        show_sittings: flag("showSittings", false),
+        suggest_topics: flag("suggestTopics", false),
         terminal_scheme,
         terminal_font_size,
         window_theme,
@@ -300,7 +319,10 @@ fn save_value(roots: &Roots, config: &Config) -> Result<(), Refusal> {
         "showUsage": config.show_usage,
         "notifications": config.notifications.json(),
         "showHidden": config.show_hidden,
-        "foldersView": config.folders_view,
+        "sessionsMode": config.sessions_mode.label().to_ascii_lowercase(),
+        "groupByFolder": config.group_by_folder,
+        "showSittings": config.show_sittings,
+        "suggestTopics": config.suggest_topics,
         "terminalScheme": config.terminal_scheme,
         "terminalFontSize": config.terminal_font_size,
         "windowTheme": config.window_theme,
@@ -387,8 +409,27 @@ mod tests {
         assert!(!c.show_archived);
         assert!(!c.show_workers);
         assert!(!c.show_hidden);
-        assert!(!c.folders_view);
+        assert_eq!(c.sessions_mode, crate::grouping::Mode::Recent);
+        assert!(!c.group_by_folder && !c.show_sittings && !c.suggest_topics);
         assert_eq!((c.terminal_scheme.as_str(), c.terminal_font_size, c.window_theme.as_str()), ("auto", 13, "system"));
+    }
+
+    #[test]
+    fn folders_view_migrates_without_affecting_an_explicit_new_mode() {
+        use crate::grouping::Mode;
+        let t = TempDir::new("cfg-list-modes");
+        let roots = t.roots();
+        let file = roots.config_file();
+        put(&file, r#"{"foldersView":true}"#);
+        let legacy = load(&roots);
+        assert_eq!(legacy.sessions_mode, Mode::Projects);
+        assert!(legacy.group_by_folder);
+        save(&roots, &legacy).unwrap();
+        assert_eq!(load(&roots), legacy);
+        put(&file, r#"{"foldersView":true,"sessionsMode":"Topics","groupByFolder":false}"#);
+        let modern = load(&roots);
+        assert_eq!(modern.sessions_mode, Mode::Topics);
+        assert!(!modern.group_by_folder);
     }
 
     #[test]
@@ -403,7 +444,10 @@ mod tests {
         c.show_archived = true;
         c.show_workers = true;
         c.show_hidden = true;
-        c.folders_view = true;
+        c.sessions_mode = crate::grouping::Mode::Threads;
+        c.group_by_folder = true;
+        c.show_sittings = true;
+        c.suggest_topics = true;
         c.terminal_scheme = "campbell".into();
         c.terminal_font_size = 21;
         c.window_theme = "light".into();
@@ -454,11 +498,12 @@ mod tests {
             ("off", "theme", 8)
         );
         assert!(defaults.soft_shadows && !defaults.cursor_blink && !defaults.reduce_motion);
+        assert_eq!((defaults.cursor_shape, defaults.terminal_opacity), (TerminalCursor::Block, 100));
         put(
             &roots.config_file(),
             r#"{"appearance":{"backdrop":"glass","accentSource":"cover","cornerRadius":"wide",
                 "softShadows":null,"reduceMotion":"true","cursorBlink":99,"accentColour":"invalid",
-                "terminalBackground":5,"unrecognised":true}}"#,
+                 "cursorShape":"beam","terminalOpacity":"80","terminalBackground":5,"unrecognised":true}}"#,
         );
         assert_eq!(load(&roots).appearance, defaults);
         put(&roots.config_file(), r#"{"appearance":{"cornerRadius":999}}"#);
@@ -471,6 +516,8 @@ mod tests {
             corner_radius: 0,
             soft_shadows: false,
             cursor_blink: true,
+            cursor_shape: TerminalCursor::Underline,
+            terminal_opacity: 80,
             reduce_motion: true,
             terminal_background: Some(format!("#{:06x}", 12_345)),
             terminal_foreground: Some(format!("#{:06x}", 54_321)),
@@ -478,6 +525,13 @@ mod tests {
         };
         save(&roots, &c).unwrap();
         assert_eq!(load(&roots), c);
+    }
+
+    #[test]
+    fn terminal_opacity_is_clamped_and_quantized_when_read() {
+        for (raw, expected) in [(i64::MIN, 60), (62, 60), (63, 65), (97, 95), (i64::MAX, 100)] {
+            assert_eq!(AppearancePrefs::read(&json!({ "terminalOpacity": raw })).terminal_opacity, expected);
+        }
     }
 
     #[test]

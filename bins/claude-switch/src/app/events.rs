@@ -96,6 +96,9 @@ impl App for AppState {
                 } else if self.list_area.contains(x, y) {
                     self.sections.scroll = self.sections.clamp_scroll(self.sections.scroll - f64::from(dy));
                     self.moved(cx, x, y);
+                } else if self.details_scroll.area.contains(x, y) {
+                    self.details_scroll.wheel(dy);
+                    self.moved(cx, x, y);
                 }
             }
             Event::Key(k) => self.key(cx, k),

@@ -8,12 +8,11 @@ use std::time::Instant;
 use claude_switch_core::Launch;
 use mdshared_term::{MouseButton, MouseEvent, MouseKind, Selection, SelectionKind, input};
 use mdshared_ui::chrome::TITLE_H;
-use mdshared_ui::gfx::{Painter, Rect};
+use mdshared_ui::gfx::Rect;
 use mdshared_ui::host::{Button, Cx, KeyPress};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::platform;
-use mdshared_ui::scroll::draw_scrollbar;
-use mdshared_ui::termview::{Scheme, draw_screen_animated};
+use mdshared_ui::termview::Scheme;
 
 use crate::dialogs::{Dialog, Pending};
 use crate::state::{AppState, Msg, Target};
@@ -223,6 +222,11 @@ impl AppState {
                 continue;
             }
             w.output = true;
+            if tab.term.scroll > 0 {
+                // Scrollback growth can move the overlaid thumb outside the dirty grid rows.
+                w.all = true;
+                continue;
+            }
             match metrics {
                 Some(m) if had_selection == tab.term.selection.is_some() => {
                     let view = tab.term.view(true);
@@ -470,53 +474,6 @@ impl AppState {
         self.metrics = Some(metrics);
     }
 
-    /// Draws the tab shown into the whole client area under the strip.
-    pub fn draw_terminal(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect) {
-        let pal = *self.pal();
-        let scheme = self.terminal_scheme();
-        p.fill(area, scheme.background);
-        let (inner, Some(metrics)) = (self.term_area, self.metrics) else { return };
-        let focused = self.terminal_focused();
-        let Some(id) = self.tabs.active else { return };
-        let Some(tab) = self.tabs.list.iter().find(|t| t.id == id) else { return };
-        let t = &tab.term;
-        let view = t.view(focused);
-        let sel = t.selection.filter(|s| !s.is_empty());
-        let blink = self.config.appearance.cursor_blink.then_some(self.blink).flatten();
-        draw_screen_animated(
-            p,
-            &mut self.cell_font,
-            &scheme,
-            &metrics,
-            inner,
-            &t.screen,
-            sel.as_ref(),
-            view,
-            cx.anim(),
-            CURSOR,
-            blink,
-        );
-        if blink.is_some()
-            && cx.anim().animates()
-            && focused
-            && t.screen.cursor().visible
-            && t.screen.cursor().blinking
-            && let Some(row) = view.cursor_row(&t.screen)
-        {
-            cx.animating(metrics.row_rect(inner, row));
-        }
-        let back = view.scroll_in(&t.screen);
-        if back > 0 {
-            let total = (t.screen.scrollback_len() + t.screen.rows()) as f32;
-            let track = Rect::new(area.right() - 8.0, inner.y, 6.0, inner.h);
-            let h = (inner.h * t.screen.rows() as f32 / total).max(16.0);
-            let top = (t.screen.scrollback_len() - back) as f32 / total * inner.h;
-            let thumb = Rect::new(track.x, inner.y + top.min(inner.h - h), 6.0, h);
-            draw_scrollbar(p, &pal, track, thumb, false);
-        }
-        self.hits.push((area, Target::Terminal));
-    }
-
     /// A terminal's program wrote or ended: feeds them all and redraws what changed.
     pub fn term_woke(&mut self, cx: &mut Cx<'_, Msg>) {
         let w = self.pump_terms();
@@ -528,7 +485,7 @@ impl AppState {
             Self::cursor_moved(cx);
         }
         if w.all || self.metrics.is_none() {
-            cx.request_redraw(self.term_area);
+            cx.request_redraw(self.term_area.inset(-PAD));
         } else {
             for r in w.rects {
                 cx.request_redraw(r);
@@ -547,9 +504,20 @@ impl AppState {
     pub fn start_debug(&mut self, cx: &mut Cx<'_, Msg>) {
         if let Some(program) = self.debug_shell.take() {
             let account = self.current().slug.clone();
-            let mut launch = claude_switch_core::launch::shell(&self.source.home());
+            let demo = self.source.is_demo();
+            let cwd = if demo { std::env::temp_dir() } else { self.source.home() };
+            let mut launch = claude_switch_core::launch::shell(&cwd);
             launch.program = program.clone().into();
             launch.label = program.clone();
+            if demo
+                && launch
+                    .program
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("cmd.exe"))
+            {
+                launch.args.push("/d".into()); // No user-defined cmd AutoRun commands in the demo.
+            }
             match self.open_tab(&launch, None, Some(&account)) {
                 Ok(tab) => self.debug_tab = Some(tab),
                 Err(e) => self.error("Could not start it", format!("{program}: {e}")),
@@ -608,6 +576,8 @@ impl AppState {
         self.show_tab(SESSIONS);
     }
 }
+
+mod paint;
 
 #[cfg(test)]
 mod tests;

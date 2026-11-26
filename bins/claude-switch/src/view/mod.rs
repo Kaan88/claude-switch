@@ -129,6 +129,19 @@ impl AppState {
             )
             .as_bytes(),
         );
+        let preview = self.config.appearance.backdrop != "off";
+        if preview {
+            terminal.feed(b"\x1b[44m Explicit background \x1b[0m\r\nSelected text\r\nCursor: \x1b[?25h");
+            let line = terminal.screen.screen_start() + 8;
+            let mut selection = mdshared_term::Selection::start(
+                &terminal.screen,
+                mdshared_term::Point::new(line, 0),
+                mdshared_term::SelectionKind::Stream,
+                1,
+            );
+            selection.extend(&terminal.screen, mdshared_term::Point::new(line, 12));
+            terminal.selection = Some(selection);
+        }
         let account = self.current().slug.clone();
         let id = self.tabs.open(
             crate::tabs::NewTab {
@@ -142,6 +155,9 @@ impl AppState {
         let mut pane = self.new_session_pane(model::Source::File(demo.path().to_owned()), demo.cwd().to_owned());
         pane._demo = Some(demo);
         pane.chat = chat::Chat::demo();
+        if preview {
+            pane.chat.open_drawer();
+        }
         pane.ui.chat_conversation(&mut pane.model);
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.pane = Some(pane);

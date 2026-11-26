@@ -20,6 +20,7 @@ pub mod compact;
 pub mod config;
 pub mod folder_defaults;
 pub mod fulltext;
+pub mod grouping;
 pub mod launch;
 pub mod marks;
 pub mod naming;
@@ -125,6 +126,8 @@ pub struct Session {
     pub title: String,
     /// The last recorded prompt, for display and search.
     pub last_prompt: String,
+    /// Bounded transcript-head evidence for local grouping.
+    pub grouping: grouping::Transcript,
     /// The last meaningful transcript record appears to end an assistant turn.
     pub turn_ended: bool,
     /// Transcript modification time, independent of Desktop activity.
@@ -272,7 +275,10 @@ pub struct Config {
     /// Show hidden sessions and folders.
     pub show_hidden: bool,
     /// Use the folder-grouped view instead of Recent.
-    pub folders_view: bool,
+    pub sessions_mode: grouping::Mode,
+    pub group_by_folder: bool,
+    pub show_sittings: bool,
+    pub suggest_topics: bool,
     /// Terminal colour scheme id; unknown ids are treated as automatic by the window.
     pub terminal_scheme: String,
     /// Terminal font size in logical pixels.

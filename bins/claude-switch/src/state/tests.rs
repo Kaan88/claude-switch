@@ -19,8 +19,9 @@ fn the_demo_list_groups_every_unarchived_session_and_selects_the_first_pinned_ro
 #[test]
 fn both_modes_promote_pins_and_filters_use_the_marked_state() {
     let mut s = state();
-    for folders in [false, true] {
-        s.config.folders_view = folders;
+    for mode in [claude_switch_core::grouping::Mode::Recent, claude_switch_core::grouping::Mode::Projects] {
+        s.config.sessions_mode = mode;
+        s.config.group_by_folder = true;
         s.filter = Filter::All;
         s.rebuild_view();
         assert_eq!(s.groups[0].name, "Pinned");

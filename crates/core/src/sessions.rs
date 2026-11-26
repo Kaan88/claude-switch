@@ -8,6 +8,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 mod archive_excerpts;
+mod grouping;
 mod prompts;
 pub use archive_excerpts::archive_excerpts;
 pub use prompts::{TurnActivity, naming_prompts, row_activity, turn_activity};
@@ -152,6 +153,7 @@ fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {
     let lines = Lines::read(file, CHUNK)?;
     let transcript_ms = modified_ms(file);
     let (last_prompt, turn_ended) = prompts::activity(&lines);
+    let grouping = grouping::head(&lines.head, &id);
     let (mut custom, mut ai, mut prompt) = (None::<String>, None::<String>, None::<String>);
     let mut is_session = false;
     for line in lines.iter() {
@@ -175,7 +177,10 @@ fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {
     }
     let (mut cwd, mut branch, mut entrypoint) = (None::<String>, None::<String>, None::<String>);
     for line in lines.iter().rev() {
-        if !contains(line, b"\"cwd\"") && !contains(line, b"\"entrypoint\"") && !contains(line, b"\"gitBranch\"") {
+        let needed = (!is_session || cwd.is_none()) && contains(line, b"\"cwd\"")
+            || (!is_session || entrypoint.is_none()) && contains(line, b"\"entrypoint\"")
+            || (!is_session || branch.is_none()) && contains(line, b"\"gitBranch\"");
+        if !needed {
             continue;
         }
         let Some(v) = parse(line) else { continue };
@@ -193,7 +198,7 @@ fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {
         take(&mut cwd, "cwd");
         take(&mut branch, "gitBranch");
         take(&mut entrypoint, "entrypoint");
-        if is_session && cwd.is_some() && entrypoint.is_some() {
+        if is_session && cwd.is_some() && entrypoint.is_some() && branch.is_some() {
             break;
         }
     }
@@ -209,6 +214,7 @@ fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {
     let session = Session {
         title,
         last_prompt,
+        grouping,
         turn_ended,
         transcript_ms,
         cwd: cwd.map(PathBuf::from).unwrap_or_default(),

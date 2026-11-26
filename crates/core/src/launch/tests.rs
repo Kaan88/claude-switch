@@ -1,12 +1,14 @@
 use super::*;
 use crate::util::testing::{TempDir, config_with, log_in, put};
 const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
+const COPY: &str = "11111111-2222-4333-8444-555555555555";
 
 fn session(cwd: &Path) -> Session {
     Session {
         id: ID.into(),
         title: "T".into(),
         last_prompt: String::new(),
+        grouping: Default::default(),
         turn_ended: false,
         transcript_ms: 0,
         cwd: cwd.to_path_buf(),
@@ -40,22 +42,24 @@ fn a_copy_forks_the_session_also_while_it_runs_but_needs_a_login() {
     let s = session(&folder);
     // A running original and a start a moment ago do not stop a copy.
     note_launch(&roots, &s.id, "main");
-    let l = fork(&roots, &config, &s, "main").unwrap();
+    let l = fork(&roots, &config, &s, "main", COPY).unwrap();
     assert_eq!(l.program, PathBuf::from("claude"));
-    assert_eq!(l.args, ["--resume", ID, "--fork-session"]);
+    assert_eq!(l.args, ["--resume", ID, "--fork-session", "--session-id", COPY]);
+    assert!(fork(&roots, &config, &s, "main", ID).is_err());
+    assert!(fork(&roots, &config, &s, "main", "--bad").is_err());
     assert_eq!(l.cwd.as_deref(), Some(folder.as_path()));
     assert_eq!(l.place, Place::Terminal);
     assert_eq!(l.label, "Main · kweb-mail · Copy");
     assert_eq!(l.env_remove[0], "CLAUDE_CONFIG_DIR");
-    let w = fork(&roots, &config, &s, "work").unwrap();
+    let w = fork(&roots, &config, &s, "work", COPY).unwrap();
     assert_eq!(w.env.get("CLAUDE_CONFIG_DIR"), Some(&config.accounts[1].cli_dir.to_string_lossy().into_owned()));
     assert_eq!(w.label, "Work · kweb-mail · Copy");
     // The copy is not noted as a start of the original.
     let history = std::fs::read_to_string(roots.appdata.join("claude-switch").join("history.json")).unwrap();
     assert_eq!(history.matches(ID).count(), 1);
     std::fs::remove_file(config.accounts[1].cli_dir.join(".credentials.json")).unwrap();
-    assert_eq!(fork(&roots, &config, &s, "work"), Err(Refusal::NotLoggedIn("Work".into())));
-    assert!(matches!(fork(&roots, &config, &s, "nobody"), Err(Refusal::NoSuchAccount(_))));
+    assert_eq!(fork(&roots, &config, &s, "work", COPY), Err(Refusal::NotLoggedIn("Work".into())));
+    assert!(matches!(fork(&roots, &config, &s, "nobody", COPY), Err(Refusal::NoSuchAccount(_))));
 }
 
 #[test]
@@ -118,7 +122,7 @@ fn no_launch_passes_on_a_sessions_identity_or_login() {
             resume(&roots, &config, &session(&t.0), account, App::Desktop, &[]).unwrap(),
             new_session(&roots, &config, account, App::Cli, &t.0).unwrap(),
             login(&roots, &config, account).unwrap(),
-            fork(&roots, &config, &session(&t.0), account).unwrap(),
+            fork(&roots, &config, &session(&t.0), account, COPY).unwrap(),
             shell(&t.0),
             desktop_launch(PathBuf::from("Claude.exe"), find_account(&config, account).unwrap()),
         ];
@@ -199,7 +203,7 @@ fn non_uuid_transcript_stems_never_reach_resume_or_fork() {
     let mut s = session(&t.0);
     s.id = "not-a-uuid".into();
     assert!(matches!(resume(&roots, &config, &s, "main", App::Cli, &[]), Err(Refusal::Invalid(_))));
-    assert!(matches!(fork(&roots, &config, &s, "main"), Err(Refusal::Invalid(_))));
+    assert!(matches!(fork(&roots, &config, &s, "main", COPY), Err(Refusal::Invalid(_))));
 }
 
 #[test]

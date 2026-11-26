@@ -107,8 +107,8 @@ Claude Switch is an unofficial tool. It is not made by or affiliated with Anthro
 
 ## Find and manage sessions
 
-**Recent** puts all folders in one newest-first view; **Folders** groups them by project. Pins
-appear first in both views. Search includes the last prompt, and the All, Running, Waiting, Pinned
+**Recent** puts all folders in one newest-first view; see [Grouping sessions](#grouping-sessions)
+for other views. Pins take priority. Search includes the last prompt, and the All, Running, Waiting, Pinned
 and Unseen filters help you narrow the list. Right-click a row to open it, rename or pin it,
 hide it or its folder, copy its ID or folder path, or reveal its transcript in Explorer.
 Hidden sessions are not deleted; turn on **Show hidden** in Settings to find and unhide them.
@@ -211,3 +211,26 @@ to resize it, and answer permissions and other CLI dialogs there.
 
 Chat keeps drafts when it cannot tell that the CLI is ready. Check the terminal before using
 **Send anyway**. A slash opens the CLI’s own menus in the drawer. Chat does not answer for you.
+
+## Grouping sessions
+
+The Sessions switcher now offers **Recent**, **Projects**, **Threads**, and **Topics** when a
+session has a topic. **Projects** combines folders and worktrees of the same repository. Use
+**Group by: Project / Folder** to switch back to the original folder grouping. **Threads**
+folds proven continuations under their newest member; click **N earlier** or use Left/Right
+with the thread’s first row selected. In **Recent**, turn on **Sittings** to bracket same-day
+activity in the same project within 30 minutes. Scroll the details pane to **Related** to
+open thread members and sessions with similar prompts. These features work locally.
+
+Right-click **Set topic…** to edit or clear a topic. To suggest topics alongside titles,
+enable **Settings → Sessions → Include topics when suggesting names**. The existing
+confirmed **Suggest names** request includes topic labels to reuse, but no extra transcript
+excerpts or separate request. In review, Tab moves between the title and topic fields.
+
+## Terminal cursor and opacity
+
+In **Settings → Terminal**, choose Block, Bar, or Underline and optionally enable **Blink**.
+The terminal program’s explicit cursor style still takes precedence. **Background opacity**
+goes from 60% to 100% (the default) when Mica or Acrylic is active on Windows 11 22H2 or later.
+These settings apply to open tabs and to Chat’s terminal drawer. **Ctrl+Shift+E** opens or closes
+the drawer in Chat.

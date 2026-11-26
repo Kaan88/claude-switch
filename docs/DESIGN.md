@@ -320,15 +320,14 @@ Settings has navigable Appearance, Terminal, and Custom colours sections (as wel
 Sessions). The window theme is System, Light or Dark; `--theme light|dark` overrides that preference.
 Windows high contrast takes priority. The toolkit's appearance model supplies the accent (clay by
 default, or system or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
-Mica and Acrylic are optional on Windows 11 in the title bar, capped at 15% compositor colour.
-The terminal grid, its padding, and the strip it joins stay opaque.
+Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
+compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
 
 Automatic terminal colours use Dark (`#101010`) or Light according to the effective window theme.
 Match window uses the window bar background. Custom lets the user pick the background, text and
 accent; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
-changes resize all open screens and pseudo-terminals. The cursor is steady by default; enabling blink
-also respects the program's request, the system caret setting and reduced motion. The program sets
-the cursor shape.
+changes resize all open screens and pseudo-terminals. Cursor shape and background opacity are
+described under [Terminal cursor and backdrop](#terminal-cursor-and-backdrop).
 
 Tab marks, hover, menu entrances, the dialog dimmer, sessions-list selection and settings controls
 animate briefly. Reduce motion snaps them to their targets, as does the system setting. Tab content
@@ -340,7 +339,7 @@ but a polling tick no longer redraws the window unless visible state changes.
 Recent is the default. It sorts sessions across folders by activity, newest first, with local
 calendar headings: Today, Yesterday, This week (Monday onward), Earlier this month and Older.
 It uses the current local offset for the comparison; historical daylight-saving transitions
-are not resolved separately. Folders keeps folder grouping, and both modes put pins first.
+are not resolved separately. See [Session organization](#session-organization) for the alternate modes.
 Only the visible rows and sticky heading are drawn. Mode and Show hidden are config preferences.
 
 Rows show the latest `last-prompt` record (`lastPrompt`) or real user message found in the
@@ -549,3 +548,60 @@ Edit/Write tool paths seen in loaded history, not a filesystem or Git diff. Cont
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer reuses the app's multiline editor with toolkit text and drawing.
 Demo shows the waiting state, and its composer writes only to the synthetic terminal screen.
+
+## Session organization
+
+Recent, Projects, Threads and (when at least one indexed session has a label) Topics are remembered in
+`config.json`. The old Folders setting migrates to Projects → Group by: Folder. Projects resolves each
+working folder once per run on the scan worker. It walks up to the first `.git` directory or file,
+follows `gitdir:` and `commondir` using paths relative to the files that hold them, and uses the
+main checkout's `HEAD` as the branch reference. It does not run Git. A submodule with its own gitdir
+and no commondir stays separate. Missing folders, malformed markers and common directories that do
+not identify a checkout fall back to the original folder. Within a project the visible members are
+newest first; Groups containing pins are promoted in Projects, Threads and Topics without splitting
+the groups. Recent and the Folder option still have a separate Pinned section.
+
+New handovers retain the display-only `handoverFrom` and store the exact source UUID in
+`parentSessionId` in `marks.json`. Open a copy preallocates a different UUID, persists its source
+before launch and passes it with `--fork-session --session-id`; failed starts remove the parent mark.
+An old handover with only a title is not evidence of lineage. The bounded transcript head accepts
+optional `forkedFrom.sessionId` and `parentSessionId` UUIDs in the first 32 lines; these two names are
+compatibility guesses, not fields documented by the previous reader or verified against live
+transcripts. Conflicting transcript candidates, unknown parents and cycles do not create links. The documented
+Desktop `priorCliSessionIds` describes Desktop's aliases and still follows the existing scan policy
+of keeping the current transcript. `parentUuid` is not a session link. Threads show the newest
+visible member, with earlier members collapsed; text search reveals all matches.
+
+Recent’s optional Sittings view merges visible non-pinned activity intervals within 30 minutes in
+the same project and local activity day. Unknown starts use the last activity as a point; unknown
+end times are never merged. A range that crosses midnight is clipped to its last activity day. The
+cluster occupies its newest member’s position, and its members stay in newest-first order.
+The scrollable details pane shows visible thread members first, then up to five other sessions
+from the same project with nonzero Jaccard overlap of case-folded, stop-word-filtered first/last
+prompt words. Scoring runs on a cancellable selection-scoped worker; no transcript or prompt goes
+to a model for Related.
+
+**Include topics when suggesting names** is off by default in Settings → Sessions. If enabled,
+the existing confirmed naming request adds existing short topic labels and asks for an optional
+topic beside each title. Its transcript excerpts and request count are unchanged. Review keeps
+title and topic editable before acceptance. **Set topic…** edits or clears a local label without
+running a model. Topics have at most three words and 60 characters; blank means no topic. The demo contains synthetic
+projects, a worktree, a four-session thread, adjacent activity, Related prompts and topics.
+
+## Terminal cursor and backdrop
+
+Settings → Terminal saves `appearance.cursorShape`, `appearance.cursorBlink`, and
+`appearance.terminalOpacity` in `config.json`. Every tab uses the latest preferences when drawn,
+including the Chat drawer. The default cursor is a steady Block; Bar and Underline are fallbacks
+when the program has not chosen a DECSCUSR style. Blink is off by default. When enabled it still
+respects an explicitly steady cursor, the system caret interval, focus, visibility and reduced motion.
+
+Opacity defaults to 100% and steps down to 60% by 5%. It affects normal backgrounds and padding,
+not text, explicit terminal backgrounds, or selected cells. The toolkit can raise opacity for text
+contrast. Without an active Mica or Acrylic backdrop (including high contrast or loss of window
+focus), the setting is disabled and the surface draws opaque. The scrollback thumb has a solid
+gutter and the end notice is drawn on solid rows. The Chat drawer header is solid. Window-level
+popups and dialogs temporarily use an opaque terminal frame beneath their edges and scrims.
+
+`--demo --demo-terminal bar,80,mica` previews this with a synthetic Chat drawer; a debug build
+can add `--shell cmd.exe` to preview it with an isolated command prompt instead.

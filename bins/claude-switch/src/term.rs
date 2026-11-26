@@ -4,6 +4,7 @@
 //! no events here; [`crate::termapp`] does those.
 
 use std::io;
+use std::ops::Range;
 
 use claude_switch_core::Launch;
 use mdshared_pty::{Command, Exit, Pty};
@@ -73,6 +74,7 @@ pub struct Term {
     pub wheel_rest: f32,
     /// How the program ended, once it has and its last output is on the screen.
     pub ended: Option<Exit>,
+    pub ended_lines: Range<u64>,
 }
 
 impl Term {
@@ -97,6 +99,7 @@ impl Term {
             last_cell: None,
             wheel_rest: 0.0,
             ended: None,
+            ended_lines: 0..0,
         }
     }
 
@@ -133,14 +136,21 @@ impl Term {
         if self.ended.is_none()
             && let Some(exit) = exit
         {
-            self.ended = Some(exit);
-            // The cursor is hidden: nothing more can be typed.
-            let line = format!("\x1b[0m\r\n{}\x1b[?25l", ended_line(exit));
-            self.screen.feed(line.as_bytes());
+            self.finish(exit);
             out.ended = true;
             out.output = true;
         }
         out
+    }
+
+    pub fn finish(&mut self, exit: Exit) {
+        self.ended = Some(exit);
+        let line = ended_line(exit);
+        let line_count = line.len().div_ceil(self.screen.cols()) as u64;
+        // Force normal wrapping for the app-owned notice, and hide the cursor after it.
+        self.screen.feed(format!("\x1b[0m\x1b[?7h\r\n{line}\x1b[?25l").as_bytes());
+        let end = self.screen.screen_start() + self.screen.cursor().row as u64 + 1;
+        self.ended_lines = end.saturating_sub(line_count)..end;
     }
 
     /// Feeds output to the screen, keeping a view that looks back on the same lines and
@@ -167,7 +177,13 @@ impl Term {
         if (cols, rows) == (self.screen.cols(), self.screen.rows()) {
             return false;
         }
+        let cursor_line = self.screen.screen_start() + self.screen.cursor().row as u64;
         self.screen.resize(cols, rows);
+        if !self.ended_lines.is_empty() {
+            // The alternate screen can discard top rows rather than preserving their absolute IDs.
+            let delta = cursor_line.saturating_sub(self.screen.screen_start() + self.screen.cursor().row as u64);
+            self.ended_lines = self.ended_lines.start.saturating_sub(delta)..self.ended_lines.end.saturating_sub(delta);
+        }
         if let Some(p) = &mut self.pty {
             let _ = p.resize(cols.min(u16::MAX as usize) as u16, rows.min(u16::MAX as usize) as u16);
         }

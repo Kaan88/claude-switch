@@ -27,6 +27,7 @@ pub struct Scan {
     pub sessions: Vec<Session>,
     pub running: Vec<Running>,
     pub statuses: Vec<(String, AccountStatus)>,
+    pub projects: HashMap<String, claude_switch_core::grouping::Project>,
 }
 
 pub struct ActivityScan {
@@ -61,13 +62,21 @@ impl Source {
     }
 
     /// Sessions, running sessions and the accounts' login states. Runs on a worker thread.
-    pub fn scan(&self, c: &Config) -> Scan {
+    pub fn scan(&self, c: &Config, cache: &mut claude_switch_core::grouping::ProjectCache) -> Scan {
         match self {
-            Source::Real(roots) => Scan {
-                sessions: sessions::scan(roots, c),
-                running: running::scan(roots, c),
-                statuses: c.accounts.iter().map(|a| (a.slug.clone(), accounts::status(roots, a))).collect(),
-            },
+            Source::Real(roots) => {
+                let sessions = sessions::scan(roots, c);
+                let mut projects = HashMap::new();
+                for s in &sessions {
+                    projects.entry(sessions::folder_key(&s.cwd)).or_insert_with(|| cache.get(&s.cwd));
+                }
+                Scan {
+                    sessions,
+                    projects,
+                    running: running::scan(roots, c),
+                    statuses: c.accounts.iter().map(|a| (a.slug.clone(), accounts::status(roots, a))).collect(),
+                }
+            }
             Source::Demo => demo::scan(c),
         }
     }
@@ -132,9 +141,9 @@ impl Source {
         }
     }
 
-    pub fn fork(&self, c: &Config, s: &Session, account: &str) -> Result<Launch, Refusal> {
+    pub fn fork(&self, c: &Config, s: &Session, account: &str, new_id: &str) -> Result<Launch, Refusal> {
         match self {
-            Source::Real(roots) => launch::fork(roots, c, s, account),
+            Source::Real(roots) => launch::fork(roots, c, s, account, new_id),
             Source::Demo => Ok(demo::fork(s, account)),
         }
     }

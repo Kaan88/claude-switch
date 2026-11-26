@@ -247,7 +247,7 @@ impl Chat {
         }
     }
 
-    fn open_drawer(&mut self) {
+    pub(super) fn open_drawer(&mut self) {
         self.drawer = Drawer::Manual;
         self.drawer_focus = true;
     }

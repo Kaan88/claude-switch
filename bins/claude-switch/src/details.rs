@@ -12,18 +12,34 @@ use crate::state::{AppState, Target};
 const PAD: f32 = 24.0;
 const LABEL_W: f32 = 104.0;
 
+#[derive(Default)]
+pub struct Scroll {
+    pub area: Rect,
+    pub offset: f32,
+    max: f32,
+}
+
+impl Scroll {
+    pub fn wheel(&mut self, dy: f32) {
+        self.offset = (self.offset - dy).clamp(0.0, self.max);
+    }
+}
+
 pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     let pal = *st.pal();
     p.fill(area, pal.page);
+    st.details_scroll.area = area;
     let Some(s) = st.selected_session().cloned() else {
         let text = if st.scanned { "Select a session on the left." } else { "" };
         p.text_center(Face::Ui, 13.0, Rect::new(area.x, area.y + 40.0, area.w, 24.0), text, pal.muted);
         return;
     };
     let old = p.clip(area);
+    let first_hit = st.hits.len();
     let x = area.x + PAD;
     let w = (area.w - 2.0 * PAD).max(40.0);
-    let mut y = area.y + 22.0;
+    let offset = st.details_scroll.offset;
+    let mut y = area.y + 22.0 - offset;
     y += p.paragraph_wrapped(Face::Semibold, 18.0, x, y, w, st.title_of(&s), pal.text, Wrap::Words) + 4.0;
     let folder = if s.cwd.as_os_str().is_empty() { "(no folder)".to_string() } else { s.cwd.display().to_string() };
     y += p.paragraph_wrapped(Face::Mono, 12.0, x, y, w, &folder, pal.muted, Wrap::Anywhere) + 14.0;
@@ -44,6 +60,9 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     ];
     if s.archived {
         facts.push(("Archived", "yes, in the desktop app".into()));
+    }
+    if let Some(topic) = st.marks.topic(&s.id) {
+        facts.push(("Topic", topic.to_owned()));
     }
     for (label, value) in facts {
         p.text(Face::Ui, 12.0, x, y + 9.0, label, pal.muted, LABEL_W - 8.0);
@@ -106,6 +125,7 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     }
 
     y = crate::compact_dialog::draw_history_row(st, p, &s.id, x, y, w, area);
+    y = related(st, p, area, Rect::new(x, y, w, 0.0));
 
     // The last messages.
     p.fill(Rect::new(x, y - 12.0, w, p.px()), pal.line);
@@ -117,9 +137,6 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
                 p.text(Face::Ui, 13.0, x, y + 8.0, "Nothing to show.", pal.muted, w);
             }
             for line in lines {
-                if y > area.bottom() {
-                    break;
-                }
                 let (who, c) = if line.from_user { ("You", pal.accent) } else { ("Claude", pal.muted) };
                 p.text(Face::Semibold, 12.0, x, y + 8.0, who, c, w);
                 y += 18.0;
@@ -130,7 +147,53 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
             p.text(Face::Ui, 13.0, x, y + 8.0, "Reading the conversation\u{2026}", pal.muted, w);
         }
     }
+    let content = (y + offset + 34.0 - area.y).max(0.0);
+    st.details_scroll.max = (content - area.h).max(0.0);
+    for (r, _) in &mut st.hits[first_hit..] {
+        let bottom = r.bottom().min(area.bottom());
+        r.y = r.y.max(area.y);
+        r.h = (bottom - r.y).max(0.0);
+    }
+    if let Some((track, thumb)) = mdshared_ui::scroll::scrollbar(area, content, area.h, offset) {
+        mdshared_ui::scroll::draw_scrollbar(p, &pal, track, thumb, false);
+    }
     p.restore(old);
+}
+
+fn related(st: &mut AppState, p: &mut Painter, view: Rect, r: Rect) -> f32 {
+    let pal = *st.pal();
+    let mut y = r.y;
+    p.fill(Rect::new(r.x, y - 12.0, r.w, p.px()), pal.line);
+    p.text(Face::Semibold, 13.0, r.x, y + 8.0, "Related", pal.text, r.w);
+    y += 24.0;
+    let start = y;
+    for (i, (id, relation)) in st.grouping.related.iter().enumerate() {
+        let Some(s) = st.by_id.get(id).map(|&j| &st.sessions[j]).filter(|s| st.related_visible(s)) else { continue };
+        let hit = Rect::new(r.x, y, r.w, 24.0);
+        y += hit.h;
+        if hit.bottom() <= view.y || hit.y >= view.bottom() {
+            continue;
+        }
+        let target = Target::Related(i);
+        if st.hover == Some(target) {
+            p.rbox(hit, 5.0, pal.hover);
+        }
+        let side =
+            if st.is_archived(s) { format!("{} · Archived", relation.label()) } else { relation.label().into() };
+        let right = p.text_right(Face::Ui, 11.0, hit.right() - 4.0, hit.cy(), &side, pal.muted);
+        p.text(Face::Ui, 12.0, hit.x + 4.0, hit.cy(), st.title_of(s), pal.text, (hit.w - right - 16.0).max(0.0));
+        st.hits.push((hit, target));
+    }
+    if y == start {
+        let message = if st.grouping.pending.as_ref().is_some_and(|j| j.running()) {
+            "Comparing prompts…"
+        } else {
+            "No related sessions."
+        };
+        p.text(Face::Ui, 12.0, r.x, y + 9.0, message, pal.muted, r.w);
+        y += 24.0;
+    }
+    y + 22.0
 }
 
 /// The day and minute of a time in ms since 1970, on a clock `offset` minutes east of UTC.

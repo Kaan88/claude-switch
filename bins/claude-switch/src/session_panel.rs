@@ -18,6 +18,7 @@ use crate::state::{AppState, Target};
 
 const RESULT: u32 = 10;
 const SKIP: u32 = 5;
+const TOPIC_FIELD: u32 = 6;
 const VISIBLE: usize = 5;
 
 pub type NameResults = Result<(VecDeque<Suggestion>, usize), String>;
@@ -26,6 +27,7 @@ pub struct Suggestion {
     id: String,
     original: String,
     title: String,
+    topic: Option<String>,
 }
 
 struct Hit {
@@ -78,6 +80,7 @@ impl Picker {
 pub enum Mode {
     Switch(Picker),
     Rename { id: String, original: String },
+    Topic { id: String },
     Working,
     Review { current: Suggestion, rest: VecDeque<Suggestion>, n: usize, total: usize, missing: usize },
 }
@@ -85,6 +88,10 @@ pub enum Mode {
 pub struct Panel {
     field: TextField,
     stops: Vec<f32>,
+    topic: TextField,
+    topic_stops: Vec<f32>,
+    topic_focus: bool,
+    invalid_topic: bool,
     mode: Mode,
 }
 
@@ -93,15 +100,33 @@ impl Panel {
         let mut field = TextField::new();
         field.set_text(text);
         field.select_all();
-        Dialog::Session(Box::new(Self { field, stops: vec![], mode }))
+        let mut topic = TextField::new();
+        if let Mode::Review { current, .. } = &mode
+            && let Some(label) = &current.topic
+        {
+            topic.set_text(label);
+            topic.select_all();
+        }
+        Dialog::Session(Box::new(Self {
+            field,
+            stops: vec![],
+            topic,
+            topic_stops: vec![],
+            topic_focus: false,
+            invalid_topic: false,
+            mode,
+        }))
     }
 
     pub fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, window: Rect) {
         let (title, height) = match &self.mode {
             Mode::Switch(_) => ("Quick switcher".to_string(), 382.0),
             Mode::Rename { .. } => ("Rename session".into(), 228.0),
+            Mode::Topic { .. } => ("Set topic".into(), 210.0),
             Mode::Working => ("Suggesting names…".into(), 154.0),
-            Mode::Review { n, total, .. } => (format!("Review suggested name  {n} / {total}"), 242.0),
+            Mode::Review { current, n, total, .. } => {
+                (format!("Review suggestion  {n} / {total}"), if current.topic.is_some() { 298.0 } else { 242.0 })
+            }
         };
         let card = dialog_card(528.0, height, window.w, window.h);
         let footer = d.card(p, card);
@@ -114,15 +139,17 @@ impl Panel {
         };
         if !matches!(self.mode, Mode::Working) {
             let r = Rect::new(x, card.y + 54.0, w, 34.0);
-            p.frame(r, 6.0, pal.field, pal.accent);
+            p.frame(r, 6.0, pal.field, if self.topic_focus { pal.line } else { pal.accent });
             let colors =
                 FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
             let hint = if matches!(self.mode, Mode::Switch(_)) {
                 "Search name, prompt or folder"
+            } else if matches!(self.mode, Mode::Topic { .. }) {
+                "No topic"
             } else {
                 "Use transcript title"
             };
-            self.field.draw(p, r.inset(8.0), Face::Ui, 13.0, &colors, hint, true, true);
+            self.field.draw(p, r.inset(8.0), Face::Ui, 13.0, &colors, hint, !self.topic_focus, true);
             self.stops = p.caret_stops(Face::Ui, 13.0, &self.field.display());
             d.hits.push((r, Target::Dialog(FIELD)));
         }
@@ -156,17 +183,53 @@ impl Panel {
                 text(131.0, "Leave blank to use the transcript title. The transcript is not edited.", p);
                 d.footer(p, footer, &[("Save name", true, OK), ("Cancel", false, CANCEL)]);
             }
+            Mode::Topic { .. } => {
+                text(
+                    112.0,
+                    if self.invalid_topic {
+                        "Enter a plain topic of up to 3 words (60 characters)."
+                    } else {
+                        "Up to 3 words. Leave blank to remove the topic."
+                    },
+                    p,
+                );
+                d.footer(p, footer, &[("Save topic", true, OK), ("Cancel", false, CANCEL)]);
+            }
             Mode::Working => {
                 text(69.0, "Waiting for Claude. No session will be renamed automatically.", p);
                 d.footer(p, footer, &[("Cancel", true, CANCEL)]);
             }
             Mode::Review { current, missing, .. } => {
                 text(109.0, &format!("Current title: {}", current.original), p);
-                text(131.0, "Edit the suggestion or accept it as shown.", p);
-                if *missing > 0 {
-                    text(151.0, &format!("No usable suggestion for {missing} requested session(s)."), p);
+                if current.topic.is_some() {
+                    text(
+                        132.0,
+                        if self.invalid_topic {
+                            "Topic must be plain text, up to 3 words (60 characters)."
+                        } else {
+                            "Topic · up to 3 words (blank removes it) · Tab to edit"
+                        },
+                        p,
+                    );
+                    let r = Rect::new(x, card.y + 146.0, w, 34.0);
+                    p.frame(r, 6.0, pal.field, if self.topic_focus { pal.accent } else { pal.line });
+                    let colors = FieldColors {
+                        text: pal.text,
+                        placeholder: pal.muted,
+                        selection: pal.selection,
+                        caret: pal.text,
+                    };
+                    self.topic.draw(p, r.inset(8.0), Face::Ui, 13.0, &colors, "No topic", self.topic_focus, true);
+                    self.topic_stops = p.caret_stops(Face::Ui, 13.0, &self.topic.display());
+                    d.hits.push((r, Target::Dialog(TOPIC_FIELD)));
+                } else {
+                    text(131.0, "Edit the suggestion or accept it as shown.", p);
                 }
-                d.footer(p, footer, &[("Accept name", true, OK), ("Skip", false, SKIP), ("Done", false, CANCEL)]);
+                if *missing > 0 {
+                    let y = if current.topic.is_some() { 197.0 } else { 151.0 };
+                    text(y, &format!("No usable suggestion for {missing} requested session(s)."), p);
+                }
+                d.footer(p, footer, &[("Accept", true, OK), ("Skip", false, SKIP), ("Done", false, CANCEL)]);
             }
         }
     }
@@ -175,20 +238,28 @@ impl Panel {
         match k {
             KeyName::Escape => return Some(CANCEL),
             KeyName::Enter => return Some(if matches!(self.mode, Mode::Working) { CANCEL } else { OK }),
+            KeyName::Tab if matches!(&self.mode, Mode::Review { current, .. } if current.topic.is_some()) => {
+                self.topic_focus = !self.topic_focus;
+                return None;
+            }
             KeyName::Up | KeyName::Down if let Mode::Switch(s) = &mut self.mode => {
                 s.step(*k == KeyName::Down);
                 return None;
             }
             _ => {}
         }
-        if self.field.handle_key(k, mods, text, true) == Some(true) {
+        let field = if self.topic_focus { &mut self.topic } else { &mut self.field };
+        if field.handle_key(k, mods, text, true) == Some(true) {
+            self.invalid_topic = false;
             self.refill(st);
         }
         None
     }
 
     pub fn text_input(&mut self, st: &AppState, text: &str) {
-        if self.field.insert(text) {
+        let field = if self.topic_focus { &mut self.topic } else { &mut self.field };
+        if field.insert(text) {
+            self.invalid_topic = false;
             self.refill(st);
         }
     }
@@ -209,9 +280,14 @@ impl Panel {
     }
 
     pub fn click(mut self: Box<Self>, st: &mut AppState, now: Instant, id: u32, x: f32, other: bool) {
-        if id == FIELD {
-            let offset = st.hits.iter().find(|(_, t)| *t == Target::Dialog(FIELD)).map_or(0.0, |(r, _)| r.x + 8.0);
-            self.field.press(x - offset, &self.stops, false);
+        if id == FIELD || id == TOPIC_FIELD {
+            let offset = st.hits.iter().find(|(_, t)| *t == Target::Dialog(id)).map_or(0.0, |(r, _)| r.x + 8.0);
+            self.topic_focus = id == TOPIC_FIELD;
+            if self.topic_focus {
+                self.topic.press(x - offset, &self.topic_stops, false);
+            } else {
+                self.field.press(x - offset, &self.stops, false);
+            }
             st.dialog = Some(Dialog::Session(self));
             return;
         }
@@ -243,15 +319,34 @@ impl Panel {
                 }
             }
             Mode::Rename { id: session, .. } if id == OK => st.rename_session(session, self.field.text()),
+            Mode::Topic { id: session } if id == OK => {
+                if valid_edit(self.field.text()) {
+                    st.save_suggestion(session, None, Some(self.field.text()));
+                } else {
+                    self.invalid_topic = true;
+                    st.dialog = Some(Dialog::Session(self));
+                }
+            }
             Mode::Review { current, rest, n, total, missing } if id == OK || id == SKIP => {
-                if id == OK && !self.field.text().trim().is_empty() {
-                    st.rename_session(&current.id, self.field.text());
+                if id == OK {
+                    let topic = current.topic.as_ref().map(|_| self.topic.text());
+                    if topic.is_some_and(|s| !valid_edit(s)) {
+                        self.invalid_topic = true;
+                        st.dialog = Some(Dialog::Session(self));
+                        return;
+                    }
+                    let title = self.field.text();
+                    st.save_suggestion(&current.id, (!title.trim().is_empty()).then_some(title), topic);
                 }
                 st.dialog = review(std::mem::take(rest), *n + 1, *total, *missing);
             }
             _ => st.dialog = Some(Dialog::Session(self)),
         }
     }
+}
+
+fn valid_edit(s: &str) -> bool {
+    s.trim().is_empty() || claude_switch_core::grouping::valid_topic(s).is_some()
 }
 
 fn review(mut rest: VecDeque<Suggestion>, n: usize, total: usize, missing: usize) -> Option<Dialog> {
@@ -271,6 +366,26 @@ impl AppState {
         if let Some(s) = self.selected_session() {
             self.dialog =
                 Some(Panel::dialog(Mode::Rename { id: s.id.clone(), original: s.title.clone() }, self.title_of(s)));
+        }
+    }
+
+    pub fn ask_set_topic(&mut self) {
+        if let Some(s) = self.selected_session() {
+            self.dialog = Some(Panel::dialog(Mode::Topic { id: s.id.clone() }, self.marks.topic(&s.id).unwrap_or("")));
+        }
+    }
+
+    fn save_suggestion(&mut self, id: &str, name: Option<&str>, topic: Option<&str>) {
+        let Some(&i) = self.by_id.get(id) else { return };
+        let file = &self.sessions[i].file;
+        let previous = self.marks.clone();
+        let name_changed = name.is_some_and(|name| self.marks.rename(id, file, name));
+        let topic_changed = topic.is_some_and(|topic| self.marks.set_topic(id, file, topic));
+        if name_changed || topic_changed {
+            if !self.save_marks() {
+                self.marks = previous;
+            }
+            self.rebuild_view();
         }
     }
 
@@ -323,6 +438,9 @@ impl AppState {
                 a.name
             )
         };
+        if self.config.suggest_topics {
+            text.push_str("\n\nAlso suggest a topic of up to three words. This includes existing topic labels so they can be reused.");
+        }
         if batch && !self.source.is_demo() {
             text.push_str("\n\nSessions: ");
             let names = ids
@@ -373,7 +491,8 @@ impl AppState {
                 {
                     return None;
                 }
-                Some((id, self.title_of(s).to_string(), s.file.clone()))
+                let topic = self.marks.topic(&id).unwrap_or_default().to_owned();
+                Some((id, self.title_of(s).to_string(), s.file.clone(), topic))
             })
             .collect();
         if sessions.len() != count || count == 0 {
@@ -382,6 +501,15 @@ impl AppState {
         }
         let account = naming::worker_account(&self.config).clone();
         let demo = self.source.is_demo();
+        let topics = self.config.suggest_topics.then(|| {
+            let mut unique = std::collections::BTreeMap::new();
+            for s in &self.sessions {
+                if let Some(label) = self.marks.topic(&s.id) {
+                    unique.entry(label.to_lowercase()).or_insert_with(|| label.to_owned());
+                }
+            }
+            unique.into_values().collect::<Vec<_>>()
+        });
         let marks = match &self.source {
             crate::source::Source::Real(roots) if batch => Some((roots.clone(), self.marks.clone())),
             _ => None,
@@ -389,9 +517,10 @@ impl AppState {
         match Job::start(self.wake_fn(), move |cancel, _| {
             let mut queue = VecDeque::new();
             if demo {
-                for (i, (id, original, _)) in sessions.into_iter().enumerate() {
+                for (i, (id, original, _, _)) in sessions.into_iter().enumerate() {
                     let title = if i == 0 { "Refine recent session navigation" } else { "Review the session changes" };
-                    queue.push_back(Suggestion { id, original, title: title.to_string() });
+                    let topic = topics.as_ref().map(|_| "Session navigation".into());
+                    queue.push_back(Suggestion { id, original, title: title.to_string(), topic });
                 }
             } else {
                 let verify = || {
@@ -404,21 +533,23 @@ impl AppState {
                 verify()?;
                 let mut excerpts = Vec::new();
                 let mut named = Vec::new();
-                for (id, original, path) in sessions {
+                for (id, original, path, old_topic) in sessions {
                     if cancel.cancelled() {
                         return Err("Cancelled".into());
                     }
                     let (first, last) = claude_switch_core::sessions::naming_prompts(&path);
                     if first.is_some() || !last.is_empty() {
                         excerpts.push(Excerpts { first, last });
-                        named.push((id, original));
+                        named.push((id, original, old_topic));
                     }
                 }
                 verify()?;
-                let titles = naming::suggest(&account, &excerpts, || cancel.cancelled()).map_err(|e| e.to_string())?;
-                for (i, (id, original)) in named.into_iter().enumerate() {
-                    if let Some(title) = titles.get(&i) {
-                        queue.push_back(Suggestion { id, original, title: title.clone() });
+                let mut suggestions = naming::suggest(&account, &excerpts, topics.as_deref(), || cancel.cancelled())
+                    .map_err(|e| e.to_string())?;
+                for (i, (id, original, old_topic)) in named.into_iter().enumerate() {
+                    if let Some(item) = suggestions.remove(&i) {
+                        let topic = topics.as_ref().map(|_| item.topic.unwrap_or(old_topic));
+                        queue.push_back(Suggestion { id, original, title: item.title, topic });
                     }
                 }
             }
@@ -452,59 +583,4 @@ impl AppState {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn batch_without_trustworthy_marks_cannot_prepare_or_start_naming() {
-        let mut st = crate::state::AppState::new(crate::source::Source::Demo, None, Default::default());
-        st.marks_read_only = true;
-        st.ask_naming(true);
-        assert!(st.dialog.is_none() && st.info.is_some());
-        st.start_naming(vec!["anything".into()], true);
-        assert!(st.naming_job.is_none());
-    }
-    use super::*;
-    use crate::source::Source;
-    use crate::state::MenuKind;
-    use crate::winfile::WindowFile;
-
-    fn demo_state() -> AppState {
-        let mut st = AppState::new(Source::Demo, Some(true), WindowFile::default());
-        st.apply_scan(crate::demo::scan(&st.config));
-        st
-    }
-
-    #[test]
-    fn switcher_matches_the_prompt_and_ctrl_enter_can_override_the_folder_default() {
-        let mut st = demo_state();
-        let target = st.sessions[2].id.clone();
-        let now = Instant::now();
-        st.quick_switcher();
-        crate::dialogs::text_input(&mut st, "compare a clean build");
-        crate::dialogs::key(&mut st, now, &KeyName::Enter, Mods { ctrl: true, ..Mods::default() }, None);
-        assert_eq!(st.selected.as_deref(), Some(target.as_str()));
-        let Some((kind, menu)) = &st.menu else { panic!("Open as menu not shown") };
-        assert_eq!(*kind, MenuKind::OpenAs);
-        assert!(menu.items.iter().any(|item| item.label.contains("Work")));
-        assert!(menu.items.iter().any(|item| item.label.contains("Main")));
-    }
-
-    #[test]
-    fn batch_confirms_the_cap_and_review_never_saves_before_accept() {
-        let mut st = demo_state();
-        st.ask_naming(true);
-        let Some(Dialog::Confirm { then: Pending::Suggest { ids, .. }, .. }) = st.dialog.take() else {
-            panic!("batch requires explicit confirmation");
-        };
-        assert_eq!(ids.len(), naming::MAX_BATCH);
-        let first = ids[0].clone();
-        let second = ids[1].clone();
-        let sample = |id: &str| Suggestion { id: id.to_string(), original: "Before".into(), title: "Generated".into() };
-        st.dialog = review(VecDeque::from([sample(&first), sample(&second)]), 1, 2, 0);
-        assert!(st.marks.name(&first).is_none() && st.marks.name(&second).is_none());
-        crate::dialogs::click(&mut st, Instant::now(), SKIP, 0.0);
-        crate::dialogs::text_input(&mut st, "Edited proposal");
-        crate::dialogs::click(&mut st, Instant::now(), OK, 0.0);
-        assert!(st.marks.name(&first).is_none());
-        assert_eq!(st.marks.name(&second), Some("Edited proposal"));
-    }
-}
+mod tests;

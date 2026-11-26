@@ -181,6 +181,7 @@ mod tests {
             last_active_ms,
             title: id.into(),
             last_prompt: String::new(),
+            grouping: Default::default(),
             turn_ended: false,
             branch: None,
             bytes: 0,

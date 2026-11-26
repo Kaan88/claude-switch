@@ -1,4 +1,4 @@
-//! Host appearance and short-lived popup motion. The terminal grid stays out of both paths.
+//! Host appearance and short-lived popup motion. Terminal opacity is independent of the chrome veil.
 
 use mdshared_app::backdrop::Backdrop;
 use mdshared_ui::anim::{AsId, Id, Policy, document};

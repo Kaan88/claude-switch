@@ -26,6 +26,7 @@ use crate::usage_ui::AccountUsage;
 mod newsession;
 mod opencode_rows;
 mod settings;
+mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
 pub use settings::{settings, settings_outcome};
 
@@ -173,6 +174,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
         style.backdrop = t;
         form.set_style(style);
         form.set_high_contrast(st.high_contrast);
+        terminal_appearance::sync(form, &st.config.appearance, st.high_contrast, p.frost_key().is_some());
         form.draw_animated(p, st.pal(), window, true, cx.anim(), "settings");
         st.dialog = Some(dialog);
         return;

@@ -153,6 +153,7 @@ impl AppState {
             p.restore(clip);
         }
         if l.grip.h > 0.0 {
+            // Opaque backing for the drawer label, resize handle and Focus terminal button.
             p.fill(l.grip, pal.bar);
             p.fill(Rect::new(l.grip.x, l.grip.y, l.grip.w, p.px()), pal.line);
             p.rbox(Rect::new(l.grip.cx() - 18.0, l.grip.y + 3.0, 36.0, 2.0), 1.0, pal.thumb);

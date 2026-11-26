@@ -1,8 +1,8 @@
-use super::opencode_rows;
 use super::*;
+use super::{opencode_rows, terminal_appearance};
 use crate::termtheme::{self, ACCENT_SOURCES, PRESETS, WINDOW_THEMES, preset_index};
 use claude_switch_core::WorkersUse;
-use claude_switch_core::config::{TERMINAL_FONT_MAX, TERMINAL_FONT_MIN};
+use claude_switch_core::config::{TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TerminalCursor, terminal_opacity};
 use mdshared_app::backdrop::Backdrop;
 use mdshared_ui::colour_picker::parse_hex;
 use mdshared_ui::settings::{Outcome, Row, Value};
@@ -32,6 +32,7 @@ const SET_TRAY: u32 = 73;
 const SET_CLOSE_TO_TRAY: u32 = 74;
 const SET_RESTORE_TABS: u32 = 87;
 const FORGET_HANDOVER_CONSENTS: u32 = 90;
+const SET_SUGGEST_TOPICS: u32 = 91;
 
 pub fn settings(st: &AppState) -> Dialog {
     let mut options = vec!["Same account as the session".to_string(), "The other account".to_string()];
@@ -65,7 +66,7 @@ pub fn settings(st: &AppState) -> Dialog {
             &Backdrop::LABELS,
             Backdrop::parse(&a.backdrop).unwrap_or_default().index(),
         )
-        .help("Windows 11, for the title bar. Terminal text stays opaque."),
+        .help("Windows 11 22H2 or later. Terminal opacity is set separately."),
         Row::choice(SET_ACCENT, "Accent source", &accent_names, accent),
         colour(SET_ACCENT_COLOUR, "Window accent", &a.accent_colour, st.pal().accent)
             .help("Used when Accent source is Custom."),
@@ -83,8 +84,7 @@ pub fn settings(st: &AppState) -> Dialog {
             i32::from(TERMINAL_FONT_MAX),
         )
         .unit("px"),
-        Row::toggle(SET_CURSOR_BLINK, "Blink terminal cursor", a.cursor_blink)
-            .help("Follows the program and system when enabled."),
+        Row::toggle(SET_CURSOR_BLINK, "Blink", a.cursor_blink).help("Follows the program and system when enabled."),
         Row::choice(
             SET_RESTORE_TABS,
             "Reopen terminal tabs on startup",
@@ -92,6 +92,8 @@ pub fn settings(st: &AppState) -> Dialog {
             st.win_file.restore_tabs.index(),
         )
         .help("Only Claude session tabs are remembered. Always still honors resume warnings."),
+        terminal_appearance::cursor_row(a),
+        terminal_appearance::opacity_row(a, st.high_contrast, st.window_focused),
         Row::header("Custom colours"),
         colour(SET_TERM_BACKGROUND, "Terminal background", &a.terminal_background, auto.background)
             .help("Select Custom in Terminal colours."),
@@ -120,6 +122,8 @@ pub fn settings(st: &AppState) -> Dialog {
             st.config.notifications.attention.index(),
         )
         .help("Windows notifications require the tray icon; otherwise the taskbar flashes."),
+        Row::toggle(SET_SUGGEST_TOPICS, "Include topics when suggesting names", st.config.suggest_topics)
+            .help("Shares existing topic labels only when you confirm Suggest names. No extra request."),
         Row::header("Handovers"),
         Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents"),
     ];
@@ -177,6 +181,7 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
                     }
                 }
                 (SET_EMBEDDED, Value::Bool(b)) => st.config.embedded_terminal = b,
+                (SET_SUGGEST_TOPICS, Value::Bool(b)) => st.config.suggest_topics = b,
                 (SET_USAGE, Value::Bool(b)) => {
                     st.config.show_usage = b;
                     if !b {
@@ -229,6 +234,12 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
                 (SET_REDUCE_MOTION, Value::Bool(b)) => st.config.appearance.reduce_motion = b,
                 (SET_SHADOWS, Value::Bool(b)) => st.config.appearance.soft_shadows = b,
                 (SET_CURSOR_BLINK, Value::Bool(b)) => st.config.appearance.cursor_blink = b,
+                (terminal_appearance::CURSOR, Value::Choice(i)) if i < TerminalCursor::OPTIONS.len() => {
+                    st.config.appearance.cursor_shape = TerminalCursor::OPTIONS[i].0;
+                }
+                (terminal_appearance::OPACITY, Value::Number(n)) => {
+                    st.config.appearance.terminal_opacity = terminal_opacity(i64::from(n));
+                }
                 (SET_CORNERS, Value::Number(n)) => st.config.appearance.corner_radius = n.clamp(0, 16) as u8,
                 (id, Value::Text(text)) => {
                     let a = &mut st.config.appearance;

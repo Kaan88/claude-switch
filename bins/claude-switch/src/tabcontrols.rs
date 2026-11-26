@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn tab_actions_target_the_clicked_session_without_changing_list_selection() {
         let mut app = AppState::new(Source::Demo, Some(false), Default::default());
-        app.apply_scan(app.source.scan(&app.config));
+        app.apply_scan(crate::demo::scan(&app.config));
         let selected = app.selected.clone();
         let session = app.sessions.iter().find(|s| Some(&s.id) != selected.as_ref() && s.desktop_id.is_none()).unwrap();
         let id = session.id.clone();

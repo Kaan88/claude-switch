@@ -46,6 +46,7 @@ const COPY_ID: u32 = 27;
 const COPY_PATH: u32 = 28;
 const REVEAL: u32 = 29;
 const CHAT_LAYOUT: u32 = 30;
+const SET_TOPIC: u32 = 31;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -105,6 +106,7 @@ impl AppState {
             PALETTE => self.open_palette(),
             SWITCHER => self.quick_switcher(),
             RENAME => self.ask_rename_session(),
+            SET_TOPIC => self.ask_set_topic(),
             SUGGEST | SUGGEST_BATCH => self.ask_naming(id == SUGGEST_BATCH),
             HIDE_FOLDER if let Some(key) = self.context_folder.take() => self.toggle_group_hidden(now, key),
             HIDE | HIDE_FOLDER => self.toggle_hidden(now, id == HIDE_FOLDER),
@@ -247,13 +249,23 @@ impl AppState {
     pub fn copy_now(&mut self, now: Instant, id: &str, account: &str) {
         let Some(&i) = self.by_id.get(id) else { return };
         let session = self.sessions[i].clone();
-        match self.source.fork(&self.config, &session, account) {
+        let copy_id = match crate::compact_open::session_id() {
+            Ok(id) => id,
+            Err(e) => return self.error("Not opened", e),
+        };
+        match self.source.fork(&self.config, &session, account, &copy_id) {
             Err(r) => self.error("Not opened", r.to_string()),
             Ok(l) => {
+                if !self.source.is_demo() && !self.record_copy(&copy_id, id) {
+                    return;
+                }
                 let name = self.account_name(account);
                 let done = format!("Opened a copy of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
                 if self.start_with_result(now, &l, None, Some(account), done, Some((&session.cwd, App::Cli))) {
                     self.remember_folder_open(&session.cwd, account, App::Cli);
+                } else if !self.source.is_demo() {
+                    self.marks.clear_parent(&copy_id);
+                    self.save_marks();
                 }
             }
         }
@@ -515,6 +527,7 @@ impl AppState {
             Item::new(OPEN_COPY, "Open a copy"),
             Item::new(crate::compact_dialog::COMMAND, crate::compact_dialog::LABEL),
             Item::new(RENAME, "Rename").hint("F2").sep(),
+            Item::new(SET_TOPIC, "Set topic…"),
             Item::new(SUGGEST, "Suggest name"),
             Item::new(PIN, pin).hint("Ctrl+D").enabled(!self.is_archived(s)),
             Item::new(HIDE, hide).hint("Delete"),

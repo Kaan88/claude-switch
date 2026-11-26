@@ -71,7 +71,10 @@ pub fn config() -> Config {
         show_usage: true,
         notifications: Default::default(),
         show_hidden: false,
-        folders_view: false,
+        sessions_mode: Default::default(),
+        group_by_folder: false,
+        show_sittings: false,
+        suggest_topics: false,
         terminal_scheme: "auto".into(),
         terminal_font_size: claude_switch_core::config::TERMINAL_FONT_DEFAULT,
         window_theme: "system".into(),
@@ -98,6 +101,11 @@ fn sessions() -> Vec<Session> {
                 2 => "Compare a clean build with an incremental build and report the difference.".into(),
                 3 => "Add a regression test for dragging past the minimum width.".into(),
                 _ => format!("{title}; start with a small example."),
+            },
+            grouping: claude_switch_core::grouping::Transcript {
+                first_active: Some(at.saturating_sub(14 * 60_000)),
+                first_prompt: Some(title.into()),
+                parent: None,
             },
             turn_ended: i % 3 == 1,
             transcript_ms: at,
@@ -157,11 +165,52 @@ pub fn scan(c: &Config) -> Scan {
             (a.slug.clone(), status)
         })
         .collect();
-    Scan { sessions: sessions(), running: running(), statuses }
+    let mut sessions = sessions();
+    let main = PathBuf::from(FOLDERS[0].0);
+    sessions[3].cwd = main.join("src");
+    sessions[6].cwd = main.with_file_name("kweb-mail-sidebar");
+    sessions[6].branch = Some("sidebar".into());
+    let projects = sessions
+        .iter()
+        .map(|s| {
+            use claude_switch_core::{grouping::Project, sessions::folder_key};
+            let mut p = Project::folder(&s.cwd);
+            p.branch = FOLDERS
+                .iter()
+                .find(|(folder, _)| s.cwd == std::path::Path::new(folder))
+                .map(|(_, branch)| (*branch).to_owned());
+            if s.cwd.starts_with(&main) || s.cwd == main.with_file_name("kweb-mail-sidebar") {
+                p = Project::folder(&main);
+                p.branch = Some("main".into());
+                p.location = match s.cwd.file_name().and_then(|s| s.to_str()) {
+                    Some("src") => Some("src".into()),
+                    Some("kweb-mail-sidebar") => Some("Worktree: kweb-mail-sidebar".into()),
+                    _ => None,
+                };
+            }
+            (folder_key(&s.cwd), p)
+        })
+        .collect();
+    Scan { sessions, running: running(), statuses, projects }
 }
 
 pub fn seed_marks(marks: &mut claude_switch_core::marks::Marks, sessions: &[Session]) {
     for (i, s) in sessions.iter().enumerate() {
+        if i < 32 {
+            let topics = ["Interface", "Build checks", "Session navigation"];
+            marks.set_topic(&s.id, &s.file, topics[i % topics.len()]);
+        }
+        if let Some(parent) = match i {
+            0 => sessions.get(3),
+            3 => sessions.get(6),
+            6 => sessions.get(9),
+            _ => None,
+        } {
+            marks.set_parent(&s.id, &parent.id);
+            if i == 0 {
+                marks.set_handover_from(&s.id, &parent.title);
+            }
+        }
         if i == 2 {
             marks.set_folder_default(&claude_switch_core::sessions::folder_key(&s.cwd), Some(("work", App::Cli)));
         }

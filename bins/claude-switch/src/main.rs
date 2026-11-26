@@ -25,6 +25,7 @@ mod conversation_demo;
 mod conversation_draw;
 mod conversation_search;
 mod demo;
+mod demo_terminal;
 mod details;
 mod dialogs;
 mod folder_defaults;
@@ -63,6 +64,8 @@ use crate::state::AppState;
 fn main() {
     let mut demo = false;
     let mut demo_notifications = false;
+    let mut demo_terminal = None;
+    let mut demo_terminal_settings = false;
     let mut forced_dark = None;
     let mut usage_shape = None;
     let mut usage_labels = false;
@@ -81,6 +84,8 @@ fn main() {
         match a.as_str() {
             "--demo" => demo = true,
             "--demo-notifications" => demo_notifications = true,
+            "--demo-terminal" => demo_terminal = args.next().as_deref().and_then(demo_terminal::Preview::parse),
+            "--demo-terminal-settings" => demo_terminal_settings = true,
             "--theme" => forced_dark = args.next().as_deref().and_then(termtheme::window_dark),
             "--shell" => shell = debug_value(cfg!(debug_assertions), args.next()),
             "--type" => typed.extend(debug_value(cfg!(debug_assertions), args.next())),
@@ -136,6 +141,12 @@ fn main() {
         None
     };
     let mut state = AppState::new(source, forced_dark, win_file.clone());
+    if let Some(preview) = demo_terminal {
+        preview.apply(&mut state);
+    }
+    if demo_terminal_settings {
+        demo_terminal::show_settings(&mut state);
+    }
     state.compact.standalone_window = startup.is_some();
     state.compact.startup = startup;
     state.compact.demo = demo_compact.filter(|_| demo);

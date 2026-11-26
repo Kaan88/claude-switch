@@ -271,6 +271,7 @@ fn session(id: &str, cwd: &str, at: u64) -> Session {
         id: id.into(),
         title: id.into(),
         last_prompt: String::new(),
+        grouping: Default::default(),
         turn_ended: false,
         transcript_ms: at,
         cwd: PathBuf::from(cwd),

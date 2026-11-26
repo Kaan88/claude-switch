@@ -89,12 +89,6 @@ as the second account, Windows Terminal, the desktop hand-over.
     glyphs can lose contrast against the replacement fill; a full-block glyph can even cover that fill.
     The app supplies a contrasting selection foreground as well as a background in every scheme.
     The focused block cursor still paints above the selection in its own cell.
-15. Host frost has one window-wide key and veil, and `termview` paints opaque cell backgrounds
-    without exposing a background-only/compositor layer. Marking the finished grid would also key
-    out glyph pixels and could break contrast on arbitrary desktop colours. Frost the title bar only.
-16. `termview::View` can hide a cursor but cannot override its shape; `Screen` exposes only the
-    parsed cursor. A host-side shape preference needs a renderer override that preserves DECSCUSR,
-    cursor visibility and wide-character coverage. No synthetic escape sequences are fed to the grid.
 17. `settings::pages::Form` has no colour rows or configurable card style. Use the grouped, scrolling
     `settings::Form` with its category rail, native colour rows and animated controls instead.
 18. The grouped form's style controls its card, not its internal dropdown menus or colour-picker
@@ -107,6 +101,13 @@ as the second account, Windows Terminal, the desktop hand-over.
     Claude Code can read the clipboard via its own Alt+V key.
 21. `host::Event` has no file-drop event with positions or file batches. The raw winit hook supplies
     file paths to the active terminal tab, with a short coalescing delay for multiple files.
+
+### Done in the toolkit
+
+- 15: `termview::BackgroundOpacity` composites the default terminal background and padding
+  independently of the chrome veil, with contrast protection and opaque selection/explicit backgrounds.
+- 16: `View::cursor_preference` and `Screen::cursor_style_is_explicit` support a host default
+  without overriding DECSCUSR, cursor visibility, or wide-character coverage.
 
 ## The bridge (`claude-flash-bridge`)
 

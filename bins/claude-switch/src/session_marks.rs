@@ -2,13 +2,14 @@
 
 use std::time::{Duration, Instant};
 
+use claude_switch_core::grouping::Mode;
 use claude_switch_core::sessions::{folder_key, folder_name, group_by_folder};
 use claude_switch_core::{Session, clock};
 use mdshared_ui::sections::Sections;
 
-use crate::list::model::{self, BUCKETS, Calendar, Filter, Flags};
+use crate::list::model::{self, Filter, Flags};
 use crate::source::{ActivityScan, Source};
-use crate::state::{AppState, HEAD_H, ROW_H, ViewGroup};
+use crate::state::{AppState, HEAD_H, ROW_H};
 
 pub struct UndoHide {
     pub key: String,
@@ -86,7 +87,7 @@ impl AppState {
         let now = crate::list::now_ms();
         let offset = clock::local_offset_minutes();
         let date_changed =
-            !self.config.folders_view && self.recent_local_day != Some((model::local_day(now, offset), offset));
+            self.list_mode() == Mode::Recent && self.recent_local_day != Some((model::local_day(now, offset), offset));
         if changed || date_changed {
             self.rebuild_view_at(now, offset);
         }
@@ -98,7 +99,6 @@ impl AppState {
     }
 
     fn rebuild_view_at(&mut self, now: u64, offset: i32) {
-        let calendar = Calendar::at(now, offset);
         self.recent_local_day = Some((model::local_day(now, offset), offset));
         self.archive_count = self.sessions.iter().filter(|s| self.is_archived(s)).count();
         self.archive_picks.retain(|id| self.by_id.contains_key(id) && self.marks.archived_at(id).is_some());
@@ -109,52 +109,14 @@ impl AppState {
             self.project_conversation_search();
             return;
         }
-        let query = self.search.text().trim();
-        let archive_view = self.filter == Filter::Archived;
-        let mut pinned = Vec::new();
-        let mut buckets: [Vec<usize>; 5] = Default::default();
-        let mut groups = Vec::new();
-        for g in &self.all_groups {
-            let mut rows = Vec::new();
-            let key = folder_key(&g.cwd);
-            for &i in &g.sessions {
-                let s = &self.sessions[i];
-                if !self.list_session_visible(s, !query.is_empty())
-                    || (!query.is_empty()
-                        && model::score(query, self.marks.name(&s.id), s, &g.name).is_none()
-                        && s.branch.as_ref().is_none_or(|b| mdshared_app::fuzzy::score(query, b).is_none()))
-                {
-                    continue;
-                }
-                if self.marks.pinned(&s.id) {
-                    pinned.push(i);
-                } else if archive_view || self.config.folders_view {
-                    rows.push(i);
-                } else {
-                    buckets[calendar.bucket(s.last_active_ms)].push(i);
-                }
-            }
-            if !rows.is_empty() {
-                groups.push(ViewGroup { name: g.name.clone(), key: format!("folder:{key}"), rows });
-            }
-        }
-        let newest = |&i: &usize| (std::cmp::Reverse(self.sessions[i].last_active_ms), i);
-        if !pinned.is_empty() {
-            pinned.sort_unstable_by_key(newest);
-            groups.insert(0, ViewGroup { name: "Pinned".into(), key: "pinned".into(), rows: pinned });
-        }
-        for (i, mut rows) in buckets.into_iter().enumerate() {
-            if !rows.is_empty() {
-                rows.sort_unstable_by_key(newest);
-                groups.push(ViewGroup { name: BUCKETS[i].into(), key: format!("recent:{i}"), rows });
-            }
-        }
+        let groups = self.project_groups(now, offset);
+        let no_query = self.search.text().trim().is_empty();
         let scroll = self.sections.scroll;
         self.sections = Sections::new(self.sections.view, ROW_H);
         self.row_locations.clear();
         for (k, g) in groups.iter().enumerate() {
-            self.sections.add_group(g.rows.len(), Some(HEAD_H));
-            self.sections.set_collapsed(k, query.is_empty() && self.collapsed.contains(&g.key));
+            self.sections.add_group(g.rows.len(), (!g.key.starts_with("thread:")).then_some(HEAD_H));
+            self.sections.set_collapsed(k, no_query && self.collapsed.contains(&g.key));
             self.row_locations.extend(g.rows.iter().enumerate().map(|(r, &i)| (i, (k, r))));
         }
         self.groups = groups;
@@ -265,6 +227,7 @@ impl AppState {
                     self.selected = None;
                     self.preview = None;
                     self.session_size.cancel();
+                    self.cancel_related();
                 } else {
                     self.select_first();
                 }
