@@ -144,6 +144,8 @@ pub enum ToolCard {
     },
     /// The questions of an `AskUserQuestion` call, exactly as Claude asked them.
     Questions(Vec<Question>),
+    /// The Markdown plan of an `ExitPlanMode` call.
+    Plan(String),
 }
 
 /// One question of an `AskUserQuestion` call. Its texts are whole: the window matches them
@@ -163,6 +165,8 @@ pub struct QuestionOption {
 }
 
 const MAX_QUESTIONS: usize = 4;
+/// A plan longer than this is cut for the conversation; the terminal shows it whole.
+const MAX_PLAN: usize = 20_000;
 const MAX_OPTIONS: usize = 8;
 const MAX_QUESTION_TEXT: usize = 2000;
 
@@ -242,6 +246,10 @@ impl ToolCard {
                 let questions = input["questions"].as_array()?;
                 (!questions.is_empty() && questions.len() <= MAX_QUESTIONS).then_some(())?;
                 Some(Self::Questions(questions.iter().map(Question::parse).collect::<Option<_>>()?))
+            }
+            "ExitPlanMode" => {
+                let plan = input["plan"].as_str().filter(|p| !p.trim().is_empty())?;
+                Some(Self::Plan(short(plan, MAX_PLAN)))
             }
             _ => None,
         }
@@ -423,5 +431,17 @@ mod tests {
         let info = reader.chat();
         assert!(!info.compacted);
         assert_eq!(info.context, Some(9000));
+    }
+
+    #[test]
+    fn an_exit_plan_mode_call_carries_its_plan() {
+        let input = json!({"plan": "# Plan\n\n1. Parse"});
+        assert_eq!(ToolCard::from_input("ExitPlanMode", &input), Some(ToolCard::Plan("# Plan\n\n1. Parse".into())));
+        assert_eq!(ToolCard::from_input("ExitPlanMode", &json!({"plan": "  "})), None);
+        let long = "x".repeat(MAX_PLAN + 5);
+        let Some(ToolCard::Plan(cut)) = ToolCard::from_input("ExitPlanMode", &json!({ "plan": long })) else {
+            panic!()
+        };
+        assert_eq!(cut.chars().count(), MAX_PLAN + 1);
     }
 }

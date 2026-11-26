@@ -407,3 +407,70 @@ fn declining_with_a_comment_opens_the_prompts_field_and_types_before_enter() {
     press(f.tab(), now, Hit::Deny);
     assert_eq!(f.writes(), [b"\r".to_vec()]);
 }
+
+/// The plan approval menu (its rows to confirm in a live session).
+fn plan_menu(highlight: usize) -> String {
+    let choices = ["Yes, and use auto mode", "Yes, manually approve edits", "No, keep planning"];
+    let mut rows = vec!["\x1b[2J\x1b[H Ready to code?".to_owned(), String::new(), " Plan: build the parser".to_owned()];
+    rows.push(String::new());
+    rows.push(" Would you like to proceed?".to_owned());
+    for (i, choice) in choices.iter().enumerate() {
+        let mark = if i == highlight { "❯" } else { " " };
+        rows.push(format!(" {mark} {}. {choice}", i + 1));
+    }
+    rows.push(String::new());
+    rows.push(" Esc to cancel".to_owned());
+    rows.join("\r\n")
+}
+
+#[test]
+fn a_plan_is_approved_from_the_card_only_while_its_menu_shows() {
+    let mut f = Fixture::new(vec![]);
+    let kind = ItemKind::Tool {
+        id: "toolu_1".into(),
+        name: "ExitPlanMode".into(),
+        summary: "ExitPlanMode".into(),
+        file_path: None,
+        state: ToolState::Running,
+        duration_ms: None,
+        pictures: vec![],
+        subagent: None,
+        card: Some(ToolCard::Plan("# Build the parser\n\n1. Tokens\n2. Tree".into())),
+    };
+    f.tab().pane.as_mut().unwrap().model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });
+    let now = Instant::now();
+
+    // Not shown yet: nothing to answer, no buttons.
+    f.screen("\x1b[?2004h❯ ", now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    assert!(f.chat().question.shown.is_none());
+
+    f.screen(&plan_menu(0), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT));
+    let shown = f.chat().question.shown.clone().unwrap();
+    assert_eq!(shown.choices, ["Yes, and use auto mode", "Yes, manually approve edits", "No, keep planning"]);
+    assert_eq!(shown.deny, Some(2));
+    assert_eq!(f.decide(now), Some(Reason::Approval));
+    let tab = f.tab();
+    assert_eq!(waiting_label(&tab.pane.as_ref().unwrap().model, &tab.term.screen), Some(APPROVING));
+
+    press(f.tab(), now, Hit::Option(1));
+    assert_eq!(f.writes(), [down(1)]);
+    f.screen(&plan_menu(1), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+
+    // Keep planning with a note: no Tab field offered, so the note goes to the composer.
+    let mut f2 = Fixture::new(vec![]);
+    let kind = f.tab().pane.as_ref().unwrap().model.items.values().next().unwrap().kind.clone();
+    f2.tab().pane.as_mut().unwrap().model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });
+    f2.screen(&plan_menu(2), now);
+    f2.chat().question.field.set_text("Add error recovery first");
+    press(f2.tab(), now, Hit::Deny);
+    assert_eq!(f2.writes(), [b"\r".to_vec()]);
+    f2.resolve();
+    advance(f2.tab(), now + RESULT, true);
+    assert_eq!(f2.chat().editor.text, "Add error recovery first");
+}

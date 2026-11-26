@@ -311,12 +311,8 @@ impl Chat {
             decision = (Gate::Check, Some(Reason::Tool));
         }
         // The card answers it: the same refusal, without sending the user to the terminal.
-        if decision.1 == Some(Reason::Tool)
-            && info.pending.is_some()
-            && self.question.answerable == info.pending
-            && !self.question.approval
-        {
-            decision.1 = Some(Reason::Question);
+        if decision.1 == Some(Reason::Tool) && info.pending.is_some() && self.question.answerable == info.pending {
+            decision.1 = Some(if self.question.approval { Reason::Approval } else { Reason::Question });
         }
         decision
     }

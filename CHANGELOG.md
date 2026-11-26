@@ -12,6 +12,8 @@
   working line says "Waiting for your answer".
 - Chat: permission prompts can be answered from a card in the chat, with the tool call and the
   terminal's own choices; the working line says "Waiting for your approval".
+- Chat: a finished plan shows as Markdown in the conversation and is approved from a card with the
+  terminal's own choices.
 - Chat: the Effort chip shows the level the session started with (environment, `--effort`,
   settings, or the model's default) and follows `/effort` and `/model` typed in the terminal; Context
   reads "— after compact" after a compaction until the next answer.

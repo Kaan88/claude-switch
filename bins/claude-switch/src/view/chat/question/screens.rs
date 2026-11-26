@@ -15,6 +15,10 @@ pub(super) const PERMISSION_ASKS: [&str; 2] = ["Do you want to ", "Would you lik
 pub(super) const TELL_CLAUDE: &str = "tell Claude";
 /// A footer hint that Tab opens a comment on the highlighted choice, lower case.
 pub(super) const AMEND: &str = "tab to amend";
+/// The plan approval question shown for `ExitPlanMode`.
+pub(super) const PLAN_ASKS: &str = "Would you like to proceed?";
+/// The plan approval choice that declines (keeps planning).
+pub(super) const PLAN_KEEP: &str = "keep planning";
 /// How far above a menu's footer its rows may start.
 const MENU_ROWS: usize = 60;
 /// How many rows above a permission question its tool description may use.
@@ -135,6 +139,13 @@ pub(super) fn permission(screen: &Screen) -> Option<Permission> {
     let tell = menu.entries.iter().position(|e| e.text.contains(TELL_CLAUDE));
     let body = body.iter().map(|s| (*s).to_owned()).collect();
     Some(Permission { question: question.to_owned(), body, tell, menu })
+}
+
+/// The plan approval menu: its question right above the choices, one of which keeps planning.
+pub(super) fn plan(screen: &Screen) -> Option<Menu> {
+    let menu = menu(screen)?;
+    let asks = menu.above(4).last().is_some_and(|q| *q == PLAN_ASKS);
+    (asks && menu.entries.iter().any(|e| e.text.contains(PLAN_KEEP))).then_some(menu)
 }
 
 #[cfg(test)]

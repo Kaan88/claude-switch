@@ -719,7 +719,16 @@ amend" (Tab, the text, then Enter once the text is visible), or its "No, and tel
 whose text then goes to the composer. Shift+Tab is never sent at a prompt. The same deadlines and
 fail-closed rules as questions apply. While the card can answer, sends are refused with "Answer
 Claude's request above", the drawer stays closed and the working line reads "Waiting for your
-approval". Every screen pattern lives in `view/chat/question/screens.rs`.
+approval".
+
+**Plan approval.** A pending `ExitPlanMode` call shows its plan as Markdown in the conversation, from
+the call's input (cut at 20,000 characters), always open. The card under it offers the plan menu's
+own choices, and only while the screen shows that menu: the row right above the choices reads
+"Would you like to proceed?", one choice contains "keep planning", and the menu footer is the last
+row. The same highlight, Enter and deadline rules apply. "Keep planning" with text uses the Tab field
+when the footer offers it, else the text goes to the composer for the next message.
+
+Every screen pattern lives in `view/chat/question/screens.rs`.
 
 **Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
 Sessions › Classic terminal view is on (the default): Claude Code then draws on the main screen,

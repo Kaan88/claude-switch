@@ -87,6 +87,7 @@ pub(super) fn pending(model: &Model) -> Option<Pending<'_>> {
 pub(in crate::view) fn waiting_label(model: &Model, screen: &Screen) -> Option<&'static str> {
     match pending(model)?.kind {
         Kind::Question(_) => Some(ASKING),
+        Kind::Tool(kind) if is_plan(kind) => screens::plan(screen).map(|_| APPROVING),
         Kind::Tool(_) => crate::attention::screen_permission_prompt(screen).then_some(APPROVING),
     }
 }
@@ -94,6 +95,11 @@ pub(in crate::view) fn waiting_label(model: &Model, screen: &Screen) -> Option<&
 /// One single-choice question is what Chat can answer; the rest stays in the terminal.
 pub(super) fn answerable(questions: &[Question]) -> bool {
     matches!(questions, [q] if !q.multi_select)
+}
+
+/// `ExitPlanMode`: the plan approval menu instead of a permission prompt.
+fn is_plan(kind: &ItemKind) -> bool {
+    matches!(kind, ItemKind::Tool { name, .. } if name == "ExitPlanMode")
 }
 
 /// Texts that the screen's prompt must show for this tool call: the command, the file, the
@@ -157,6 +163,7 @@ enum Stage {
 enum Subject {
     Question(Question),
     Tool { needles: Vec<String>, choices: Vec<String> },
+    Plan { choices: Vec<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -226,6 +233,13 @@ fn read(
             let same = texts.len() == choices.len()
                 && texts.iter().zip(choices).enumerate().all(|(i, (a, b))| a == b || typing == Some(i));
             (same && names(&prompt, needles)).then_some((prompt.menu, None, None))
+        }
+        Subject::Plan { choices } => {
+            let menu = screens::plan(screen)?;
+            let texts = menu.texts();
+            let same = texts.len() == choices.len()
+                && texts.iter().zip(choices).enumerate().all(|(i, (a, b))| a == b || typing == Some(i));
+            same.then_some((menu, None, None))
         }
     }
 }
@@ -305,6 +319,19 @@ fn write(tab: &mut Tab, bytes: &[u8]) -> Result<(), &'static str> {
 }
 
 fn tool_prompt(kind: &ItemKind, alone: bool, screen: &Screen) -> Option<Shown> {
+    if is_plan(kind) {
+        // Only the plan's own menu: the plan itself is in the conversation, from the transcript.
+        let menu = screens::plan(screen)?;
+        let amend = menu.lines[menu.footer].to_lowercase().contains(screens::AMEND);
+        return Some(Shown {
+            matched: alone,
+            question: screens::PLAN_ASKS.to_owned(),
+            body: Vec::new(),
+            choices: menu.texts(),
+            deny: menu.entries.iter().position(|e| e.text.contains(screens::PLAN_KEEP)),
+            amend,
+        });
+    }
     let prompt = screens::permission(screen)?;
     let needles = needles(kind);
     let deny = prompt.menu.entries.iter().rposition(|e| e.text.starts_with("No"));
@@ -409,6 +436,7 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         Kind::Tool(kind) => {
             let needles = needles(kind);
             match tool_prompt(kind, alone, &tab.term.screen).filter(|s| s.matched) {
+                Some(shown) if is_plan(kind) => Subject::Plan { choices: shown.choices },
                 Some(shown) => Subject::Tool { needles, choices: shown.choices },
                 None => {
                     pane.chat.question_failed(NOT_SHOWN_TOOL);
@@ -431,7 +459,9 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     let text = collapse(chat.question.field.text());
     let (target, then) = match (&subject, hit) {
         (Subject::Question(q), Hit::Option(i)) if i < q.options.len() => (Some(i), Then::Choose),
-        (Subject::Tool { choices, .. }, Hit::Option(i)) if i < choices.len() => (Some(i), Then::Choose),
+        (Subject::Tool { choices, .. } | Subject::Plan { choices }, Hit::Option(i)) if i < choices.len() => {
+            (Some(i), Then::Choose)
+        }
         (Subject::Question(_), Hit::Answer) => match answer_text(&chat.question.field) {
             Ok(text) => (other, Then::Type(text)),
             Err(error) => {
@@ -440,8 +470,8 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             }
         },
         (Subject::Question(_), Hit::ChatAbout) => (chat_row, Then::Chat(text)),
-        (Subject::Tool { .. }, Hit::Deny) if text.is_empty() => (shown.deny, Then::Choose),
-        (Subject::Tool { .. }, Hit::Deny) => match answer_text(&chat.question.field) {
+        (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) if text.is_empty() => (shown.deny, Then::Choose),
+        (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) => match answer_text(&chat.question.field) {
             Ok(text) if shown.amend => (shown.deny, Then::Amend(text)),
             Ok(text) => (shown.deny, Then::Chat(text)),
             Err(error) => {
@@ -630,6 +660,9 @@ const BODY_LINES: usize = 4;
 /// The tool call as the transcript has it, a few lines for the card.
 fn detail(kind: &ItemKind) -> Vec<String> {
     let ItemKind::Tool { summary, file_path, card, .. } = kind else { return Vec::new() };
+    if is_plan(kind) {
+        return vec!["The plan is shown above, in the conversation.".to_owned()];
+    }
     let mut lines: Vec<String> = match card {
         Some(ToolCard::Shell { command, .. }) => command.lines().map(str::to_owned).collect(),
         Some(ToolCard::Edit { path, added, removed, lines }) => {
@@ -643,6 +676,9 @@ fn detail(kind: &ItemKind) -> Vec<String> {
 
 fn tool_title(kind: &ItemKind) -> String {
     let ItemKind::Tool { name, .. } = kind else { return String::new() };
+    if is_plan(kind) {
+        return "Claude's plan is ready".to_owned();
+    }
     match name.strip_prefix("mcp__").and_then(|s| s.split_once("__")) {
         Some((server, tool)) => format!("Claude wants to use {server} / {tool}"),
         None => format!("Claude wants to use {name}"),
