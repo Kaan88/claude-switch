@@ -76,6 +76,11 @@ pub enum Pending {
     },
     UnarchiveAll,
     RestartOpenCode(crate::opencode_workers::Restart),
+    ManageShell {
+        tab: u64,
+        generation: u64,
+        tool: claude_switch_core::transcript::ItemId,
+    },
 }
 
 impl Pending {
@@ -420,6 +425,7 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::ChatSlash { tab, session, line, from_editor }) => {
                 st.chat_confirm_slash(now, tab, session, &line, from_editor);
             }
+            (OK, Pending::ManageShell { tab, generation, tool }) => st.confirm_shell_manager(tab, generation, tool),
             (OK, Pending::Quit) => st.quit = true,
             (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
             (OK, Pending::UnarchiveAll) => st.unarchive(now, None),

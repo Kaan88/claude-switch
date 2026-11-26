@@ -245,6 +245,9 @@ impl Ui {
                 self.follow.latest();
             }
             Action::Stop(turn) => return Release::Stop(turn),
+            Action::Shell(id) => return Release::Shell(id),
+            Action::ShellList => return Release::ShellList,
+            Action::Output(output) => self.open_output(output.to, m),
             Action::Group(id) => {
                 if !self.expanded.remove(&id) {
                     self.expanded.insert(id);
@@ -285,10 +288,30 @@ impl Ui {
     }
 
     pub(in crate::view) fn open_markdown(&mut self, file: NamedFile, m: &mut Model) {
+        if self.detail_side().is_some() {
+            self.show(Page::Conversation);
+        }
         self.selection = None;
         self.focused = true;
         m.request_markdown(file.clone());
         self.markdown = Some(markdown::Markdown::new(file));
+    }
+
+    pub(in crate::view) fn open_output(&mut self, output: Destination, m: &mut Model) {
+        if self.detail_side().is_some() && !matches!(&output, Destination::Web(..)) {
+            self.show(Page::Conversation);
+        }
+        match output {
+            Destination::Web(url, _) if super::super::outputs::https(&url).is_some() => {
+                platform::open_url(&url);
+            }
+            Destination::File(file) => self.open_markdown(file, m),
+            Destination::Picture(id, index) => {
+                let image = m.picture(id, index, true).or_else(|| m.picture(id, index, false));
+                self.overlay = Some(Overlay { id, index, image, bounds: Rect::default() });
+            }
+            _ => {}
+        }
     }
 
     pub(super) fn close_markdown(&mut self) {

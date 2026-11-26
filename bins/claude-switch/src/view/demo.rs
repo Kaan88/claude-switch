@@ -20,14 +20,19 @@ pub struct Transcript {
 impl Transcript {
     #[cfg(test)]
     pub fn new() -> io::Result<Self> {
-        Self::open(false)
+        Self::open(false, false)
     }
 
+    #[cfg(test)]
     pub fn new_chat() -> io::Result<Self> {
-        Self::open(true)
+        Self::open(true, false)
     }
 
-    fn open(chat: bool) -> io::Result<Self> {
+    pub fn new_details() -> io::Result<Self> {
+        Self::open(true, true)
+    }
+
+    fn open(chat: bool, details: bool) -> io::Result<Self> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         let cwd = loop {
             let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
@@ -46,6 +51,9 @@ impl Transcript {
         seed(&demo, &mut file)?;
         if chat {
             seed_chat(&mut file, &demo.cwd)?;
+            if details {
+                seed_details(&mut file, &demo.cwd)?;
+            }
             return Ok(demo);
         }
         let (stop, signal) = mpsc::channel();
@@ -75,6 +83,103 @@ impl Transcript {
             let _ = writer.join();
         }
     }
+}
+
+fn seed_details(file: &mut File, cwd: &Path) -> io::Result<()> {
+    record(file, 40, "user", json!("Build the preview and show me what it produced."))?;
+    let runs = [
+        ("watch-preview", "b7watch", "npm run preview -- --watch", "Listening on the demo preview port"),
+        ("check-proof", "b4done", "npm run check:proof", "Proof checks passed"),
+        ("old-preview", "b2old", "npm run build:old-preview", "Stopped at a checkpoint"),
+    ];
+    // Each record is separate, exactly like the tool-use/result pairing of a real turn.
+    for (i, (tool_id, shell_id, command, last)) in runs.into_iter().enumerate() {
+        let log = cwd.join(format!("{shell_id}.output"));
+        fs::write(
+            &log,
+            format!(
+                "Checking assets\nLoading cover images\nBuilding the ridge plate\nPreparing styles\n\
+             Indexing views\nRendering the north ridge\nWriting the preview\n{last}\n"
+            ),
+        )?;
+        record(
+            file,
+            41 + i as u8,
+            "assistant",
+            json!([tool(
+                tool_id,
+                "Bash",
+                json!({
+                    "command": command, "run_in_background": true
+                })
+            )]),
+        )?;
+        record(
+            file,
+            42 + i as u8,
+            "user",
+            json!([result(
+                tool_id,
+                json!(format!(
+                    "Command running in background with ID: {shell_id}. Output is being written to: {}",
+                    log.display()
+                ))
+            )]),
+        )?;
+    }
+    for (i, (id, status, code)) in [("b4done", "completed", 0), ("b2old", "killed", 130)].into_iter().enumerate() {
+        record(
+            file,
+            45 + i as u8,
+            "user",
+            json!(format!(
+                "<task-notification><task-id>{id}</task-id><status>{status}</status><exit-code>{code}</exit-code></task-notification>"
+            )),
+        )?;
+    }
+    let mut image = File::create(cwd.join("north-ridge.png"))?;
+    let mut encoder = png::Encoder::new(&mut image, 144, 90);
+    encoder.set_color(png::ColorType::Rgb);
+    let mut rgb = Vec::new();
+    for y in 0..90 {
+        for x in 0..144 {
+            let ridge = 56 - (45i32 - x).abs().min(50) / 2;
+            let ink = if (y - (x - 108).abs()) < 39 && y < ridge {
+                [248, 202, 120]
+            } else if y >= ridge {
+                [43, 67, 85]
+            } else {
+                [98, 155, 178]
+            };
+            rgb.extend(ink);
+        }
+    }
+    encoder.write_header()?.write_image_data(&rgb)?;
+    record(file, 46, "assistant", json!([tool("demo-image", "Write", json!({"file_path":"north-ridge.png"}))]))?;
+    record(file, 47, "user", json!([result("demo-image", json!("Saved the north ridge plate."))]))?;
+    fs::write(cwd.join("preview-report.txt"), "Demo preview report\n8 assets rendered.\n")?;
+    record(file, 48, "assistant", json!([tool("demo-publish", "Bash", json!({"command":"publish preview"}))]))?;
+    record(
+        file,
+        49,
+        "user",
+        json!([result(
+            "demo-publish",
+            json!(
+                "Published https://claude.ai/artifacts/demo-north-ridge and created https://github.com/example/field-guide/pull/42\nSaved to: preview-report.txt"
+            )
+        )]),
+    )?;
+    record(
+        file,
+        50,
+        "assistant",
+        json!(
+            "The [North ridge preview](https://claude.ai/artifacts/demo-north-ridge) and the \
+         [review pull request](https://github.com/example/field-guide/pull/42) are ready. \
+         See also the [build notes](https://example.test/field-guide/build)."
+        ),
+    )
 }
 
 fn seed_chat(file: &mut File, cwd: &Path) -> io::Result<()> {

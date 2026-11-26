@@ -3,10 +3,13 @@
 pub mod attach;
 pub mod chat;
 mod discovery;
+mod documents;
 mod links;
 pub(crate) mod model;
+mod outputs;
 mod pictures;
 mod preview;
+mod shells;
 mod text;
 mod ui;
 mod working;
@@ -162,7 +165,7 @@ impl AppState {
         if !self.source.is_demo() || !self.tabs.is_empty() {
             return;
         }
-        let demo = match crate::demo::Transcript::new_chat() {
+        let demo = match crate::demo::Transcript::new_details() {
             Ok(demo) => demo,
             Err(e) => {
                 self.error("Could not start the demo transcript", e.to_string());
@@ -313,6 +316,20 @@ impl AppState {
         let Some(pane) = &mut tab.pane else { return };
         if output || pane.next.is_none_or(|at| at <= now) {
             pane.model.poll();
+            let side =
+                pane.chat.detail_side().or_else(|| (!pane.chat.enabled).then(|| pane.ui.detail_side()).flatten());
+            if side == Some(chat::Side::Shells) && !pane.ui.overlay_open() {
+                for &id in pane.chat.details.visible_shells.iter().take(6) {
+                    pane.model.request_shell_tail(id);
+                }
+                if pane.model.running_shells() > 0 {
+                    if pane.chat.enabled {
+                        cx.request_redraw_all();
+                    } else {
+                        cx.request_redraw(self.session_view.pane_area);
+                    }
+                }
+            }
             pane.next = Some(now + POLL);
         }
         if let Some(next) = pane.next {
@@ -345,13 +362,38 @@ impl AppState {
         let mouse = self.background_pointer();
         let hot = self.session_view.splitter.hit(area, AXIS, mouse.0, mouse.1);
         let motion = cx.anim().animates();
+        let tab = self.tabs.active.unwrap_or(0);
+        let hover = self.hover;
+        let details_active = self.nothing_over() && !self.picture_overlay() && !self.usage.popup.open;
+        let mut hits = Vec::new();
         if let Some(pane) = self.shown_pane(area.w) {
             pane.ui.draw(p, pal, rects.2, &mut pane.model, mouse, cx.now(), motion);
+            if let Some(side) = pane.ui.detail_side() {
+                let area =
+                    mdshared_ui::gfx::Rect::new(rects.2.x, rects.2.y + 31.0, rects.2.w, (rects.2.h - 31.0).max(0.0));
+                hits = pane.chat.details.draw(
+                    p,
+                    pal,
+                    chat::side::Frame {
+                        tab,
+                        area,
+                        side,
+                        model: &pane.model,
+                        cwd: &pane.cwd,
+                        hover: hover.filter(|_| details_active),
+                    },
+                );
+            } else {
+                pane.chat.details.visible_shells.clear();
+            }
             if pane.ui.animating() && motion {
                 cx.animating(rects.2);
             }
             splitter::draw(p, pal, rects, AXIS, hot);
             self.hits.push((rects.1, Target::Splitter));
+        }
+        if details_active {
+            self.hits.extend(hits);
         }
     }
 
@@ -382,6 +424,16 @@ impl AppState {
     pub fn session_press(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32, clicks: u32) -> bool {
         let width = cx.size().0;
         let overlay = self.picture_overlay();
+        if !overlay
+            && !self.chat_active()
+            && self.session_visible(width)
+            && let Some(target) = self.hits.iter().rev().find_map(|(r, t)| {
+                (r.contains(x, y) && matches!(t, Target::Chat(chat::Control::Detail(_)))).then_some(*t)
+            })
+        {
+            self.pressed = Some(target);
+            return true;
+        }
         if !overlay && !self.chat_active() && self.session_visible(width) {
             let split = &mut self.session_view.splitter;
             let area = self.session_view.area;
@@ -423,11 +475,25 @@ impl AppState {
             return false;
         }
         let Some(pane) = self.shown_pane(cx.size().0) else { return false };
-        match pane.ui.release(x, y, cx.mods(), &mut pane.model) {
+        let previous = pane.ui.detail_side();
+        let action = pane.ui.release(x, y, cx.mods(), &mut pane.model);
+        if previous != pane.ui.detail_side() {
+            pane.chat.details.reset_scroll();
+            pane.chat.details.visible_shells.clear();
+        }
+        match action {
             ui::Release::Miss => false,
             ui::Release::Handled => true,
             ui::Release::Stop(turn) => {
                 self.stop_conversation(cx, Some(turn));
+                true
+            }
+            ui::Release::Shell(id) => {
+                self.select_shell(Some(id));
+                true
+            }
+            ui::Release::ShellList => {
+                self.select_shell(None);
                 true
             }
         }
@@ -468,7 +534,11 @@ impl AppState {
     pub fn session_wheel(&mut self, width: f32, x: f32, y: f32, dy: f32) -> bool {
         (self.picture_overlay() || self.session_view.pane_area.contains(x, y))
             && self.shown_pane(width).is_some_and(|pane| {
-                pane.ui.wheel(x, y, dy);
+                if pane.ui.detail_side().is_some() && !pane.ui.overlay_open() {
+                    pane.chat.details.wheel(dy);
+                } else {
+                    pane.ui.wheel(x, y, dy);
+                }
                 true
             })
     }

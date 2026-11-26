@@ -227,7 +227,7 @@ and never overwrites an existing file. Treat the report as private conversation 
 
 Pick **Chat** or **Terminal** at the right of a Claude session’s tab strip. The choice stays
 with each tab and sets the default for new ones. Chat shows the local conversation, a multiline
-composer, and a collapsible Tasks, Agents, and Changed files panel on wider windows.
+composer, and a collapsible Details panel on wider windows.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
 to resize it, and answer permissions and other CLI dialogs there.
 
@@ -241,6 +241,14 @@ the system’s default app; **×** returns to the conversation.
 In Chat’s **Details** panel, click a task or agent to expand it. Under **Files**, click a name
 to open an existing supported file, or click its arrow to see the recorded edits. Clicking an
 edit jumps to that tool call in the conversation.
+
+**Shells** shows background Bash runs and their reported outcomes. Click the **N shells running**
+chip or a tool row’s **background** badge to get there. Expand a running shell for its latest
+eight lines; toggle **Following** to freeze the tail or choose **Full output** for a text snapshot.
+**Stop…** asks before opening the CLI’s own shell manager. Switch never stops a shell itself.
+**Outputs** collects HTTPS links, artifacts, pull requests, and saved files and pictures. The
+conversation also shows output cards. Links open in the default browser; local previews open in
+the viewer. Both tabs are also available in **Session view**.
 
 | Shortcut in a session tab | Action |
 | --- | --- |

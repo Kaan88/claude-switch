@@ -77,6 +77,16 @@ impl Chat {
 }
 
 impl Draw<'_> {
+    pub(super) fn shell_chip(&mut self, p: &mut Painter, area: Rect, count: usize) {
+        if count > 0 && area.h > 0.0 {
+            let label = crate::view::shells::running_label(count);
+            let w = p.measure(Face::Semibold, PILL_FONT, &label) + 18.0;
+            if w <= area.w {
+                self.pill(p, Rect::new(area.x + 3.0, area.y + 1.0, w, 21.0), &label, Control::Shells, false, true);
+            }
+        }
+    }
+
     pub fn composer(mut self, p: &mut Painter, chat: &mut Chat, info: &ChatInfo, suggestions: Option<Suggestions>) {
         let l = chat.layout;
         let clip = p.clip(l.composer);
@@ -84,6 +94,7 @@ impl Draw<'_> {
         p.rbox(l.box_frame.inset(1.0), 10.0, self.pal.field);
         self.attachments(p, chat);
         self.editor(p, chat);
+        self.shell_chip(p, l.shell_chip, chat.shell_count);
         self.notice(p, chat, info);
         self.toolbar(p, chat, info);
         p.restore(clip);

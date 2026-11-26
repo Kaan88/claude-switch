@@ -9,7 +9,7 @@ use claude_switch_core::transcript::{Picture, Reader};
 use mdshared_text::image::{self, Image, Limits};
 use mdshared_ui::{platform, thumbs};
 
-fn decode(bytes: &[u8], side: u32) -> io::Result<Image> {
+pub(super) fn decode(bytes: &[u8], side: u32) -> io::Result<Image> {
     let image = image::decode(bytes, Limits::DEFAULT).map_err(io::Error::other)?;
     if image.width.max(image.height) <= side {
         return Ok(image);

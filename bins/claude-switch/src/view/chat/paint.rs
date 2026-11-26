@@ -28,14 +28,20 @@ impl AppState {
     pub fn layout_chat(&mut self, area: Rect) -> Rect {
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return Rect::default() };
         let chat = &mut pane.chat;
-        chat.layout = Layout::new(
-            area,
+        chat.shell_count = pane.model.running_shells();
+        let running = chat.shell_count != 0;
+        let reveal = matches!(chat.side, Side::Shells | Side::Outputs);
+        let (panel, drawer, chips, notice) = (
             !chat.side_hidden,
             chat.drawer != Drawer::Closed,
-            chat.drawer_height,
             !chat.chips.is_empty(),
             chat.notice(&pane.model.chat).is_some(),
         );
+        chat.layout = if running || reveal {
+            Layout::with_shells(area, panel, drawer, chat.drawer_height, chips, notice, running, reveal)
+        } else {
+            Layout::new(area, panel, drawer, chat.drawer_height, chips, notice)
+        };
         self.session_view.pane_area = chat.layout.conversation;
         chat.layout.drawer
     }
@@ -67,13 +73,21 @@ impl AppState {
             let clip = p.clip(l.side);
             p.fill(l.side, pal.pane);
             p.fill(Rect::new(l.side.x, l.side.y, p.px(), l.side.h), pal.line);
-            let w = (l.side.w - 20.0) / 3.0;
-            for (i, (side, name)) in
-                [(Side::Tasks, "Tasks"), (Side::Agents, "Agents"), (Side::Files, "Files")].into_iter().enumerate()
+            let w = (l.side.w - 12.0) / 5.0;
+            let shells = format!("Shells {}", pane.model.shells.len());
+            for (i, (side, name)) in [
+                (Side::Tasks, "Tasks"),
+                (Side::Agents, "Agents"),
+                (Side::Shells, shells.as_str()),
+                (Side::Files, "Files"),
+                (Side::Outputs, "Outputs"),
+            ]
+            .into_iter()
+            .enumerate()
             {
                 hit(
                     p,
-                    Rect::new(l.side.x + 10.0 + w * i as f32, l.side.y + 10.0, w - 3.0, 27.0),
+                    Rect::new(l.side.x + 6.0 + w * i as f32, l.side.y + 10.0, w - 2.0, 27.0),
                     name,
                     Control::Side(side),
                     chat.side == side,
@@ -92,6 +106,8 @@ impl AppState {
                 },
             );
             p.restore(clip);
+        } else {
+            chat.details.visible_shells.clear();
         }
         if l.grip.h > 0.0 {
             // Opaque backing for the drawer label, resize handle and Focus terminal button.
@@ -132,7 +148,7 @@ impl AppState {
         composer::Draw {
             pal,
             focused,
-            wide: area.w >= 900.0,
+            wide: area.w >= 900.0 || l.side.w > 0.0,
             hover,
             hits: &mut self.hits,
             pins: &self.win_file.chat_pins,

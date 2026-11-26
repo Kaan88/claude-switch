@@ -17,6 +17,7 @@ use mdshared_ui::theme::Palette;
 
 use super::links::NamedFile;
 use super::model::{Follow, Group, Model};
+use super::outputs::{Destination, Output};
 use super::working::{Footer, Turn};
 use rows::{HEAD, Id, PIC, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface};
@@ -27,6 +28,7 @@ enum Page {
     Conversation,
     Agents,
     Tasks,
+    Details(super::chat::Side),
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -36,6 +38,9 @@ enum Action {
     Earlier,
     Latest,
     Stop(Turn),
+    Shell(ItemId),
+    ShellList,
+    Output(Output),
     Agent(String),
     Back,
     Group(ItemId),
@@ -94,10 +99,19 @@ pub(super) enum Release {
     Miss,
     Handled,
     Stop(Turn),
+    Shell(ItemId),
+    ShellList,
 }
 
 const PAD: f32 = 12.0;
 impl Ui {
+    pub(super) fn detail_side(&self) -> Option<super::chat::Side> {
+        if let Page::Details(side) = self.page { Some(side) } else { None }
+    }
+
+    pub(super) fn show_details(&mut self, side: super::chat::Side) {
+        self.show(Page::Details(side));
+    }
     pub fn set_chat(&mut self, chat: bool) {
         if self.chat != chat {
             self.chat = chat;
@@ -175,20 +189,31 @@ impl Ui {
         let tabs_y = area.y + 44.0;
         if !self.chat {
             let mut bx = x;
-            for (page, label, frac) in [
-                (Page::Conversation, "Conversation", 0.45),
-                (Page::Agents, "Agents", 0.285),
-                (Page::Tasks, "Tasks", 0.265),
-            ] {
-                let w = width * frac;
-                let count = match page {
-                    Page::Conversation => None,
-                    Page::Agents => Some(m.agents.len()),
-                    Page::Tasks => Some(m.tasks.len()),
-                };
-                self.segment(p, pal, Rect::new(bx, tabs_y, (w - 3.0).max(1.0), 29.0), (label, count), page);
+            use super::chat::Side;
+            let tabs = [
+                (Page::Conversation, "Conversation", None),
+                (Page::Tasks, "Tasks", (width >= 365.0).then_some(m.tasks.len())),
+                (Page::Agents, "Agents", (width >= 365.0).then_some(m.agents.len())),
+                (Page::Details(Side::Shells), "Shells", Some(m.shells.len())),
+                (Page::Details(Side::Files), "Files", None),
+                (Page::Details(Side::Outputs), "Outputs", None),
+            ];
+            let needs = tabs.map(|(_, label, count)| {
+                p.measure(Face::Semibold, 12.0, label) + if count.is_some() { 29.0 } else { 4.0 }
+            });
+            let need = needs.iter().sum::<f32>();
+            for ((page, label, count), want) in tabs.into_iter().zip(needs) {
+                let w = width * want / need;
+                let label = (label, count.filter(|_| width >= need - 5.0));
+                self.segment(p, pal, Rect::new(bx, tabs_y, (w - 2.0).max(1.0), 29.0), label, page);
                 bx += w;
             }
+        }
+        if self.detail_side().is_some() {
+            self.scrollbar = None;
+            self.body = Rect::default();
+            p.restore(clip);
+            return;
         }
         let mut top = if self.chat { area.y + 7.0 } else { tabs_y + 38.0 };
         if self.page == Page::Conversation
@@ -205,7 +230,10 @@ impl Ui {
             top += 24.0;
         }
         // The track must retain its length when paging or dragging toggles follow.
-        let footer = area.bottom() - self.footer_height(area.w, m.agent.is_none());
+        let shell_count =
+            if self.page == Page::Conversation && !self.chat && m.agent.is_none() { m.running_shells() } else { 0 };
+        let shell_h = if shell_count > 0 { 26.0 } else { 0.0 };
+        let footer = area.bottom() - self.footer_height(area.w, m.agent.is_none()) - shell_h;
         if self.page == Page::Conversation && m.has_earlier && !(self.markdown.is_some() && width < 640.0) {
             let h = if self.chat { 21.0 } else { 26.0 };
             self.button(p, pal, Rect::new(x, top, 106.0, h), "Load earlier", Action::Earlier, false);
@@ -247,10 +275,20 @@ impl Ui {
             self.conversation_footer(
                 p,
                 pal,
-                Rect::new(x, footer, width, area.bottom() - footer),
+                Rect::new(x, footer, width, area.bottom() - footer - shell_h),
                 visible,
                 m.agent.is_none(),
             );
+            if shell_count > 0 {
+                self.button(
+                    p,
+                    pal,
+                    Rect::new(x, area.bottom() - 25.0, 136.0, 22.0),
+                    &super::shells::running_label(shell_count),
+                    Action::ShellList,
+                    false,
+                );
+            }
         } else {
             let count = if self.page == Page::Agents { m.agents.len() } else { m.tasks.len() };
             p.text(
@@ -295,6 +333,7 @@ impl Ui {
                 }
                 Page::Agents => r.agents(&m.agents),
                 Page::Tasks => r.tasks(&m.tasks),
+                Page::Details(_) => unreachable!("shared Details draws outside transcript rows"),
             }
             self.rows = r.list;
             self.cache = Some(key);

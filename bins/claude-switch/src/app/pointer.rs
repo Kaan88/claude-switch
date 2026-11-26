@@ -147,7 +147,9 @@ impl AppState {
             Some(Target::Terminal) if !program_mouse => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Editor) | Target::Search) => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Grip)) => Cursor::ResizeNs,
-            Some(Target::Chat(crate::view::chat::Control::Detail(_))) => Cursor::Hand,
+            Some(Target::Chat(crate::view::chat::Control::Detail(_) | crate::view::chat::Control::Shells)) => {
+                Cursor::Hand
+            }
             Some(Target::Dialog(id))
                 if id == dialogs::FIELD
                     || id == crate::compact_dialog::EDITOR && matches!(self.dialog, Some(Dialog::Compact(_))) =>
