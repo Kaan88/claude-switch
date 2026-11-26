@@ -124,6 +124,8 @@ impl AppState {
 
     pub(crate) fn in_place_failed(&mut self, tab: u64, reason: &str) {
         let Some(job) = self.tabs.get_mut(tab).and_then(|t| t.in_place.take()) else { return };
+        // An automatic handover that stopped here asks next time (compaction is still off).
+        self.auto_ask_again(tab, &job.from_session);
         self.warn("The handover did not continue here", failure_text(reason, &job.saved));
     }
 

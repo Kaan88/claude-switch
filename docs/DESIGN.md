@@ -482,7 +482,9 @@ It applies only to the CLI tabs Claude Switch starts from then on; nothing outsi
 changes (no plugin hook, no global or account setting). While it is on, those tabs start Claude
 Code with `DISABLE_AUTO_COMPACT=1` in that process's environment only, which per Claude Code's
 docs turns off automatic (and idle) compaction and keeps manual `/compact`. Tabs started while it
-was off keep Claude Code's compaction and are not watched. Sign-in tabs never get it.
+was off keep Claude Code's compaction and are not watched. A tab started with compaction off
+stays watched for as long as it runs, whatever the setting is later: switching to Off then makes
+it ask first, since nothing else keeps its context in bounds. Sign-in tabs never get it.
 
 A worker reads each watched tab's verified transcript tail (512 KiB, at most every 5 seconds and
 only when the file changed) for the last request's context size (input plus cache tokens, as the
@@ -505,7 +507,10 @@ again at the next poll). **Automatic** makes the handover with the configured su
 (**Summary written by**) and the focus from the transcript or, without one, the picked focus, keeps it like any opened handover, and
 opens the new chat in the same account beside the old tab, with the Settings default agent if
 that account and folder have it. It needs that provider's consent already recorded; otherwise it
-asks first and says so. Either way it happens once per session in a tab. By default the handover
+asks first and says so. Either way it happens once per session in a tab. If an automatic
+handover fails (OpenCode missing, the summary failing, the handover not opening or not
+continuing in place), the notice says why and that tab is watched again, asking with the dialog
+from then on instead of trying by itself. By default the handover
 continues in place in that tab (below); only with a new tab chosen does the new chat open beside
 the old tab. The new chat is linked, not forked: it carries the handover provenance
 (`handoverFrom`, `parentSessionId`), so it shows as a continuation in the list and Threads, and

@@ -1,7 +1,7 @@
 //! Handover instead of Claude Code's own compaction (Settings › Handovers), in Claude Switch's
 //! tabs only. While it is on, the CLI tabs Switch starts get `DISABLE_AUTO_COMPACT=1` (manual
 //! `/compact` still works) and this watcher reads each such tab's transcript tail off the UI
-//! thread. Once the context passes the threshold and the turn has ended, it asks first (the
+//! thread, for as long as the tab runs (after the setting goes Off, it asks first). Once the context passes the threshold and the turn has ended, it asks first (the
 //! handover dialog, opened for that tab) or makes the handover with the configured summarizer
 //! and opens the new chat in the same account, linked to the old one (handover provenance).
 //! It never types into the old chat and never forks it; the old tab stays open, marked.
@@ -34,6 +34,8 @@ pub struct TabAuto {
     stamp: u64,
     /// Asked or handed over for this session; never again for it.
     pub done: Option<String>,
+    /// An automatic handover failed here: ask with the dialog from now on.
+    pub ask: bool,
 }
 
 #[derive(Default)]
@@ -44,6 +46,7 @@ pub struct Watcher {
 }
 
 struct Making {
+    tab: u64,
     session: Session,
     from: String,
     account: String,
@@ -138,8 +141,10 @@ pub fn account_limits(cli_dir: &std::path::Path) -> Limits {
 }
 
 /// Whether this sample calls for a handover now.
+/// Only tabs started with compaction off are sampled, so this holds whatever the setting is now:
+/// such a tab has nothing else to keep its context in bounds (Off then asks, as Ask first).
 fn due(sample: &Sample, prefs: &compact::Preferences, limits: &Limits) -> Option<u8> {
-    if !sample.ended || prefs.auto == AutoHandover::Off {
+    if !sample.ended {
         return None;
     }
     let window = window(sample.model.as_deref(), sample.context, limits);
@@ -173,7 +178,8 @@ impl AppState {
         let now = cx.now();
         self.take_auto_samples();
         self.take_auto_handover();
-        let watched = self.config.compact.auto != AutoHandover::Off && self.tabs.list.iter().any(watching);
+        // Tabs started with compaction off stay watched even after the setting goes Off.
+        let watched = self.tabs.list.iter().any(watching);
         if !watched || self.source.is_demo() {
             return;
         }
@@ -234,8 +240,9 @@ impl AppState {
     }
 
     fn auto_handover_due(&mut self, tab: u64, session: &str, percent: u8) {
-        let ask = self.config.compact.auto == AutoHandover::Ask;
-        if self.compact.auto.making.is_some() || ask && (self.dialog.is_some() || !self.nothing_over()) {
+        let automatic =
+            self.config.compact.auto == AutoHandover::Automatic && self.tabs.get(tab).is_some_and(|t| !t.auto.ask);
+        if self.compact.auto.making.is_some() || !automatic && (self.dialog.is_some() || !self.nothing_over()) {
             // Read it again at the next poll, even if the transcript does not change meanwhile.
             if let Some(t) = self.tabs.get_mut(tab) {
                 t.auto.stamp = 0;
@@ -245,14 +252,13 @@ impl AppState {
         let Some(t) = self.tabs.get(tab) else { return };
         let Some(account) = t.account.clone() else { return };
         let Some(source) = self.by_id.get(session).and_then(|&i| self.sessions.get(i)).cloned() else { return };
-        let automatic = self.config.compact.auto == AutoHandover::Automatic;
         let ready = compact::provider(&self.config.compact.model)
             .is_some_and(|provider| self.config.compact.consents.contains(provider));
         if let Some(t) = self.tabs.get_mut(tab) {
             t.auto.done = Some(session.to_owned());
         }
         if automatic && ready {
-            self.start_auto_handover(source, account, percent);
+            self.start_auto_handover(tab, source, account, percent);
         } else {
             self.ask_tab_compact(tab, Some(&account));
             let why = if automatic { " Approve a summary model once to let it run by itself." } else { "" };
@@ -262,12 +268,12 @@ impl AppState {
         }
     }
 
-    fn start_auto_handover(&mut self, session: Session, account: String, percent: u8) {
+    fn start_auto_handover(&mut self, tab: u64, session: Session, account: String, percent: u8) {
         let Source::Real(roots) = &self.source else { return };
         let roots: Roots = roots.clone();
         let program = match crate::compact_runner::opencode() {
             Ok(program) => program,
-            Err(e) => return self.warn("Automatic handover did not start", e),
+            Err(e) => return self.auto_failed(tab, &session.id, &e),
         };
         let model = self.config.compact.model.clone();
         let from = self.title_of(&session).to_owned();
@@ -282,10 +288,31 @@ impl AppState {
         });
         match job {
             Ok(job) => {
-                self.compact.auto.making = Some(Making { session, from, account, job });
+                self.compact.auto.making = Some(Making { tab, session, from, account, job });
                 self.toast(format!("Context at {percent}%: making a handover for a new chat…"), Instant::now());
             }
-            Err(_) => self.warn("Automatic handover did not start", "Could not start the handover worker.".into()),
+            Err(_) => self.auto_failed(tab, &session.id, "Could not start the handover worker."),
+        }
+    }
+
+    /// An automatic handover did not happen: say why and ask with the dialog next time, since the
+    /// tab still runs with Claude Code's compaction off.
+    fn auto_failed(&mut self, tab: u64, session: &str, why: &str) {
+        self.auto_ask_again(tab, session);
+        self.warn(
+            "Automatic handover failed",
+            format!("{why} Compaction stays off in this tab, so Switch asks with the handover dialog instead."),
+        );
+    }
+
+    /// Watch `session` in `tab` again, asking first.
+    pub(crate) fn auto_ask_again(&mut self, tab: u64, session: &str) {
+        if let Some(t) = self.tabs.get_mut(tab)
+            && t.auto.done.as_deref() == Some(session)
+        {
+            t.auto.done = None;
+            t.auto.stamp = 0;
+            t.auto.ask = true;
         }
     }
 
@@ -293,7 +320,7 @@ impl AppState {
         if !self.compact.auto.making.as_ref().is_some_and(|m| !m.job.running()) {
             return;
         }
-        let Some(Making { session, from, account, job }) = self.compact.auto.making.take() else { return };
+        let Some(Making { tab, session, from, account, job }) = self.compact.auto.making.take() else { return };
         let result = job
             .take()
             .unwrap_or_else(|| Err("The handover worker stopped.".into()))
@@ -303,7 +330,7 @@ impl AppState {
             Ok(false) => {
                 self.toast("Handed over: the new chat continues from a summary.".into(), Instant::now());
             }
-            Err(e) => self.warn("Automatic handover failed", e),
+            Err(e) => self.auto_failed(tab, &session.id, &e),
         }
     }
 
@@ -431,7 +458,39 @@ mod tests {
         assert_eq!(due(&sample(100_000, false), &prefs, &none), None, "never during a turn");
         assert_eq!(due(&sample(100_000, true), &prefs, &none), Some(50));
         prefs.auto = AutoHandover::Off;
-        assert_eq!(due(&sample(190_000, true), &prefs, &none), None);
+        assert_eq!(
+            due(&sample(190_000, true), &prefs, &none),
+            Some(95),
+            "a tab started with compaction off still asks"
+        );
+    }
+
+    #[test]
+    fn tabs_started_with_compaction_off_stay_watched_and_a_failure_falls_back_to_asking() {
+        use crate::{dialogs::Dialog, tabs::NewTab, term::Term};
+        let mut st = AppState::new(Source::Demo, Some(false), Default::default());
+        st.apply_scan(crate::demo::scan(&st.config));
+        let session = st.sessions.iter().find(|s| s.desktop_id.is_none()).unwrap().id.clone();
+        let new =
+            NewTab { label: "t".into(), color: [0; 3], session: Some(session.clone()), account: Some("main".into()) };
+        let tab = st.tabs.open(new, Term::empty((8, 4)));
+        st.tabs.get_mut(tab).unwrap().auto.managed = true;
+        st.config.compact.auto = AutoHandover::Off;
+        st.auto_handover_due(tab, &session, 96);
+        assert!(matches!(st.dialog, Some(Dialog::Compact(_))), "Off asks for a tab that has no compaction");
+        st.dialog = None;
+        // Automatic, but it fails (here: no provider consent is not a failure; simulate one).
+        st.config.compact.auto = AutoHandover::Automatic;
+        st.tabs.get_mut(tab).unwrap().auto.done = Some(session.clone());
+        st.auto_failed(tab, &session, "OpenCode was not found.");
+        let t = st.tabs.get(tab).unwrap();
+        assert!(t.auto.done.is_none() && t.auto.ask, "watched again, asking first");
+        assert!(st.info.is_some() || st.dialog.is_some(), "the reason is shown");
+        st.dialog = None;
+        st.info = None;
+        st.auto_handover_due(tab, &session, 96);
+        assert!(matches!(st.dialog, Some(Dialog::Compact(_))), "asks instead of trying again by itself");
+        assert!(st.compact.auto.making.is_none());
     }
 
     #[test]

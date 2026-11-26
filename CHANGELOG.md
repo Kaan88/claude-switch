@@ -14,6 +14,9 @@
   (jobs, workers, reviews and what was promised when they report); "instructions" holds only rules
   still in force; long fields are cut at a line with a visible `[cut]`; Files leaves out temporary
   paths and keeps the 30 most recent; the task list is marked possibly stale.
+- Handover: a tab started with Claude Code's compaction off stays watched after **Hand over
+  automatically** is set to Off (it then asks first), and a failed automatic handover asks with
+  the dialog next time instead of leaving the session without compaction or handover.
 - Two Claude Switch windows no longer stop each other from saving: session marks (names, pins,
   hiding, handover links) and settings apply only each window's own changes onto the file as it is
   now. Only the same field changed differently in both is refused, with a notice naming it, and
