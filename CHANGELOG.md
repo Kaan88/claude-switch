@@ -65,7 +65,7 @@
 - Mark background tabs that need attention and optionally notify through the Windows tray.
 - Warn at 80% and 95% usage and offer handover to another account with recent headroom.
 - Add an optional tray menu with per-account usage and close-to-tray behavior.
-- Share the OpenCode CLI client as the MIT-licensed `opencode-cli` crate; show OpenCode health, running sessions, a guarded restart, and the optional Config Studio shortcut in Settings → Workers.
+- Share the OpenCode CLI client as the MIT-licensed `opencode-cli` crate; show OpenCode health, running sessions, a guarded restart, and the optional Config Studio shortcut in Settings → OpenCode.
 - Open oversized handovers by absolute Markdown path rather than refusing the launch at the Windows command-line safety threshold.
 - Add an optional Chat layout over the same embedded Claude Code terminal, with draft recall, tool previews, a details panel and an automatic terminal drawer.
 - Group sessions by repository and worktree, proven thread, or topic; add optional Recent sittings and local Related suggestions in details. Keep the original Folder option and add opt-in topics to the existing name review.

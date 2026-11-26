@@ -59,7 +59,7 @@ Claude Switch checks its tabs and the running-session records across accounts be
 | Ctrl+Shift+W | Close the terminal tab |
 | Ctrl+Shift+T | Open a plain shell in the selected session's folder |
 | Ctrl+Shift+K | Open the command palette |
-| Ctrl+Shift+C / Ctrl+Shift+V | Copy / paste |
+| Ctrl+Shift+C / Ctrl+V or Ctrl+Shift+V | Copy / paste |
 | Ctrl+C | Copy if text is selected; otherwise send Ctrl+C to the program |
 | Shift+Page Up / Shift+Page Down | Scroll back / forward |
 | Enter in an ended tab | Close the tab |
@@ -278,7 +278,10 @@ eight lines; toggle **Following** to freeze the tail or choose **Full output** f
 **Stop…** asks before opening the CLI’s own shell manager. Switch never stops a shell itself.
 **Outputs** collects HTTP(S) links, artifacts, pull requests, and saved files and pictures. The
 conversation also shows output cards. Links open in the default browser; local previews open in
-the viewer. Both tabs are also available in **Session view**.
+the viewer.
+
+**Session view** has the same pages as tabs: **Conversation**, **Tasks**, **Agents**, **Shells**,
+**Files** and **Outputs**.
 
 | Shortcut in a session tab | Action |
 | --- | --- |

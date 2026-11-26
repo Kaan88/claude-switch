@@ -259,8 +259,8 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
 shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
 running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
 
-**Not there:** more than one terminal in a tab, moving tabs by drag, search or links in the terminal,
-font-family settings, tabs restored after a restart; Shift+Insert and the Insert key (the window host
+**Not there:** more than one terminal in a tab, search or links in the terminal,
+font-family settings; Shift+Insert and the Insert key (the window host
 has no name for Insert); input-method composition (the host turns input methods off on Windows).
 
 ## Session view
@@ -278,7 +278,8 @@ For new and forked tabs the verified ID must name a fresh transcript in the laun
 directory. For wrapped processes, the live CLI PID must belong to the terminal's process tree; otherwise the pane
 stays unattached.
 
-Conversation, Agents and Tasks are separate views of the incremental transcript reader. Conversation
+Session view has six pages over the incremental transcript reader: Conversation, Tasks, Agents,
+Shells, Files and Outputs. Chat shows the same five beside the conversation in its Details panel. Conversation
 opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
 following. Both Chat and Session view support wheel scrolling, thumb drag, and track clicks that page
 by a viewport. Earlier history is loaded on request. Agent transcripts are reachable from expanded
@@ -528,8 +529,6 @@ JSONL without touching the listed paths.
 `--demo --demo-search "width splitter"` opens the Sessions tab with an example search.
 
 ## Window placement and reopening terminal tabs
-
-This supersedes the earlier notes that tabs cannot be moved or restored.
 
 The window saves the normal placement and maximized bit in `window.ini` via the toolkit’s
 Windows placement capture. Restore keeps a rectangle when any one connected work area shows
