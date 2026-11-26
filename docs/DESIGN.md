@@ -488,7 +488,11 @@ the name with that owner) and allows identification, not impersonation. The serv
 a client running as the same user at an integrity level no lower than its own, so a normal
 process cannot steer an elevated window; an elevated window also labels the pipe High with
 no-write-up. A client has 5 seconds to write its request, repeated connect errors back off, and a
-window that cannot create the channel says so. It carries one
+window that cannot create the channel says so. Known limit: another local user can create the
+name first (a pipe name is first come). The owner check then stops every client from writing to
+it, so no request leaks, but each window starts as a second window: it restores no tabs and
+handovers sent with `--open` fail. That is a local denial of service only, needs a second local
+account, and is not worked around. It carries one
 request kind only: a versioned list of the same validated words as the window arguments (session
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
 decoded and revalidated by the window, which then continues in place when one of its tabs runs
@@ -570,7 +574,11 @@ the old tab. The new chat is linked, not forked: it carries the handover provena
 (`handoverFrom`, `parentSessionId`), so it shows as a continuation in the list and Threads, and
 starts from the summary alone (a `--fork-session` would carry the full context). The old session
 is marked handed over (`handedOverTo` in marks): its tab title says “· handed over” and its row
-in Sessions starts with “Handed over”.
+in Sessions starts with “Handed over”. Once a session has continued in place, a failed save of
+these links (another window's lock or a damaged file) keeps them in memory: the save is tried
+again up to three times, 5 seconds apart, and the next save carries them after that. A new tab
+that fails to start removes only its own links; an earlier handover's mark on the old session
+stays.
 
 ### Continuing in place
 
@@ -583,8 +591,14 @@ continues** is A new tab, or when Switch is not running, it opens a new tab as b
 
 Switch shows that tab in the Chat view (that tab only; the saved Chat default for new tabs is
 left as it was) and goes through the Chat view's gate for every write; it
-never writes to the terminal itself. At an idle prompt it sends `/clear` with the gate's slash
-command path (up to 90 seconds for the prompt to become idle), waits until the tab has followed
+never writes to the terminal itself. Right before `/clear` it checks that the handover still
+covers the session: the transcript's length is recorded when it is read for the handover (the
+dialog's, the automatic one's and `compact --open`'s, which passes it in its request), and a
+prompt recorded at or past that offset means the user sent something since, so it stops with that
+reason before clearing. It also waits while the composer holds a draft or a picture, or anything
+is queued or staging, and never clears under them; if they stay past the deadline it stops, the
+session uncleared. At an idle prompt it then sends `/clear` with the gate's slash command path (up
+to 90 seconds for the prompt to become idle), waits until the tab has followed
 the CLI to the new session that `/clear` starts (the same following as for any `/clear`; the
 running records are read every second meanwhile, up to 30 seconds; the new session counts as
 followed once the pane is pinned to it and awaits its transcript, which the CLI writes only with
@@ -689,7 +703,9 @@ the app leaves a damaged marks file alone. Two windows may both write it: under 
 save that finds the file changed since this window read it applies only this window's own changes,
 per session or folder and field, onto the file as it is now, and the window then has the other's
 changes too. Last-seen times take the later value, the missing-since stamp the earlier, and the
-transcript path the one on disk. Only a field both changed differently (two names for the same
+transcript path the one on disk; a session one window pruned stays pruned when the other only
+updated those (its next scan marks it afresh), so an entry is never left empty. An empty (null)
+entry an earlier version wrote is dropped on load. Only a field both changed differently (two names for the same
 session, say) refuses the save with a notice naming it; the other window's value is kept, nothing
 else from that save is written, and the next change saves normally. No restart is needed. Showing details or a tab clears Unseen for its
 known transcript version. Remembered session marks expire only after the transcript has been
@@ -741,7 +757,14 @@ snapshot; neither local tab labels nor terminal contents are saved. For a new or
 identity must match the PTY’s live CLI process (or its immediate npm shim child), account and
 folder. Ambiguous or unavailable identities are not guessed. Ask is the default; Always
 starts the batch after the first scan, Never clears the snapshot. The pending offer survives
-an exit with no replacement tabs. Restoration uses the normal resume warning, process scan
+an exit with no replacement tabs. Only the window holding the handover channel restores and saves
+the snapshot; a second window started meanwhile neither restores it nor writes it on exit (its
+tabs are not saved), so the first window's tabs survive whichever window closes first. The one
+exception is a second window that closes after the first has gone: on exit it tries to claim the
+channel, and when it gets it (no other window holds it) it is the last window, re-reads the
+snapshot the first one left and replaces it with its own tabs. With no tabs of its own it leaves
+the first window's.
+Restoration uses the normal resume warning, process scan
 and launch reservation, always targets embedded tabs, ignores a stale saved folder in favor of
 the indexed one, and reports skipped entries together.
 
@@ -928,7 +951,13 @@ and its numbered choices as buttons, answered like a question (arrows, then Ente
 shows the highlight on that row with the same title and choices); the step ends as soon as that
 menu is gone. A menu without numbered rows shows its rows read-only with Open terminal. While a
 card shows a menu, sends are refused with "Choose in Claude Code's menu above" and the drawer stays
-closed; a slash command no longer opens the drawer by itself.
+closed; a slash command no longer opens the drawer by itself. A menu that may be a permission
+prompt never shows as a menu card: within 24 rows of its footer a "Do you want to"/"Would you like
+to" row, "Tab to amend", "don't ask again" or "tell Claude what to do", or Yes and No choices over
+"Esc to cancel". Only the menu's own rows are read for these: those below the nearest rule above
+the footer (the CLI draws its prompts and menus under one), so the same words in the conversation
+above do not count; with no rule in those 24 rows, all of them do. Unless a question card answers that menu, the gate treats it as a permission
+prompt left to the terminal (drawer, notice).
 
 **Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
 the call's input (header, question, options with descriptions), never from the screen. Chat answers
@@ -936,8 +965,13 @@ only one single-choice question: before any key it requires the live screen to s
 the question text, and every option as `n. label` in order, followed only by "Type something" and
 "Chat about this", and not to look like a permission question. It moves the `❯` highlight with arrow
 keys, and writes Enter only after newer output shows the highlight on the chosen row. A typed answer
-is written on the "Type something" row and Enter follows only once the screen shows that text.
-"Chat about this" chooses that row and puts the card's text in the composer. Every step has a two
+is written on the "Type something" row and Enter follows only once the screen shows that text; an
+answer starting with a digit is refused, since that row shows no field of its own and digits pick
+choices.
+"Chat about this" chooses that row and puts the card's text in the composer: once Enter went, the
+text is kept (the composer's notice says so) until the composer is empty and nothing is being sent,
+whether the call resolves, the prompt closes or the step stops; it never replaces a draft. Only a
+question or permission card has a field: when none shows, the card's field gives the keyboard back. Every step has a two
 second deadline; a mismatch, timeout or a question still open eight seconds after Enter stops, says
 why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
 stay terminal-only. While the card can answer, sends are refused with "Answer Claude's question
@@ -947,20 +981,32 @@ above" and the drawer does not open by itself; the working line reads "Waiting f
 (2026-11-27): "give that up, otherwise all I see is that chat has stopped. convenience trumps". The
 safeguards that cost nothing stay. While the main transcript has exactly one pending tool call and
 the screen shows a permission prompt (a "Do you want to …" or "Would you like to …" row, then
-`1. Yes`/`1. Allow` down to a `No`/`Deny` choice, then the "Esc to cancel" footer), the card shows
+`1. Yes`/`1. Allow` down to a `No`/`Deny` choice, each choice wrapping onto at most four rows, then
+the "Esc to cancel" footer), the card shows
 the call as the transcript records it (command, file and diff lines, MCP server and tool), the
 prompt's own rows above the question (warnings and countdowns included), the question and the
-screen's choices, exactly as written. Clicks are answered only if the prompt names that call (the
-command's first 40 characters, the file name, the MCP tool or the fetched host must appear in it);
-a subagent's prompt, two pending calls, or any other prompt stays terminal-only with an Open terminal
-button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
+screen's choices, exactly as written. Clicks are answered only if the prompt names that call: the
+whole command as whole rows of the prompt (whitespace and wrapping aside), the file's full path or
+its path from the session folder, the MCP server and tool, or the fetched address or host, each as
+a whole word, never a part of a longer word or path. A prompt while a subagent may be asking (one
+is running, or this turn started one whose end is unknown), two pending calls, or any other prompt
+stays terminal-only with an Open terminal button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
 highlight there with the same choices; nothing is pre-selected and nothing is answered without a
 click. A decline with text uses the prompt's Tab comment field when the footer offers "Tab to
-amend" (Tab, the text, then Enter once the text is visible), or its "No, and tell Claude …" choice,
+amend" (Tab; the text only once the screen shows the field open on that row, the choice followed by
+":", since on a menu row digits pick choices; then Enter once the text is visible), or its "No, and tell Claude …" choice,
 whose text then goes to the composer. Shift+Tab is never sent at a prompt. The same deadlines and
 fail-closed rules as questions apply. While the card can answer, sends are refused with "Answer
 Claude's request above", the drawer stays closed and the working line reads "Waiting for your
 approval".
+
+A card answers ahead of a queued draft: the queue waits for the turn to end, which waits for the
+answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer
+("Chat about this", "No, and tell Claude") is refused while a draft is queued, saying to cancel it
+first. While a message is still on its way to the terminal, a card click says so and writes
+nothing; the notice goes once those keys have gone (a queued draft is not such keys). In turn, the
+queue is not released while a card's answer, a mode change or Ctrl+B is still in flight: the draft
+stays queued until it has ended.
 
 **Plan approval.** A pending `ExitPlanMode` call shows its plan as Markdown in the conversation, from
 the call's input (cut at 20,000 characters), always open. The card under it offers the plan menu's
@@ -989,6 +1035,11 @@ input, a card offers Run in background. A click re-checks all of that and writes
 done once newer output no longer shows the hint or the call ended, and stops with a notice after two
 seconds otherwise. Stop agent is not offered: the key that opens the CLI's agent panel is unverified
 (once that panel is open, it shows as a menu card).
+
+A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click
+says so instead of writing, and it ends (or fails) in a hidden tab too. A menu that stays open after
+Enter (a toggle) is done as soon as newer output shows the chosen row changed; one that shows no
+change at all by the deadline still stops with a notice.
 
 Every screen pattern lives in `view/chat/question/screens.rs`.
 

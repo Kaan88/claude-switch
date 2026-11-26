@@ -7,6 +7,7 @@
 //! closed, says why and opens the drawer. Screen patterns live in `screens`.
 pub(super) mod screens;
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use claude_switch_core::transcript::{ItemId, ItemKind, Question, ToolCard, ToolState};
@@ -37,6 +38,11 @@ const NOT_CLOSED: &str = "The answer was sent, but the prompt is still open. Che
 const TERMINAL_ONLY: &str = "Answer this in the terminal.";
 const NO_FIELD: &str = "The terminal's prompt has no such choice. Answer it in the terminal.";
 const BAD_TEXT: &str = "Type a short answer without control characters.";
+const SENDING: &str = "A message is on its way to the terminal. Answer once it has gone, or Cancel it.";
+const QUEUED_TEXT: &str = "A message is queued, and this text would go to the composer. Cancel the queued message first, or answer without text.";
+const HELD: &str = "Your text for Claude goes to the message box once it is empty.";
+const DIGIT_FIRST: &str =
+    "Start the answer with a word, not a digit (digits pick a choice), or answer in the terminal.";
 const BLOCKED: &str = "Chat cannot answer now. Check the terminal.";
 pub(super) const WAITING: &str = "Sending your answer to the terminal…";
 const ASKING: &str = "Waiting for your answer";
@@ -60,7 +66,8 @@ pub(super) enum Kind<'a> {
 pub(super) struct Pending<'a> {
     pub item: ItemId,
     pub kind: Kind<'a>,
-    /// No other tool of the turn is pending: a prompt on screen can only be for this one.
+    /// No other tool of the turn is pending and no subagent may be asking: a prompt on screen can
+    /// only be for this one.
     pub alone: bool,
 }
 
@@ -70,7 +77,8 @@ pub(super) fn pending(model: &Model) -> Option<Pending<'_>> {
         matches!(item.kind, ItemKind::Tool { state: ToolState::Running, .. })
     };
     let turn = model.chat.prompt.map_or(0, |p| p.saturating_add(1));
-    let alone = model.items.range(ItemId { offset: turn, block: 0 }..).filter(|(_, item)| running(item)).count() == 1;
+    let alone = model.items.range(ItemId { offset: turn, block: 0 }..).filter(|(_, item)| running(item)).count() == 1
+        && !subagent_may_prompt(model);
     let range = ItemId { offset: at, block: 0 }..ItemId { offset: at.saturating_add(1), block: 0 };
     model.items.range(range).rev().find_map(|(id, item)| match &item.kind {
         ItemKind::Tool { name, state: ToolState::Running, card, .. } => {
@@ -107,29 +115,94 @@ fn is_plan(kind: &ItemKind) -> bool {
     matches!(kind, ItemKind::Tool { name, .. } if name == "ExitPlanMode")
 }
 
-/// Texts that the screen's prompt must show for this tool call: the command, the file, the
-/// MCP tool or the address. Empty when the call cannot be told apart.
-fn needles(kind: &ItemKind) -> Vec<String> {
+/// What the screen's prompt must show for a tool call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Needle {
+    /// The whole text, as one or more whole rows of the prompt (whitespace and wrapping aside).
+    Rows(String),
+    /// A word of the prompt, in one of these forms: never a part of a longer word or path.
+    Word(Vec<String>),
+}
+
+/// What the screen's prompt must show for this tool call: the whole command, the file's full path
+/// (or its path from the session folder), the MCP server and tool, or the address. Empty when the
+/// call cannot be told apart.
+fn needles(kind: &ItemKind, cwd: &Path) -> Vec<Needle> {
     let ItemKind::Tool { name, summary, file_path, card, .. } = kind else { return Vec::new() };
-    let first = |text: &str, n: usize| {
-        collapse(text.lines().find(|l| !l.trim().is_empty()).unwrap_or("")).chars().take(n).collect::<String>()
-    };
-    let needle = match (name.as_str(), card) {
+    let needles = match (name.as_str(), card) {
         // Subagents' own prompts belong to their tools, not to the pending Agent call.
-        ("Agent" | "Task", _) => String::new(),
-        (_, Some(ToolCard::Shell { command, .. })) => first(command, 40),
+        ("Agent" | "Task", _) => Vec::new(),
+        (_, Some(ToolCard::Shell { command, .. })) => vec![Needle::Rows(command.trim().to_owned())],
         _ if file_path.is_some() => {
-            let path = file_path.as_deref().unwrap_or_default();
-            path.rsplit(['/', '\\']).next().unwrap_or(path).to_owned()
+            let path = file_path.as_deref().unwrap_or_default().trim();
+            let mut forms = vec![path.to_owned()];
+            if let Ok(rest) = Path::new(path).strip_prefix(cwd) {
+                let rest = rest.to_string_lossy();
+                forms.extend([rest.replace('\\', "/"), rest.replace('/', "\\")]);
+            }
+            forms.retain(|f| !f.is_empty());
+            forms.dedup();
+            vec![Needle::Word(forms)]
         }
-        _ if name.starts_with("mcp__") => name.rsplit("__").next().unwrap_or_default().to_owned(),
+        _ if name.starts_with("mcp__") => match name.trim_start_matches("mcp__").rsplit_once("__") {
+            Some((server, tool)) => vec![Needle::Word(vec![server.to_owned()]), Needle::Word(vec![tool.to_owned()])],
+            None => Vec::new(),
+        },
         ("WebFetch", _) => {
             let url = summary.split_once("://").map_or(summary.as_str(), |(_, rest)| rest);
-            url.split(['/', '?', '#']).next().unwrap_or_default().to_owned()
+            let host = url.split(['/', '?', '#']).next().unwrap_or_default();
+            vec![Needle::Word(vec![summary.trim().to_owned(), host.to_owned()])]
         }
-        _ => first(summary, 30),
+        _ => vec![Needle::Rows(summary.trim().to_owned())],
     };
-    if needle.trim().is_empty() { Vec::new() } else { vec![needle] }
+    let empty = |n: &Needle| match n {
+        Needle::Rows(text) => text.trim().is_empty(),
+        Needle::Word(forms) => forms.iter().all(|f| f.trim().is_empty()),
+    };
+    if needles.iter().any(empty) { Vec::new() } else { needles }
+}
+
+/// `text` holds `word` with nothing of a longer word or path right before or after it (closing
+/// punctuation at the end of a sentence aside).
+fn has_word(text: &str, word: &str) -> bool {
+    let quote = |c: char| matches!(c, '"' | '\'' | '`' | '(' | ')');
+    !word.is_empty()
+        && text.match_indices(word).any(|(at, _)| {
+            let before = text[..at].chars().next_back().is_none_or(|c| c.is_whitespace() || quote(c));
+            let mut after = text[at + word.len()..].chars();
+            let ends = match after.next() {
+                None => true,
+                Some(c) if c.is_whitespace() || quote(c) => true,
+                Some('.' | '?' | ':' | ',' | ';') => after.next().is_none_or(char::is_whitespace),
+                Some(_) => false,
+            };
+            before && ends
+        })
+}
+
+/// Some run of whole rows reads `text`, all whitespace aside.
+fn has_rows(rows: &[String], text: &str) -> bool {
+    let squash = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let want = squash(text);
+    !want.is_empty()
+        && (0..rows.len()).any(|i| {
+            let mut run = String::new();
+            rows[i..].iter().any(|row| {
+                run.push_str(&squash(row));
+                run == want
+            })
+        })
+}
+
+/// A subagent may be the one asking: one is running, or the turn started one whose end is unknown.
+fn subagent_may_prompt(model: &Model) -> bool {
+    let finished = |id: &str| model.agents.iter().any(|a| a.id == id && a.finished == Some(true));
+    let turn = model.chat.prompt.map_or(0, |p| p.saturating_add(1));
+    model.agents.iter().any(|a| a.finished == Some(false))
+        || model.items.range(ItemId { offset: turn, block: 0 }..).any(|(_, item)| {
+            matches!(&item.kind, ItemKind::Tool { name, subagent, .. }
+                if (name == "Agent" || name == "Task") && !subagent.as_deref().is_some_and(finished))
+        })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,7 +245,7 @@ enum Stage {
 enum Subject {
     Question(Question),
     Tool {
-        needles: Vec<String>,
+        needles: Vec<Needle>,
         choices: Vec<String>,
     },
     Plan {
@@ -253,6 +326,11 @@ pub(super) struct Card {
     pub(super) answerable: Option<u64>,
     /// The card answers a permission prompt, not a question.
     pub(super) approval: bool,
+    /// Text a "Chat about this" or "No, and tell Claude" answer left for the composer, until it
+    /// lands there (once the composer is empty).
+    pub(super) held: Option<String>,
+    /// The notice a click got because other keys were on their way: it goes when they have.
+    busy: Option<&'static str>,
 }
 
 impl Card {
@@ -302,9 +380,13 @@ fn read(
     }
 }
 
-fn names(prompt: &screens::Permission, needles: &[String]) -> bool {
+fn names(prompt: &screens::Permission, needles: &[Needle]) -> bool {
     let text = collapse(&format!("{} {}", prompt.body.join(" "), prompt.question));
-    !needles.is_empty() && needles.iter().all(|n| text.contains(n.as_str()))
+    !needles.is_empty()
+        && needles.iter().all(|n| match n {
+            Needle::Rows(want) => has_rows(&prompt.body, want),
+            Needle::Word(forms) => forms.iter().any(|f| has_word(&text, &collapse(f))),
+        })
 }
 
 fn label_matches(text: &str, label: &str) -> bool {
@@ -376,7 +458,7 @@ fn write(tab: &mut Tab, bytes: &[u8]) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn tool_prompt(kind: &ItemKind, alone: bool, screen: &Screen) -> Option<Shown> {
+fn tool_prompt(kind: &ItemKind, alone: bool, cwd: &Path, screen: &Screen) -> Option<Shown> {
     if is_plan(kind) {
         // Only the plan's own menu: the plan itself is in the conversation, from the transcript.
         let menu = screens::plan(screen)?;
@@ -391,7 +473,7 @@ fn tool_prompt(kind: &ItemKind, alone: bool, screen: &Screen) -> Option<Shown> {
         });
     }
     let prompt = screens::permission(screen)?;
-    let needles = needles(kind);
+    let needles = needles(kind, cwd);
     let deny = prompt.menu.entries.iter().rposition(|e| e.text.starts_with("No"));
     let amend = prompt.menu.footer_text().contains(screens::AMEND);
     Some(Shown {
@@ -406,7 +488,12 @@ fn tool_prompt(kind: &ItemKind, alone: bool, screen: &Screen) -> Option<Shown> {
 
 impl Chat {
     fn question_failed(&mut self, error: &'static str) {
-        self.question.step = None;
+        if let Some(step) = self.question.step.take()
+            && step.stage == Stage::Sent
+        {
+            // Enter went: the text is kept for the composer all the same.
+            self.hold(&step);
+        }
         self.question.error = Some(error);
         self.question.failed = true;
         self.question.answerable = None;
@@ -415,29 +502,59 @@ impl Chat {
         }
     }
 
+    /// Keeps the text of an answer meant for the composer until it lands there.
+    fn hold(&mut self, step: &Step) {
+        let Then::Chat(text) = &step.then else { return };
+        if text.is_empty() {
+            return;
+        }
+        if collapse(self.question.field.text()) == *text {
+            self.question.field.clear();
+        }
+        self.question.held = Some(text.clone());
+        self.land_held();
+    }
+
+    /// Drops a click's "other keys are on their way" notice once they have gone.
+    fn clear_busy(&mut self) -> bool {
+        // A queued draft is no key on its way: the card answers ahead of it.
+        let Some(busy) = self.question.busy.filter(|_| self.waiting().is_none() && !self.enter_only()) else {
+            return false;
+        };
+        self.question.busy = None;
+        self.question.error.take_if(|error| *error == busy).is_some()
+    }
+
+    /// Puts the held text in the composer once it is empty and nothing is being sent.
+    fn land_held(&mut self) -> bool {
+        if self.question.held.is_none() || !self.editor.text.trim().is_empty() || self.locked() {
+            return false;
+        }
+        self.editor.set(self.question.held.take().unwrap_or_default());
+        true
+    }
+
     /// Follows the transcript's pending call and the screen's prompt; true when the card changed.
-    fn sync_question(&mut self, model: &Model, screen: &Screen) -> bool {
+    pub(super) fn sync_question(&mut self, model: &Model, cwd: &Path, screen: &Screen) -> bool {
         let pending = pending(model);
         let item = pending.as_ref().map(|p| p.item);
         let mut changed = false;
         if self.question.item != item {
-            if let Some(Step { then: Then::Chat(text), stage: Stage::Sent, .. }) = &self.question.step
-                && !text.is_empty()
-                && self.editor.text.trim().is_empty()
-            {
+            if let Some(step) = self.question.step.take().filter(|step| step.stage == Stage::Sent) {
                 // "Chat about this" and "No, and tell Claude" return to the prompt; the text
                 // goes as the next message.
-                self.editor.set(text.clone());
+                self.hold(&step);
             }
             let field = std::mem::take(&mut self.question.field);
-            self.question = Card { item, field, ..Card::default() };
+            let held = self.question.held.take();
+            self.question = Card { item, field, held, ..Card::default() };
             if item.is_none() {
                 self.question.field.clear();
             }
             changed = true;
         }
         let shown = match pending.as_ref().map(|p| p.kind) {
-            Some(Kind::Tool(kind)) => tool_prompt(kind, pending.as_ref().is_some_and(|p| p.alone), screen),
+            Some(Kind::Tool(kind)) => tool_prompt(kind, pending.as_ref().is_some_and(|p| p.alone), cwd, screen),
             _ => None,
         };
         changed |= self.question.shown != shown;
@@ -461,13 +578,23 @@ impl Chat {
         changed |= self.question.background != background;
         self.question.background = background;
         self.question.menu = menu;
+        // Only a question or permission card has a field: no hidden card keeps the keyboard.
+        let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some();
+        if !field && std::mem::take(&mut self.question.focus) {
+            changed = true;
+        }
         self.question.shown = shown;
         changed |= std::mem::replace(&mut self.question.answerable, answerable) != answerable;
-        changed
+        changed | self.clear_busy() | self.land_held()
     }
 
     pub(super) fn question_notice(&self) -> Option<&'static str> {
-        self.question.step.is_some().then_some(WAITING)
+        (self.question.step.is_some() || self.question.background_step.is_some()).then_some(WAITING)
+    }
+
+    /// The composer's notice while a card's text waits for it.
+    pub(super) fn held_notice(&self) -> Option<&'static str> {
+        self.question.held.as_ref().map(|_| HELD)
     }
 }
 
@@ -482,7 +609,7 @@ fn ready(tab: &Tab) -> bool {
 /// A click in the card. Writes nothing unless the screen shows the same prompt.
 pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     let pane = tab.pane.as_mut().expect("Chat pane");
-    pane.chat.sync_question(&pane.model, &tab.term.screen);
+    pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
     let chat = &mut pane.chat;
     match hit {
         Hit::Field => {
@@ -493,7 +620,17 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             chat.open_drawer();
             return true;
         }
-        _ if chat.question.step.is_some() || chat.locked() => return false,
+        _ if chat.question.step.is_some() => return false,
+        // Keys on their way to the terminal (a message, a mode change, Ctrl+B): the card's must not
+        // mix with them.
+        _ if chat.waiting().is_some() || chat.enter_only() => {
+            let busy = chat.waiting().filter(|_| !chat.enter_only()).unwrap_or(SENDING);
+            chat.question.error = Some(busy);
+            chat.question.busy = Some(busy);
+            return true;
+        }
+        // A queued draft waits for the turn to end, which waits for this answer: the answer goes
+        // first, under the same checks. Only text meant for the composer has to wait for it.
         _ => {}
     }
     if hit == Hit::Background {
@@ -512,8 +649,8 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             }
         },
         Kind::Tool(kind) => {
-            let needles = needles(kind);
-            match tool_prompt(kind, alone, &tab.term.screen).filter(|s| s.matched) {
+            let needles = needles(kind, &pane.cwd);
+            match tool_prompt(kind, alone, &pane.cwd, &tab.term.screen).filter(|s| s.matched) {
                 Some(shown) if is_plan(kind) => Subject::Plan { choices: shown.choices },
                 Some(shown) => Subject::Tool { needles, choices: shown.choices },
                 None => {
@@ -544,12 +681,23 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             (Some(i), Then::Choose)
         }
         (Subject::Question(_), Hit::Answer) => match answer_text(&chat.question.field) {
+            // The row shows no field of its own: a leading digit could pick a choice instead.
+            Ok(text) if text.starts_with(|c: char| c.is_ascii_digit()) => {
+                chat.question.error = Some(DIGIT_FIRST);
+                return true;
+            }
             Ok(text) => (other, Then::Type(text)),
             Err(error) => {
                 chat.question.error = Some(error);
                 return true;
             }
         },
+        (Subject::Question(_), Hit::ChatAbout) | (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny)
+            if !text.is_empty() && chat.queue.is_some() && !(shown.amend && hit == Hit::Deny) =>
+        {
+            chat.question.error = Some(QUEUED_TEXT);
+            return true;
+        }
         (Subject::Question(_), Hit::ChatAbout) => (chat_row, Then::Chat(text)),
         (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) if text.is_empty() => (shown.deny, Then::Choose),
         (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) => match answer_text(&chat.question.field) {
@@ -719,8 +867,9 @@ fn arrived(tab: &mut Tab, step: &mut Step, now: Instant) -> Result<(), &'static 
 /// Moves an answer in flight on; true when the card changed.
 pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_mut().expect("Chat pane");
-    let changed = pane.chat.sync_question(&pane.model, &tab.term.screen) | advance_background(tab, now);
+    let changed = pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen) | advance_background(tab, now);
     let pane = tab.pane.as_mut().expect("Chat pane");
+    let changed = changed | pane.chat.clear_busy();
     let Some(mut step) = pane.chat.question.step.clone() else { return changed };
     if step.item.is_some() && pending(&pane.model).map(|p| p.item) != step.item {
         // The transcript resolved or replaced the call; `sync_question` cleared the step.
@@ -734,7 +883,9 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         Action::Wait => return changed,
         Action::Fail(error) => Err(error),
         Action::Closed => {
-            tab.pane.as_mut().unwrap().chat.question.step = None;
+            let chat = &mut tab.pane.as_mut().unwrap().chat;
+            chat.question.step = None;
+            chat.hold(&step);
             return true;
         }
         Action::Arrive => arrived(tab, &mut step, now),
@@ -766,6 +917,15 @@ enum Action {
     Enter,
 }
 
+/// The text in the comment field open on the subject's highlighted `target` choice; `None` when
+/// the screen shows no such field.
+fn comment(subject: &Subject, screen: &Screen, target: usize) -> Option<String> {
+    let (Subject::Tool { choices, .. } | Subject::Plan { choices }) = subject else { return None };
+    let (menu, ..) = read(subject, screen, Some(target))?;
+    (menu.highlight() == Some(target)).then_some(())?;
+    menu.comment(target, choices.get(target)?)
+}
+
 /// What the screen says about an answer in flight. `may_act`: the window allows writes and the
 /// screen changed since the last key.
 fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
@@ -792,19 +952,22 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
             None if late => Action::Fail(CHANGED),
             _ => Action::Wait,
         },
-        Stage::Opening => match read(&step.subject, screen, Some(step.target)) {
-            Some((menu, ..)) if may_act && menu.highlight() == Some(step.target) => {
-                Action::Type(typed_text.unwrap_or_default().to_owned())
-            }
+        // Only a field the screen positively shows takes the text: on a menu row, digits pick choices.
+        Stage::Opening => match comment(&step.subject, screen, step.target) {
+            Some(typed) if may_act && typed.is_empty() => Action::Type(typed_text.unwrap_or_default().to_owned()),
             _ if late => Action::Fail(NO_COMMENT),
             _ => Action::Wait,
         },
         Stage::Typing => {
             let text = typed_text.unwrap_or_default();
-            let typed = read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
-                menu.highlight() == Some(step.target)
-                    && menu.rows_from(step.target).is_some_and(|rows| rows.contains(text))
-            });
+            let typed = if matches!(step.then, Then::Amend(_)) {
+                comment(&step.subject, screen, step.target).is_some_and(|typed| typed.contains(text))
+            } else {
+                read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
+                    menu.highlight() == Some(step.target)
+                        && menu.rows_from(step.target).is_some_and(|rows| rows.contains(text))
+                })
+            };
             if typed && may_act {
                 Action::Enter
             } else if late {
@@ -819,6 +982,9 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
 /// A key while the card's field has the keyboard. Enter answers, Escape leaves the field.
 pub(super) fn key(tab: &mut Tab, now: Instant, name: &KeyName, mods: Mods, text: Option<&str>) -> bool {
     let chat = &mut tab.pane.as_mut().expect("Chat pane").chat;
+    if !chat.question.visible() {
+        chat.question.focus = false;
+    }
     if !chat.question.focus {
         return false;
     }
@@ -838,6 +1004,9 @@ pub(super) fn key(tab: &mut Tab, now: Instant, name: &KeyName, mods: Mods, text:
 }
 
 pub(super) fn text(chat: &mut Chat, text: &str) -> bool {
+    if !chat.question.visible() {
+        chat.question.focus = false;
+    }
     if !chat.question.focus {
         return false;
     }

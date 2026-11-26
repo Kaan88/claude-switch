@@ -166,4 +166,27 @@ mod tests {
         assert!(advance(tab, now + STEP));
         assert_eq!(chat(tab).error, Some(NOT_CHANGED));
     }
+
+    #[test]
+    fn a_mode_change_in_a_hidden_tab_still_ends() {
+        let mut app = AppState::new(Source::Demo, Some(false), Default::default());
+        let root = std::env::temp_dir();
+        let mut pane = app.new_session_pane(crate::view::model::Source::File(root.join("mode.jsonl")), root);
+        pane.chat.enabled = true;
+        pane.chat.demo = true;
+        pane.chat.identity_unverified = false;
+        let mut term = Term::empty((60, 8));
+        term.feed(prompt("⏸ plan mode on").as_bytes());
+        let id = app.tabs.open(NewTab { label: "M".into(), color: [0; 3], session: None, account: None }, term);
+        let tab = app.tabs.get_mut(id).unwrap();
+        tab.pane = Some(pane);
+        let now = Instant::now();
+        chat(tab).mode_step = Some(ModeStep { from: "Plan", due: now + STEP });
+        assert!(chat(tab).waiting().is_some(), "the composer waits for it too");
+        assert!(app.tabs.activate(crate::tabs::SESSIONS));
+        app.progress_chat_tabs(now + STEP, true);
+        let chat = &app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
+        assert!(chat.mode_step.is_none());
+        assert_eq!(chat.error, Some(NOT_CHANGED));
+    }
 }

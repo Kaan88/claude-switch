@@ -528,10 +528,12 @@ impl Compact {
         };
         compact_open::validate_prompt(&self.preview.text)?;
         let saved = compact_open::keep(roots, &self.session.id, &self.preview.text, self.saved.as_deref())?;
-        if let Some(tab) = st.in_place_target(&self.session.id, Some(account)) {
+        let basis = self.data.as_ref().map(|data| data.basis());
+        if let (Some(tab), Some(basis)) = (st.in_place_target(&self.session.id, Some(account)), basis) {
             self.saved = Some(saved.clone());
             let names = (self.name.clone(), name);
-            return st.continue_in_place(tab, &self.session.clone(), names, &self.preview.text.clone(), saved);
+            let text = self.preview.text.clone();
+            return st.continue_in_place(tab, &self.session.clone(), names, &text, (saved, basis));
         }
         let request = compact_open::prepare(
             roots,

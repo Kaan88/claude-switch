@@ -148,7 +148,7 @@ fn an_option_moves_the_highlight_and_enter_follows_only_once_the_screen_shows_it
     f.screen(&menu(0, None), now);
     let tab = f.tab();
     let pane = tab.pane.as_mut().unwrap();
-    assert!(pane.chat.sync_question(&pane.model, &tab.term.screen));
+    assert!(pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen));
     assert_eq!(f.chat().question.answerable, Some(AT));
     assert!(press(f.tab(), now, Hit::Option(1)));
     assert_eq!(f.writes(), [down(1)], "arrows only; no Enter yet");
@@ -225,6 +225,53 @@ fn chat_about_this_leaves_the_question_and_keeps_the_text_for_the_composer() {
 }
 
 #[test]
+fn text_for_the_composer_is_kept_until_it_lands_there() {
+    // The composer holds a draft: the text waits, and lands once the composer is empty.
+    let mut f = Fixture::new(vec![question(false)]);
+    let now = Instant::now();
+    f.screen(&menu(3, None), now);
+    f.chat().editor.set("my draft".into());
+    f.chat().question.field.set_text("Let us talk first");
+    press(f.tab(), now, Hit::ChatAbout);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.resolve();
+    advance(f.tab(), now, true);
+    assert_eq!(f.chat().editor.text, "my draft", "never over the user's draft");
+    assert_eq!(f.chat().question.held.as_deref(), Some("Let us talk first"));
+    assert_eq!(f.chat().held_notice(), Some(HELD));
+    assert!(f.chat().question.field.text().is_empty(), "not left in the next card's field");
+    f.chat().editor.set(String::new());
+    advance(f.tab(), now, true);
+    assert_eq!(f.chat().editor.text, "Let us talk first");
+    assert_eq!(f.chat().question.held, None);
+
+    // The prompt closes but the call stays pending past the deadline: the text still lands.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(3, None), now);
+    f.chat().question.field.set_text("Let us talk first");
+    press(f.tab(), now, Hit::ChatAbout);
+    f.writes();
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    advance(f.tab(), now + RESULT, true);
+    assert!(f.chat().question.step.is_none());
+    assert_eq!(f.chat().editor.text, "Let us talk first");
+}
+
+#[test]
+fn a_card_that_goes_away_gives_the_keyboard_back() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    assert!(press(f.tab(), now, Hit::Field));
+    assert!(f.chat().question.focus);
+    // The prompt closes while the call stays pending: no card, so no hidden field takes keys.
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    f.sync();
+    assert!(!f.chat().question.focus);
+    assert!(!key(f.tab(), now, &KeyName::Char('x'), Mods::default(), Some("x")));
+}
+
+#[test]
 fn several_questions_or_answers_stay_in_the_terminal_and_the_drawer_opens_as_before() {
     for questions in [vec![question(true)], vec![question(false), question(false)]] {
         let mut f = Fixture::new(questions);
@@ -244,7 +291,7 @@ fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
         f.screen(&menu(0, None), now - QUIET);
         let tab = f.tab();
         let pane = tab.pane.as_mut().unwrap();
-        pane.chat.sync_question(&pane.model, &tab.term.screen);
+        pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
         pane.chat.observe(&pane.model.chat, now - super::super::TOOL_WAIT);
         let tab = f.tab();
         let pane = tab.pane.as_mut().unwrap();
@@ -306,7 +353,7 @@ impl Fixture {
     fn sync(&mut self) -> bool {
         let tab = self.tab();
         let pane = tab.pane.as_mut().unwrap();
-        pane.chat.sync_question(&pane.model, &tab.term.screen)
+        pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen)
     }
 
     fn decide(&mut self, now: Instant) -> Option<Reason> {
@@ -382,6 +429,149 @@ fn a_prompt_for_another_call_or_with_other_choices_is_left_to_the_terminal() {
 }
 
 #[test]
+fn a_queued_draft_lets_the_cards_answer_go_first_but_not_text_for_the_composer() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)], "the queue waits for the turn, which waits for this answer");
+    assert!(f.chat().locked(), "the draft stays queued");
+
+    // "Chat about this" would put its text in the composer, which holds the queued draft.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    f.chat().question.field.set_text("Let's talk it through");
+    assert!(press(f.tab(), now, Hit::ChatAbout));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(QUEUED_TEXT));
+    assert_eq!(f.chat().question.field.text(), "Let's talk it through", "the text is kept");
+}
+
+/// A permission prompt whose "don't ask again" choice wraps onto three rows.
+fn wrapped_prompt(command: &str) -> String {
+    [
+        "\x1b[2J\x1b[H────────────────────",
+        " Bash command",
+        "",
+        &format!("   {command}"),
+        "   Remove the build output",
+        "",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   2. Yes, and don't ask again for rm commands in",
+        "      /home/someone/projects/a-rather-long-folder-name",
+        "      /and-one-more-level",
+        "   3. No, and tell Claude what to do differently (esc)",
+        "",
+        " Esc to cancel",
+    ]
+    .join("\r\n")
+}
+
+#[test]
+fn a_permission_prompt_never_becomes_a_menu_card_even_when_its_choices_wrap() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model
+        .items
+        .insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: shell("toolu_0", "rm -rf target"), timestamp: None });
+    let now = Instant::now();
+    f.screen(&wrapped_prompt("rm -rf target"), now);
+    assert!(crate::attention::screen_permission_prompt(&f.tab().term.screen), "wrapped choices are read");
+    f.sync();
+    assert!(f.chat().question.menu.is_none(), "never the generic menu card");
+    assert_eq!(f.chat().question.answerable, None, "two calls pending: the terminal answers");
+    assert_eq!(f.decide(now), Some(Reason::Permission));
+    assert_ne!(f.chat().drawer, Drawer::Closed);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+
+    // A screen that only looks like a permission prompt (its footer offers Tab to amend) is not
+    // recognised, yet still never shows as a menu card.
+    let mut f = Fixture::tool("cargo test --workspace");
+    let odd = prompt("cargo test --workspace", 0, None).replace(" Do you want to proceed?", " Proceed?");
+    f.screen(&odd, now);
+    f.sync();
+    assert!(f.chat().question.menu.is_none() && f.chat().question.shown.is_none());
+    assert_eq!(f.decide(now), Some(Reason::Permission));
+    assert_ne!(f.chat().drawer, Drawer::Closed);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+}
+
+#[test]
+fn a_prompt_must_show_the_whole_command_or_full_path_and_no_subagent_may_be_asking() {
+    let now = Instant::now();
+    // A short command inside a longer one is not the call's prompt.
+    let mut f = Fixture::tool("make");
+    f.screen(&prompt("make install", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    f.screen(&prompt("make", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "the whole command, on its own row");
+
+    // A subagent that is running (or that this turn started, end unknown) may be the one asking.
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.agents.push(claude_switch_core::transcript::Subagent {
+        id: "a1".into(),
+        finished: Some(false),
+        ..Default::default()
+    });
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.agents[0].finished = Some(true);
+    let mut agent = shell("toolu_a", "");
+    if let ItemKind::Tool { name, state, card, .. } = &mut agent {
+        *name = "Agent".into();
+        *state = ToolState::Ok;
+        *card = None;
+    }
+    pane.model.items.insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: agent, timestamp: None });
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None, "an agent of this turn with no known end");
+    if let Some(Item { kind: ItemKind::Tool { subagent, .. }, .. }) =
+        f.tab().pane.as_mut().unwrap().model.items.get_mut(&ItemId { offset: AT - 1, block: 0 })
+    {
+        *subagent = Some("a1".into());
+    }
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "its subagent finished");
+}
+
+#[test]
+fn a_path_or_host_matches_only_as_a_whole_word() {
+    assert!(has_word("Do you want to make this edit to src/main.rs?", "src/main.rs"));
+    assert!(!has_word("Do you want to make this edit to other/src/main.rs?", "src/main.rs"));
+    assert!(!has_word("Edit src/main.rs.bak", "src/main.rs"));
+    assert!(has_word("Claude wants to fetch content from example.com", "example.com"));
+    assert!(!has_word("fetch from notexample.com", "example.com"));
+    let edit = |path: &str| ItemKind::Tool {
+        id: "e".into(),
+        name: "Edit".into(),
+        summary: String::new(),
+        file_path: Some(path.into()),
+        state: ToolState::Running,
+        duration_ms: None,
+        pictures: vec![],
+        subagent: None,
+        card: None,
+    };
+    let root = std::env::temp_dir().join("proj");
+    let file = root.join("src").join("main.rs");
+    let Some(Needle::Word(forms)) = needles(&edit(&file.to_string_lossy()), &root).pop() else { panic!() };
+    assert!(forms.contains(&"src/main.rs".to_owned()) && forms.contains(&file.to_string_lossy().into_owned()));
+    assert!(!forms.contains(&"main.rs".to_owned()), "never the bare file name");
+    assert!(has_rows(&["Bash command".into(), "cargo test".into(), "--workspace".into()], "cargo test --workspace"));
+    assert!(!has_rows(&["sudo cargo test --workspace".into()], "cargo test --workspace"));
+}
+
+#[test]
 fn declining_with_a_comment_opens_the_prompts_field_and_types_before_enter() {
     let mut f = Fixture::tool("cargo test --workspace");
     let now = Instant::now();
@@ -406,6 +596,34 @@ fn declining_with_a_comment_opens_the_prompts_field_and_types_before_enter() {
     f.screen(&prompt("cargo test --workspace", 2, None), now);
     press(f.tab(), now, Hit::Deny);
     assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+#[test]
+fn a_comment_is_typed_only_into_the_field_the_screen_shows_never_into_the_menu() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.chat().question.field.set_text("2 is wrong");
+    press(f.tab(), now, Hit::Deny);
+    f.writes();
+    f.screen(&prompt("cargo test --workspace", 2, None), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"	".to_vec()]);
+    // Newer output (a repaint) with the same menu: no field opened, so nothing is typed.
+    f.screen(&prompt("cargo test --workspace", 2, None), now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "digits would pick a choice in the menu");
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NO_COMMENT));
+
+    // A question's free-text row shows no field of its own: a leading digit is never typed.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    f.chat().question.field.set_text("2 of them");
+    press(f.tab(), now, Hit::Answer);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(DIGIT_FIRST));
 }
 
 /// The plan approval menu (its rows to confirm in a live session).
@@ -561,6 +779,60 @@ fn a_cli_menu_is_answered_from_its_card_and_keeps_the_drawer_closed() {
     assert_eq!(f.chat().question.error, Some(CHANGED));
 }
 
+/// A settings menu whose rows toggle and stay open (its look to confirm in a live session).
+fn toggles(highlight: usize, verbose: bool) -> String {
+    let state = |on: bool| if on { "✔ on" } else { "off" };
+    let choices = [format!("Verbose output  {}", state(verbose)), format!("Auto-compact  {}", state(true))];
+    let mut rows = vec!["\x1b[2J\x1b[H Settings".to_owned(), String::new()];
+    for (i, choice) in choices.iter().enumerate() {
+        let mark = if i == highlight { "❯" } else { " " };
+        rows.push(format!(" {mark} {}. {choice}", i + 1));
+    }
+    rows.push(String::new());
+    rows.push(" Enter to toggle · Esc to close".to_owned());
+    rows.join("\r\n")
+}
+
+#[test]
+fn a_toggle_that_keeps_its_menu_open_is_done_once_its_row_changed() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen(&toggles(0, false), now);
+    f.sync();
+    assert!(f.chat().question.menu.is_some());
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.screen(&toggles(0, true), now);
+    assert!(advance(f.tab(), now, true));
+    assert!(f.chat().question.step.is_none());
+    assert_eq!(f.chat().question.error, None);
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+    f.sync();
+    assert!(f.chat().question.menu.as_ref().unwrap().choices[0].ends_with("✔ on"), "the card shows the new state");
+
+    // Nothing changed by the deadline: that is still a failure.
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    f.writes();
+    f.screen(&toggles(0, true), now);
+    advance(f.tab(), now + RESULT, true);
+    assert_eq!(f.chat().question.error, Some(NOT_CLOSED));
+}
+
+#[test]
+fn a_ctrl_b_in_a_hidden_tab_still_ends() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&running(true), now);
+    f.sync();
+    assert!(press(f.tab(), now, Hit::Background));
+    assert!(f.chat().waiting().is_some(), "chat work, so a hidden tab progresses too");
+    let id = f.tab;
+    assert!(f.app.tabs.activate(crate::tabs::SESSIONS));
+    f.app.progress_chat_tabs(now + STEP, true);
+    let chat = &f.app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
+    assert!(chat.question.background_step.is_none());
+}
+
 #[test]
 fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
     let mut f = Fixture::idle();
@@ -601,7 +873,9 @@ fn run_in_background_is_offered_only_with_the_clis_hint_and_waits_for_it_to_go()
     assert_eq!(f.chat().question.background.as_ref().map(|b| b.1.as_str()), Some("npm test"));
     assert!(press(f.tab(), now, Hit::Background));
     assert_eq!(f.writes(), [CTRL_B.to_vec()]);
-    assert!(!press(f.tab(), now, Hit::Background), "one at a time");
+    press(f.tab(), now, Hit::Background);
+    assert!(f.writes().is_empty(), "one at a time");
+    assert_eq!(f.chat().question.error, Some(WAITING));
     advance(f.tab(), now, true);
     assert!(f.chat().question.background_step.is_some(), "the same screen proves nothing");
     f.screen(&running(false), now);
@@ -669,4 +943,97 @@ fn esc_leaves_a_menu_or_declines_a_prompt_only_while_the_screen_shows_it() {
     f.screen(&menu(1, None), now);
     press(f.tab(), now, Hit::Escape);
     assert_eq!(f.writes(), [ESC.to_vec()]);
+}
+
+#[test]
+fn words_in_the_conversation_above_a_menu_do_not_make_it_a_permission_prompt() {
+    // Claude's last message asked something; then the user opened a picker. The CLI draws its
+    // menus under a rule, so only the rows below the nearest rule are the menu's own.
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    let above = "\x1b[2J\x1b[H● Do you want to keep the old parser? Would you like to see the diff?\r\n\r\n";
+    let rule = "────────────────────\r\n";
+    f.screen(&format!("{above}{rule}{}", picker(0).replace("\x1b[2J\x1b[H", "")), now);
+    assert!(!screens::permission_like(&f.tab().term.screen));
+    f.sync();
+    assert_eq!(f.chat().question.menu.as_ref().map(|m| m.choices.len()), Some(3), "the picker's card");
+    assert_eq!(f.decide(now), Some(Reason::Menu));
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+
+    // The prompt's own rows still count, with or without a rule above them.
+    for rule in [rule, ""] {
+        let odd = prompt("cargo test --workspace", 0, None).replace(" Do you want to proceed?", " Proceed?");
+        let mut f = Fixture::tool("cargo test --workspace");
+        f.screen(&format!("{above}{rule}{}", odd.replace("\x1b[2J\x1b[H", "")), now);
+        assert!(screens::permission_like(&f.tab().term.screen), "Tab to amend is in its footer");
+        let asks = picker(0).replace(" Switch between Claude models.", " Do you want to switch models?");
+        let mut f = Fixture::idle();
+        f.screen(&format!("\x1b[2J\x1b[H{rule}{}", asks.replace("\x1b[2J\x1b[H", "")), now);
+        assert!(screens::permission_like(&f.tab().term.screen), "the question is the menu's own row");
+    }
+}
+
+#[test]
+fn a_queued_draft_stays_queued_while_a_cards_keys_are_on_their_way() {
+    // The turn ended and the menu closed, but the card's answer is not known to have landed yet
+    // (no window focus, so nothing newer was read). The queue must neither send past it nor be
+    // dropped without a word.
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.chat().demo_progress = true;
+    f.screen(&picker(0), now);
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.tab().term.feed("\x1b[2J\x1b[H\x1b[?2004h❯ ".as_bytes());
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    AppState::advance_submission(f.tab(), now, false);
+    AppState::advance_submission(f.tab(), now, true);
+    assert!(f.chat().question.step.is_some(), "the answer is still in flight");
+    assert!(f.writes().is_empty());
+    assert!(f.chat().queue.is_some(), "still queued");
+
+    // Once the screen shows the menu gone, the step ends and the draft goes.
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    AppState::advance_submission(f.tab(), now, true);
+    AppState::advance_submission(f.tab(), now, true);
+    assert!(f.chat().question.step.is_none());
+    assert!(f.chat().queue.is_none() && f.chat().editor.text.is_empty(), "sent");
+}
+
+#[test]
+fn the_busy_notice_goes_once_the_other_keys_have_gone_even_with_a_draft_queued() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    f.sync();
+    f.chat().question.background_step = Some((ItemId { offset: AT, block: 0 }, now + STEP, 0));
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(WAITING));
+    f.chat().question.background_step = None;
+    f.sync();
+    assert_eq!(f.chat().question.error, None, "the queued draft is no key on its way");
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+#[test]
+fn a_question_worded_like_a_permission_prompt_never_opens_the_drawer_for_a_tick() {
+    // "Do you want to …" is how Claude often asks. The gate must know the question card answers
+    // this menu before it judges the screen, in the same tick the call and the menu appear.
+    let mut q = question(false);
+    q.question = "Do you want to build the parser?".into();
+    let mut f = Fixture::new(vec![q]);
+    let now = Instant::now();
+    f.app.tabs.active = Some(f.tab);
+    f.screen(&menu(0, None).replace("Who builds the parser?", "Do you want to build the parser?"), now);
+    assert!(screens::permission_like(&f.tab().term.screen), "the look-alike rule alone would refuse it");
+    f.app.progress_chat_tabs(now, true);
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+    assert_ne!(f.chat().reason, Some(Reason::Permission));
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
 }

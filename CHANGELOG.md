@@ -16,6 +16,16 @@
   (jobs, workers, reviews and what was promised when they report); "instructions" holds only rules
   still in force; long fields are cut at a line with a visible `[cut]`; Files leaves out temporary
   paths and keeps the 30 most recent; the task list is marked possibly stale.
+- Handover in place: never clears the session when you sent a message after the handover was
+  made (it stops and says to make it again), and never clears under a draft in the message box.
+- Handover: when saving the new session's links fails after continuing in place, they are kept
+  and saved again instead of being dropped; a new handover tab that fails to start no longer
+  removes an earlier handover's mark from the old session.
+- Marks: a session forgotten in one window while the other saw it no longer turns into an empty
+  entry that refused pins and names for it; such entries in existing files are repaired on load.
+- Saved terminal tabs: a second window no longer replaces the first window's saved tabs with its
+  own when it closes while the first still runs. A second window that closes last, after the
+  first has gone, saves its own tabs (when it has any) so they are the ones restored next time.
 - Handover channel: an elevated window refuses requests from lower-integrity processes; the
   window claims the channel before restoring tabs, so two windows starting together never both
   restore them; a client that connects and never writes no longer blocks later requests; the
@@ -50,7 +60,10 @@
   Claude Code's grey next-prompt suggestion appears as a chip that fills the draft.
 - The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
 - Chat: permission prompts can be answered from a card in the chat, with the tool call and the
-  terminal's own choices; the working line says "Waiting for your approval".
+  terminal's own choices; the working line says "Waiting for your approval". A card answers ahead
+  of a queued draft, which stays queued until the card's keys have gone. A menu that only looks
+  like a permission prompt is left to the terminal; words in the conversation above a menu do not
+  count for that.
 - Chat: a finished plan shows as Markdown in the conversation and is approved from a card with the
   terminal's own choices.
 - Chat: the Effort chip shows the level the session started with (environment, `--effort`,

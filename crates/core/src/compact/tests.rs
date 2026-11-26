@@ -372,6 +372,15 @@ fn the_focus_kind_is_picked_locally_from_the_tool_calls() {
 }
 
 #[test]
+fn the_basis_is_the_transcript_length_when_it_was_read() {
+    let t = TempDir::new("compact-basis");
+    let (s, _) = fixture(&t, &[message("user", json!("first")), message("assistant", json!("answer"))]);
+    let len = fs::metadata(&s.file).unwrap().len();
+    let data = Handover::read(s, "fixture".into()).unwrap();
+    assert_eq!(data.basis(), len, "a prompt recorded at or past this came later");
+}
+
+#[test]
 fn seven_fields_a_visible_cut_the_recent_files_and_a_stale_task_list() {
     let t = TempDir::new("compact-format");
     let mut blocks: Vec<Value> =

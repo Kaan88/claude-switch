@@ -164,6 +164,8 @@ pub struct AppState {
     pub marks: claude_switch_core::marks::Marks,
     pub marks_read_only: bool,
     pub marks_flush_at: Option<Instant>,
+    /// Saves left to retry for marks no one will set again (a handover's links); see `save_marks`.
+    pub marks_retries: u8,
     pub undo_hide: Option<crate::session_marks::UndoHide>,
     pub archive_picks: HashSet<String>,
     pub archive_count: usize,
@@ -278,6 +280,7 @@ impl AppState {
             marks: marks.unwrap_or_default(),
             marks_read_only: marks_error.is_some(),
             marks_flush_at: None,
+            marks_retries: 0,
             undo_hide: None,
             archive_picks: HashSet::new(),
             archive_count: 0,

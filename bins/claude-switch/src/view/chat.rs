@@ -284,7 +284,12 @@ impl Chat {
         if term.ended.is_some() || !self.demo && !term.running() {
             return (Gate::Ended, Some(Reason::Ended));
         }
-        if crate::attention::screen_permission_prompt(&term.screen) {
+        // A question card answers its own menu, whatever its words.
+        let question_card =
+            info.pending.is_some() && self.question.answerable == info.pending && !self.question.approval;
+        if crate::attention::screen_permission_prompt(&term.screen)
+            || !question_card && question::screens::permission_like(&term.screen)
+        {
             // The card answers it when it names the pending call; the terminal otherwise.
             let card = info.pending.is_some() && self.question.approval && self.question.answerable == info.pending;
             return (Gate::Check, Some(if card { Reason::Approval } else { Reason::Permission }));

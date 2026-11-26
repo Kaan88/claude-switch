@@ -1,10 +1,15 @@
 //! Handover instead of Claude Code's own compaction (Settings › Handovers), in Claude Switch's
 //! tabs only. While it is on, the CLI tabs Switch starts get `DISABLE_AUTO_COMPACT=1` (manual
 //! `/compact` still works) and this watcher reads each such tab's transcript tail off the UI
-//! thread, for as long as the tab runs (after the setting goes Off, it asks first). Once the context passes the threshold and the turn has ended, it asks first (the
-//! handover dialog, opened for that tab) or makes the handover with the configured summarizer
-//! and opens the new chat in the same account, linked to the old one (handover provenance).
-//! It never types into the old chat and never forks it; the old tab stays open, marked.
+//! thread, for as long as the tab runs (after the setting goes Off, it asks first).
+//!
+//! Once the context passes the threshold and the turn has ended, it asks first (the
+//! handover dialog, opened for that tab) or makes the handover with the configured summarizer.
+//! By default it then continues in place (`handover_in_place`): `/clear` in that tab, then the
+//! handover as the new session's first message, both through the Chat view's gate and only if
+//! the user sent nothing since the handover was made. With a new tab chosen it opens the new
+//! chat in the same account instead. Either way the new session is linked to the old one
+//! (handover provenance), never forked, and the old session is marked handed over.
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -50,7 +55,7 @@ struct Making {
     session: Session,
     from: String,
     account: String,
-    job: Job<Result<String, String>>,
+    job: Job<Result<(String, u64), String>>,
 }
 
 #[derive(Debug)]
@@ -285,6 +290,7 @@ impl AppState {
                 .map_err(|_| "Could not read the transcript.".to_string())?;
             let focus = data.chosen_focus(&prefs).1;
             crate::compact_runner::make(&roots, &program, &model, &data, &focus, || cancel.cancelled())
+                .map(|text| (text, data.basis()))
         });
         match job {
             Ok(job) => {
@@ -324,7 +330,7 @@ impl AppState {
         let result = job
             .take()
             .unwrap_or_else(|| Err("The handover worker stopped.".into()))
-            .and_then(|text| self.open_auto_handover(&session, &from, &account, &text));
+            .and_then(|(text, basis)| self.open_auto_handover(&session, &from, &account, &text, basis));
         match result {
             Ok(true) => {}
             Ok(false) => {
@@ -334,7 +340,14 @@ impl AppState {
         }
     }
 
-    fn open_auto_handover(&mut self, session: &Session, from: &str, account: &str, text: &str) -> Result<bool, String> {
+    fn open_auto_handover(
+        &mut self,
+        session: &Session,
+        from: &str,
+        account: &str,
+        text: &str,
+        basis: u64,
+    ) -> Result<bool, String> {
         let Source::Real(roots) = &self.source else { return Err("Demo".into()) };
         let roots = roots.clone();
         crate::compact_open::validate_prompt(text)?;
@@ -343,7 +356,7 @@ impl AppState {
         let name = crate::compact_open::names::suggest(&self.marks, &self.sessions, from);
         // In place by default: the same tab and process continue (`handover_in_place`).
         if let Some(tab) = self.in_place_target(&session.id, Some(account)) {
-            self.continue_in_place(tab, session, (from.to_owned(), name), text, saved)?;
+            self.continue_in_place(tab, session, (from.to_owned(), name), text, (saved, basis))?;
             return Ok(true);
         }
         let agent = self.config.compact.default_agent.clone().filter(|default| {

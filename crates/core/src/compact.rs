@@ -78,6 +78,8 @@ pub struct Handover {
     files: Vec<(String, usize)>,
     commands: VecDeque<String>,
     calls: Calls,
+    /// The transcript's length when it was read: a prompt recorded at or past it came later.
+    basis: u64,
 }
 
 impl Handover {
@@ -87,6 +89,8 @@ impl Handover {
 
     pub fn read_cancel(mut session: Session, name: String, cancelled: impl Fn() -> bool) -> io::Result<Self> {
         session.file = std::path::absolute(&session.file)?;
+        // Taken before reading: anything appended meanwhile counts as newer than the handover.
+        let basis = std::fs::metadata(&session.file)?.len();
         let mut turns = vec![Turn::default()];
         let mut files = BTreeMap::<String, (usize, usize)>::new();
         let mut commands = VecDeque::new();
@@ -138,7 +142,13 @@ impl Handover {
         let mut files: Vec<_> = files.into_iter().collect();
         files.sort_by_key(|(_, (last, _))| *last);
         let files = files.into_iter().map(|(path, (_, count))| (path, count)).collect();
-        Ok(Self { session, name, turns, tasks, files, commands, calls })
+        Ok(Self { session, name, turns, tasks, files, commands, calls, basis })
+    }
+
+    /// The transcript's length when this was read. A handover made from it is stale once the
+    /// session has a prompt recorded at or past this offset.
+    pub fn basis(&self) -> u64 {
+        self.basis
     }
 
     pub fn focus(&self) -> Option<&str> {

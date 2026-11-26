@@ -125,6 +125,19 @@ and in the README, not committed, and not copied to the installed clone
 
 ## Reported after 0.1.0 (owner, 2026-11-26)
 
+Status of items 23 to 60 (2026-11-27, merged into `main` after two reviews by Claude Fable and the fixes
+of both): built and passing format, lint and the test suite: 23 to 31, 34 to 48, 50 to 55, 57, 58 and 60.
+Partly: 47 (no `!` toggle in the composer), 53 (no Stop agent; the key that opens the CLI's agent panel
+is not known). Not built: 22, 32 (later; fonts need toolkit work), 49 (rewind, waits for a live check of
+42 and 48), 56 (later), 59 (idea only). Item 14 for Settings text rows waits for the toolkit pin move
+(toolkit 7da7b22). Nothing was tried against a live Claude Code: the screen shapes the cards read (the
+comment field after Tab, permission prompt phrases, full paths in Edit prompts, the /model picker, menu
+footers, the Ctrl+B hint), the in-place handover's paste echo within 2 s, two real windows and the pipe
+are guesses or unit-tested only; where a guess is wrong the card leaves the prompt to the terminal.
+Known and left (owner to decide): a handover made mid-turn misses the rest of that turn; a draft typed
+between `/clear` and the handover send makes the handover wait and then stop with the saved file.
+
+
 Status after the fix rounds on branch `integrate` (2026-11-26; GPT-6.2 Sol workers, two reviews by
 Claude Fable): items 1 to 13 and 15 to 21 are built and pass format, lint and the test suite; item 14
 is built for the Chat composer only, the text fields belong to the toolkit (asked for in its session).
