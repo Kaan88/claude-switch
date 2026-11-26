@@ -134,3 +134,24 @@ fn secondary_missing_agents_can_see_the_main_folder_without_provisioning_it() {
     assert!(Volume::at(&account.cli_dir).unwrap().folder(&account.cli_dir.join("agents")).is_none());
     assert_eq!(discover(&roots, &account, &fixture.0, || false)[0].name, "inherited");
 }
+
+#[test]
+fn settings_lists_every_accounts_agents_once_and_names_owners_only_when_they_differ() {
+    let agent = |name: &str| Agent { name: name.into(), description: String::new() };
+    let per_account = [
+        ("Main".to_string(), vec![agent("review"), agent("plugin:docs")]),
+        ("Work".to_string(), vec![agent("review"), agent("Build")]),
+    ];
+    assert_eq!(
+        settings_choices(&per_account),
+        [
+            ("Build".to_string(), "Build (Work)".to_string()),
+            ("plugin:docs".to_string(), "plugin:docs (Main)".to_string()),
+            ("review".to_string(), "review".to_string()),
+        ]
+    );
+    assert_eq!(settings_choices(&per_account[..1])[0].1, "plugin:docs", "one account: no owner label");
+    assert!(checked_default("review", &per_account[0].1, "Main").is_ok());
+    let notice = checked_default("deepseek-flash", &per_account[0].1, "Main").unwrap_err();
+    assert!(notice.contains("“deepseek-flash”") && notice.contains("Main") && notice.contains("plain Claude"));
+}

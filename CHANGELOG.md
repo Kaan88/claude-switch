@@ -2,8 +2,68 @@
 
 ## Unreleased
 
+- Handover: continues in place by default. When a Claude Switch tab runs the session (dialog,
+  automatic handover, `compact --open` and `/switch-compact`), Switch sends `/clear` there, follows
+  the tab to the new session and sends the handover as its first message, through the Chat view's
+  checks; the dialog's button reads **Continue here**. The old session is marked handed over in
+  its tab and in Sessions. A step that does not happen in time stops it with the reason and the
+  saved file's path. Otherwise, or with a new tab chosen, it opens a new tab as before. Only that
+  tab switches to Chat (the default for new tabs is kept), and Claude Code's own name follows with
+  `/rename` once the first message has gone.
+- Handover: when you give no focus, one is picked locally from the session (coordination, non-code
+  work, or the default); the dialog says which and lets you edit it, and Settings › Handovers can
+  edit and reset each of the three texts. The summary gains an **In flight and promised** section
+  (jobs, workers, reviews and what was promised when they report); "instructions" holds only rules
+  still in force; long fields are cut at a line with a visible `[cut]`; Files leaves out temporary
+  paths and keeps the 30 most recent; the task list is marked possibly stale.
+- Handover channel: an elevated window refuses requests from lower-integrity processes; the
+  window claims the channel before restoring tabs, so two windows starting together never both
+  restore them; a client that connects and never writes no longer blocks later requests; the
+  client checks the channel's owner, and a window that cannot create it says so.
+- Handover tabs now get the classic renderer too (they name Claude Code by its full path), so
+  Chat can send in them; continuing in place in a tab that shows Claude Code's full-screen view
+  stops at once and says how to fix it, instead of waiting for the deadline.
+- Handover: a tab started with Claude Code's compaction off stays watched after **Hand over
+  automatically** is set to Off (it then asks first), and a failed automatic handover asks with
+  the dialog next time instead of leaving the session without compaction or handover.
+- Two Claude Switch windows no longer stop each other from saving: session marks (names, pins,
+  hiding, handover links) and settings apply only each window's own changes onto the file as it is
+  now. Only the same field changed differently in both is refused, with a notice naming it, and
+  nothing asks for a restart.
+- Settings › Handovers: **Where it continues** (This tab, A new tab), **Summary written by**,
+  the focus texts (used when you give no focus; editable, with Reset), **New chat starts as** (new
+  tabs only), **Hand over automatically** and **When the context reaches**, in that order.
+- Chat: new Claude tabs use Claude Code's classic renderer (Settings › Sessions › Classic terminal
+  view for Claude tabs, on by default), so Chat no longer refuses every send in fresh chats; the
+  refusal now says how to switch the renderer.
+- Chat: the first message of a new chat can be sent from Chat, and a tab follows its process to a
+  new session after `/clear`, compaction or `/resume` instead of asking to reopen it. A new session
+  is shown in Threads as the continuation of the old one.
+- Chat: Claude's questions (AskUserQuestion) appear as a card you can answer from the chat; the
+  working line says "Waiting for your answer".
+- Text boxes (search, name and folder dialogs, Settings) select with the mouse: drag, Shift+click,
+  double-click a word, triple-click all, and a right-click menu with Cut, Copy, Paste, Select all.
+- The conversation in Chat and Session view can be selected across messages and copied with
+  Ctrl+C or the right-click menu (Copy, Select all, Copy message, Copy as Markdown); code blocks
+  have a Copy button.
+- The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
+- Handover: `/switch-handover:switch-compact` and `claude-switch compact --open` open the new chat as
+  a tab in the running Claude Switch window, beside the source session's tab, instead of a window of
+  its own; only when Switch is not running do they start it (with its saved tabs and the new one).
+- Settings › Handovers: **New chat starts as** is a list of the agents your accounts really have
+  (**None (plain Claude)** first) and **Summary written by** names the OpenCode model. A saved
+  agent the target account lacks is shown as missing and skipped with a notice instead of failing
+  the launch with `--agent '…' not found`.
+- Tabs: renaming a tab that runs a Claude session renames the session (list, search, restored
+  tabs) and, at an idle prompt and through the Chat view's usual checks, Claude Code's own name
+  with `/rename`, so other sessions can reach it by that name. Plain terminal tabs keep a
+  label-only rename.
+- Handover: **Hand over automatically** (Off, Ask first, Automatic) in Settings › Handovers replaces
+  Claude Code's compaction in Claude Switch's own tabs: at the threshold, after the turn, the new
+  chat opens from a handover in the same account, linked to the old one, which stays open marked
+  handed over.
 
 ## 0.1.1 (2026-11-26)
 

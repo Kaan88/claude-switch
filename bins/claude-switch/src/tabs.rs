@@ -21,6 +21,7 @@ pub const STRIP_H: f32 = TITLE_H;
 pub const SESSIONS: u64 = 0;
 const LEFT: f32 = 12.0;
 const ENDED_SUFFIX: &str = " (ended)";
+const HANDED_OVER: &str = " · handed over";
 
 /// One terminal tab.
 pub struct Tab {
@@ -30,6 +31,13 @@ pub struct Tab {
     /// The title the program set (OSC 0 or 2); empty when it set none.
     pub program_title: String,
     pub rename: Option<String>,
+    /// A `/rename` for Claude Code's own session name: (session, name), sent through the Chat
+    /// view's slash gate when its prompt is idle; dropped if the tab's session changes.
+    pub cli_rename: Option<(String, String)>,
+    /// Automatic handover instead of Claude Code's compaction (`auto_handover`).
+    pub auto: crate::auto_handover::TabAuto,
+    /// A handover continuing in this tab (`handover_in_place`).
+    pub in_place: Option<crate::handover_in_place::InPlace>,
     pub color: [u8; 3],
     /// Current session for list routing, badges and seen marks; never the pane's pinned identity.
     pub session: Option<String>,
@@ -46,13 +54,15 @@ pub struct Tab {
 
 impl Tab {
     pub(crate) fn needs_identity(&self) -> bool {
-        self.pane.as_ref().is_some_and(|pane| pane.chat.identity_unverified)
+        // Awaiting: the record will not change when the transcript appears, so keep looking.
+        self.pane.as_ref().is_some_and(|pane| pane.chat.identity_unverified || pane.chat.awaiting_transcript)
     }
 
     pub(crate) fn apply_live_identity(&mut self, found: Option<&str>) -> bool {
         let Some(pane) = &mut self.pane else { return false };
         let pane_changed = pane.update_identity(found);
-        let verified = found.filter(|_| !pane.chat.identity_unverified);
+        // A session awaiting its first transcript is not yet one to route, mark or resume.
+        let verified = found.filter(|_| !pane.chat.identity_unverified && !pane.chat.awaiting_transcript);
         // An absent PID record must not permit a duplicate resume of an already open tab.
         // A conflicting positive record, on the other hand, clears that routing claim.
         let current = if found.is_none() { self.session.as_deref() } else { verified };
@@ -107,6 +117,9 @@ impl Tabs {
             label,
             program_title: String::new(),
             rename: None,
+            cli_rename: None,
+            auto: Default::default(),
+            in_place: None,
             color,
             resume_id: session.clone(),
             session,
@@ -184,6 +197,18 @@ impl Tabs {
         self.list.iter().find(|t| t.session.as_deref() == Some(session) && eligible(t))
     }
 
+    /// Moves tab `id` to just right of `anchor`; false if either is missing.
+    pub fn place_after(&mut self, id: u64, anchor: u64) -> bool {
+        let (Some(from), Some(_)) = (self.index(id), self.index(anchor)) else { return false };
+        if id == anchor {
+            return false;
+        }
+        let tab = self.list.remove(from);
+        let to = self.index(anchor).map_or(self.list.len(), |i| i + 1);
+        self.list.insert(to, tab);
+        true
+    }
+
     /// How many tabs have a program that still runs.
     pub fn running(&self) -> usize {
         self.list.iter().filter(|t| t.term.running()).count()
@@ -244,6 +269,8 @@ pub fn draw(
             Some(name) => Cow::Borrowed(name),
             None => t.title(),
         };
+        let handed = t.session.as_deref().is_some_and(|id| marks.handed_over_to(id).is_some());
+        let title = if handed { format!("{title}{HANDED_OVER}").into() } else { title };
         (t.id, title, Some(t.color), ended)
     }));
     let natural: Vec<f32> = labels.iter().map(|(_, l, _, _)| chrome::tab_natural_width(p, l)).collect();
@@ -358,6 +385,17 @@ mod tests {
         let b = t.open(new("b", None), Term::empty((10, 3)));
         let c = t.open(new("c", Some("s-c")), Term::empty((10, 3)));
         (t, [a, b, c])
+    }
+
+    #[test]
+    fn a_handover_tab_moves_beside_its_source_and_stays_shown() {
+        let (mut t, [a, b, c]) = three();
+        assert!(t.place_after(c, a));
+        assert_eq!(t.list.iter().map(|x| x.id).collect::<Vec<_>>(), [a, c, b]);
+        assert_eq!(t.active, Some(c));
+        assert!(t.place_after(a, b));
+        assert_eq!(t.list.iter().map(|x| x.id).collect::<Vec<_>>(), [c, b, a]);
+        assert!(!t.place_after(a, a) && !t.place_after(a, 99) && !t.place_after(99, a));
     }
 
     #[test]

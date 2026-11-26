@@ -29,6 +29,10 @@ const ENTER_ONLY: &str = "Input is already in the CLI. Use Press Enter to submit
 const ENTER_WAIT: &str = "Staged input not confirmed. Check the terminal; Press Enter will not paste again.";
 const NO_PASTE: &str = "Bracketed paste is unavailable. Open the terminal to check.";
 const ALTERNATE: &str = "The terminal is showing a full-screen view. Return to the CLI prompt first.";
+pub(super) const FULLSCREEN: &str = "Claude Code is drawing its full-screen view, where Chat cannot send. Type \
+    /tui default in the terminal, or turn on Settings › Sessions › Classic terminal view and open a new tab.";
+pub(super) const NO_TRANSCRIPT: &str =
+    "Waiting for Claude Code to write this chat's transcript. Check the terminal before sending again.";
 const BUSY_CMD: &str = "A turn is running. Wait for it to finish before running this command.";
 const NO_IMAGE_PROMPT: &str = "No empty CLI input line for the picture. Check the terminal.";
 pub(super) const REMOVE_ATTACHMENTS: &str = "Remove attachments before running a slash command.";
@@ -155,8 +159,13 @@ fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'static str> {
     if let Some(recovery) = chat.staging.recovery.filter(|recovery| !recovery_ready(tab, now, *recovery)) {
         return Some(recovery.notice());
     }
+    if chat.awaiting_transcript && chat.first_sent {
+        return Some(NO_TRANSCRIPT);
+    }
     if modes.alt_screen {
-        return Some(ALTERNATE);
+        // A tab started without the classic renderer is most likely showing the CLI's own
+        // fullscreen renderer; say how to leave it. Otherwise it is another full-screen view.
+        return Some(if chat.classic_renderer { ALTERNATE } else { FULLSCREEN });
     }
     if !chat.demo && !modes.bracketed_paste {
         return Some(NO_PASTE);
@@ -306,7 +315,7 @@ impl AppState {
     }
 
     pub(super) fn advance_submission(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
-        let changed = clear_recovery(tab, now);
+        let changed = super::question::advance(tab, now, may_write) | clear_recovery(tab, now);
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
         if let Some(wait) = &chat.image_wait {
@@ -556,7 +565,10 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
     let pane = tab.pane.as_mut().unwrap();
     let chat = &mut pane.chat;
     match input.completion {
-        Completion::Message(_) => chat.submitted(),
+        Completion::Message(_) => {
+            chat.first_sent |= chat.awaiting_transcript;
+            chat.submitted();
+        }
         Completion::Command { line, from_editor } => {
             chat.cli_report.begin(baseline.unwrap_or_default(), chat.output_epoch, chat.demo, chat.input_floor, &line);
             if from_editor {
@@ -610,8 +622,14 @@ pub(super) fn write(tab: &mut Tab, bytes: &[u8], demo_text: &str) -> Result<(), 
 }
 
 pub(super) fn stage_deadline(chat: &Chat) -> Option<Instant> {
-    chat.image_wait.as_ref().map(|wait| wait.due).or_else(|| chat.staging.echo.as_ref().map(|wait| wait.due))
+    chat.image_wait
+        .as_ref()
+        .map(|wait| wait.due)
+        .or_else(|| chat.staging.echo.as_ref().map(|wait| wait.due))
+        .or_else(|| chat.question.deadline())
 }
 
+#[cfg(test)]
+mod identity_tests;
 #[cfg(test)]
 mod tests;

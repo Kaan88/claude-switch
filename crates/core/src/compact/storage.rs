@@ -1,3 +1,4 @@
+use super::FocusKind;
 use crate::{Refusal, Roots};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -11,7 +12,45 @@ pub struct Preferences {
     pub model: String,
     pub consents: BTreeSet<String>,
     pub default_agent: Option<String>,
+    /// Handover instead of Claude Code's own compaction, in Claude Switch's tabs only.
+    pub auto: AutoHandover,
+    /// The context percentage that triggers it; `None` is where Claude Code would compact.
+    pub auto_percent: Option<u8>,
+    /// Where a handover continues: false (the default) is in place, in the tab that runs the
+    /// session (`/clear`, then the handover as the first message); true opens a new tab.
+    pub new_tab: bool,
+    /// Focus texts replacing the built-in ones, by [`FocusKind::index`]; `None` is built-in.
+    pub focus: [Option<String>; 3],
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AutoHandover {
+    #[default]
+    Off,
+    Ask,
+    Automatic,
+}
+
+impl AutoHandover {
+    pub const OPTIONS: [(Self, &'static str, &'static str); 3] =
+        [(Self::Off, "off", "Off"), (Self::Ask, "ask", "Ask first"), (Self::Automatic, "automatic", "Automatic")];
+
+    pub fn index(self) -> usize {
+        Self::OPTIONS.iter().position(|(mode, _, _)| *mode == self).unwrap_or(0)
+    }
+
+    fn key(self) -> &'static str {
+        Self::OPTIONS[self.index()].1
+    }
+
+    fn parse(key: &str) -> Self {
+        Self::OPTIONS.iter().find(|(_, k, _)| *k == key).map_or(Self::Off, |(mode, _, _)| *mode)
+    }
+}
+
+/// The range a set percentage may take: below it a handover would come too early to be useful,
+/// above it Claude Code may run out of room for the summary turn.
+pub const AUTO_PERCENT: std::ops::RangeInclusive<u8> = 40..=95;
 
 impl Preferences {
     pub(crate) fn read(value: &Value) -> Self {
@@ -29,11 +68,40 @@ impl Preferences {
                 .as_str()
                 .filter(|name| crate::launch::session_agent_args(name).is_ok())
                 .map(str::to_owned),
+            auto: value["auto"]["mode"].as_str().map_or(AutoHandover::Off, AutoHandover::parse),
+            auto_percent: value["auto"]["percent"]
+                .as_u64()
+                .and_then(|n| u8::try_from(n).ok())
+                .filter(|n| AUTO_PERCENT.contains(n)),
+            new_tab: value["continueIn"].as_str() == Some("newTab"),
+            focus: FocusKind::ALL.map(|kind| {
+                value["focus"][kind.key()].as_str().and_then(super::clean_focus).filter(|t| t != kind.built_in())
+            }),
         }
     }
 
     pub(crate) fn json(&self) -> Value {
-        json!({"model": self.model, "consents": self.consents, "defaultAgent": self.default_agent})
+        json!({
+            "model": self.model,
+            "consents": self.consents,
+            "defaultAgent": self.default_agent,
+            "auto": {"mode": self.auto.key(), "percent": self.auto_percent},
+            "continueIn": if self.new_tab { "newTab" } else { "thisTab" },
+            "focus": FocusKind::ALL
+                .iter()
+                .filter_map(|kind| Some((kind.key().to_owned(), Value::from(self.focus[kind.index()].clone()?))))
+                .collect::<serde_json::Map<_, _>>(),
+        })
+    }
+
+    /// The focus used for `kind` when the user gives none.
+    pub fn focus_text(&self, kind: FocusKind) -> &str {
+        self.focus[kind.index()].as_deref().unwrap_or(kind.built_in())
+    }
+
+    /// Saves `text` for `kind`; empty or the built-in text resets it.
+    pub fn set_focus(&mut self, kind: FocusKind, text: &str) {
+        self.focus[kind.index()] = super::clean_focus(text).filter(|t| t != kind.built_in());
     }
 
     pub fn set_default_agent(&mut self, name: &str) -> Result<(), Refusal> {

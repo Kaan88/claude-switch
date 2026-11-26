@@ -14,7 +14,7 @@ use mdshared_ui::overlay::{
     DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_backdrop_presence, draw_dialog_button,
     draw_dialog_card_with,
 };
-use mdshared_ui::textfield::{FieldColors, TextField};
+use mdshared_ui::textfield::{FieldColors, FieldHit, TextField};
 use mdshared_ui::theme::Palette;
 
 use crate::session_panel::Panel;
@@ -93,7 +93,6 @@ impl Pending {
 
 #[derive(Clone, Debug)]
 pub enum NameFor {
-    HandoverAgent,
     Add,
     Rename(String),
     Tab(u64),
@@ -102,7 +101,7 @@ pub enum NameFor {
 pub enum Dialog {
     Confirm { title: String, text: String, ok: String, then: Pending },
     Accounts { scroll: f32, shares: Vec<(String, Vec<ShareState>)> },
-    Name { title: String, field: TextField, stops: Vec<f32>, then: NameFor, error: Option<String> },
+    Name { title: String, field: TextField, hit: Option<FieldHit>, then: NameFor, error: Option<String> },
     NewSession(Box<newsession::NewSession>),
     FolderOpen(Box<crate::folder_defaults::Editor>),
     Archive(Box<crate::archive::ArchiveDialog>),
@@ -124,7 +123,7 @@ pub(crate) fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
     let mut field = TextField::new();
     field.set_text(text);
     field.select_all();
-    Dialog::Name { title: title.into(), field, stops: Vec::new(), then, error: None }
+    Dialog::Name { title: title.into(), field, hit: None, then, error: None }
 }
 
 // ---- drawing ---------------------------------------------------------------------------------
@@ -227,7 +226,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
             let primary = then.ok_is_primary();
             d.footer(p, footer, &[(ok.as_str(), primary, OK), ("Cancel", !primary, CANCEL)]);
         }
-        Dialog::Name { title, field, stops, error, then } => {
+        Dialog::Name { title, field, hit, error, then } => {
             let card = dialog_card(420.0, 120.0 + DIALOG_FOOTER, w, h);
             let footer = d.card(p, card);
             d.title(p, card, title);
@@ -237,12 +236,11 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
             let colors =
                 FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
             let placeholder = match then {
-                NameFor::HandoverAgent => "Agent name (blank uses Claude)",
                 NameFor::Tab(_) => "Tab name (blank resets it)",
                 _ => "Account name",
             };
             field.draw(p, inner, Face::Ui, 13.0, &colors, placeholder, true, true);
-            *stops = p.caret_stops(Face::Ui, 13.0, &field.display());
+            *hit = crate::fieldmouse::hit(p, inner, 13.0);
             d.hits.push((fr, Target::Dialog(FIELD)));
             if let Some(e) = error {
                 p.text(Face::Ui, 12.0, fr.x, fr.bottom() + 14.0, e, pal.danger, fr.w);
@@ -446,20 +444,11 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (CANCEL, _) => {}
             (_, then) => st.dialog = Some(Dialog::Confirm { title, text, ok, then }),
         },
-        Dialog::Name { mut field, stops, then, title, error } => match id {
-            OK => submit_name(st, now, field, stops, then, title),
-            CANCEL if matches!(then, NameFor::HandoverAgent) => {
-                st.dialog = Some(settings::settings(st, Some(settings::HANDOVERS)));
-            }
+        Dialog::Name { field, hit, then, title, error } => match id {
+            OK => submit_name(st, now, field, hit, then, title),
             CANCEL if matches!(then, NameFor::Tab(_)) => {}
             CANCEL => st.dialog = Some(accounts(st, now)),
-            FIELD => {
-                let inner_x =
-                    x - st.hits.iter().find(|(_, t)| *t == Target::Dialog(FIELD)).map_or(0.0, |(r, _)| r.x + 8.0);
-                field.press(inner_x, &stops, false);
-                st.dialog = Some(Dialog::Name { title, field, stops, then, error });
-            }
-            _ => st.dialog = Some(Dialog::Name { title, field, stops, then, error }),
+            _ => st.dialog = Some(Dialog::Name { title, field, hit, then, error }),
         },
         Dialog::About => {
             if id != CANCEL {
@@ -477,14 +466,14 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             _ => st.dialog = Some(Dialog::Accounts { scroll, shares }),
         },
         Dialog::NewSession(mut picker) => {
-            if picker.click(st, now, id, x) {
+            if picker.click(st, now, id) {
                 st.dialog = Some(Dialog::NewSession(picker));
             }
         }
         Dialog::FolderOpen(editor) => editor.click(st, id),
         Dialog::Archive(archive) => archive.click(st, id),
         Dialog::ArchiveReport(report) => report.click(st, id),
-        Dialog::Session(panel) => panel.click(st, now, id, x, false),
+        Dialog::Session(panel) => panel.click(st, now, id, false),
         Dialog::Compact(mut compact) => {
             if compact.click(st, now, id, x) {
                 st.dialog = Some(Dialog::Compact(compact));
@@ -531,23 +520,13 @@ fn account_action(st: &mut AppState, now: Instant, k: usize, act: u32) {
     }
 }
 
-fn submit_name(st: &mut AppState, now: Instant, field: TextField, stops: Vec<f32>, then: NameFor, title: String) {
+fn submit_name(st: &mut AppState, now: Instant, field: TextField, hit: Option<FieldHit>, then: NameFor, title: String) {
     let name = field.text().trim().to_string();
-    if matches!(then, NameFor::HandoverAgent) {
-        st.dialog = Some(match settings::set_handover_agent(st, &name) {
-            Ok(()) => settings::settings(st, Some(settings::HANDOVERS)),
-            Err(error) => Dialog::Name { title, field, stops, then, error: Some(error.to_string()) },
-        });
-        return;
-    }
     let result = match &then {
-        NameFor::HandoverAgent => unreachable!(),
         NameFor::Add => st.source.add_account(&mut st.config, &name).map(drop),
         NameFor::Rename(slug) => st.source.rename(&mut st.config, slug, &name),
         NameFor::Tab(id) => {
-            if let Some(tab) = st.tabs.get_mut(*id) {
-                tab.rename = (!name.is_empty()).then_some(name);
-            }
+            st.rename_tab(now, *id, &name);
             return;
         }
     };
@@ -556,7 +535,7 @@ fn submit_name(st: &mut AppState, now: Instant, field: TextField, stops: Vec<f32
             accounts_changed(st, now);
             st.dialog = Some(accounts(st, now));
         }
-        Err(e) => st.dialog = Some(Dialog::Name { title, field, stops, then, error: Some(e.to_string()) }),
+        Err(e) => st.dialog = Some(Dialog::Name { title, field, hit, then, error: Some(e.to_string()) }),
     }
 }
 
@@ -599,7 +578,7 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
             if let Some(id) = id
                 && let Dialog::Session(panel) = dialog
             {
-                panel.click(st, now, id, 0.0, mods.ctrl);
+                panel.click(st, now, id, mods.ctrl);
             } else {
                 st.dialog = Some(dialog);
             }

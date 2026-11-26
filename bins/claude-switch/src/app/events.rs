@@ -13,9 +13,7 @@ impl App for AppState {
         if let Some(place) = &self.win_file.place {
             winfile::apply(cx.window(), place);
         }
-        if !self.compact.standalone_window {
-            self.load_tab_restore();
-        }
+        self.load_tab_restore();
         windowlook::apply(self, cx);
         let now = cx.now();
         self.refresh(now);
@@ -25,6 +23,7 @@ impl App for AppState {
         self.start_demo_session();
         self.start_usage_hover_demo(now);
         self.start_compact();
+        self.serve_handovers();
         self.setup_notifications(cx);
         self.timers(cx);
     }
@@ -47,11 +46,14 @@ impl App for AppState {
             }
             Event::Press { x, y, button: Button::Left, clicks } => self.press(cx, x, y, clicks),
             Event::Release { x, y, button: Button::Left } => self.release(cx, x, y),
+            Event::Press { x, y, button: Button::Right, .. } if self.field_menu(x, y, cx.now()) => {}
             Event::Press { x, y, button, clicks } => {
+                self.field_mouse.cancel();
                 if !self.nothing_over() || self.picture_overlay() {
                     return;
                 }
                 match self.hit(x, y) {
+                    _ if button == Button::Right && self.conversation_menu(x, y) => {}
                     Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Middle && id != SESSIONS => {
                         self.ask_close_tab(id)
                     }
@@ -117,6 +119,7 @@ impl App for AppState {
                 }
             }
             Event::Focus(false) => {
+                self.field_mouse.cancel();
                 self.tabs.drag = None;
                 self.chat_end_drag(None);
                 self.usage.popup = Default::default();
@@ -148,6 +151,7 @@ impl App for AppState {
                     cx.request_redraw_all();
                 }
                 self.attention_tick(cx);
+                self.auto_handover_tick(cx);
                 self.usage_warning_tick(now);
                 if self.start_conversation_search(now) {
                     cx.request_redraw_all();
@@ -157,7 +161,7 @@ impl App for AppState {
                 if let Some(at) = self.typed_due(now) {
                     cx.wake_at(at);
                 }
-                if self.tip.tick(now) | self.toasts.tick(now) {
+                if self.tip.tick(now) | self.toasts.tick(now) | self.field_tick(now) {
                     cx.request_redraw_all();
                 }
                 if self.usage_hover_due(now) {
@@ -226,6 +230,7 @@ impl App for AppState {
                     | self.take_opencode_job(cx.now());
                 let changed = changed | self.restore_tabs_if_always(cx.now());
                 self.attention_tick(cx);
+                self.auto_handover_tick(cx);
                 self.usage_warning_tick(cx.now());
                 if self.exit_if_requested(cx) {
                     return;
@@ -244,6 +249,15 @@ impl App for AppState {
                 }
             }
             Msg::SessionView => self.session_ready(cx),
+            Msg::Handover(request, reply) => {
+                let result = self.handover_requested(*request);
+                if result.is_ok() {
+                    crate::tray::show(cx.window());
+                }
+                let _ = reply.send(result);
+                cx.request_redraw_all();
+                self.timers(cx);
+            }
             Msg::ArchiveReportSaved(result) => {
                 self.report_saved(result);
                 cx.request_redraw_all();
@@ -308,32 +322,27 @@ impl AppState {
         if self.marks_flush_at.is_some() {
             self.save_marks();
         }
-        if !self.compact.standalone_window {
-            self.capture_window(cx);
-            if !self.restore.window_save_failed
-                && let Err(error) = self.write_window()
-            {
-                self.restore.window_save_failed = true;
-                self.quit = false;
-                self.error(
-                    "Could not save window settings",
-                    format!("{error} Close again to exit without saving them."),
-                );
-                cx.request_redraw_all();
-                return;
-            }
-            if !self.restore.save_failed
-                && let Err(error) = self.save_tab_restore()
-            {
-                self.restore.save_failed = true;
-                self.quit = false;
-                self.error(
-                    "Could not save terminal tabs",
-                    format!("{error} Close again to leave the saved snapshot unchanged."),
-                );
-                cx.request_redraw_all();
-                return;
-            }
+        self.capture_window(cx);
+        if !self.restore.window_save_failed
+            && let Err(error) = self.write_window()
+        {
+            self.restore.window_save_failed = true;
+            self.quit = false;
+            self.error("Could not save window settings", format!("{error} Close again to exit without saving them."));
+            cx.request_redraw_all();
+            return;
+        }
+        if !self.restore.save_failed
+            && let Err(error) = self.save_tab_restore()
+        {
+            self.restore.save_failed = true;
+            self.quit = false;
+            self.error(
+                "Could not save terminal tabs",
+                format!("{error} Close again to leave the saved snapshot unchanged."),
+            );
+            cx.request_redraw_all();
+            return;
         }
         cx.exit();
     }

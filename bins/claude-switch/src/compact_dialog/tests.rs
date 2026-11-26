@@ -40,8 +40,26 @@ fn saved_agent_is_preselected_and_can_be_overridden_with_plain_claude() {
     dialog.click(&mut st, now, OPTION + 1, 0.0);
     assert_eq!(dialog.agent_name(), Some("main-reviewer"), "an account change resets to Settings");
     dialog.click(&mut st, now, AGENT, 0.0);
-    assert_eq!(dialog.count(), 3);
-    assert!(dialog.agents[0].description.contains("not found"));
+    assert_eq!(dialog.count(), 2, "the other account lacks it: not offered");
+    assert_eq!(dialog.agent_name(), None, "and not passed");
+    let (notice, error) = dialog.message.clone().unwrap();
+    assert!(notice.contains("“main-reviewer”") && notice.contains("plain Claude") && !error, "{notice}");
+}
+
+#[test]
+fn a_missing_saved_agent_is_checked_before_launch_even_without_opening_the_picker() {
+    let mut st = app();
+    st.config.compact.set_default_agent("deepseek-flash").unwrap();
+    let mut dialog = Compact::new(&st, st.selected_session().unwrap().clone(), Some("main"));
+    assert_eq!(dialog.agent_name(), Some("deepseek-flash"));
+    let notice = dialog.check_agents_now(&st).unwrap();
+    assert!(notice.contains("deepseek-flash"), "{notice}");
+    assert_eq!(dialog.agent_name(), None);
+    assert_eq!(dialog.check_agents_now(&st), None, "checked once");
+    st.config.compact.set_default_agent("main-reviewer").unwrap();
+    let mut dialog = Compact::new(&st, st.selected_session().unwrap().clone(), Some("main"));
+    assert_eq!(dialog.check_agents_now(&st), None);
+    assert_eq!(dialog.agent_name(), Some("main-reviewer"), "a present default is kept");
 }
 
 #[test]
@@ -120,7 +138,14 @@ fn demo_requires_provider_consent_and_preview_before_the_open_action() {
     let now = Instant::now();
     let click = |st: &mut AppState, id| dialogs::click(st, now, id, 0.0);
     assert!(compact(&st).phase == Phase::Setup);
-    assert!(compact(&st).focus.text.contains("remaining verification"));
+    assert!(compact(&st).focus.text.starts_with("No code here."));
+    assert!(compact(&st).focus_label().contains("non-code work, picked for this session"));
+    let mut edited = compact(&st).focus.text.clone();
+    edited.push_str(" Keep the glossary.");
+    if let Some(Dialog::Compact(dialog)) = &mut st.dialog {
+        dialog.focus.set(edited);
+    }
+    assert_eq!(compact(&st).focus_label(), "Focus: your own", "an edit makes it the user's own");
     click(&mut st, MODEL);
     click(&mut st, OPTION + 1);
     assert_eq!(st.config.compact.model, "demo/summary-thorough");

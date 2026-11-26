@@ -191,7 +191,7 @@ impl Draw<'_> {
         self.hits.push((e, Target::Chat(Control::Editor)));
         let c = p.clip(e);
         let x = e.x + 8.0;
-        let width = (e.w - 16.0).max(0.0);
+        let width = editor_text_width(e);
         let ed = &mut chat.editor;
         ed.flow(p, width, e.h);
         let selection = ed.selection();
@@ -376,6 +376,11 @@ impl Draw<'_> {
         }
         p.restore(clip);
     }
+}
+
+/// The editor's wrapping width inside its rectangle (8 px of padding on each side).
+pub(super) fn editor_text_width(e: Rect) -> f32 {
+    (e.w - 16.0).max(0.0)
 }
 
 fn short(s: &str, max: usize) -> String {

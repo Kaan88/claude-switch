@@ -7,11 +7,11 @@ license.workspace = true
 [dependencies]
 claude-switch-core = { path = "../../crates/core" }
 opencode-cli = { path = "../../crates/opencode" }
-mdshared-ui = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "137121c6a0006ad524cffc40ef4d29410dcb332f", features = ["host", "term"] }
-mdshared-app = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "137121c6a0006ad524cffc40ef4d29410dcb332f" }
-mdshared-term = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "137121c6a0006ad524cffc40ef4d29410dcb332f" }
-mdshared-pty = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "137121c6a0006ad524cffc40ef4d29410dcb332f" }
-mdshared-text = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "137121c6a0006ad524cffc40ef4d29410dcb332f" }
+mdshared-ui = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "081d413e5f64e12e168e8b940d4dba2bf954fa19", features = ["host", "term"] }
+mdshared-app = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "081d413e5f64e12e168e8b940d4dba2bf954fa19" }
+mdshared-term = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "081d413e5f64e12e168e8b940d4dba2bf954fa19" }
+mdshared-pty = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "081d413e5f64e12e168e8b940d4dba2bf954fa19" }
+mdshared-text = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "081d413e5f64e12e168e8b940d4dba2bf954fa19" }
 mdview-preview = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }
 mdview-render = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }
 mdview-core = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }
@@ -21,4 +21,4 @@ serde_json = "1"
 winit = { version = "=0.30.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Networking_WinHttp", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Memory", "Win32_System_Time", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

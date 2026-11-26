@@ -104,6 +104,7 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
                                 "Bash" | "PowerShell" => "Shell",
                                 "Grep" | "Glob" => "Search",
                                 "WebFetch" | "WebSearch" => "Web",
+                                name if delegates(name) => "Delegate",
                                 _ => "Other",
                             };
                             visit(Entry::Tool { id: id.into(), kind, path, command });
@@ -116,4 +117,14 @@ pub(crate) fn read(path: &Path, cancelled: impl Fn() -> bool, mut visit: impl Fn
         line.clear();
     }
     Ok(if native_is_latest { native.finish() } else { tasks })
+}
+
+/// A tool call that hands work to an agent or worker: Claude Code's Agent (formerly Task),
+/// messages to agents, workflows, and MCP tools named for workers or agents.
+fn delegates(name: &str) -> bool {
+    if matches!(name, "Agent" | "Task" | "SendMessage" | "Workflow") {
+        return true;
+    }
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("mcp__") && ["worker", "agent", "delegate"].iter().any(|w| lower.contains(w))
 }

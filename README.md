@@ -82,11 +82,28 @@ session. The character/token estimate updates as you edit. You can also copy or 
 **New session name** starts with the source’s displayed name plus ` · continued` (then
 ` · continued 2`, ` · continued 3`, and so on if needed). Edit it before opening to set the
 Claude Code session name, not just the handover tab label.
-The editor's **Agent** picker starts with the **Default CLI agent** from **Settings → Handovers**.
-Leave the setting blank to start at **Default (Claude)**, which adds no `--agent` override.
+**Settings → Handovers** sets **Where it continues** (this tab, or a new tab), **Summary written
+by**, the focus texts, and **New chat starts as** for new tabs. When you give no focus, Switch
+picks one locally from the session's tool calls: coordination (mostly handing work to agents),
+non-code work (no code edits), or the default. The dialog shows which it picked and lets you
+edit it; your own focus replaces it. Each of the three texts can be edited and reset in Settings.
+The editor's **Agent** picker starts with **New chat starts as** from **Settings → Handovers**, a
+list of the agents your accounts have (with the accounts named when they differ). **None (plain
+Claude)** adds no `--agent` override. If the target account and folder do not have the saved agent,
+the new chat starts as plain Claude and a notice says so; Settings marks a name no account has as
+missing. **Summary written by** in the same page is the OpenCode model that writes the handover.
 You can choose a different agent before selecting **Open in CLI**. Changing the target account
 resets the picker to your setting.
 There is no supported agent option for starting a handover in Desktop.
+**Hand over automatically** (Off, Ask first, Automatic) replaces Claude Code's own compaction in
+the CLI tabs Claude Switch starts: they run with `DISABLE_AUTO_COMPACT=1`, and once the context
+reaches the set point (by default where Claude Code would compact) and the turn has ended,
+Switch asks with the handover dialog or makes the handover itself, linked to the old chat.
+A handover continues **in place** when a Claude Switch tab runs the session: the dialog's button
+reads **Continue here**, and Switch sends `/clear` at an idle prompt, follows the tab to the new
+session and sends the handover as its first message, all through the Chat view's usual checks.
+The old session is marked handed over in its tab and in Sessions. If a step does not happen in
+time it stops, says why and where the handover is saved. Otherwise it opens in a new tab. Automatic needs the summary model's provider approved once.
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 
@@ -106,9 +123,10 @@ the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requ
 consent. `--print` outputs Markdown and opens nothing; add `--save` to keep a local copy.
 `--agent <name>` overrides the handover default for `--open` only. The agent must be available to
 Claude Code in the target account and project. `--name <title>` is also `--open` only; omit it to
-use the same numbered continuation name as the editor. `--open` saves the handover and starts a new
-session in a new Claude Switch window; it waits for
-tab-creation confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
+use the same numbered continuation name as the editor. `--open` saves the handover and, when a tab of the running Claude Switch window runs
+the session, continues there in place; otherwise it opens the new session as a tab in the running
+window (beside the source session's tab), or starts Claude Switch with that tab when it is not
+running. It waits for the window's confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
 code units are saved in full; the new session's initial prompt asks it to read the saved
@@ -251,14 +269,31 @@ and never overwrites an existing file. Treat the report as private conversation 
 
 Pick **Chat** or **Terminal** at the right of a Claude session’s tab strip. The choice stays
 with each tab and sets the default for new ones. Chat shows the local conversation, a multiline
-composer, and a collapsible Details panel on wider windows.
+composer, and a collapsible Details panel on wider windows. The composer is three lines tall and
+grows with your text up to about 40% of the view, then scrolls.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
 to resize it, and answer permissions and other CLI dialogs there.
+
+When Claude asks a question (its AskUserQuestion tool), the question appears as a card under the
+conversation and the working line says **Waiting for your answer**. Click an option, or type an
+answer and choose **Answer**, or **Chat about this** to leave the question and send the text as
+your next message. Chat answers only while the terminal shows that same question, and only one
+single-choice question at a time; otherwise the card says why and the drawer opens for you to
+answer there. Permission questions are always answered in the terminal.
+
+Chat cannot send while Claude Code draws its full-screen view. **Settings › Sessions › Classic
+terminal view for Claude tabs** (on by default) starts new Claude tabs with Claude Code's classic
+renderer (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`, for that process only). In a tab started
+without it, type `/tui default` in the terminal. The first message of a new chat can be sent from
+Chat; after `/clear`, compaction or `/resume` in the terminal, Chat follows the tab to its new
+session.
 
 Chat and the narrower **Session view** share the same conversation design: your prompts are
 right-aligned bubbles, Claude’s replies are open prose, and compact tool rows expand for details.
 Long runs of consecutive tools start collapsed. Drag the scrollbar thumb or click its track to
-page through either view. Click an existing Markdown path in a reply, or a Markdown file button
+page through either view. Select text across messages with the mouse and press Ctrl+C, or
+right-click for **Copy**, **Select all**, and on a message **Copy message** or **Copy as
+Markdown**; each code block has its own **Copy** button. Click an existing Markdown path in a reply, or a Markdown file button
 under the turn, to preview the file without leaving the conversation. **Open in editor** uses
 the system’s default app; **×** returns to the conversation.
 
@@ -281,7 +316,7 @@ the viewer. Both tabs are also available in **Session view**.
 | Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (sent as a space) |
 | Up on the first line / Down on the last line | Browse earlier or newer prompts, including terminal prompts. Escape or Down past newest restores the draft unless you edit or send |
 | Click, drag or Shift+click; double- or triple-click | Place the caret, extend a selection, select a word, or select everything |
-| Right-click in the composer | Cut, Copy, Paste, Select all |
+| Right-click in the composer or any text box | Cut, Copy, Paste, Select all |
 | Ctrl+V / Ctrl+Shift+V | Paste text if available (otherwise a picture) / paste a picture explicitly |
 | **Attach…** or file drop | Choose files or **Paste picture** from the menu, or drop files into Chat |
 | `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |

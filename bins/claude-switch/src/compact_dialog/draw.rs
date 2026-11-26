@@ -100,7 +100,7 @@ impl Compact {
             p.text(Face::Ui, FONT, body.x, y + 16.0, model, d.pal.muted, half);
             p.text(Face::Ui, FONT, body.x + half + 16.0, y + 16.0, account, d.pal.muted, half);
         }
-        p.text(Face::Semibold, 13.0, body.x, body.y + 115.0, "Focus (optional)", d.pal.text, body.w);
+        p.text(Face::Semibold, 13.0, body.x, body.y + 115.0, &self.focus_label(), d.pal.text, body.w);
         if ready {
             self.draw_editor(d, p, Rect::new(body.x, body.y + 131.0, body.w, (body.h - 183.0).max(36.0)), false);
         }
@@ -182,8 +182,7 @@ impl Compact {
         p.text(Face::Ui, FONT, body.x, field.y + 14.0, "New session name", d.pal.text, 111.0);
         p.frame(field, 5.0, d.pal.field, if self.name_focused { d.pal.accent } else { d.pal.line });
         let inner = field.inset(7.0);
-        self.name_x = inner.x;
-        self.name_stops = p.caret_stops(Face::Ui, FONT, &self.new_name.display());
+        self.name_hit = crate::fieldmouse::hit(p, inner, FONT);
         let colors =
             FieldColors { text: d.pal.text, placeholder: d.pal.muted, selection: d.pal.selection, caret: d.pal.text };
         self.new_name.draw(p, inner, Face::Ui, FONT, &colors, "Enter a name", self.name_focused, true);
@@ -217,7 +216,7 @@ impl Compact {
             p,
             footer,
             &[
-                ("Open in CLI", true, OK),
+                (if self.in_place { "Continue here" } else { "Open in CLI" }, true, OK),
                 ("Cancel", false, CANCEL),
                 ("Back", false, BACK),
                 ("Save as…", false, SAVE),

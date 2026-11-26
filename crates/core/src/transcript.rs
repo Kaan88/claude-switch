@@ -15,7 +15,7 @@ mod background;
 mod chat;
 pub use background::{BackgroundShell, ResultDetails, ShellStatus};
 mod decode;
-pub use chat::{ChatInfo, Phase as ChatPhase, ToolCard};
+pub use chat::{ChatInfo, Phase as ChatPhase, Question, QuestionOption, ToolCard};
 mod tail;
 use decode::*;
 pub(crate) use decode::{LineKind, line_kind};

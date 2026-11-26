@@ -23,6 +23,7 @@ pub mod fulltext;
 pub mod grouping;
 pub mod launch;
 pub mod marks;
+mod merge;
 pub mod naming;
 mod prompt_clean;
 pub mod running;
@@ -273,6 +274,9 @@ pub struct Config {
     pub workers: WorkersUse,
     /// Open CLI sessions in a tab of the window (true) or in an external terminal window (false).
     pub embedded_terminal: bool,
+    /// Start Claude tabs with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` (the CLI's classic
+    /// renderer); the Chat view cannot send while the CLI draws its full-screen view.
+    pub classic_terminal_view: bool,
     /// Show archived desktop sessions in the list.
     pub show_archived: bool,
     /// Show the sessions started by tools and subagents ([`Session::worker`]) in the list.

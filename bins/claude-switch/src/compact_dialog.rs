@@ -14,7 +14,7 @@ pub use draw::draw_history_row;
 use editor::Editor;
 use mdshared_app::job::Job;
 use mdshared_ui::keys::{KeyName, Mods};
-use mdshared_ui::textfield::TextField;
+use mdshared_ui::textfield::{FieldHit, TextField};
 use mdshared_ui::{gfx::Rect, platform};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -42,10 +42,16 @@ pub struct Cache {
     retiring: Vec<Work>,
     pub startup: Option<crate::compact_open::NewHandover>,
     pub startup_ack: Option<String>,
-    pub standalone_window: bool,
+    /// The handover channel this window claimed at startup, until it serves it.
+    pub listener: Option<crate::handover_pipe::Listener>,
+    /// Why the channel could not be claimed, shown once the window runs.
+    pub listen_failed: Option<String>,
     pub demo: Option<bool>,
     pub demo_long: bool,
     pub history: Option<(String, Vec<PathBuf>)>,
+    /// Settings › Handovers' agent choice: (name, label), read when that page opens.
+    pub settings_agents: Vec<(String, String)>,
+    pub auto: crate::auto_handover::Watcher,
 }
 
 enum Update {
@@ -74,12 +80,13 @@ enum Phase {
 pub struct Compact {
     session: Session,
     source_tab: Option<u64>,
+    /// A tab runs this session as the chosen account: the handover continues there.
+    pub(super) in_place: bool,
     name: String,
     suggested_name: String,
     new_name: TextField,
     name_focused: bool,
-    name_stops: Vec<f32>,
-    name_x: f32,
+    name_hit: Option<FieldHit>,
     program: Option<PathBuf>,
     data: Option<std::sync::Arc<compact::Handover>>,
     models: Vec<String>,
@@ -92,6 +99,9 @@ pub struct Compact {
     agent: usize,
     agent_focus: usize,
     focus: Editor,
+    /// The focus put in the box when the transcript was read: the session's own `/compact`
+    /// focus (kind `None`) or the Settings text for the kind picked for this session.
+    picked: Option<(Option<compact::FocusKind>, String)>,
     preview: Editor,
     saved: Option<PathBuf>,
     history: Vec<PathBuf>,
@@ -114,6 +124,35 @@ impl Drop for Compact {
 }
 
 impl AppState {
+    /// Reads every account's agents for the Settings choice (local files only, never Claude).
+    pub fn load_settings_agents(&mut self) {
+        let per_account: Vec<_> = self
+            .config
+            .accounts
+            .iter()
+            .map(|account| {
+                let found = match &self.source {
+                    Source::Real(roots) => agents::discover_account(roots, account, || false),
+                    Source::Demo => choices::demo_agents(&account.slug),
+                };
+                (account.name.clone(), found)
+            })
+            .collect();
+        self.compact.settings_agents = agents::settings_choices(&per_account);
+    }
+
+    /// A notice in the open handover dialog (not an error).
+    pub fn compact_notice(&mut self, text: String) {
+        if let Some(Dialog::Compact(dialog)) = &mut self.dialog {
+            dialog.message = Some((text, false));
+        }
+    }
+
+    /// The OpenCode models last listed in this window, if any.
+    pub fn listed_models(&self) -> Option<&[String]> {
+        self.compact.models.as_deref()
+    }
+
     pub fn start_compact(&mut self) {
         if let Some(request) = self.compact.startup.take() {
             let result = self.open_handover_tab(request);
@@ -215,7 +254,10 @@ impl AppState {
                 }
             }
         } else if self.source.is_demo() {
-            dialog.focus.set("Keep the decision and the remaining verification.".into());
+            let kind = compact::FocusKind::NonCode;
+            let text = self.config.compact.focus_text(kind).to_owned();
+            dialog.focus.set(text.clone());
+            dialog.picked = Some((Some(kind), text));
             dialog.models = vec!["demo/summary-fast".into(), "demo/summary-thorough".into()];
             self.compact.models = Some(dialog.models.clone());
         } else {
@@ -276,13 +318,13 @@ impl Compact {
         new_name.set_text(&suggested_name);
         let mut this = Self {
             source_tab: None,
+            in_place: false,
             session,
             name,
             suggested_name,
             new_name,
             name_focused: false,
-            name_stops: Vec::new(),
-            name_x: 0.0,
+            name_hit: None,
             accounts,
             account,
             default_agent: st.config.compact.default_agent.clone(),
@@ -295,6 +337,7 @@ impl Compact {
             models: Vec::new(),
             model: 0,
             focus: Editor::default(),
+            picked: None,
             preview: Editor::default(),
             saved: None,
             history: Vec::new(),
@@ -308,7 +351,18 @@ impl Compact {
             message: None,
         };
         this.reset_agents();
+        this.check_in_place(st);
         this
+    }
+
+    pub(super) fn check_in_place(&mut self, st: &AppState) {
+        let account = self.accounts.get(self.account).map(|a| a.0.as_str());
+        self.in_place = account.is_some() && st.in_place_target(&self.session.id, account).is_some();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notice_text(&self) -> Option<&str> {
+        self.message.as_ref().map(|(text, _)| text.as_str())
     }
 
     fn error(&mut self, text: String) {
@@ -354,7 +408,9 @@ impl Compact {
         match result {
             Ok(Update::Loaded(data, models)) => {
                 if let Some(data) = data {
-                    self.focus.set(data.focus().unwrap_or_default().to_owned());
+                    let picked = data.chosen_focus(&st.config.compact);
+                    self.focus.set(picked.1.clone());
+                    self.picked = Some(picked);
                     self.data = Some(data);
                 }
                 match models {
@@ -456,6 +512,10 @@ impl Compact {
     }
 
     fn open(&mut self, st: &mut AppState, now: Instant) -> Result<(), String> {
+        let dropped = self.check_agents_now(st);
+        if let Some(notice) = &dropped {
+            st.toast(notice.clone(), now);
+        }
         let Some((account, _)) = self.accounts.get(self.account) else { return Err("Choose an account.".into()) };
         let name = if self.new_name.text() == self.suggested_name {
             names::suggest(&st.marks, &st.sessions, &self.name)
@@ -468,6 +528,11 @@ impl Compact {
         };
         compact_open::validate_prompt(&self.preview.text)?;
         let saved = compact_open::keep(roots, &self.session.id, &self.preview.text, self.saved.as_deref())?;
+        if let Some(tab) = st.in_place_target(&self.session.id, Some(account)) {
+            self.saved = Some(saved.clone());
+            let names = (self.name.clone(), name);
+            return st.continue_in_place(tab, &self.session.clone(), names, &self.preview.text.clone(), saved);
+        }
         let request = compact_open::prepare(
             roots,
             &st.config,
@@ -480,6 +545,21 @@ impl Compact {
         .with_agent(self.agent_name())?;
         self.saved = Some(saved);
         st.open_handover_tab(request)
+    }
+
+    /// The new session name takes the mouse only where a click would focus it.
+    pub(crate) fn name_editable(&self) -> bool {
+        self.phase == Phase::Preview && self.choice.is_none()
+    }
+
+    pub(crate) fn name_parts(&mut self) -> (&mut TextField, Option<FieldHit>) {
+        (&mut self.new_name, self.name_hit)
+    }
+
+    pub(crate) fn focus_name(&mut self) {
+        if self.name_editable() {
+            self.name_focused = true;
+        }
     }
 
     pub fn click(&mut self, st: &mut AppState, now: Instant, id: u32, x: f32) -> bool {
@@ -516,7 +596,6 @@ impl Compact {
             AGENT if self.phase == Phase::Preview => self.pick(Choice::Agent, st),
             NAME_FIELD if self.phase == Phase::Preview && self.choice.is_none() => {
                 self.name_focused = true;
-                self.new_name.press(x - self.name_x, &self.name_stops, false);
             }
             EDITOR => {
                 self.name_focused = false;
@@ -624,10 +703,25 @@ impl Compact {
     }
 }
 
+impl Compact {
+    /// The focus box's label: which focus it holds.
+    pub(super) fn focus_label(&self) -> String {
+        match &self.picked {
+            None => "Focus (optional)".into(),
+            Some((_, text)) if *text != self.focus.text => "Focus: your own".into(),
+            Some((None, _)) => "Focus: your own, from the session's /compact".into(),
+            Some((Some(kind), _)) => {
+                format!("Focus: {}, picked for this session (edit or replace it)", kind.label().to_lowercase())
+            }
+        }
+    }
+}
+
 fn demo_text(name: &str) -> String {
     format!(
         "## Goal\n\n> Find why a clean release build takes four minutes.\n\n\
          ## Where it stands\n\n> Compared the clean and warm builds. Most time is in dependency compilation.\n\n\
+         ## In flight and promised\n\n> None.\n\n\
          ## Decisions and why\n\n> Use a separate target directory so a clean timing cannot disturb an existing build.\n\n\
          ## Standing instructions from the user\n\n> Keep the toolkit unchanged.\n\n\
          ## Open items\n\n> Repeat the timing after disabling the optional feature.\n\n\
@@ -635,7 +729,7 @@ fn demo_text(name: &str) -> String {
          ## Files\n\n- docs/build-notes.md (2)\n\n\
          ## Source session\n\nName: {name}\nID: demo\nFolder: C:\\demo\\mdplay\nBranch: main\n\
          Transcript: C:\\demo\\mdplay.jsonl\n\nLook up further details in the original transcript.\n\n\
-         ## Latest task list\n\n- [pending] Repeat the feature comparison\n\n\
+         ## Latest task list\n\nPossibly stale: as the session last wrote it.\n\n- [pending] Repeat the feature comparison\n\n\
          ## Last 15 shell commands\n\n    cargo build --release --timings\n\n\
          ## User prompts (verbatim)\n\n### 2026-11-26T09:00:00Z\n\n```\nCompare a clean build with an incremental build and report the timings.\n```\n\n\
          ## Last 6 turns (assistant text only)\n\n```\nThe warm run does not reproduce the delay.\n```\n"

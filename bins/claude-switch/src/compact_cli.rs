@@ -1,7 +1,7 @@
 //! `compact` is dispatched before the window or any window state is created.
 use crate::{
     compact_open::{self, names},
-    compact_runner,
+    compact_runner, handover_pipe,
 };
 use claude_switch_core::{Roots, Session, compact, config, marks::Marks, sessions};
 use std::io::{self, Write};
@@ -136,15 +136,13 @@ fn run(options: Options) -> Result<(), String> {
     }
     let data = compact::Handover::read(session.clone(), name_of(&roots, session))
         .map_err(|_| "Could not read the transcript.")?;
-    let focus = options.focus_file.as_deref().map(Path::new).map(focus_from_file).transpose()?;
-    let text = compact_runner::make(
-        &roots,
-        &program,
-        model,
-        &data,
-        focus.as_deref().or_else(|| data.focus()).unwrap_or(""),
-        || false,
-    )?;
+    // An empty focus file (the plugin with no focus text) means no focus of the user's own.
+    let own = options.focus_file.as_deref().map(Path::new).map(focus_from_file).transpose()?;
+    let focus = match own.filter(|text| !text.trim().is_empty()) {
+        Some(text) => text,
+        None => data.chosen_focus(&config.compact).1,
+    };
+    let text = compact_runner::make(&roots, &program, model, &data, &focus, || false)?;
     if !options.open {
         return print(&roots, &session.id, &text, options.save, io::stdout().lock());
     }
@@ -152,10 +150,55 @@ fn run(options: Options) -> Result<(), String> {
     let file = compact::save(&roots, &session.id, &text).map_err(|e| format!("Could not keep the handover: {e}"))?;
     let exe = std::env::current_exe().map_err(|_| "Could not locate Claude Switch.")?;
     let name = file.file_name().and_then(|n| n.to_str()).ok_or("Invalid saved handover path.")?;
-    let agent = config.compact.agent_for(options.agent.as_deref());
-    window::spawn(&exe, &session.id, account, name, agent, options.name.as_deref())?;
-    eprintln!("Claude Switch: opened the handover tab in a new window.");
+    let (agent, dropped) = resolve_agent(&roots, &config, account, &session.cwd, options.agent.as_deref());
+    let request = Handoff {
+        id: session.id.clone(),
+        account: account.to_owned(),
+        file: name.to_owned(),
+        agent: agent.map(str::to_owned),
+        name: options.name.clone(),
+        explicit_account: options.account.is_some(),
+    };
+    match handover_pipe::send(&encode_request(&request)?) {
+        handover_pipe::Sent::Answered(result) => match result? {
+            handover_pipe::Outcome::NewTab => {
+                eprintln!("Claude Switch: opened the handover tab in the running window.{}", note(dropped.as_deref()));
+            }
+            handover_pipe::Outcome::InPlace => eprintln!(
+                "Claude Switch: continuing in this session's tab (/clear, then the handover as the first message)."
+            ),
+        },
+        handover_pipe::Sent::NotRunning => {
+            window::spawn(&exe, &session.id, account, name, agent, options.name.as_deref())?;
+            eprintln!("Claude Switch: started Claude Switch with the handover tab.{}", note(dropped.as_deref()));
+        }
+    }
     Ok(())
+}
+
+fn note(dropped: Option<&str>) -> String {
+    dropped.map(|notice| format!(" {notice}")).unwrap_or_default()
+}
+
+/// An explicit `--agent` is passed as given; the Settings default only when the target account
+/// and folder have it (otherwise none, and the notice).
+fn resolve_agent<'a>(
+    roots: &Roots,
+    config: &'a claude_switch_core::Config,
+    account: &str,
+    cwd: &Path,
+    explicit: Option<&'a str>,
+) -> (Option<&'a str>, Option<String>) {
+    if explicit.is_some() {
+        return (explicit, None);
+    }
+    let Some(default) = config.compact.default_agent.as_deref() else { return (None, None) };
+    let Ok(target) = claude_switch_core::account(config, account) else { return (None, None) };
+    let found = crate::compact_dialog::agents::discover(roots, target, cwd, || false);
+    match crate::compact_dialog::agents::checked_default(default, &found, &target.name) {
+        Ok(()) => (Some(default), None),
+        Err(notice) => (None, Some(notice)),
+    }
 }
 
 fn print(roots: &Roots, id: &str, text: &str, save: bool, mut out: impl Write) -> Result<(), String> {
@@ -187,11 +230,91 @@ pub struct Handoff {
     file: String,
     agent: Option<String>,
     name: Option<String>,
+    /// `--as` was given: continue only in a tab of that account, else open a new tab.
+    explicit_account: bool,
+}
+
+const REQUEST_VERSION: &str = "claude-switch-handover-2";
+
+/// The running window's request: the same validated words as the window arguments, one a line.
+pub fn encode_request(request: &Handoff) -> Result<Vec<u8>, String> {
+    window::words(&request.id, &request.account, &request.file, request.agent.as_deref())?;
+    let name = request.name.as_deref().map(names::encode).transpose()?;
+    let lines = [
+        REQUEST_VERSION,
+        &request.id,
+        &request.account,
+        &request.file,
+        request.agent.as_deref().unwrap_or("-"),
+        name.as_deref().unwrap_or("-"),
+        if request.explicit_account { "as" } else { "-" },
+    ];
+    let bytes = lines.join("\n").into_bytes();
+    if bytes.len() > handover_pipe::MAX_REQUEST {
+        return Err("The handover request is too long.".into());
+    }
+    Ok(bytes)
+}
+
+/// Revalidates everything: the sender is the same user, but not trusted to have checked.
+pub fn decode_request(bytes: &[u8]) -> Result<Handoff, String> {
+    let invalid = "Invalid handover request.";
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid)?;
+    let lines: Vec<&str> = text.split('\n').collect();
+    let [version, id, account, file, agent, name, explicit] = lines[..] else { return Err(invalid.into()) };
+    if version != REQUEST_VERSION || !matches!(explicit, "as" | "-") {
+        return Err(invalid.into());
+    }
+    let agent = (agent != "-").then(|| agent.to_owned());
+    window::words(id, account, file, agent.as_deref())?;
+    let name = (name != "-").then(|| names::decode(name)).transpose()?;
+    Ok(Handoff {
+        id: id.into(),
+        account: account.into(),
+        file: file.into(),
+        agent,
+        name,
+        explicit_account: explicit == "as",
+    })
 }
 
 /// Only app-owned handovers are accepted by the window handoff, never a caller-selected file path.
+/// A requested handover with everything read from disk (off the UI thread), before the window
+/// decides whether it continues in place or in a new tab.
+pub struct Loaded {
+    pub session: Session,
+    pub from: String,
+    pub name: String,
+    pub text: String,
+    pub file: std::path::PathBuf,
+    pub account: String,
+    pub explicit_account: bool,
+    agent: Option<String>,
+    marks: Option<Marks>,
+}
+
+impl Loaded {
+    pub fn new_tab(
+        self,
+        roots: &Roots,
+        config: &claude_switch_core::Config,
+    ) -> Result<compact_open::NewHandover, String> {
+        let Loaded { session, from, name, text, file, account, agent, marks, .. } = self;
+        let request = compact_open::prepare(roots, config, &session, (from, &name), &account, &text, &file)?
+            .with_agent(agent.as_deref())?;
+        Ok(match marks {
+            Some(marks) => request.expecting_marks(marks),
+            None => request,
+        })
+    }
+}
+
 pub fn handoff(roots: &Roots, args: Handoff) -> Result<compact_open::NewHandover, String> {
-    let Handoff { id, account, file, agent, name } = args;
+    load(roots, args)?.new_tab(roots, &config::load(roots))
+}
+
+pub fn load(roots: &Roots, args: Handoff) -> Result<Loaded, String> {
+    let Handoff { id, account, file, agent, name, explicit_account } = args;
     let config = config::load(roots);
     let file = compact::list(roots, &id)
         .map_err(|_| "Could not list saved handovers.")?
@@ -205,9 +328,17 @@ pub fn handoff(roots: &Roots, args: Handoff) -> Result<compact_open::NewHandover
     let automatic = name.is_none();
     let name = name.unwrap_or_else(|| names::suggest(&marks, &sessions, &from));
     let text = std::fs::read_to_string(&file).map_err(|_| "Could not read the saved handover.")?;
-    let request = compact_open::prepare(roots, &config, session, (from, &name), &account, &text, &file)?
-        .with_agent(agent.as_deref())?;
-    Ok(if automatic { request.expecting_marks(marks) } else { request })
+    Ok(Loaded {
+        session: session.clone(),
+        from,
+        name,
+        text,
+        file,
+        account,
+        explicit_account,
+        agent,
+        marks: automatic.then_some(marks),
+    })
 }
 
 pub fn window_args(mut args: impl Iterator<Item = String>) -> Result<(Handoff, String), String> {
@@ -225,7 +356,23 @@ pub fn window_args(mut args: impl Iterator<Item = String>) -> Result<(Handoff, S
     }
     window::words(&id, &account, &file, agent.as_deref())?;
     let name = name.map(|word| names::decode(word.strip_prefix("name=").ok_or(invalid)?)).transpose()?;
-    Ok((Handoff { id, account, file, agent, name }, ack))
+    Ok((Handoff { id, account, file, agent, name, explicit_account: false }, ack))
+}
+
+/// The window started for a handover gives it to a Switch that started meanwhile, rather than
+/// becoming a second one. True when that window answered (the answer is acknowledged).
+pub fn forward_to_running(request: &Handoff, ack: &str) -> bool {
+    let Ok(payload) = encode_request(request) else { return false };
+    match handover_pipe::send(&payload) {
+        handover_pipe::Sent::NotRunning => false,
+        handover_pipe::Sent::Answered(result) => {
+            if let Err(e) = &result {
+                eprintln!("claude-switch compact: {e}");
+            }
+            acknowledge(ack, result.is_ok());
+            true
+        }
+    }
 }
 
 pub(crate) fn acknowledge(key: &str, opened: bool) {
@@ -253,6 +400,45 @@ mod tests {
         assert!(parse(&["--session", "latest", "--name", "Review"]).is_err());
         assert!(parse(&["--session", "latest", "--open", "--name", "--save"]).is_err());
         assert!(parse(&["--session", "latest", "--open", "--name=one", "--name", "two"]).is_err());
+    }
+
+    #[test]
+    fn running_window_request_round_trips_validated_words_only() {
+        let id = "5eed3dde-1c2d-4e5f-8a9b-000000033232";
+        let make = |agent: Option<&str>, name: Option<&str>| Handoff {
+            id: id.into(),
+            account: "work".into(),
+            file: "handover-001.md".into(),
+            agent: agent.map(str::to_owned),
+            name: name.map(str::to_owned),
+            explicit_account: agent.is_some(),
+        };
+        for (agent, name) in [(None, None), (Some("plugin:review"), Some("Dev's \"notes\" & $env:PATH 😺"))] {
+            let bytes = encode_request(&make(agent, name)).unwrap();
+            let back = decode_request(&bytes).unwrap();
+            assert_eq!((back.id.as_str(), back.account.as_str(), back.file.as_str()), (id, "work", "handover-001.md"));
+            assert_eq!(back.agent.as_deref(), agent);
+            assert_eq!(back.name.as_deref(), name);
+            assert_eq!(back.explicit_account, agent.is_some());
+        }
+        assert!(encode_request(&make(Some("bad agent"), None)).is_err());
+        assert!(encode_request(&make(None, Some("two\nlines"))).is_err());
+        let good = String::from_utf8(encode_request(&make(None, None)).unwrap()).unwrap();
+        for bad in [
+            good.replace("claude-switch-handover-2", "claude-switch-handover-1"),
+            good.replace("\n-\n-\n-", "\n-\n-\nyes"),
+            good.replace("handover-001.md", "..\\other.md"),
+            good.replace("work", "work & calc"),
+            format!("{good}\nextra"),
+            good.replace(id, "not-a-uuid"),
+            good.replace("\n-\n-", "\n--help\n-"),
+            good.replace("\n-\n-", "\n-\nzz"),
+            good.replace('\n', "\r\n"),
+            String::new(),
+        ] {
+            assert!(decode_request(bad.as_bytes()).is_err(), "{bad:?}");
+        }
+        assert!(decode_request(b"\xff").is_err());
     }
 
     #[test]

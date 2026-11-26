@@ -8,8 +8,7 @@ const JSON_BYTES: u64 = 2 * 1024 * 1024;
 pub(super) fn discover(
     roots: &Roots,
     target: &Account,
-    project: &Path,
-    cwd: &Path,
+    folder: Option<(&Path, &Path)>,
     cancelled: &impl Fn() -> bool,
 ) -> BTreeMap<String, Agent> {
     let Some(dir) = shared_folder(roots, target, "plugins") else { return BTreeMap::new() };
@@ -20,7 +19,12 @@ pub(super) fn discover(
     };
     let mut enabled = BTreeMap::new();
     let mut settings = vec![target.cli_dir.join("settings.json")];
-    for base in if project == cwd { vec![cwd] } else { vec![project, cwd] } {
+    let bases = match folder {
+        Some((project, cwd)) if project == cwd => vec![cwd],
+        Some((project, cwd)) => vec![project, cwd],
+        None => Vec::new(),
+    };
+    for base in bases {
         settings.push(base.join(".claude/settings.json"));
         settings.push(base.join(".claude/settings.local.json"));
     }
@@ -46,8 +50,8 @@ pub(super) fn discover(
             .filter_map(|entry| {
                 let rank = match entry.get("scope")?.as_str()? {
                     "user" => 0,
-                    "project" if in_project(entry, project, cwd) => 1,
-                    "local" if in_project(entry, project, cwd) => 2,
+                    "project" if folder.is_some_and(|(project, cwd)| in_project(entry, project, cwd)) => 1,
+                    "local" if folder.is_some_and(|(project, cwd)| in_project(entry, project, cwd)) => 2,
                     _ => return None,
                 };
                 let path = Path::new(entry.get("installPath")?.as_str()?);

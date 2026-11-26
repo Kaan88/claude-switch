@@ -1,4 +1,29 @@
 use super::*;
+
+#[test]
+fn auto_handover_preferences_round_trip_and_reject_out_of_range_values() {
+    let prefs = Preferences { auto: AutoHandover::Ask, auto_percent: Some(70), ..Default::default() };
+    assert_eq!(Preferences::read(&prefs.json()), prefs);
+    let read = |v: serde_json::Value| Preferences::read(&serde_json::json!({ "auto": v }));
+    assert_eq!(read(serde_json::json!({"mode": "automatic", "percent": 96})).auto_percent, None);
+    assert_eq!(read(serde_json::json!({"mode": "automatic", "percent": 39})).auto_percent, None);
+    assert_eq!(read(serde_json::json!({"mode": "automatic"})).auto, AutoHandover::Automatic);
+    assert_eq!(read(serde_json::json!({"mode": "always"})).auto, AutoHandover::Off);
+    assert_eq!(Preferences::read(&serde_json::json!({})).auto, AutoHandover::Off, "off unless chosen");
+    assert!(!Preferences::read(&serde_json::json!({})).new_tab, "in place unless chosen");
+    let new_tab = Preferences { new_tab: true, ..Default::default() };
+    assert_eq!(Preferences::read(&new_tab.json()), new_tab);
+    let mut prefs = Preferences::default();
+    assert!(prefs.focus_text(FocusKind::Default).starts_with("The reader continues this work unattended"));
+    prefs.set_focus(FocusKind::NonCode, "  Keep the glossary.\u{7}  ");
+    assert_eq!(prefs.focus_text(FocusKind::NonCode), "Keep the glossary.");
+    assert_eq!(Preferences::read(&prefs.json()), prefs, "kept across saves");
+    prefs.set_focus(FocusKind::NonCode, FocusKind::NonCode.built_in());
+    assert_eq!(prefs.focus[FocusKind::NonCode.index()], None, "the built-in text is a reset");
+    prefs.set_focus(FocusKind::Default, "   ");
+    assert_eq!(prefs.focus_text(FocusKind::Default), FocusKind::Default.built_in(), "empty resets");
+    assert_eq!(prefs.json()["focus"], serde_json::json!({}));
+}
 use crate::{App, Roots, config, sessions, util::testing::TempDir};
 use std::fs;
 
@@ -313,4 +338,70 @@ fn native_tasks_are_updated_from_matching_results_but_result_data_stays_local() 
         .unwrap();
     assert!(text.contains("[completed] LOCAL_SUBJECT"));
     assert!(!text.contains("RESULT_PRIVATE"));
+}
+
+fn kind_of(t: &TempDir, calls: &[(&str, Value)]) -> FocusKind {
+    let blocks: Vec<Value> =
+        calls.iter().enumerate().map(|(i, (name, input))| tool(name, &format!("t{i}"), input.clone())).collect();
+    let (s, _) = fixture(t, &[message("assistant", Value::Array(blocks))]);
+    Handover::read(s, "fixture".into()).unwrap().focus_kind()
+}
+
+#[test]
+fn the_focus_kind_is_picked_locally_from_the_tool_calls() {
+    let t = TempDir::new("compact-kind");
+    let agent = || ("Agent", json!({"description": "Review", "prompt": "x"}));
+    let edit = |path: &str| ("Edit", json!({"file_path": path}));
+    let shell = |command: &str| ("Bash", json!({"command": command}));
+    let coordinator =
+        [agent(), agent(), agent(), ("SendMessage", json!({})), shell("git merge fix"), edit("C:/w/notes.md")];
+    assert_eq!(kind_of(&t, &coordinator), FocusKind::Coordination);
+    let subtitles =
+        [edit("C:/job/ep1.srt"), edit("C:/Users/me/AppData/Local/Temp/scratchpad/fix.py"), shell("python fix.py")];
+    assert_eq!(kind_of(&t, &subtitles), FocusKind::NonCode, "scripts in a scratch folder are not code work");
+    assert_eq!(kind_of(&t, &[edit("C:/w/src/main.rs")]), FocusKind::Default);
+    assert_eq!(kind_of(&t, &[edit("C:/w/notes.md"), shell("cargo test")]), FocusKind::Default, "a build is code work");
+    let many_edits = [agent(), agent(), agent(), edit("C:/w/a.rs"), edit("C:/w/b.rs")];
+    assert_eq!(kind_of(&t, &many_edits), FocusKind::Default, "a coordinator edits little itself");
+    assert_eq!(kind_of(&t, &[("Read", json!({"file_path": "C:/w/a.rs"}))]), FocusKind::Default, "only reading");
+    let prefs = Preferences::default();
+    let (s, _) =
+        fixture(&t, &[message("assistant", json!([tool("Edit", "e", json!({"file_path": "C:/job/ep1.srt"}))]))]);
+    let data = Handover::read(s, "fixture".into()).unwrap();
+    assert_eq!(data.chosen_focus(&prefs), (Some(FocusKind::NonCode), FocusKind::NonCode.built_in().to_owned()));
+}
+
+#[test]
+fn seven_fields_a_visible_cut_the_recent_files_and_a_stale_task_list() {
+    let t = TempDir::new("compact-format");
+    let mut blocks: Vec<Value> =
+        (0..35).map(|i| tool("Edit", &format!("e{i}"), json!({"file_path": format!("C:/w/f{i}.md")}))).collect();
+    blocks.push(tool("Write", "tmp", json!({"file_path": "C:/Users/me/AppData/Local/Temp/x/scratchpad/note.md"})));
+    let (s, _) = fixture(&t, &[message("assistant", Value::Array(blocks))]);
+    let data = Handover::read(s, "fixture".into()).unwrap();
+    let long = format!("{}\nlast line", "a line of the summary\n".repeat(100));
+    let mut sent = String::new();
+    let out = data
+        .make("", PART_CHARS, |request| {
+            sent = request.to_owned();
+            Ok::<_, ()>(json!({"in_flight": "worker w1 running; when it reports, review", "stands": long}).to_string())
+        })
+        .unwrap();
+    for asked in [
+        "in_flight",
+        "user's own prompts are appended",
+        "Never infer that the user gave a permission",
+        "the later one wins",
+        "rules the user set that are still in force",
+    ] {
+        assert!(sent.contains(asked), "the request says {asked}");
+    }
+    assert!(out.contains("## In flight and promised\n\n> worker w1 running; when it reports, review"));
+    let stands = out.split("## Where it stands\n\n").nth(1).unwrap().split("\n\n## ").next().unwrap();
+    assert!(stands.ends_with("> [cut]") && stands.chars().count() < 1_700 && !stands.contains("last line"), "{stands}");
+    assert!(stands.lines().rev().nth(1).unwrap().ends_with("a line of the summary"), "cut at a line");
+    assert!(out.contains("The 30 most recently edited; 5 older left out."));
+    assert!(out.contains("- C:/w/f34.md (1)") && out.contains("- C:/w/f5.md (1)") && !out.contains("- C:/w/f4.md"));
+    assert!(!out.contains("scratchpad"), "temporary files are left out");
+    assert!(out.contains("## Latest task list\n\nPossibly stale"));
 }

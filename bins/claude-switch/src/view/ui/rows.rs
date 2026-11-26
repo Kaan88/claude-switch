@@ -131,10 +131,23 @@ enum Layout {
 }
 
 impl Body {
+    /// The source: Markdown for an answer, the literal text otherwise.
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
     pub fn text(&self) -> &str {
         match &self.layout {
             Layout::Plain(_) => &self.raw,
             Layout::Markdown(t) => t.text(),
+        }
+    }
+
+    /// An answer's code blocks (top, height, text), relative to the text's top.
+    pub fn code_blocks(&self) -> Vec<(f32, f32, &str)> {
+        match &self.layout {
+            Layout::Plain(_) => Vec::new(),
+            Layout::Markdown(t) => t.code_blocks(),
         }
     }
 
@@ -557,7 +570,7 @@ fn tool_detail(card: Option<&ToolCard>, summary: &str) -> (String, BodyKind) {
             format!("{command}\n\n{}", if result.is_empty() { "No text result.".into() } else { result.join("\n") }),
             BodyKind::Shell,
         ),
-        None => (summary.into(), BodyKind::Mono),
+        Some(ToolCard::Questions(_)) | None => (summary.into(), BodyKind::Mono),
     }
 }
 

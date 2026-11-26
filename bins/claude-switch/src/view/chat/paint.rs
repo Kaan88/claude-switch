@@ -37,11 +37,11 @@ impl AppState {
             !chat.chips.is_empty(),
             chat.notice(&pane.model.chat).is_some(),
         );
-        chat.layout = if running || reveal {
-            Layout::with_shells(area, panel, drawer, chat.drawer_height, chips, notice, running, reveal)
-        } else {
-            Layout::new(area, panel, drawer, chat.drawer_height, chips, notice)
-        };
+        // The draft's wrapped rows as last flowed; `draw_chat` flows again first and re-lays.
+        let lines = chat.editor.rows.len().max(1);
+        chat.layout =
+            Layout::with_shells(area, panel, drawer, chat.drawer_height, chips, notice, running, reveal, lines);
+        super::question::place(chat, &pane.model);
         self.session_view.pane_area = chat.layout.conversation;
         chat.layout.drawer
     }
@@ -52,6 +52,14 @@ impl AppState {
         let hover = self.hover;
         let mouse = self.background_pointer();
         let focused = cx.focused() && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
+        let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return };
+        let chat = &mut pane.chat;
+        // The box grows with the draft: wrap it at the box's width, then lay out for its rows.
+        let before = chat.editor.rows.len();
+        chat.editor.flow(p, composer::editor_text_width(chat.layout.editor), chat.layout.editor.h);
+        if chat.editor.rows.len() != before {
+            self.layout_chat(area);
+        }
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return };
         let chat = &mut pane.chat;
         let l = chat.layout;
@@ -130,7 +138,10 @@ impl AppState {
                 button(p, pal, r, "Focus terminal", hover == Some(target), false);
                 self.hits.push((r, target));
             }
-        } else if chat.reason == Some(Reason::Tool) && l.conversation.h > 25.0 {
+        } else if chat.reason == Some(Reason::Tool)
+            && super::question::pending(&pane.model).is_none()
+            && l.conversation.h > 25.0
+        {
             let row = Rect::new(
                 l.conversation.x + 12.0,
                 l.conversation.bottom() - pane.ui.footer_height(l.conversation.w, pane.model.agent.is_none()) - 26.0,
@@ -141,6 +152,7 @@ impl AppState {
             p.text(Face::Ui, 11.5, row.x, row.cy(), Reason::Tool.label(), pal.muted, (row.w - 122.0).max(0.0));
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
         }
+        super::question::Draw { pal, hover, focused }.card(p, chat, &pane.model, &mut self.hits);
         if details_active {
             self.hits.extend(detail_hits);
         }

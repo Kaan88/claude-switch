@@ -230,6 +230,7 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
     };
     let flag = |k: &str, default: bool| file.get(k).and_then(Value::as_bool).unwrap_or(default);
     let embedded_terminal = flag("embeddedTerminal", true);
+    let classic_terminal_view = flag("classicTerminalView", true);
     let show_archived = flag("showArchived", false);
     let show_workers = flag("showWorkers", false);
     let terminal_scheme = str_field(&file, "terminalScheme").filter(|s| !s.is_empty()).unwrap_or("auto").to_string();
@@ -249,6 +250,7 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
         current,
         workers,
         embedded_terminal,
+        classic_terminal_view,
         show_archived,
         show_workers,
         show_usage: !damaged && flag("showUsage", true),
@@ -282,7 +284,8 @@ pub fn save(roots: &Roots, config: &Config) -> Result<(), Refusal> {
     save_value(roots, &config)
 }
 
-/// Apply only this window's edits. Refuse conflicting edits to the same field.
+/// Apply only this window's edits onto the file as it is now, field by field (inside groups such
+/// as `appearance` too). Refuse only an edit another window made to the same field.
 pub fn save_changes(roots: &Roots, baseline: &Config, edited: &Config) -> Result<Config, Refusal> {
     let path = roots.config_file();
     let _lock = lock_beside(&path)?;
@@ -291,16 +294,22 @@ pub fn save_changes(roots: &Roots, baseline: &Config, edited: &Config) -> Result
     let before = config_value(baseline);
     let after = config_value(edited);
     let mut merged = disk.as_object().cloned().unwrap_or_default();
+    let mut conflicts = Vec::new();
     for (key, value) in after.as_object().expect("settings object") {
         if matches!(key.as_str(), "showUsage" | "compact") || before[key] == *value {
             continue;
         }
-        if current[key] != before[key] && current[key] != *value {
-            return Err(Refusal::Invalid(
-                "Another window changed these settings. Review the current values and retry.".into(),
-            ));
+        let m = crate::merge::three_way(before.get(key), Some(value), current.get(key), 1);
+        conflicts.extend(m.conflicts.into_iter().map(|p| [key.clone()].into_iter().chain(p).collect::<Vec<_>>()));
+        if let Some(v) = m.value {
+            merged.insert(key.clone(), v);
         }
-        merged.insert(key.clone(), value.clone());
+    }
+    if let Some(first) = conflicts.first() {
+        return Err(Refusal::Invalid(format!(
+            "Another Claude Switch window changed the setting “{}” at the same time. That window's value is kept and this window now shows the current settings; change it again if you still want to.",
+            first.join(" › ")
+        )));
     }
     let merged = Value::Object(merged);
     write_json(&path, &merged)?;
@@ -369,6 +378,7 @@ fn config_value(config: &Config) -> Value {
         "current": config.current,
         "workers": workers,
         "embeddedTerminal": config.embedded_terminal,
+        "classicTerminalView": config.classic_terminal_view,
         "showArchived": config.show_archived,
         "showWorkers": config.show_workers,
         "showUsage": config.show_usage,
@@ -460,7 +470,7 @@ mod tests {
         assert_eq!(main.desktop_dir, roots.primary_desktop_dir());
         assert_eq!(c.current, "main");
         assert_eq!(c.workers, WorkersUse::Same);
-        assert!(c.embedded_terminal);
+        assert!(c.embedded_terminal && c.classic_terminal_view);
         assert!(!c.show_archived);
         assert!(!c.show_workers);
         assert!(!c.show_hidden);
@@ -496,6 +506,7 @@ mod tests {
         c.current = "work".into();
         c.workers = WorkersUse::Account("work".into());
         c.embedded_terminal = false;
+        c.classic_terminal_view = false;
         c.show_archived = true;
         c.show_workers = true;
         c.show_hidden = true;
@@ -600,6 +611,29 @@ mod tests {
         set_usage(&roots, true).unwrap();
         save(&roots, &stale_off).unwrap();
         assert!(load(&roots).show_usage);
+    }
+
+    #[test]
+    fn two_windows_change_different_fields_of_one_group_and_only_the_same_field_is_refused() {
+        let t = TempDir::new("cfg-two-windows");
+        let roots = t.roots();
+        let start = load(&roots);
+        let mut one = start.clone();
+        one.appearance.reduce_motion = !start.appearance.reduce_motion;
+        let one_saved = save_changes(&roots, &start, &one).unwrap();
+        let mut two = start.clone();
+        two.appearance.soft_shadows = !start.appearance.soft_shadows;
+        let saved = save_changes(&roots, &start, &two).expect("another field of appearance");
+        assert_eq!(saved.appearance.reduce_motion, one.appearance.reduce_motion, "the other window's edit is kept");
+        assert_eq!(saved.appearance.soft_shadows, two.appearance.soft_shadows);
+        let mut font = one_saved.clone();
+        font.terminal_font_size = 20;
+        save_changes(&roots, &one_saved, &font).expect("one window, again");
+        let mut other = saved.clone();
+        other.terminal_font_size = 11;
+        let e = save_changes(&roots, &saved, &other).expect_err("both set the font size").to_string();
+        assert!(e.contains("terminalFontSize") && !e.contains("Restart"), "{e}");
+        assert_eq!(load(&roots).terminal_font_size, 20);
     }
 
     #[test]

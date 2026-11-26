@@ -197,11 +197,13 @@ impl AppState {
         }
     }
 
-    pub fn rename_session(&mut self, id: &str, name: &str) {
-        let Some(&i) = self.by_id.get(id) else { return };
+    /// Whether the session's mark now carries `name` (blank: no custom name).
+    pub fn rename_session(&mut self, id: &str, name: &str) -> bool {
+        let Some(&i) = self.by_id.get(id) else { return false };
         if self.edit_marks(|st| st.marks.rename(id, &st.sessions[i].file, name)) {
             self.rebuild_view();
         }
+        self.marks.name(id).unwrap_or_default() == name.trim()
     }
 
     pub fn toggle_pin(&mut self, i: usize) {

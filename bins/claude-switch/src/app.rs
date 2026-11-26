@@ -59,6 +59,7 @@ impl AppState {
             self.usage_warnings.next,
             self.usage.popup.due,
             self.usage.cache_retry_at().filter(|_| self.config.show_usage),
+            self.field_mouse.deadline(),
         ]
         .into_iter()
         .flatten()
@@ -175,7 +176,7 @@ impl AppState {
         }
     }
 
-    fn after_search(&mut self) {
+    pub(crate) fn after_search(&mut self) {
         if self.conversation_search.on {
             self.restart_conversation_search(std::time::Instant::now());
         }
@@ -221,6 +222,8 @@ impl AppState {
                 MenuKind::Row => Some(Rect::new(self.mouse.0, self.mouse.1, 0.0, 0.0)),
                 MenuKind::Tab(tab) => return self.tab_menu_chosen(cx.now(), tab, id),
                 MenuKind::Chat(tab, mode) => return self.chat_menu_chosen(cx, tab, mode, id),
+                MenuKind::Field(field) => return self.field_menu_chosen(field, id),
+                MenuKind::Conversation(tab) => return self.conversation_menu_chosen(tab, id),
             };
             self.command(cx.now(), id, anchor);
         }
@@ -414,16 +417,12 @@ impl AppState {
             }
             return;
         }
-        if let Some(Dialog::Settings(form)) = &mut self.dialog {
-            let o = form.press(x, y, cx.mods(), clicks.min(3) as u8);
-            dialogs::settings_event(self, o);
+        if matches!(self.dialog, Some(Dialog::Settings(_))) {
+            self.settings_press(x, y, cx.mods(), clicks);
             return;
         }
         if self.dialog.is_some() {
-            self.pressed = hover;
-            if hover == Some(Target::Dialog(dialogs::FIELD)) {
-                dialogs::click(self, cx.now(), dialogs::FIELD, x);
-            }
+            self.pressed = if self.field_press(x, y, cx.mods(), cx.now()) { None } else { hover };
             return;
         }
         if matches!(hover, Some(Target::UsageLines | Target::UsageRefresh | Target::UsageOpenAs | Target::UsagePopup)) {
@@ -466,12 +465,7 @@ impl AppState {
             }
             Some(Target::Search) => {
                 self.focus = Focus::Search;
-                let inner = bar.search_inner();
-                if clicks >= 2 {
-                    self.search.select_all();
-                } else {
-                    self.search.press(x - inner.x, &self.search_stops, cx.mods().shift);
-                }
+                self.field_press(x, y, cx.mods(), cx.now());
             }
             Some(Target::Entry(e)) => {
                 self.focus = Focus::List;
@@ -493,6 +487,9 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
+        if self.field_release() {
+            return;
+        }
         if self.chat_end_drag(Some((x, y))) {
             return;
         }

@@ -4,6 +4,7 @@ use mdshared_ui::platform;
 
 use super::super::links;
 use super::scroll::Press;
+use super::select::Selection;
 use super::*;
 
 impl Ui {
@@ -120,6 +121,9 @@ impl Ui {
             self.selection = None;
             return true;
         }
+        if matches!(self.pressed, Some(Action::CopyCode(_))) {
+            return false;
+        }
         if let Some((row, at, link)) = self.text_at(x, y) {
             let id = row.id.clone();
             let link = link.map(str::to_owned);
@@ -128,14 +132,22 @@ impl Ui {
                 (0, text.len())
             } else if clicks == 2 {
                 word(text, at)
-            } else if mods.shift {
-                (self.selection.as_ref().filter(|(r, _, _)| *r == id).map_or(at, |s| s.1), at)
             } else {
                 (at, at)
             };
             self.start = link.filter(|_| clicks == 1 && !mods.shift).map(|s| (x, y, s));
-            self.selection = Some((id, a, b));
+            self.selection = Some(match self.selection.take() {
+                // Shift+click extends from the old anchor, in this message or another.
+                Some(old) if mods.shift && clicks == 1 => Selection { anchor: old.anchor, focus: (id, at) },
+                _ => Selection::within(id, a, b),
+            });
             self.dragging = clicks == 1;
+        } else if mods.shift
+            && self.selection.is_some()
+            && let Some(end) = self.point_anywhere(x, y)
+        {
+            self.selection.as_mut().unwrap().focus = end;
+            self.dragging = true;
         } else {
             self.selection = None;
         }
@@ -155,19 +167,25 @@ impl Ui {
             if self.start.as_ref().is_some_and(|(sx, sy, _)| (x - sx).abs() + (y - sy).abs() > 4.0) {
                 self.start = None;
             }
-            if let Some((id, _, caret)) = &self.selection
-                && let Some(row) = self.rows.iter().find(|r| r.id == *id)
-                && let Some(text) = &row.body
+            // Dragging past the top or bottom scrolls the conversation along with the selection.
+            let beyond = if y < self.body.y {
+                y - self.body.y
+            } else if y > self.body.bottom() {
+                y - self.body.bottom()
+            } else {
+                0.0
+            };
+            if beyond != 0.0 && self.selection.is_some() {
+                changed |= self.scroll_to(Surface::Conversation, self.offset + beyond * 0.5);
+            }
+            if let Some(next) = self.point_anywhere(x, y)
+                && let Some(selection) = &mut self.selection
+                && selection.focus != next
             {
-                let dx = x - self.body.x - row.geo.tx;
-                let dy = y - self.body.y + self.offset - row.top - row.geo.ty;
-                let next = text.point(dx, dy).0;
-                if next != *caret {
-                    self.selection.as_mut().unwrap().2 = next;
-                    changed = true;
-                    self.start = None;
-                    self.pressed = None;
-                }
+                selection.focus = next;
+                changed = true;
+                self.start = None;
+                self.pressed = None;
             }
         }
         changed
@@ -283,6 +301,11 @@ impl Ui {
                 }
             }
             Action::Close => self.overlay = None,
+            Action::CopyCode(code) => {
+                if platform::set_clipboard_text(&code) {
+                    self.copied = Some(code);
+                }
+            }
         }
         Release::Handled
     }
@@ -366,22 +389,14 @@ impl Ui {
         }
         match name {
             KeyName::Escape if self.markdown.is_some() => self.close_markdown(),
-            KeyName::Char('c') if mods.ctrl && !mods.alt => {
-                let Some((id, _, _)) = &self.selection else { return false };
-                let Some(text) = self.rows.iter().find(|r| r.id == *id).and_then(|r| r.body.as_ref()).map(|b| b.text())
-                else {
-                    return false;
-                };
-                let Some(range) = selection(&self.selection, id, text).filter(|r| !r.is_empty()) else { return false };
-                platform::set_clipboard_text(&text[range]);
+            KeyName::Char('c' | 'C') if mods.ctrl && !mods.alt && !mods.shift => {
+                let Some(text) = self.selected_text() else { return false };
+                platform::set_clipboard_text(&text);
             }
-            KeyName::Char('a') if mods.ctrl && !mods.alt => {
-                let Some((id, a, b)) = &mut self.selection else { return false };
-                let Some(text) = self.rows.iter().find(|r| r.id == *id).and_then(|r| r.body.as_ref()) else {
+            KeyName::Char('a' | 'A') if mods.ctrl && !mods.alt && !mods.shift => {
+                if !self.select_all() {
                     return false;
-                };
-                *a = 0;
-                *b = text.text().len();
+                }
             }
             KeyName::Escape if self.selection.is_some() => {
                 self.selection = None;

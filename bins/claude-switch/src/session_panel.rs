@@ -8,7 +8,7 @@ use mdshared_app::job::Job;
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::overlay::{DIALOG_PAD, dialog_card};
-use mdshared_ui::textfield::{FieldColors, TextField};
+use mdshared_ui::textfield::{FieldColors, FieldHit, TextField};
 
 use crate::actions::{OPEN_AS, OPEN_LAST};
 use crate::dialogs::{CANCEL, Dialog, Draw, FIELD, OK, Pending};
@@ -87,9 +87,9 @@ pub enum Mode {
 
 pub struct Panel {
     field: TextField,
-    stops: Vec<f32>,
+    hit: Option<FieldHit>,
     topic: TextField,
-    topic_stops: Vec<f32>,
+    topic_hit: Option<FieldHit>,
     topic_focus: bool,
     invalid_topic: bool,
     mode: Mode,
@@ -109,9 +109,9 @@ impl Panel {
         }
         Dialog::Session(Box::new(Self {
             field,
-            stops: vec![],
+            hit: None,
             topic,
-            topic_stops: vec![],
+            topic_hit: None,
             topic_focus: false,
             invalid_topic: false,
             mode,
@@ -150,7 +150,7 @@ impl Panel {
                 "Use transcript title"
             };
             self.field.draw(p, r.inset(8.0), Face::Ui, 13.0, &colors, hint, !self.topic_focus, true);
-            self.stops = p.caret_stops(Face::Ui, 13.0, &self.field.display());
+            self.hit = crate::fieldmouse::hit(p, r.inset(8.0), 13.0);
             d.hits.push((r, Target::Dialog(FIELD)));
         }
         match &self.mode {
@@ -220,7 +220,7 @@ impl Panel {
                         caret: pal.text,
                     };
                     self.topic.draw(p, r.inset(8.0), Face::Ui, 13.0, &colors, "No topic", self.topic_focus, true);
-                    self.topic_stops = p.caret_stops(Face::Ui, 13.0, &self.topic.display());
+                    self.topic_hit = crate::fieldmouse::hit(p, r.inset(8.0), 13.0);
                     d.hits.push((r, Target::Dialog(TOPIC_FIELD)));
                 } else {
                     text(131.0, "Edit the suggestion or accept it as shown.", p);
@@ -256,6 +256,32 @@ impl Panel {
         None
     }
 
+    /// Which of this panel's boxes a dialog hit id is, if it is shown.
+    pub(crate) fn field_of(&self, id: u32) -> Option<crate::fieldmouse::FieldId> {
+        use crate::fieldmouse::FieldId;
+        match id {
+            FIELD if !matches!(self.mode, Mode::Working) => Some(FieldId::SessionName),
+            TOPIC_FIELD if matches!(&self.mode, Mode::Review { current, .. } if current.topic.is_some()) => {
+                Some(FieldId::SessionTopic)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn field_parts(&mut self, topic: bool) -> (&mut TextField, Option<FieldHit>) {
+        if topic { (&mut self.topic, self.topic_hit) } else { (&mut self.field, self.hit) }
+    }
+
+    pub(crate) fn focus_topic(&mut self, topic: bool) {
+        self.topic_focus = topic;
+    }
+
+    /// The text changed other than by typing (the right-click menu).
+    pub(crate) fn edited(&mut self, st: &AppState) {
+        self.invalid_topic = false;
+        self.refill(st);
+    }
+
     pub fn text_input(&mut self, st: &AppState, text: &str) {
         let field = if self.topic_focus { &mut self.topic } else { &mut self.field };
         if field.insert(text) {
@@ -279,15 +305,9 @@ impl Panel {
         }
     }
 
-    pub fn click(mut self: Box<Self>, st: &mut AppState, now: Instant, id: u32, x: f32, other: bool) {
+    pub fn click(mut self: Box<Self>, st: &mut AppState, now: Instant, id: u32, other: bool) {
         if id == FIELD || id == TOPIC_FIELD {
-            let offset = st.hits.iter().find(|(_, t)| *t == Target::Dialog(id)).map_or(0.0, |(r, _)| r.x + 8.0);
             self.topic_focus = id == TOPIC_FIELD;
-            if self.topic_focus {
-                self.topic.press(x - offset, &self.topic_stops, false);
-            } else {
-                self.field.press(x - offset, &self.stops, false);
-            }
             st.dialog = Some(Dialog::Session(self));
             return;
         }
@@ -318,7 +338,9 @@ impl Panel {
                     st.command(now, if other { OPEN_AS } else { OPEN_LAST }, anchor);
                 }
             }
-            Mode::Rename { id: session, .. } if id == OK => st.rename_session(session, self.field.text()),
+            Mode::Rename { id: session, .. } if id == OK => {
+                st.rename_session(session, self.field.text());
+            }
             Mode::Topic { id: session } if id == OK => {
                 if valid_edit(self.field.text()) {
                     st.save_suggestion(session, None, Some(self.field.text()));

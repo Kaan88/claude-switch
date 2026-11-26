@@ -7,6 +7,8 @@ use mdshared_ui::host::Cx;
 
 use crate::state::{AppState, Msg};
 
+const ASKING: &str = "Waiting for your answer";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Footer {
     pub label: String,
@@ -36,12 +38,17 @@ impl Working {
         allowed: bool,
         screen: &Screen,
         can_stop: bool,
+        asking: bool,
     ) -> (Option<Footer>, Option<Instant>) {
         let phase = info.latest.map(|(_, phase)| phase);
         let Some(prompt) = info.prompt.filter(|_| allowed && phase != Some(ChatPhase::EndTurn)) else {
             self.turn = None;
             return (None, None);
         };
+        if asking && info.pending.is_some() {
+            // Claude is not working: the turn waits for the answer to its question.
+            return (Some(Footer { label: ASKING.into(), stop: None }), None);
+        }
         let (row, hint) = visible(screen);
         let line = row.as_deref().and_then(parse);
         if phase != Some(ChatPhase::Active) && info.pending.is_none() && line.is_none() && !hint {
@@ -88,7 +95,8 @@ impl AppState {
             && !term.screen.modes().alt_screen
             && !crate::attention::screen_permission_prompt(&term.screen);
         let can_stop = allowed && pane.chat.stop_ready(&pane.model.chat, term, &tab.program_title, now);
-        let (footer, wake) = pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop);
+        let asking = super::chat::question::asking(&pane.model);
+        let (footer, wake) = pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop, asking);
         if pane.ui.set_working(footer) {
             cx.request_redraw(area);
         }
@@ -248,19 +256,33 @@ mod tests {
         info.prompt = Some(10);
         info.latest = Some((10, ChatPhase::Active));
         let mut state = Working::default();
-        let (first, wake) = state.update(now, &info, true, &screen, true);
+        let (first, wake) = state.update(now, &info, true, &screen, true, false);
         assert_eq!(first.unwrap().label, "Working… (0s)");
         assert_eq!(wake, Some(now + Duration::from_secs(1)));
         assert_eq!(
-            state.update(now + Duration::from_secs(3), &info, true, &screen, false).0.unwrap().label,
+            state.update(now + Duration::from_secs(3), &info, true, &screen, false, false).0.unwrap().label,
             "Working… (3s)"
         );
         screen.feed("\r\n✻ Shimmying… (53m 37s · ↓ 27.1k tokens)".as_bytes());
-        let (live, wake) = state.update(now + Duration::from_secs(4), &info, true, &screen, true);
+        let (live, wake) = state.update(now + Duration::from_secs(4), &info, true, &screen, true, false);
         assert_eq!(live.unwrap().label, "✻ Shimmying… (53m 37s · ↓ 27.1k tokens)");
         assert_eq!(wake, None);
         info.latest = Some((30, ChatPhase::EndTurn));
-        assert_eq!(state.update(now + Duration::from_secs(5), &info, true, &screen, false), (None, None));
-        assert_eq!(state.update(now, &info, false, &screen, true), (None, None));
+        assert_eq!(state.update(now + Duration::from_secs(5), &info, true, &screen, false, false), (None, None));
+        assert_eq!(state.update(now, &info, false, &screen, true, false), (None, None));
+    }
+
+    #[test]
+    fn a_pending_question_reads_as_waiting_for_the_answer_without_stop() {
+        let screen = Screen::new(60, 6, 0);
+        let mut info = ChatInfo::default();
+        info.prompt = Some(10);
+        info.latest = Some((20, ChatPhase::Active));
+        info.pending = Some(20);
+        let mut state = Working::default();
+        let footer = state.update(Instant::now(), &info, true, &screen, true, true).0.unwrap();
+        assert_eq!(footer, Footer { label: ASKING.into(), stop: None });
+        info.pending = None;
+        assert!(state.update(Instant::now(), &info, true, &screen, true, true).0.unwrap().label.starts_with("Working"));
     }
 }

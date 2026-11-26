@@ -28,3 +28,34 @@ fn ended_tabs_still_handle_local_scrollback() {
     app.term_key(Instant::now(), &key);
     assert!(app.tabs.shown().unwrap().term.scroll > 0);
 }
+
+#[test]
+fn claude_tabs_get_the_classic_renderer_only_when_the_setting_is_on() {
+    let launch = |program: &str| Launch {
+        program: program.into(),
+        args: vec![],
+        cwd: None,
+        env: Default::default(),
+        env_remove: vec![],
+        place: claude_switch_core::Place::Terminal,
+        label: String::new(),
+    };
+    let mut claude = launch("claude");
+    classic_renderer(&mut claude, true);
+    assert_eq!(claude.env.get(CLASSIC_RENDERER).map(String::as_str), Some("1"));
+    assert_eq!(CLASSIC_RENDERER, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN");
+    let mut off = launch("claude");
+    classic_renderer(&mut off, false);
+    assert!(off.env.is_empty());
+    for handover in [r"C:\Users\me\.local\bin\claude.exe", r"C:\Tools\Claude.EXE", "claude.cmd"] {
+        let mut tab = launch(handover);
+        classic_renderer(&mut tab, true);
+        assert_eq!(tab.env.get(CLASSIC_RENDERER).map(String::as_str), Some("1"), "{handover}");
+    }
+    let mut lookalike = launch(r"C:\Tools\claude-helper.exe");
+    classic_renderer(&mut lookalike, true);
+    assert!(lookalike.env.is_empty());
+    let mut shell = launch("cmd.exe");
+    classic_renderer(&mut shell, true);
+    assert!(shell.env.is_empty(), "other programs keep their own full-screen views");
+}
