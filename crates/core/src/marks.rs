@@ -26,33 +26,40 @@ impl Default for Marks {
 const DEPTH: usize = 3;
 
 fn decode(path: &Path, bytes: &[u8]) -> Result<Value, Refusal> {
-    let data: Value = serde_json::from_slice(bytes).map_err(|e| io_refusal("decode", path, &e))?;
+    let mut data: Value = serde_json::from_slice(bytes).map_err(|e| io_refusal("decode", path, &e))?;
     if !data.is_object() || ["sessions", "folders"].iter().any(|k| data.get(k).is_some_and(|v| !v.is_object())) {
         return Err(Refusal::Io(format!("The structure of {} is not recognized.", path.display())));
+    }
+    // An earlier version's merge could leave `"id": null`, which refused every mark for that
+    // entry; it holds nothing, so it is dropped (other unrecognized entries are kept as they are).
+    for group in ["sessions", "folders"] {
+        if let Some(map) = data.get_mut(group).and_then(Value::as_object_mut) {
+            map.retain(|_, entry| !entry.is_null());
+        }
     }
     Ok(data)
 }
 
 /// Fields each window keeps up by itself are no conflict: the later `seenMs`, the earlier
 /// `missingSinceMs`, and the transcript `file` as on disk. True when `path` was one of them.
+/// An entry the other window removed (pruned) stays removed: bookkeeping alone never brings it
+/// back, and never leaves a null in its place; the next scan that finds it starts a new one.
 fn bookkeeping(merged: &mut Value, ours: &Value, path: &[String]) -> bool {
     let [group, key, field] = path else { return false };
-    let pick = |a: u64, b: u64| if field == "seenMs" { a.max(b) } else { a.min(b) };
-    let target = &mut merged[group.as_str()][key.as_str()];
-    match field.as_str() {
-        "file" => true,
-        "seenMs" | "missingSinceMs" => {
-            let mine = ours[group.as_str()][key.as_str()][field.as_str()].as_u64();
-            let theirs = target.get(field.as_str()).and_then(Value::as_u64);
-            match (mine, theirs) {
-                (Some(a), Some(b)) => target[field.as_str()] = json!(pick(a, b)),
-                (Some(a), None) if target.is_object() && field == "seenMs" => target[field.as_str()] = json!(a),
-                _ => {}
-            }
-            true
-        }
-        _ => false,
+    if !matches!(field.as_str(), "file" | "seenMs" | "missingSinceMs") {
+        return false;
     }
+    let target = merged.get_mut(group.as_str()).and_then(|g| g.get_mut(key.as_str())).and_then(Value::as_object_mut);
+    let (Some(target), "seenMs" | "missingSinceMs") = (target, field.as_str()) else { return true };
+    let pick = |a: u64, b: u64| if field == "seenMs" { a.max(b) } else { a.min(b) };
+    let mine = ours[group.as_str()][key.as_str()][field.as_str()].as_u64();
+    let theirs = target.get(field.as_str()).and_then(Value::as_u64);
+    match (mine, theirs) {
+        (Some(a), Some(b)) => _ = target.insert(field.clone(), json!(pick(a, b))),
+        (Some(a), None) if field == "seenMs" => _ = target.insert(field.clone(), json!(a)),
+        _ => {}
+    }
+    true
 }
 
 /// "the name of session 1a2b3c4d", for a conflict notice.
@@ -425,6 +432,42 @@ mod tests {
         assert!(Marks::load(&roots).is_err());
         assert!(m.save(&roots).is_err());
         assert_eq!(std::fs::read_to_string(path(&roots)).unwrap(), r#"{"sessions":1,"folders":{"keep":true}}"#);
+    }
+
+    #[test]
+    fn a_session_pruned_in_one_window_and_seen_in_the_other_never_becomes_null() {
+        // The reviewer's case: one window prunes a session and saves; the other, loaded before,
+        // sees it and saves. The merge wrote "a": null, which then refused every mark for it.
+        let t = TempDir::new("marks-null");
+        let roots = t.roots();
+        let gone = t.0.join("gone.jsonl");
+        let old = 1_000;
+        put(&path(&roots), &json!({"sessions": {"a": {"file": gone, "seenMs": 1, "missingSinceMs": old}}}).to_string());
+        let mut one = Marks::load(&roots).unwrap();
+        let mut two = Marks::load(&roots).unwrap();
+        assert!(one.prune([], old + RETAIN_MS));
+        one.save(&roots).unwrap();
+        assert!(two.see("a", &gone, 7));
+        two.save(&roots).unwrap();
+        let disk: Value = serde_json::from_slice(&std::fs::read(path(&roots)).unwrap()).unwrap();
+        assert!(disk["sessions"].get("a").is_none_or(Value::is_object), "{disk}");
+        for mut m in [two, Marks::load(&roots).unwrap()] {
+            assert!(m.pin("a", &gone, true) && m.rename("a", &gone, "Back"), "marks work again");
+            assert!(m.data["sessions"]["a"].is_object());
+        }
+    }
+
+    #[test]
+    fn a_null_entry_left_by_an_earlier_version_is_repaired_on_load() {
+        let t = TempDir::new("marks-null-load");
+        let roots = t.roots();
+        let file = t.0.join("a.jsonl");
+        put(&path(&roots), r#"{"sessions":{"a":null,"b":{"name":"B"},"odd":5},"folders":{"C:/w":null}}"#);
+        let mut m = Marks::load(&roots).unwrap();
+        assert!(m.pin("a", &file, true) && m.hide_folder("C:/w", true));
+        assert_eq!((m.name("b"), &m.data["sessions"]["odd"]), (Some("B"), &json!(5)), "the rest is kept");
+        m.save(&roots).unwrap();
+        assert!(Marks::load(&roots).unwrap().pinned("a"));
     }
 
     #[test]

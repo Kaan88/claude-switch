@@ -699,7 +699,9 @@ the app leaves a damaged marks file alone. Two windows may both write it: under 
 save that finds the file changed since this window read it applies only this window's own changes,
 per session or folder and field, onto the file as it is now, and the window then has the other's
 changes too. Last-seen times take the later value, the missing-since stamp the earlier, and the
-transcript path the one on disk. Only a field both changed differently (two names for the same
+transcript path the one on disk; a session one window pruned stays pruned when the other only
+updated those (its next scan marks it afresh), so an entry is never left empty. An empty (null)
+entry an earlier version wrote is dropped on load. Only a field both changed differently (two names for the same
 session, say) refuses the save with a notice naming it; the other window's value is kept, nothing
 else from that save is written, and the next change saves normally. No restart is needed. Showing details or a tab clears Unseen for its
 known transcript version. Remembered session marks expire only after the transcript has been

@@ -18,6 +18,8 @@
   paths and keeps the 30 most recent; the task list is marked possibly stale.
 - Handover in place: never clears the session when you sent a message after the handover was
   made (it stops and says to make it again), and never clears under a draft in the message box.
+- Marks: a session forgotten in one window while the other saw it no longer turns into an empty
+  entry that refused pins and names for it; such entries in existing files are repaired on load.
 - Saved terminal tabs: a second window no longer replaces the first window's saved tabs with its
   own when it closes; only the window that restored them saves them.
 - Handover channel: an elevated window refuses requests from lower-integrity processes; the
