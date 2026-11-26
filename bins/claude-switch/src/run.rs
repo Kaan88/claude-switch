@@ -3,7 +3,9 @@
 //! instead of an external terminal, and nothing else changes.
 //!
 //! - `Place::Detached`: the program alone, with no console window (`CREATE_NO_WINDOW`), not
-//!   waited for.
+//!   waited for. A launch that hands a session to the desktop app (`claude --desktop ...`) is the
+//!   exception: the CLI refuses that without a terminal, so it runs in a pseudo-terminal nobody
+//!   sees ([`needs_terminal`], [`run_unseen`]).
 //! - `Place::Terminal`: Windows Terminal when `wt.exe` is on the `PATH`
 //!   (`wt.exe -d <cwd> -- <program> <args…>`), else `cmd /c start "" /d <cwd> <program> <args…>`.
 //!
@@ -14,16 +16,102 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use claude_switch_core::{Launch, Place};
 
 /// Starts the launch and returns once the process exists. Errors are the system's.
 pub fn run(launch: &Launch) -> io::Result<()> {
+    if needs_terminal(launch) {
+        return run_unseen(launch);
+    }
     let path = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
     let mut cmd = command(launch, &path, &pathext);
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     cmd.spawn().map(drop)
+}
+
+/// A detached launch the CLI only does with a terminal: `--desktop` ends at once with "can't run
+/// non-interactively" when its output is not one.
+pub fn needs_terminal(launch: &Launch) -> bool {
+    launch.place == Place::Detached && launch.args.iter().any(|a| a == "--desktop")
+}
+
+/// How long [`run_unseen`] waits for a refusal before it reports the launch as started.
+const REFUSAL_WAIT: Duration = Duration::from_secs(4);
+/// How long the unseen terminal is kept for a program that does not end.
+const UNSEEN_LIMIT: Duration = Duration::from_secs(120);
+
+/// Runs the launch in a pseudo-terminal that is shown nowhere. A program that ends with an error
+/// within [`REFUSAL_WAIT`] makes this an error carrying what it printed (the CLI says why it will
+/// not hand the session over); otherwise its output is thrown away until it ends.
+fn run_unseen(launch: &Launch) -> io::Result<()> {
+    let mut pty = mdshared_pty::Pty::spawn(&crate::term::command(launch), 200, 30, || {})?;
+    let start = Instant::now();
+    let mut printed = Vec::new();
+    while start.elapsed() < REFUSAL_WAIT {
+        printed.extend(pty.take_output());
+        if let Some(exit) = pty.exit() {
+            printed.extend(pty.take_output());
+            let said = plain_text(&printed);
+            return if exit.success() {
+                Ok(())
+            } else if said.is_empty() {
+                Err(io::Error::other("The Claude Code CLI ended with an error and said nothing."))
+            } else {
+                Err(io::Error::other(said))
+            };
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::thread::spawn(move || {
+        while pty.running() && start.elapsed() < UNSEEN_LIMIT {
+            drop(pty.take_output());
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    });
+    Ok(())
+}
+
+/// What a terminal's output says as one line: escape sequences and control characters removed,
+/// runs of white space made one space.
+pub fn plain_text(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '' {
+            match chars.next() {
+                // CSI: parameters, then one final character.
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                // OSC: up to BEL or ESC \.
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '' {
+                            break;
+                        }
+                        if c == '' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if c.is_control() {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The command [`run`] spawns, with `path` and `pathext` standing for the environment's.
@@ -145,6 +233,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn only_a_detached_hand_over_to_the_desktop_app_needs_a_terminal() {
+        let mut l = launch(Place::Detached);
+        assert!(!needs_terminal(&l));
+        l.args.insert(0, "--desktop".into());
+        assert!(needs_terminal(&l));
+        l.place = Place::Terminal;
+        assert!(!needs_terminal(&l));
+    }
+
+    #[test]
+    fn what_a_terminal_printed_becomes_one_plain_line() {
+        let raw = b"]0;claude[31mNo session found[0m
+  with ID 1.[?25h
+";
+        assert_eq!(plain_text(raw), "No session found with ID 1.");
+        assert_eq!(plain_text(b"[2J"), "");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_unseen_run_reports_what_a_failing_program_said_and_nothing_for_a_good_one() {
+        let mut l = launch(Place::Detached);
+        l.cwd = None;
+        l.program = "cmd.exe".into();
+        l.args = vec!["/c".into(), "echo no such session& exit 3".into()];
+        assert_eq!(run_unseen(&l).unwrap_err().to_string(), "no such session");
+        l.args = vec!["/c".into(), "echo fine".into()];
+        assert!(run_unseen(&l).is_ok());
+    }
+
+    /// A real hand-over: `CS_DESKTOP_SESSION` is the session's id and `CS_DESKTOP_CWD` its folder.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "opens a session in the desktop app"]
+    fn a_real_session_is_handed_to_the_desktop_app() {
+        let id = std::env::var("CS_DESKTOP_SESSION").unwrap();
+        let l = Launch {
+            program: "claude".into(),
+            args: vec!["--desktop".into(), "--resume".into(), id],
+            cwd: Some(PathBuf::from(std::env::var("CS_DESKTOP_CWD").unwrap())),
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
+            place: Place::Detached,
+            label: String::new(),
+        };
+        let started = Instant::now();
+        let result = run_unseen(&l);
+        println!("{result:?} after {:?}", started.elapsed());
+        assert!(result.is_ok());
     }
 
     #[test]
