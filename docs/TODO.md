@@ -401,3 +401,18 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     repository's; a relative name is resolved against the session's folder only. Consider showing
     the full path in the panel's title and, when the answer's recent tool calls name a file with that
     name elsewhere, preferring that one or offering both.
+35. **Details panel: MCP tasks are missing, and every item should show its work** (owner,
+    2026-11-26). The CLI's Background view lists MCP tasks (e.g. `opencode/opencode_run`, working,
+    job id, running time, last tool); the Details panel shows none. Add them (a tab of their own or
+    under Tasks/Agents), live, with status, running time and the last step. For every item in the
+    panel (tasks, agents, shells, MCP tasks, outputs) the owner wants to open its work: an agent's
+    conversation and tool calls (its sidechain transcript), a shell's output, an MCP task's progress
+    and final result. First find where the CLI records MCP tasks (transcript records, the task
+    output files, or only in memory; for the OpenCode bridge `opencode_result` could be read only
+    through the CLI) and read what is on disk; never call a tool to get it.
+36. **"Session changed in the terminal. Reopen the session to attach its transcript"** leaves the Chat
+    view refusing to send ("could not be verified") until the session is reopened (owner's
+    screenshot, 2026-11-26). When the change is the CLI's own (`/clear`, compaction, `/resume` in
+    that tab), the live record names the new ID for the same process: follow it automatically and
+    attach the new transcript (linked to the old one), and keep the refusal only for a change Switch
+    cannot explain. Related to item 24.
