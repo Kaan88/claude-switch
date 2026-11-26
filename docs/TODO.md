@@ -391,3 +391,5 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     Claude window here". Check whether "Continue with email" for a Google-made account reaches the
     same account; and whether `claude://` can be routed to the right profile at all (likely not:
     the protocol handler always starts the default profile).
+    Closed (owner, 2026-11-26): "Continue with email" with the Google account's address gives the
+    code and reaches the same account; no further work needed.
