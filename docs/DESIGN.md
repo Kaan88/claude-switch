@@ -957,10 +957,12 @@ the screen shows a permission prompt (a "Do you want to …" or "Would you like 
 the "Esc to cancel" footer), the card shows
 the call as the transcript records it (command, file and diff lines, MCP server and tool), the
 prompt's own rows above the question (warnings and countdowns included), the question and the
-screen's choices, exactly as written. Clicks are answered only if the prompt names that call (the
-command's first 40 characters, the file name, the MCP tool or the fetched host must appear in it);
-a subagent's prompt, two pending calls, or any other prompt stays terminal-only with an Open terminal
-button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
+screen's choices, exactly as written. Clicks are answered only if the prompt names that call: the
+whole command as whole rows of the prompt (whitespace and wrapping aside), the file's full path or
+its path from the session folder, the MCP server and tool, or the fetched address or host, each as
+a whole word, never a part of a longer word or path. A prompt while a subagent may be asking (one
+is running, or this turn started one whose end is unknown), two pending calls, or any other prompt
+stays terminal-only with an Open terminal button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
 highlight there with the same choices; nothing is pre-selected and nothing is answered without a
 click. A decline with text uses the prompt's Tab comment field when the footer offers "Tab to
 amend" (Tab; the text only once the screen shows the field open on that row, the choice followed by

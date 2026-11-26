@@ -148,7 +148,7 @@ fn an_option_moves_the_highlight_and_enter_follows_only_once_the_screen_shows_it
     f.screen(&menu(0, None), now);
     let tab = f.tab();
     let pane = tab.pane.as_mut().unwrap();
-    assert!(pane.chat.sync_question(&pane.model, &tab.term.screen));
+    assert!(pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen));
     assert_eq!(f.chat().question.answerable, Some(AT));
     assert!(press(f.tab(), now, Hit::Option(1)));
     assert_eq!(f.writes(), [down(1)], "arrows only; no Enter yet");
@@ -244,7 +244,7 @@ fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
         f.screen(&menu(0, None), now - QUIET);
         let tab = f.tab();
         let pane = tab.pane.as_mut().unwrap();
-        pane.chat.sync_question(&pane.model, &tab.term.screen);
+        pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
         pane.chat.observe(&pane.model.chat, now - super::super::TOOL_WAIT);
         let tab = f.tab();
         let pane = tab.pane.as_mut().unwrap();
@@ -306,7 +306,7 @@ impl Fixture {
     fn sync(&mut self) -> bool {
         let tab = self.tab();
         let pane = tab.pane.as_mut().unwrap();
-        pane.chat.sync_question(&pane.model, &tab.term.screen)
+        pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen)
     }
 
     fn decide(&mut self, now: Instant) -> Option<Reason> {
@@ -454,6 +454,74 @@ fn a_permission_prompt_never_becomes_a_menu_card_even_when_its_choices_wrap() {
     assert_ne!(f.chat().drawer, Drawer::Closed);
     press(f.tab(), now, Hit::Option(0));
     assert!(f.writes().is_empty());
+}
+
+#[test]
+fn a_prompt_must_show_the_whole_command_or_full_path_and_no_subagent_may_be_asking() {
+    let now = Instant::now();
+    // A short command inside a longer one is not the call's prompt.
+    let mut f = Fixture::tool("make");
+    f.screen(&prompt("make install", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    f.screen(&prompt("make", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "the whole command, on its own row");
+
+    // A subagent that is running (or that this turn started, end unknown) may be the one asking.
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.agents.push(claude_switch_core::transcript::Subagent {
+        id: "a1".into(),
+        finished: Some(false),
+        ..Default::default()
+    });
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None);
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.agents[0].finished = Some(true);
+    let mut agent = shell("toolu_a", "");
+    if let ItemKind::Tool { name, state, card, .. } = &mut agent {
+        *name = "Agent".into();
+        *state = ToolState::Ok;
+        *card = None;
+    }
+    pane.model.items.insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: agent, timestamp: None });
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None, "an agent of this turn with no known end");
+    if let Some(Item { kind: ItemKind::Tool { subagent, .. }, .. }) =
+        f.tab().pane.as_mut().unwrap().model.items.get_mut(&ItemId { offset: AT - 1, block: 0 })
+    {
+        *subagent = Some("a1".into());
+    }
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "its subagent finished");
+}
+
+#[test]
+fn a_path_or_host_matches_only_as_a_whole_word() {
+    assert!(has_word("Do you want to make this edit to src/main.rs?", "src/main.rs"));
+    assert!(!has_word("Do you want to make this edit to other/src/main.rs?", "src/main.rs"));
+    assert!(!has_word("Edit src/main.rs.bak", "src/main.rs"));
+    assert!(has_word("Claude wants to fetch content from example.com", "example.com"));
+    assert!(!has_word("fetch from notexample.com", "example.com"));
+    let edit = |path: &str| ItemKind::Tool {
+        id: "e".into(),
+        name: "Edit".into(),
+        summary: String::new(),
+        file_path: Some(path.into()),
+        state: ToolState::Running,
+        duration_ms: None,
+        pictures: vec![],
+        subagent: None,
+        card: None,
+    };
+    let root = std::env::temp_dir().join("proj");
+    let file = root.join("src").join("main.rs");
+    let Some(Needle::Word(forms)) = needles(&edit(&file.to_string_lossy()), &root).pop() else { panic!() };
+    assert!(forms.contains(&"src/main.rs".to_owned()) && forms.contains(&file.to_string_lossy().into_owned()));
+    assert!(!forms.contains(&"main.rs".to_owned()), "never the bare file name");
+    assert!(has_rows(&["Bash command".into(), "cargo test".into(), "--workspace".into()], "cargo test --workspace"));
+    assert!(!has_rows(&["sudo cargo test --workspace".into()], "cargo test --workspace"));
 }
 
 #[test]
