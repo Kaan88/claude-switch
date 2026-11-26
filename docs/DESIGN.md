@@ -55,8 +55,15 @@ that pid is alive.
   `%USERPROFILE%\.claude`, and its `.claude.json` is `%USERPROFILE%\.claude.json` (beside the folder, not
   in it). The Accounts dialog reads these per-account records directly and checks that the credentials
   file exists without opening it. Usage is a separate path described below. `claude auth login` signs in.
-- Desktop: the app is an MSIX package; its executable is in the command registered for the `claude:`
-  protocol (`HKCU\Software\Classes\claude\shell\open\command`). Started with
+- Desktop: Switch checks Windows' registration of `Claude_pzs8sxrjxfjjc` for the current user and
+  uses the package's `app\Claude.exe` (Store, standalone MSIX or enterprise provisioning). It also
+  checks the per-user Squirrel install (`%LOCALAPPDATA%\AnthropicClaude\app-<version>\Claude.exe`,
+  newest version first) and fixed `Claude` or `AnthropicClaude` folders under Local AppData's
+  Programs and Program Files. It does not run the `claude:` protocol command, an updater, a PATH
+  alias, or a shell. The chosen file must be an absolute native executable on a local fixed drive
+  with a Windows-trusted Authenticode signature from Anthropic, PBC. Verification uses local trust
+  data only, with no online revocation check, and the verified file is held through process creation.
+  Started with
   `--user-data-dir=<dir>` it runs as a second, separate copy with its own login, beside the normal one.
   The Code tab of every copy writes transcripts to `%USERPROFILE%\.claude\projects`.
 - `claude --resume <id>` continues a session (it finds it from any folder, but run it in the session's
@@ -103,9 +110,13 @@ part of app state, error details, logs, UI, clipboard or storage. Responses are 
 fields described below; errors carry only a kind, never response bodies or headers.
 
 Opening the window, account selector or Accounts page can request a reading if it is at least five
-minutes old. The selected-account usage popup can do the same for that account. The manual Refresh
-button allows a successful reading to be updated after 30 seconds. After a failure both paths wait
-at least five minutes, or 30 minutes for HTTP 429. Failure cooldowns are in memory, not shared across
+  minutes old. The selected-account usage popup can do the same for that account. The manual Refresh
+  button allows a successful reading to be updated after 30 seconds. After a failure both paths wait
+  at least five minutes, or 30 minutes for HTTP 429. If the account is not signed in or its local
+  login has expired, Refresh and an embedded sign-in tab ending can retry immediately, because
+  the previous attempt never sent a request. If a usage read is in flight when the tab ends, Switch
+  rechecks after that read finishes; normal HTTP cooldowns still apply. External sign-ins can use
+  Refresh. Failure cooldowns are in memory, not shared across
 processes or saved on exit. Only [background usage warnings](#background-notices-and-notification-area)
 can request a periodic refresh. Turning the setting
 off cancels pending work and prevents new credential reads; a request already sent cannot be unsent.
@@ -119,12 +130,14 @@ With `--labels`, the diagnostic may also print short simple strings for `kind`, 
 `key` and `display_name` (up to 40 ASCII letters, digits, spaces, dots, dashes or underscores),
 never a string containing the bearer. Without `--labels` no values are printed.
 
-The app uses the nonempty `limits` array in preference to the older named limits. It deliberately
-keeps valid inactive entries: a limit still belongs in the display even when it is not the one
-currently binding.
+The app uses the nonempty `limits` array in preference to the older named limits. If it has no
+usable Session limit, a numeric legacy `five_hour` can fill that gap; if neither has a figure, the
+usage panels show Session as not reported. Valid inactive entries are kept: a limit still belongs
+in the display even when it is not the one currently binding.
 Both 80% usage and non-normal severity trigger the warning colour. “This week by app” shows up
-to six rows, largest first, using `percent_of_limit`. This is a guess about the undocumented field:
-we interpret it as a share of the weekly allowance, not a share of the usage so far.
+to six named rows, numeric `percent_of_limit` values largest first, followed by named rows without
+a figure (`—`, not reported). We interpret the undocumented field as a share of the weekly allowance,
+not a share of the usage so far; Switch does not substitute a differently named measure.
 
 `%APPDATA%\claude-switch\usage.json` keeps limit labels, slots, percentages, normalized reset times,
 severity, the displayed breakdown and the reading time by account. It is replaced via a separate

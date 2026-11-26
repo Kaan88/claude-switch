@@ -34,6 +34,7 @@ pub struct Tab {
     /// Current session for list routing, badges and seen marks; never the pane's pinned identity.
     pub session: Option<String>,
     pub account: Option<String>,
+    pub signing_in: bool,
     /// Launch folder for a Claude session; shell and sign-in tabs leave it unset.
     pub cwd: Option<PathBuf>,
     /// A resume argument or a live record matched to this tab's process, not a pane guess.
@@ -110,6 +111,7 @@ impl Tabs {
             resume_id: session.clone(),
             session,
             account,
+            signing_in: false,
             cwd: None,
             term,
             pane: None,
