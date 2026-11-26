@@ -180,6 +180,7 @@ are never saved unless you accept them. Rename, pins and hiding never edit trans
 All search terms must appear on the same line, in any order. Results show up to three matching
 lines per session, newest sessions first. The details pane shows turns, tool calls, pictures,
 subagents, and context/output tokens. Figures marked **about** are character-based estimates.
+After a compaction, context reads **— after compact** until Claude's next answer.
 
 | Shortcut in Sessions | Action |
 | --- | --- |
@@ -305,7 +306,7 @@ the viewer. Both tabs are also available in **Session view**.
 | Ctrl+V / Ctrl+Shift+V | Paste text if available (otherwise a picture) / paste a picture explicitly |
 | **Attach…** or file drop | Choose files or **Paste picture** from the menu, or drop files into Chat |
 | `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
-| **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first |
+| **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first. Effort shows the session's level, also after `/effort` typed in the terminal; **(default)** marks the model's default |
 | **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending; the queue also runs in background tabs |
 | **Press Enter** | Retry only the Enter key after the input was staged, without pasting it again |
 

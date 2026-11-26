@@ -95,6 +95,9 @@ impl AppState {
         classic_renderer(&mut l, self.config.classic_terminal_view);
         if let Some(pane) = &mut pane {
             pane.chat.classic_renderer = l.env.contains_key(CLASSIC_RENDERER);
+            if !self.source.is_demo() {
+                pane.chat.set_starting_effort(crate::view::chat::effort::starting(&l, &self.source.home()));
+            }
         }
         l.program = crate::run::native_program(&l.program)?;
         let id = self.open_command(&term::command(&l), l.label.clone(), session, account)?;

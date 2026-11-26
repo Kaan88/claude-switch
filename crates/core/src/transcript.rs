@@ -394,6 +394,21 @@ impl View {
             changes.background_changed = true;
             return;
         }
+        if matches!(kind, LineKind::User | LineKind::System) {
+            // A slash command's reply, whether Chat or the terminal sent the command.
+            let content = &value["message"]["content"];
+            let texts = [content, &value["content"]].into_iter().flat_map(|c| {
+                c.as_str()
+                    .into_iter()
+                    .chain(blocks(c).filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()))
+            });
+            for text in texts.filter(|t| t.contains("<local-command-stdout>")) {
+                self.chat.local_output(offset, text);
+            }
+        }
+        if kind == LineKind::System && value["subtype"] == "compact_boundary" || flag(&value, "isCompactSummary") {
+            self.chat.compaction(offset);
+        }
         if flag(&value, "isMeta") {
             return;
         }

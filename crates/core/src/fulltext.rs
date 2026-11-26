@@ -57,7 +57,7 @@ pub(crate) fn records(
 }
 
 fn record(bytes: &[u8], visit: &mut impl FnMut(LineKind, &Value)) -> io::Result<()> {
-    let Some(kind @ (LineKind::User | LineKind::Assistant)) = line_kind(bytes) else { return Ok(()) };
+    let Some(kind) = line_kind(bytes) else { return Ok(()) };
     if !bounded_structure(bytes, 65_536) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -65,6 +65,16 @@ fn record(bytes: &[u8], visit: &mut impl FnMut(LineKind, &Value)) -> io::Result<
         ));
     }
     let Ok(value) = serde_json::from_slice::<Value>(bytes) else { return Ok(()) };
+    // A compaction of the main conversation is passed on as a `System` record without content.
+    let compaction = value["type"] == "system" && value["subtype"] == "compact_boundary"
+        || value["type"] == "user" && value["isCompactSummary"] == true;
+    if compaction && value["isSidechain"] != true && value["parent_tool_use_id"].is_null() {
+        visit(LineKind::System, &Value::Null);
+        return Ok(());
+    }
+    if kind == LineKind::System {
+        return Ok(());
+    }
     let expected = if kind == LineKind::User { "user" } else { "assistant" };
     let message = &value["message"];
     if value["type"] == expected
@@ -147,6 +157,9 @@ impl Query {
     ) -> io::Result<()> {
         let mut hits = Hits::default();
         let result = records(input, &cancelled, |kind, message| {
+            if kind == LineKind::System {
+                return;
+            }
             let parts: Vec<_> = if kind == LineKind::User {
                 prompts(message).map(std::borrow::Cow::Owned).collect()
             } else {

@@ -25,6 +25,8 @@ pub struct Stats {
     pub pictures: usize,
     pub subagents: usize,
     pub context: Tokens,
+    /// The conversation was compacted after its last answer: `context` is the size from before.
+    pub compacted: bool,
     pub output: Tokens,
 }
 
@@ -126,6 +128,10 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
         if exceeded {
             return;
         }
+        if kind == LineKind::System {
+            stats.compacted = true;
+            return;
+        }
         let mut pictures = 0;
         let mut prompt = false;
         for block in blocks(message) {
@@ -154,6 +160,7 @@ pub fn collect(input: impl io::Read, cancelled: impl Fn() -> bool) -> io::Result
             stats.turns += usize::from(prompt || chars != 0);
         } else {
             assistant_seen = true;
+            stats.compacted = false;
             let usage = &message["usage"];
             context = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
                 .into_iter()

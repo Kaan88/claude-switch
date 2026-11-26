@@ -264,14 +264,34 @@ impl Draw<'_> {
         let r = l.toolbar;
         let mut x = r.x + 1.0;
         let model = chat.cli_report.model.as_deref().or(info.model.as_deref()).unwrap_or("Model");
-        let effort = chat.cli_report.effort.unwrap_or("—");
         let model = model_label(p, model);
-        let effort = format!("Effort {effort} ▾");
-        let context = info.context.map_or_else(|| "Context —".into(), |n| format!("Context {}", tokens(n)));
+        let effort = chat.effort_label(info);
+        let compacted = info.compacted;
+        let context = match info.context {
+            _ if compacted => "Context — after compact".into(),
+            Some(n) => format!("Context {}", tokens(n)),
+            None => "Context —".into(),
+        };
+        // A longer label ("medium (default)", "— after compact") widens its pill while the row
+        // has room; otherwise the short form shows.
+        let fit = |p: &mut Painter, label: &str, min: f32| {
+            let w = p.measure(Face::Semibold, PILL_FONT, label) + 10.0;
+            if w <= min - 2.0 { min } else { w }
+        };
+        let mut effort = format!("Effort {effort} ▾");
+        let mut context = context;
+        let (mut effort_w, mut context_w) = (fit(p, &effort, 79.0), fit(p, &context, 92.0));
+        let right = if l.stacked { 0.0 } else { 216.0 + if self.wide { 62.0 } else { 0.0 } };
+        let room = r.w - right - (MODEL_W + 79.0 + 92.0 + 62.0 + 44.0 + 32.0 + 6.0 * 4.0);
+        if effort_w + context_w - 79.0 - 92.0 > room {
+            effort = format!("Effort {} ▾", chat.effort_label(info).trim_end_matches(" (default)"));
+            context = if compacted { "Context —".into() } else { context };
+            (effort_w, context_w) = (79.0, 92.0);
+        }
         for (label, w, control) in [
             (model.as_str(), MODEL_W, Control::Model),
-            (effort.as_str(), 79.0, Control::Effort),
-            (context.as_str(), 92.0, Control::Context),
+            (effort.as_str(), effort_w, Control::Effort),
+            (context.as_str(), context_w, Control::Context),
             ("Compact", 62.0, Control::Compact),
             ("Clear", 44.0, Control::Clear),
             ("/ …", 32.0, Control::Commands),

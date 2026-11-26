@@ -3,6 +3,7 @@ mod clipboard;
 mod commands;
 mod composer;
 mod editor;
+pub(crate) mod effort;
 mod input;
 mod layout;
 mod paint;

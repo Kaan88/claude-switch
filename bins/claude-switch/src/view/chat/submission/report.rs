@@ -5,6 +5,7 @@ use mdshared_term::Screen;
 
 use super::{Chat, Drawer, clean_prompt};
 use crate::view::chat::QUIET;
+use crate::view::chat::effort::{Start, model_default};
 
 #[derive(Default)]
 pub(in crate::view::chat) struct CliReport {
@@ -18,6 +19,10 @@ pub(in crate::view::chat) struct CliReport {
     pub(super) expects: Option<Choice>,
     confirmed: bool,
     pub(super) touched_terminal: bool,
+    /// The level the tab started with.
+    pub(in crate::view::chat) start: Start,
+    /// The transcript's reports last applied: generation and the effort and model offsets.
+    local: Option<(u64, Option<u64>, Option<u64>)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -77,9 +82,62 @@ pub(super) fn reported_model(line: &str) -> Option<String> {
 }
 
 impl Chat {
-    pub(in crate::view::chat) fn observe_cli(&mut self, info: &ChatInfo, screen: &Screen, now: Instant) -> bool {
+    /// The level the tab's process started with, for the Effort chip.
+    pub(crate) fn set_starting_effort(&mut self, start: Start) {
+        self.cli_report.start = start;
+    }
+
+    /// The Effort chip's level: the environment's, else the newest report, else the starting one,
+    /// else the model's default.
+    pub(in crate::view::chat) fn effort_label(&self, info: &ChatInfo) -> String {
+        let report = &self.cli_report;
+        match (report.start.clone(), report.effort) {
+            (Start::Env(level), _) | (_, Some(level)) | (Start::Set(level), None) => level.to_owned(),
+            (Start::Default, None) => {
+                let model = report.model.as_deref().or(info.model.as_deref());
+                model.and_then(model_default).map_or_else(|| "—".to_owned(), |level| format!("{level} (default)"))
+            }
+        }
+    }
+
+    /// The transcript's newest `/effort` and `/model` replies, whoever typed the command.
+    fn observe_local(&mut self, info: &ChatInfo) -> bool {
         let report = &mut self.cli_report;
+        let key = (info.generation, info.effort_report.as_ref().map(|r| r.0), info.model_report.as_ref().map(|r| r.0));
+        let last = report.local.replace(key);
+        if last == Some(key) {
+            return false;
+        }
+        // A report counts once: when it first appears, or again in another transcript.
+        let same_transcript = last.is_some_and(|l| l.0 == key.0);
+        let fresh = |now: Option<u64>, before: Option<u64>| now.is_some() && (!same_transcript || now != before);
+        let model_fresh = fresh(key.2, last.and_then(|l| l.2));
+        let effort_fresh = fresh(key.1, last.and_then(|l| l.1));
         let mut changed = false;
+        let model = info.model_report.as_ref().and_then(|(_, line)| reported_model(line));
+        if model_fresh && model.is_some() {
+            changed |= report.model != model;
+            report.model = model;
+            report.confirmed |= report.expects == Some(Choice::Model);
+        }
+        let effort = info.effort_report.as_ref().and_then(|(_, line)| reported_effort(line));
+        let model_newer = key.2.is_some_and(|m| key.1.is_none_or(|e| m > e));
+        if model_newer {
+            // A model chosen after the newest effort report starts from its own level.
+            if model_fresh {
+                changed |= report.effort.take().is_some();
+            }
+        } else if effort_fresh && effort.is_some() {
+            changed |= report.effort != effort;
+            report.effort = effort;
+            report.confirmed |= report.expects == Some(Choice::Effort);
+        }
+        changed
+    }
+
+    pub(in crate::view::chat) fn observe_cli(&mut self, info: &ChatInfo, screen: &Screen, now: Instant) -> bool {
+        let mut changed = self.observe_local(info);
+        let report = &mut self.cli_report;
         let usage = info.usage_offset().map(|at| (info.generation, at));
         if let Some((_, offset)) = usage.filter(|u| Some(*u) != report.transcript) {
             report.transcript = usage;

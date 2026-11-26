@@ -113,3 +113,36 @@ fn an_apparently_empty_row_cannot_be_the_head_or_tail_of_wrapped_terminal_input(
     screen.feed("earlier text❯ ".as_bytes());
     assert!(!clean_prompt(&screen));
 }
+
+#[test]
+fn the_effort_chip_reads_the_transcripts_replies_whoever_typed_the_command() {
+    use crate::view::chat::effort::Start;
+    let now = Instant::now();
+    let screen = Screen::new(80, 6, 0);
+    let mut chat = Chat::default();
+    let mut info = ChatInfo::default();
+    assert_eq!(chat.effort_label(&info), "—", "nothing known");
+    info.model = Some("claude-opus-5-5".into());
+    assert_eq!(chat.effort_label(&info), "medium (default)");
+    chat.set_starting_effort(Start::Set("high"));
+    assert_eq!(chat.effort_label(&info), "high", "the flag or the settings");
+
+    // `/effort` typed in the terminal: not tracked on the screen, read from the transcript.
+    info.effort_report = Some((500, "Set effort level to low (saved as your default for new sessions)".into()));
+    assert!(chat.observe_cli(&info, &screen, now));
+    assert_eq!(chat.effort_label(&info), "low");
+    assert!(!chat.observe_cli(&info, &screen, now), "a report counts once");
+
+    // A model chosen later starts from its own level again.
+    info.model_report = Some((600, "Set model to Sonnet 5.5 (default)".into()));
+    assert!(chat.observe_cli(&info, &screen, now));
+    assert_eq!(chat.cli_report.model.as_deref(), Some("Sonnet 5.5"));
+    assert_eq!(chat.effort_label(&info), "high");
+    info.effort_report = Some((700, "Set effort level to max (this session only)".into()));
+    chat.observe_cli(&info, &screen, now);
+    assert_eq!(chat.effort_label(&info), "max");
+
+    // The environment variable outranks every command.
+    chat.set_starting_effort(Start::Env("xhigh"));
+    assert_eq!(chat.effort_label(&info), "xhigh");
+}

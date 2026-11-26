@@ -673,7 +673,15 @@ from the selected account, the launch folder’s `.claude` directory, and instal
 It does not execute plugins or mirror CLI policy, and caches the scan for the tab. Stars persist in
 `window.ini`. Use ↑/↓ to choose, Tab to fill, and Enter to run. Model and Effort offer inline choices
 and toolbar menus; Model can also open the native picker. Model, effort and context labels use
-reported values, not clicked values; unknown effort stays blank. Direct slash commands need a
+reported values, not clicked values. Effort is, in Claude Code's order: `CLAUDE_CODE_EFFORT_LEVEL`
+in the tab's environment (it outranks `/effort`), else the newest "Set effort level to …" reply in
+the transcript's `<local-command-stdout>` records, whoever typed the command (a newer "Set model to
+…" sets it back), else the tab's `--effort` flag, else `effortLevel` in the project's
+`settings.local.json` and `settings.json` and the account's `settings.json` (read once when the tab
+opens, never written), else the model's documented default, marked "(default)"; unknown stays
+blank. Per-model `modelSettings` and managed settings are not read. After a `compact_boundary` or
+compact summary record, Context reads "— after compact" until the next answer reports a size; the
+Session view's "Context now" does the same. Direct slash commands need a
 verified, quiet, visibly empty CLI prompt, no active turn or blocking interaction, and the same
 terminal mode checks as Send. Chat writes command text first, and only writes Enter after seeing
 the exact text on the live input row, within two seconds. Compact and Clear (including Clear aliases)
