@@ -159,12 +159,17 @@ fn run(options: Options) -> Result<(), String> {
         file: name.to_owned(),
         agent: agent.map(str::to_owned),
         name: options.name.clone(),
+        explicit_account: options.account.is_some(),
     };
     match handover_pipe::send(&encode_request(&request)?) {
-        handover_pipe::Sent::Answered(result) => {
-            result?;
-            eprintln!("Claude Switch: opened the handover tab in the running window.{}", note(dropped.as_deref()));
-        }
+        handover_pipe::Sent::Answered(result) => match result? {
+            handover_pipe::Outcome::NewTab => {
+                eprintln!("Claude Switch: opened the handover tab in the running window.{}", note(dropped.as_deref()));
+            }
+            handover_pipe::Outcome::InPlace => eprintln!(
+                "Claude Switch: continuing in this session's tab (/clear, then the handover as the first message)."
+            ),
+        },
         handover_pipe::Sent::NotRunning => {
             window::spawn(&exe, &session.id, account, name, agent, options.name.as_deref())?;
             eprintln!("Claude Switch: started Claude Switch with the handover tab.{}", note(dropped.as_deref()));
@@ -227,9 +232,11 @@ pub struct Handoff {
     file: String,
     agent: Option<String>,
     name: Option<String>,
+    /// `--as` was given: continue only in a tab of that account, else open a new tab.
+    explicit_account: bool,
 }
 
-const REQUEST_VERSION: &str = "claude-switch-handover-1";
+const REQUEST_VERSION: &str = "claude-switch-handover-2";
 
 /// The running window's request: the same validated words as the window arguments, one a line.
 pub fn encode_request(request: &Handoff) -> Result<Vec<u8>, String> {
@@ -242,6 +249,7 @@ pub fn encode_request(request: &Handoff) -> Result<Vec<u8>, String> {
         &request.file,
         request.agent.as_deref().unwrap_or("-"),
         name.as_deref().unwrap_or("-"),
+        if request.explicit_account { "as" } else { "-" },
     ];
     let bytes = lines.join("\n").into_bytes();
     if bytes.len() > handover_pipe::MAX_REQUEST {
@@ -255,19 +263,60 @@ pub fn decode_request(bytes: &[u8]) -> Result<Handoff, String> {
     let invalid = "Invalid handover request.";
     let text = std::str::from_utf8(bytes).map_err(|_| invalid)?;
     let lines: Vec<&str> = text.split('\n').collect();
-    let [version, id, account, file, agent, name] = lines[..] else { return Err(invalid.into()) };
-    if version != REQUEST_VERSION {
+    let [version, id, account, file, agent, name, explicit] = lines[..] else { return Err(invalid.into()) };
+    if version != REQUEST_VERSION || !matches!(explicit, "as" | "-") {
         return Err(invalid.into());
     }
     let agent = (agent != "-").then(|| agent.to_owned());
     window::words(id, account, file, agent.as_deref())?;
     let name = (name != "-").then(|| names::decode(name)).transpose()?;
-    Ok(Handoff { id: id.into(), account: account.into(), file: file.into(), agent, name })
+    Ok(Handoff {
+        id: id.into(),
+        account: account.into(),
+        file: file.into(),
+        agent,
+        name,
+        explicit_account: explicit == "as",
+    })
 }
 
 /// Only app-owned handovers are accepted by the window handoff, never a caller-selected file path.
+/// A requested handover with everything read from disk (off the UI thread), before the window
+/// decides whether it continues in place or in a new tab.
+pub struct Loaded {
+    pub session: Session,
+    pub from: String,
+    pub name: String,
+    pub text: String,
+    pub file: std::path::PathBuf,
+    pub account: String,
+    pub explicit_account: bool,
+    agent: Option<String>,
+    marks: Option<Marks>,
+}
+
+impl Loaded {
+    pub fn new_tab(
+        self,
+        roots: &Roots,
+        config: &claude_switch_core::Config,
+    ) -> Result<compact_open::NewHandover, String> {
+        let Loaded { session, from, name, text, file, account, agent, marks, .. } = self;
+        let request = compact_open::prepare(roots, config, &session, (from, &name), &account, &text, &file)?
+            .with_agent(agent.as_deref())?;
+        Ok(match marks {
+            Some(marks) => request.expecting_marks(marks),
+            None => request,
+        })
+    }
+}
+
 pub fn handoff(roots: &Roots, args: Handoff) -> Result<compact_open::NewHandover, String> {
-    let Handoff { id, account, file, agent, name } = args;
+    load(roots, args)?.new_tab(roots, &config::load(roots))
+}
+
+pub fn load(roots: &Roots, args: Handoff) -> Result<Loaded, String> {
+    let Handoff { id, account, file, agent, name, explicit_account } = args;
     let config = config::load(roots);
     let file = compact::list(roots, &id)
         .map_err(|_| "Could not list saved handovers.")?
@@ -281,9 +330,17 @@ pub fn handoff(roots: &Roots, args: Handoff) -> Result<compact_open::NewHandover
     let automatic = name.is_none();
     let name = name.unwrap_or_else(|| names::suggest(&marks, &sessions, &from));
     let text = std::fs::read_to_string(&file).map_err(|_| "Could not read the saved handover.")?;
-    let request = compact_open::prepare(roots, &config, session, (from, &name), &account, &text, &file)?
-        .with_agent(agent.as_deref())?;
-    Ok(if automatic { request.expecting_marks(marks) } else { request })
+    Ok(Loaded {
+        session: session.clone(),
+        from,
+        name,
+        text,
+        file,
+        account,
+        explicit_account,
+        agent,
+        marks: automatic.then_some(marks),
+    })
 }
 
 pub fn window_args(mut args: impl Iterator<Item = String>) -> Result<(Handoff, String), String> {
@@ -301,7 +358,7 @@ pub fn window_args(mut args: impl Iterator<Item = String>) -> Result<(Handoff, S
     }
     window::words(&id, &account, &file, agent.as_deref())?;
     let name = name.map(|word| names::decode(word.strip_prefix("name=").ok_or(invalid)?)).transpose()?;
-    Ok((Handoff { id, account, file, agent, name }, ack))
+    Ok((Handoff { id, account, file, agent, name, explicit_account: false }, ack))
 }
 
 /// The window started for a handover gives it to a Switch that started meanwhile, rather than
@@ -356,6 +413,7 @@ mod tests {
             file: "handover-001.md".into(),
             agent: agent.map(str::to_owned),
             name: name.map(str::to_owned),
+            explicit_account: agent.is_some(),
         };
         for (agent, name) in [(None, None), (Some("plugin:review"), Some("Dev's \"notes\" & $env:PATH 😺"))] {
             let bytes = encode_request(&make(agent, name)).unwrap();
@@ -363,12 +421,14 @@ mod tests {
             assert_eq!((back.id.as_str(), back.account.as_str(), back.file.as_str()), (id, "work", "handover-001.md"));
             assert_eq!(back.agent.as_deref(), agent);
             assert_eq!(back.name.as_deref(), name);
+            assert_eq!(back.explicit_account, agent.is_some());
         }
         assert!(encode_request(&make(Some("bad agent"), None)).is_err());
         assert!(encode_request(&make(None, Some("two\nlines"))).is_err());
         let good = String::from_utf8(encode_request(&make(None, None)).unwrap()).unwrap();
         for bad in [
-            good.replace("claude-switch-handover-1", "claude-switch-handover-2"),
+            good.replace("claude-switch-handover-2", "claude-switch-handover-1"),
+            good.replace("\n-\n-\n-", "\n-\n-\nyes"),
             good.replace("handover-001.md", "..\\other.md"),
             good.replace("work", "work & calc"),
             format!("{good}\nextra"),

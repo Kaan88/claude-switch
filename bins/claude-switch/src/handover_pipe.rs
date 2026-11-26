@@ -16,18 +16,28 @@ const MAX_REPLY: usize = 1024;
 /// How long the window may take to open the tab before the caller reports an unknown outcome.
 pub const REPLY_WAIT: Duration = Duration::from_secs(30);
 
+/// What the running window did with the request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// Opened the handover in a new tab.
+    NewTab,
+    /// Started continuing it in place, in the tab that runs the session.
+    InPlace,
+}
+
 /// What the caller learned.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Sent {
     /// No Claude Switch window of this user is listening.
     NotRunning,
     /// The running window answered.
-    Answered(Result<(), String>),
+    Answered(Result<Outcome, String>),
 }
 
-pub fn reply(result: &Result<(), String>) -> Vec<u8> {
+pub fn reply(result: &Result<Outcome, String>) -> Vec<u8> {
     match result {
-        Ok(()) => b"opened".to_vec(),
+        Ok(Outcome::NewTab) => b"opened".to_vec(),
+        Ok(Outcome::InPlace) => b"continuing".to_vec(),
         Err(e) => {
             let mut text = format!("failed:{e}");
             while text.len() > MAX_REPLY {
@@ -38,9 +48,11 @@ pub fn reply(result: &Result<(), String>) -> Vec<u8> {
     }
 }
 
-pub fn read_reply(bytes: &[u8]) -> Result<(), String> {
-    if bytes == b"opened" {
-        return Ok(());
+pub fn read_reply(bytes: &[u8]) -> Result<Outcome, String> {
+    match bytes {
+        b"opened" => return Ok(Outcome::NewTab),
+        b"continuing" => return Ok(Outcome::InPlace),
+        _ => {}
     }
     match std::str::from_utf8(bytes).ok().and_then(|s| s.strip_prefix("failed:")) {
         Some(e) if !e.trim().is_empty() => Err(e.chars().filter(|c| !c.is_control()).collect()),
@@ -335,14 +347,19 @@ mod win {
         fn same_user_request_gets_the_answer_and_a_second_server_is_refused() {
             let suffix = format!("-test-{}", std::process::id());
             assert_eq!(send_on(&suffix, b"x"), Sent::NotRunning);
-            let answer = |request: Vec<u8>| reply(&if request == b"open" { Ok(()) } else { Err("no".into()) });
+            let answer =
+                |request: Vec<u8>| reply(&if request == b"open" { Ok(Outcome::NewTab) } else { Err("no".into()) });
             assert!(serve_on(&suffix, answer));
             assert!(!serve_on(&suffix, |_| Vec::new()), "only the first window listens");
-            assert_eq!(send_on(&suffix, b"open"), Sent::Answered(Ok(())));
+            assert_eq!(send_on(&suffix, b"open"), Sent::Answered(Ok(Outcome::NewTab)));
             assert_eq!(send_on(&suffix, b"other"), Sent::Answered(Err("no".into())));
             let long = vec![b'a'; MAX_REQUEST + 1];
             assert!(matches!(send_on(&suffix, &long), Sent::Answered(Err(_))));
-            assert_eq!(send_on(&suffix, b"open"), Sent::Answered(Ok(())), "still serves after a refused request");
+            assert_eq!(
+                send_on(&suffix, b"open"),
+                Sent::Answered(Ok(Outcome::NewTab)),
+                "still serves after a refused request"
+            );
         }
     }
 }
@@ -353,7 +370,8 @@ mod tests {
 
     #[test]
     fn replies_round_trip_and_anything_else_is_not_success() {
-        assert_eq!(read_reply(&reply(&Ok(()))), Ok(()));
+        assert_eq!(read_reply(&reply(&Ok(Outcome::NewTab))), Ok(Outcome::NewTab));
+        assert_eq!(read_reply(&reply(&Ok(Outcome::InPlace))), Ok(Outcome::InPlace));
         assert_eq!(read_reply(&reply(&Err("Sign in first.".into()))), Err("Sign in first.".into()));
         for bad in [b"".as_slice(), b"opened\n", b"failed:", b"process started", b"\xff\xfe"] {
             assert!(read_reply(bad).is_err());

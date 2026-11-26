@@ -31,6 +31,7 @@ mod details;
 mod dialogs;
 mod fieldmouse;
 mod folder_defaults;
+mod handover_in_place;
 mod handover_pipe;
 mod list;
 mod opencode_workers;

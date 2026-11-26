@@ -145,7 +145,10 @@ impl AppState {
         if window_allows_writes && self.send_cli_rename(now) {
             cx.request_redraw_all();
         }
-        if self.cli_rename_waiting() {
+        if window_allows_writes && self.in_place_tick(now) {
+            cx.request_redraw_all();
+        }
+        if self.cli_rename_waiting() || self.in_place_waiting() {
             cx.wake_at(now + SUBMISSION_POLL);
         }
         for tab in &self.tabs.list {

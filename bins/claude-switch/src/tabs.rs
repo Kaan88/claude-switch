@@ -36,6 +36,8 @@ pub struct Tab {
     pub cli_rename: Option<(String, String)>,
     /// Automatic handover instead of Claude Code's compaction (`auto_handover`).
     pub auto: crate::auto_handover::TabAuto,
+    /// A handover continuing in this tab (`handover_in_place`).
+    pub in_place: Option<crate::handover_in_place::InPlace>,
     pub color: [u8; 3],
     /// Current session for list routing, badges and seen marks; never the pane's pinned identity.
     pub session: Option<String>,
@@ -117,6 +119,7 @@ impl Tabs {
             rename: None,
             cli_rename: None,
             auto: Default::default(),
+            in_place: None,
             color,
             resume_id: session.clone(),
             session,
@@ -266,7 +269,8 @@ pub fn draw(
             Some(name) => Cow::Borrowed(name),
             None => t.title(),
         };
-        let title = if t.auto.handed_over.is_some() { format!("{title}{HANDED_OVER}").into() } else { title };
+        let handed = t.session.as_deref().is_some_and(|id| marks.handed_over_to(id).is_some());
+        let title = if handed { format!("{title}{HANDED_OVER}").into() } else { title };
         (t.id, title, Some(t.color), ended)
     }));
     let natural: Vec<f32> = labels.iter().map(|(_, l, _, _)| chrome::tab_natural_width(p, l)).collect();

@@ -15,6 +15,9 @@ pub struct Preferences {
     pub auto: AutoHandover,
     /// The context percentage that triggers it; `None` is where Claude Code would compact.
     pub auto_percent: Option<u8>,
+    /// Where a handover continues: false (the default) is in place, in the tab that runs the
+    /// session (`/clear`, then the handover as the first message); true opens a new tab.
+    pub new_tab: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,6 +70,7 @@ impl Preferences {
                 .as_u64()
                 .and_then(|n| u8::try_from(n).ok())
                 .filter(|n| AUTO_PERCENT.contains(n)),
+            new_tab: value["continueIn"].as_str() == Some("newTab"),
         }
     }
 
@@ -76,6 +80,7 @@ impl Preferences {
             "consents": self.consents,
             "defaultAgent": self.default_agent,
             "auto": {"mode": self.auto.key(), "percent": self.auto_percent},
+            "continueIn": if self.new_tab { "newTab" } else { "thisTab" },
         })
     }
 

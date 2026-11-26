@@ -41,7 +41,7 @@ pub enum Msg {
     ArchiveReportSaved(crate::archive_report::ReportResult),
     Tray(crate::tray::Event),
     /// Another process of this user asked to open a handover tab (`handover_pipe`).
-    Handover(Box<crate::compact_open::NewHandover>, std::sync::mpsc::Sender<Result<(), String>>),
+    Handover(Box<crate::compact_cli::Loaded>, std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>),
 }
 
 /// The height of a folder heading and of a session row in the list.

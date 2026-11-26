@@ -407,8 +407,10 @@ rejected, only the first window creates it, and each end checks that the process
 runs as the same user (the client allows identification, not impersonation). It carries one
 request kind only: a versioned list of the same validated words as the window arguments (session
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
-decoded and revalidated by the window, which then opens only an app-owned saved handover. The
-answer is `opened` or the window's error. When no window listens, the CLI starts Claude Switch
+decoded and revalidated by the window, which then continues in place when one of its tabs runs
+the session (see "Continuing in place"; with `--as`, only a tab of that account) and otherwise
+opens only an app-owned saved handover in a new tab. The answer is `continuing`, `opened` or the
+window's error. When no window listens, the CLI starts Claude Switch
 itself as the normal window (saved tabs, then the handover tab), which first offers the request
 to a window that started meanwhile. On Windows, that window is
 ShellExecuted through a fixed non-interactive PowerShell bootstrap run without a console window, so it
@@ -473,11 +475,36 @@ again at the next poll). **Automatic** makes the handover with the configured su
 (**Summary written by**) and focus from the transcript, keeps it like any opened handover, and
 opens the new chat in the same account beside the old tab, with the Settings default agent if
 that account and folder have it. It needs that provider's consent already recorded; otherwise it
-asks first and says so. Either way it happens once per session in a tab. The new chat is linked,
-not forked: it carries the handover provenance (`handoverFrom`, `parentSessionId`), so it shows
-as a continuation in the list and Threads, and starts from the summary alone (a
-`--fork-session` would carry the full context). The old chat is never typed into; its tab stays
-open, labelled “· handed over”.
+asks first and says so. Either way it happens once per session in a tab. By default the handover
+continues in place in that tab (below); only with a new tab chosen does the new chat open beside
+the old tab. The new chat is linked, not forked: it carries the handover provenance
+(`handoverFrom`, `parentSessionId`), so it shows as a continuation in the list and Threads, and
+starts from the summary alone (a `--fork-session` would carry the full context). The old session
+is marked handed over (`handedOverTo` in marks): its tab title says “· handed over” and its row
+in Sessions starts with “Handed over”.
+
+### Continuing in place
+
+A handover continues in the tab and CLI process that run the session, by default: from the
+dialog (whose **Open in CLI** then reads **Continue here**), automatically, and from
+`compact --open` or `/switch-compact` through the pipe. It needs a tab of the running window
+whose identity is verified as that session, with a live process and the Chat view's pane (and,
+for the dialog and automatic handovers, as the chosen account). Otherwise, when the handover
+settings say a new tab (`continueIn: "newTab"`), or when Switch is not running, it opens a new
+tab as before.
+
+Switch shows that tab in the Chat view and goes through the Chat view's gate for every write; it
+never writes to the terminal itself. At an idle prompt it sends `/clear` with the gate's slash
+command path (up to 90 seconds for the prompt to become idle), waits until the tab has followed
+the CLI to the new session that `/clear` starts (the same following as for any `/clear`; the
+running records are read every second meanwhile, up to 30 seconds), then puts the handover in the
+empty composer and sends it with the composer's own send, so its checks and refusals apply (up
+to 60 seconds). A draft in the composer is never replaced. Above the command-line limit the first
+message asks the session to read the saved file, as for a new tab. When the message is taken, the
+new session gets the handover provenance and continuation name, and the old one is marked handed
+over. A step that does not happen in time, a process that ends, or a tab that changes session
+before `/clear` stops it with the reason; nothing else is sent, and the notice names the saved
+handover file, which is kept either way.
 
 ## Pictures into the CLI
 

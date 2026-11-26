@@ -216,7 +216,7 @@ impl Compact {
             p,
             footer,
             &[
-                ("Open in CLI", true, OK),
+                (if self.in_place { "Continue here" } else { "Open in CLI" }, true, OK),
                 ("Cancel", false, CANCEL),
                 ("Back", false, BACK),
                 ("Save as…", false, SAVE),

@@ -3,6 +3,7 @@ mod clipboard;
 mod commands;
 mod composer;
 mod editor;
+mod in_place;
 mod input;
 mod layout;
 mod paint;

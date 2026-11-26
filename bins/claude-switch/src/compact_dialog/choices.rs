@@ -132,6 +132,7 @@ impl Compact {
             Some(Choice::Account) if i < self.accounts.len() && self.account != i => {
                 self.account = i;
                 self.reset_agents();
+                self.check_in_place(st);
             }
             Some(Choice::Agent) if i <= self.agents.len() => self.agent = i,
             _ => {}

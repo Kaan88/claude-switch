@@ -111,6 +111,24 @@ impl Marks {
         self.clear_session_key(id, "handoverFrom");
     }
 
+    /// The session a handover continued this one in, once it was handed over.
+    pub fn handed_over_to(&self, id: &str) -> Option<&str> {
+        self.data["sessions"][id]["handedOverTo"]
+            .as_str()
+            .filter(|to| crate::launch::validate_session_id(to).is_ok() && !to.eq_ignore_ascii_case(id))
+    }
+
+    pub fn set_handed_over_to(&mut self, id: &str, to: &str) -> bool {
+        crate::launch::validate_session_id(id).is_ok()
+            && crate::launch::validate_session_id(to).is_ok()
+            && !id.eq_ignore_ascii_case(to)
+            && self.set("sessions", id, "handedOverTo", json!(to.to_ascii_lowercase()))
+    }
+
+    pub fn clear_handed_over_to(&mut self, id: &str) {
+        self.clear_session_key(id, "handedOverTo");
+    }
+
     /// Names reserved for new handovers not yet visible in the index. Never overrides a native title.
     pub fn handover_launch_names(&self, now_ms: u64) -> impl Iterator<Item = (&str, &str)> {
         self.data["sessions"].as_object().into_iter().flatten().filter_map(move |(id, entry)| {

@@ -10,6 +10,9 @@ fn auto_handover_preferences_round_trip_and_reject_out_of_range_values() {
     assert_eq!(read(serde_json::json!({"mode": "automatic"})).auto, AutoHandover::Automatic);
     assert_eq!(read(serde_json::json!({"mode": "always"})).auto, AutoHandover::Off);
     assert_eq!(Preferences::read(&serde_json::json!({})).auto, AutoHandover::Off, "off unless chosen");
+    assert!(!Preferences::read(&serde_json::json!({})).new_tab, "in place unless chosen");
+    let new_tab = Preferences { new_tab: true, ..Default::default() };
+    assert_eq!(Preferences::read(&new_tab.json()), new_tab);
 }
 use crate::{App, Roots, config, sessions, util::testing::TempDir};
 use std::fs;

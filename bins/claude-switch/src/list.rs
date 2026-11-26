@@ -385,6 +385,11 @@ fn row(
     let label = st.marks.handover_from(&s.id).map_or(location.clone(), |from| {
         if location.is_empty() { format!("From {from}") } else { format!("From {from} · {location}") }
     });
+    let label = if st.marks.handed_over_to(&s.id).is_some() {
+        if label.is_empty() { "Handed over".to_owned() } else { format!("Handed over · {label}") }
+    } else {
+        label
+    };
     p.text(Face::Ui, 11.0, x, line3, &label, pal.muted, (right - status_w - x).max(0.0));
     if archived && st.filter == Filter::Archived {
         let target = Target::ArchivePick(i);

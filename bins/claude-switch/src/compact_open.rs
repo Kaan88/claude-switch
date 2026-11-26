@@ -79,6 +79,12 @@ pub fn keep(roots: &Roots, id: &str, text: &str, previous: Option<&Path>) -> Res
 }
 
 fn first_args(id: &str, text: &str, saved: &Path) -> Result<Vec<String>, String> {
+    Ok(vec!["--session-id".into(), id.into(), "--".into(), first_prompt(text, saved)?])
+}
+
+/// The first message: the handover itself, or above the command-line limit a request to read
+/// the saved file (the same rule for a new process and for a session continued in place).
+pub fn first_prompt(text: &str, saved: &Path) -> Result<String, String> {
     validate_prompt(text)?;
     let prompt = if uses_file(text) {
         let path = std::path::absolute(saved).map_err(|_| "Could not resolve the absolute handover path.")?;
@@ -95,7 +101,7 @@ fn first_args(id: &str, text: &str, saved: &Path) -> Result<Vec<String>, String>
     } else {
         text.into()
     };
-    Ok(vec!["--session-id".into(), id.into(), "--".into(), prompt])
+    Ok(prompt)
 }
 
 pub(crate) fn session_id() -> Result<String, String> {
@@ -164,6 +170,7 @@ impl AppState {
         if !self.marks.set_handover_from(&request.id, &request.from)
             || !self.marks.set_parent(&request.id, &request.parent)
             || !self.marks.set_handover_launch_name(&request.id, &request.name, claude_switch_core::usage::now_ms())
+            || !self.marks.set_handed_over_to(&request.parent, &request.id)
         {
             self.marks = old;
             return Err("Could not record the new session's provenance.".into());
@@ -183,6 +190,7 @@ impl AppState {
             self.marks.clear_handover_from(&request.id);
             self.marks.clear_parent(&request.id);
             self.marks.clear_handover_launch_name(&request.id);
+            self.marks.clear_handed_over_to(&request.parent);
             self.save_marks();
         }
         result.map(drop).map_err(|_| "Could not start Claude Code in a terminal tab.".into())
@@ -197,7 +205,7 @@ impl AppState {
         crate::handover_pipe::serve(move |bytes| {
             let result = (|| {
                 let args = crate::compact_cli::decode_request(&bytes)?;
-                let request = crate::compact_cli::handoff(&roots, args)?;
+                let request = crate::compact_cli::load(&roots, args)?;
                 let (tx, rx) = std::sync::mpsc::channel();
                 proxy.lock().map_err(|_| "Claude Switch is closing.")?.send(Msg::Handover(Box::new(request), tx));
                 rx.recv_timeout(crate::handover_pipe::REPLY_WAIT).map_err(
@@ -208,9 +216,23 @@ impl AppState {
         });
     }
 
-    /// A request from another process, already decoded and prepared by the pipe thread.
-    pub fn handover_requested(&mut self, request: NewHandover) -> Result<(), String> {
-        let result = self.open_handover_tab(request);
+    /// A request from another process, read by the pipe thread: in place in the tab that runs
+    /// the session (as its account, when `--as` named one), else in a new tab.
+    pub fn handover_requested(
+        &mut self,
+        request: crate::compact_cli::Loaded,
+    ) -> Result<crate::handover_pipe::Outcome, String> {
+        use crate::handover_pipe::Outcome;
+        let account = request.explicit_account.then_some(request.account.as_str());
+        let result = if let Some(tab) = self.in_place_target(&request.session.id, account) {
+            let names = (request.from.clone(), request.name.clone());
+            self.continue_in_place(tab, &request.session, names, &request.text, request.file.clone())
+                .map(|()| Outcome::InPlace)
+        } else {
+            let Source::Real(roots) = &self.source else { return Err("Demo".into()) };
+            let roots = roots.clone();
+            request.new_tab(&roots, &self.config).and_then(|r| self.open_handover_tab(r)).map(|()| Outcome::NewTab)
+        };
         if let Err(e) = &result {
             self.error("Could not open handover", e.clone());
         }

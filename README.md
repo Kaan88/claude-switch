@@ -93,8 +93,12 @@ There is no supported agent option for starting a handover in Desktop.
 **Hand over automatically** (Off, Ask first, Automatic) replaces Claude Code's own compaction in
 the CLI tabs Claude Switch starts: they run with `DISABLE_AUTO_COMPACT=1`, and once the context
 reaches the set point (by default where Claude Code would compact) and the turn has ended,
-Switch asks with the handover dialog or makes the handover itself and opens the new chat in the
-same account, linked to the old one. Automatic needs the summary model's provider approved once.
+Switch asks with the handover dialog or makes the handover itself, linked to the old chat.
+A handover continues **in place** when a Claude Switch tab runs the session: the dialog's button
+reads **Continue here**, and Switch sends `/clear` at an idle prompt, follows the tab to the new
+session and sends the handover as its first message, all through the Chat view's usual checks.
+The old session is marked handed over in its tab and in Sessions. If a step does not happen in
+time it stops, says why and where the handover is saved. Otherwise it opens in a new tab. Automatic needs the summary model's provider approved once.
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 
@@ -114,10 +118,10 @@ the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requ
 consent. `--print` outputs Markdown and opens nothing; add `--save` to keep a local copy.
 `--agent <name>` overrides the handover default for `--open` only. The agent must be available to
 Claude Code in the target account and project. `--name <title>` is also `--open` only; omit it to
-use the same numbered continuation name as the editor. `--open` saves the handover and opens the new
-session as a tab in the running Claude Switch window (beside the source session's tab when it has
-one), or starts Claude Switch with that tab when it is not running; it waits for
-tab-creation confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
+use the same numbered continuation name as the editor. `--open` saves the handover and, when a tab of the running Claude Switch window runs
+the session, continues there in place; otherwise it opens the new session as a tab in the running
+window (beside the source session's tab), or starts Claude Switch with that tab when it is not
+running. It waits for the window's confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
 code units are saved in full; the new session's initial prompt asks it to read the saved

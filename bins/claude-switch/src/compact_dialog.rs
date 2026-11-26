@@ -76,6 +76,8 @@ enum Phase {
 pub struct Compact {
     session: Session,
     source_tab: Option<u64>,
+    /// A tab runs this session as the chosen account: the handover continues there.
+    pub(super) in_place: bool,
     name: String,
     suggested_name: String,
     new_name: TextField,
@@ -306,6 +308,7 @@ impl Compact {
         new_name.set_text(&suggested_name);
         let mut this = Self {
             source_tab: None,
+            in_place: false,
             session,
             name,
             suggested_name,
@@ -337,7 +340,13 @@ impl Compact {
             message: None,
         };
         this.reset_agents();
+        this.check_in_place(st);
         this
+    }
+
+    pub(super) fn check_in_place(&mut self, st: &AppState) {
+        let account = self.accounts.get(self.account).map(|a| a.0.as_str());
+        self.in_place = account.is_some() && st.in_place_target(&self.session.id, account).is_some();
     }
 
     #[cfg(test)]
@@ -506,6 +515,11 @@ impl Compact {
         };
         compact_open::validate_prompt(&self.preview.text)?;
         let saved = compact_open::keep(roots, &self.session.id, &self.preview.text, self.saved.as_deref())?;
+        if let Some(tab) = st.in_place_target(&self.session.id, Some(account)) {
+            self.saved = Some(saved.clone());
+            let names = (self.name.clone(), name);
+            return st.continue_in_place(tab, &self.session.clone(), names, &self.preview.text.clone(), saved);
+        }
         let request = compact_open::prepare(
             roots,
             &st.config,

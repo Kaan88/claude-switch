@@ -34,8 +34,6 @@ pub struct TabAuto {
     stamp: u64,
     /// Asked or handed over for this session; never again for it.
     pub done: Option<String>,
-    /// The new chat's session ID, once handed over.
-    pub handed_over: Option<String>,
 }
 
 #[derive(Default)]
@@ -46,7 +44,6 @@ pub struct Watcher {
 }
 
 struct Making {
-    tab: u64,
     session: Session,
     from: String,
     account: String,
@@ -255,7 +252,7 @@ impl AppState {
             t.auto.done = Some(session.to_owned());
         }
         if automatic && ready {
-            self.start_auto_handover(tab, source, account, percent);
+            self.start_auto_handover(source, account, percent);
         } else {
             self.ask_tab_compact(tab, Some(&account));
             let why = if automatic { " Approve a summary model once to let it run by itself." } else { "" };
@@ -265,7 +262,7 @@ impl AppState {
         }
     }
 
-    fn start_auto_handover(&mut self, tab: u64, session: Session, account: String, percent: u8) {
+    fn start_auto_handover(&mut self, session: Session, account: String, percent: u8) {
         let Source::Real(roots) = &self.source else { return };
         let roots: Roots = roots.clone();
         let program = match crate::compact_runner::opencode() {
@@ -285,7 +282,7 @@ impl AppState {
         });
         match job {
             Ok(job) => {
-                self.compact.auto.making = Some(Making { tab, session, from, account, job });
+                self.compact.auto.making = Some(Making { session, from, account, job });
                 self.toast(format!("Context at {percent}%: making a handover for a new chat…"), Instant::now());
             }
             Err(_) => self.warn("Automatic handover did not start", "Could not start the handover worker.".into()),
@@ -296,35 +293,32 @@ impl AppState {
         if !self.compact.auto.making.as_ref().is_some_and(|m| !m.job.running()) {
             return;
         }
-        let Some(Making { tab, session, from, account, job }) = self.compact.auto.making.take() else { return };
+        let Some(Making { session, from, account, job }) = self.compact.auto.making.take() else { return };
         let result = job
             .take()
             .unwrap_or_else(|| Err("The handover worker stopped.".into()))
             .and_then(|text| self.open_auto_handover(&session, &from, &account, &text));
         match result {
-            Ok(new) => {
-                if let Some(t) = self.tabs.get_mut(tab) {
-                    t.auto.handed_over = Some(new);
-                }
+            Ok(true) => {}
+            Ok(false) => {
                 self.toast("Handed over: the new chat continues from a summary.".into(), Instant::now());
             }
             Err(e) => self.warn("Automatic handover failed", e),
         }
     }
 
-    fn open_auto_handover(
-        &mut self,
-        session: &Session,
-        from: &str,
-        account: &str,
-        text: &str,
-    ) -> Result<String, String> {
+    fn open_auto_handover(&mut self, session: &Session, from: &str, account: &str, text: &str) -> Result<bool, String> {
         let Source::Real(roots) = &self.source else { return Err("Demo".into()) };
         let roots = roots.clone();
         crate::compact_open::validate_prompt(text)?;
         let saved =
             compact::save(&roots, &session.id, text).map_err(|e| format!("Could not keep the handover: {e}"))?;
         let name = crate::compact_open::names::suggest(&self.marks, &self.sessions, from);
+        // In place by default: the same tab and process continue (`handover_in_place`).
+        if let Some(tab) = self.in_place_target(&session.id, Some(account)) {
+            self.continue_in_place(tab, session, (from.to_owned(), name), text, saved)?;
+            return Ok(true);
+        }
         let agent = self.config.compact.default_agent.clone().filter(|default| {
             let found = claude_switch_core::account(&self.config, account)
                 .map(|target| crate::compact_dialog::agents::discover(&roots, target, &session.cwd, || false))
@@ -341,9 +335,8 @@ impl AppState {
             &saved,
         )?
         .with_agent(agent.as_deref())?;
-        let id = request.id.clone();
         self.open_handover_tab(request)?;
-        Ok(id)
+        Ok(false)
     }
 }
 
