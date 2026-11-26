@@ -267,3 +267,9 @@ and in the README, not committed, and not copied to the installed clone
     (any text) steps to the previous prompt and keeps the unsent draft; Down past the newest brings
     the draft back; Escape leaves recall with the draft; prompts typed in the terminal count too;
     no duplicates in a row.
+21. **A chat opened from a handover is named "Claude Switch handover"** (owner, 2026-11-26), every one
+    of them. It should carry a name related to the session it came from, e.g. the source session's
+    name (or its first prompt's summary) with " · continued" or a running number, editable in the
+    handover dialog before opening. To find out: where the name comes from (the handover text's first
+    heading becoming the session title, or the CLI's own naming), and whether the CLI takes a name on
+    launch or the app should set it afterwards through Claude Switch's own session names.
