@@ -251,3 +251,12 @@ and in the README, not committed, and not copied to the installed clone
     Details panel (beside Files) listing them newest first with their kind, title and time, each
     opening in the browser or the viewer; the same items as link cards under the answer that made
     them. Links open only as http(s) in the default browser, files under the same rules as item 12.
+19. **Choose the new session's agent from the plugin and the command line** (owner, 2026-11-26).
+    The plugin goes straight from the command to the new session, so the handover dialog's agent
+    choice (item 8) is never shown, and `claude-switch compact` has no agent option. Add
+    `--agent <name>` to `claude-switch compact` (same name rules and `--` placement as item 8), let the
+    plugin take `agent:<name>` as the first word of its arguments (the rest stays literal focus text),
+    and add a default agent in Settings › Handover used when none is named (default: none, plain
+    Claude). Also found: the plugin called `claude-switch` from PATH, which the installer never sets;
+    the plugin now falls back to the installed exe (commit 915ef71 on `integrate`); decide whether the
+    installer should also offer to add itself to PATH.
