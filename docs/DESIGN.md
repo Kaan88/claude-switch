@@ -450,6 +450,9 @@ The category list at left selects one page at right: Appearance, Terminal, Sessi
 Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
 closing Settings. Each window remembers the last page while it runs; category selection is not saved.
+A category switch cross-fades the old page into the new one in 140 ms (the toolkit's
+`PageTransition`; the old page is drawn once more in the first frame and blended away). The app's
+Reduce motion, Windows' reduced-motion setting and high contrast make it instant.
 
 Controls still apply live. An ordinary config save merges only the top-level fields edited against
 the window's loaded baseline, refusing a conflicting change to the same field. It never republishes

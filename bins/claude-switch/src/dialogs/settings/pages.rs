@@ -1,8 +1,14 @@
 //! One native settings form at a time. Its controls (including swatches and popovers) keep
 //! their existing input handling; the app owns only the category rail and page lifetime.
+//!
+//! A category switch cross-fades the old page into the new one with the toolkit's
+//! `PageTransition`. The old page is drawn once more in the first frame after the switch (the
+//! window's bitmap no longer holds it by then), saved, and blended away over `SWITCH`. The
+//! animator decides whether anything moves: the app's Reduce motion, Windows' reduced-motion
+//! setting and high contrast all make the switch instant.
 
 use super::{AppState, Form, PAGES, SettingsEvent, appearance, page_form, terminal_appearance};
-use mdshared_ui::anim::Animator;
+use mdshared_ui::anim::{Animator, PageEffect, PageTransition, fluent};
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::overlay::draw_backdrop_presence;
@@ -17,6 +23,10 @@ const SIDE: f32 = 16.0;
 const TOP: f32 = 24.0;
 const MAX_PAGE_W: f32 = 600.0;
 const MAX_PAGE_H: f32 = 560.0;
+/// A category switch's cross-fade: short, as a page of a navigation view.
+const SWITCH: std::time::Duration = std::time::Duration::from_millis(140);
+/// Room round the page for its card's soft shadow, which the switch blends too.
+const SHADOW_ROOM: f32 = 16.0;
 
 #[derive(Default)]
 struct Layout {
@@ -45,6 +55,14 @@ impl Layout {
     }
 }
 
+/// Lays `form` out in `viewport`, less the height its card does not use: the form centres the
+/// card, and a short page keeps the top of its controls level with the rail.
+fn fit(form: &mut Form, p: &mut Painter, mut viewport: Rect) -> Rect {
+    let card = form.layout(p, viewport);
+    viewport.h = card.h + 2.0 * TOP;
+    viewport
+}
+
 pub struct Settings {
     index: usize,
     pub(in super::super) form: Form,
@@ -56,6 +74,9 @@ pub struct Settings {
     swatch_hover: Option<(u32, usize)>,
     swatch_pressed: Option<(u32, usize)>,
     layout: Layout,
+    /// The page being left, until the next frame draws it once more for the switch.
+    leaving: Option<(usize, Form)>,
+    switch: PageTransition,
 }
 
 impl Settings {
@@ -70,6 +91,8 @@ impl Settings {
             swatch_hover: None,
             swatch_pressed: None,
             layout: Layout::default(),
+            leaving: None,
+            switch: PageTransition::new("settings-page").with_timing(SWITCH, fluent::DECELERATE),
         }
     }
 
@@ -79,19 +102,48 @@ impl Settings {
 
     pub(super) fn show_page(&mut self, st: &AppState, index: usize) {
         if index != self.index {
-            self.form = page_form(st, index);
+            let old = std::mem::replace(&mut self.form, page_form(st, index));
+            // A switch over a switch starts from the page that was being left first.
+            if self.leaving.is_none() {
+                self.leaving = Some((self.index, old));
+            }
             self.index = index;
+            self.swatch_hover = None;
         }
     }
 
     fn place(&mut self, p: &mut Painter, window: Rect) -> Rect {
         self.layout = Layout::new(window);
-        let mut viewport = self.layout.viewport;
-        // The form centers the card in its viewport. Remove unused height to keep the
-        // top of the controls aligned with the rail even on a short page.
-        let card = self.form.layout(p, viewport);
-        viewport.h = card.h + 2.0 * TOP;
-        viewport
+        fit(&mut self.form, p, self.layout.viewport)
+    }
+
+    /// Where the page switch blends: every page's viewport, its shadow and nothing outside the
+    /// window.
+    fn switch_region(&self, window: Rect) -> Rect {
+        let v = self.layout.viewport.inset(-SHADOW_ROOM);
+        let (x, y) = (v.x.max(window.x), v.y.max(window.y));
+        Rect::new(x, y, v.right().min(window.right()) - x, v.bottom().min(window.bottom()) - y)
+    }
+
+    /// The first frame after a switch: draws the page being left in the region, saves it for
+    /// the cross-fade and puts the region back as it was, for the new page to be drawn on.
+    fn begin_switch(&mut self, p: &mut Painter, pal: &mdshared_ui::theme::Palette, region: Rect, anim: &mut Animator) {
+        let Some((index, mut old)) = self.leaving.take() else { return };
+        if !anim.animates() {
+            return self.switch.cancel(anim);
+        }
+        let under = p.snapshot(region);
+        let viewport = fit(&mut old, p, self.layout.viewport);
+        old.draw_animated(p, pal, viewport, false, anim, ("settings", PAGES[index].0));
+        let snapshot = p.snapshot(region);
+        under.restore(p.bmp);
+        self.switch.begin_with(anim, snapshot, p.scale, PageEffect::Crossfade);
+    }
+
+    /// Whether a page switch is blending.
+    #[cfg(test)]
+    fn switching(&self) -> bool {
+        self.switch.running() || self.leaving.is_some()
     }
 
     pub(in super::super) fn draw(
@@ -142,12 +194,19 @@ impl Settings {
         style.radius = radius;
         style.soft_shadow = Some(if st.high_contrast { 0.0 } else { st.appearance.shadow });
         style.backdrop = 0.0;
-        self.form.set_style(style);
-        self.form.set_high_contrast(st.high_contrast);
+        let region = self.switch_region(window);
+        for form in std::iter::once(&mut self.form).chain(self.leaving.as_mut().map(|(_, f)| f)) {
+            form.set_style(style);
+            form.set_high_contrast(st.high_contrast);
+        }
+        self.begin_switch(p, pal, region, anim);
         self.form.draw_animated(p, pal, viewport, true, anim, ("settings", self.category()));
         if self.index == 0 {
             appearance::draw(p, st, &self.form, self.swatch_hover);
         }
+        // After the page and before anything over it: the menus and pickers are the form's own
+        // and are drawn inside it, so only the blend is left.
+        self.switch.apply(anim, p, region);
     }
 
     fn swatch_at(&self, x: f32, y: f32) -> Option<(u32, usize)> {
@@ -358,5 +417,54 @@ mod tests {
         assert!(matches!(settings.release(first.cx(), first.cy()), SettingsEvent::Form(_)));
         settings.press(second.cx(), second.cy(), mods, 1);
         assert!(matches!(settings.release(second.cx(), second.cy()), SettingsEvent::Page(1)));
+    }
+
+    #[test]
+    fn a_category_switch_cross_fades_briefly_and_not_at_all_with_reduced_motion() {
+        use mdshared_ui::anim::Policy;
+        use std::time::{Duration, Instant};
+
+        let st = AppState::new(Source::Demo, Some(true), Default::default());
+        let window = Rect::new(0.0, 0.0, 900.0, 560.0);
+        // Draws a frame `ms` after `t0` and gives the pixels.
+        let frame = |settings: &mut Settings, anim: &mut Animator, at: Instant| {
+            let mut gfx = Gfx::new();
+            let mut bitmap = Bitmap::new(900, 560);
+            let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+            anim.begin_frame(at);
+            settings.draw(&mut p, &st, window, 1.0, anim);
+            anim.end_frame();
+            bitmap.pixels
+        };
+        let t0 = Instant::now();
+        for (policy, reduced) in [(None, false), (Some(Policy::Never), false), (None, true)] {
+            let mut anim = Animator::new();
+            if let Some(policy) = policy {
+                anim.set_policy(policy);
+            }
+            anim.set_system_reduced(reduced);
+            let mut settings = Settings::new(&st, 0);
+            frame(&mut settings, &mut anim, t0);
+            settings.show_page(&st, 1);
+            let during = frame(&mut settings, &mut anim, t0 + Duration::from_millis(40));
+            let mut plain = Settings::new(&st, 1);
+            let new_page = frame(&mut plain, &mut Animator::new(), t0);
+            let moves = policy.is_none() && !reduced;
+            assert_eq!(settings.switching(), moves);
+            assert_eq!(during != new_page, moves, "the old page shows only while it fades");
+            // Frames 16 ms apart, as the window draws them while something moves.
+            let mut at = t0 + Duration::from_millis(40);
+            let mut after = during;
+            while at < t0 + Duration::from_millis(40) + SWITCH + Duration::from_millis(32) {
+                at += Duration::from_millis(16);
+                after = frame(&mut settings, &mut anim, at);
+                if at <= t0 + Duration::from_millis(40) + SWITCH / 2 {
+                    assert_eq!(settings.switching(), moves, "still blending halfway");
+                }
+            }
+            assert!(!settings.switching());
+            assert_eq!(after, new_page);
+        }
+        assert!((120..=160).contains(&SWITCH.as_millis()));
     }
 }
