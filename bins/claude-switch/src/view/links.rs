@@ -17,6 +17,9 @@ pub type Files = BTreeMap<String, NamedFile>;
 pub struct NamedFile {
     path: PathBuf,
     view_only: bool,
+    /// For a bare name that also named a file the transcript wrote elsewhere: the other
+    /// candidate, which the viewer offers beside this one.
+    other: Option<PathBuf>,
 }
 
 pub const MAX_MARKDOWN: u64 = 1024 * 1024;
@@ -24,6 +27,12 @@ pub const MAX_MARKDOWN: u64 = 1024 * 1024;
 impl NamedFile {
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The other file a bare name could mean, when there were two.
+    pub fn other(&self) -> Option<NamedFile> {
+        let path = self.other.clone()?;
+        Some(NamedFile { other: Some(self.path.clone()), path, view_only: self.view_only })
     }
 
     pub fn markdown(&self) -> bool {
@@ -97,13 +106,42 @@ pub fn markdown_destination(s: &str) -> Option<String> {
     (local(&path) && is_markdown(Path::new(&path))).then_some(path)
 }
 
+#[cfg(test)]
 pub fn resolve(s: &str, cwd: &Path, touched: &BTreeSet<PathBuf>) -> Option<NamedFile> {
+    resolve_recent(s, cwd, touched, &[])
+}
+
+/// As [`resolve`], with the transcript's own outside writes newest first: a bare file name
+/// (no folder) that is also the name of one of them means that file, the newest, and the
+/// session folder's file of the same name, if there is one, is kept as the other candidate. A
+/// relative path with a folder in it still means the session folder's file only.
+pub fn resolve_recent(s: &str, cwd: &Path, touched: &BTreeSet<PathBuf>, recent: &[PathBuf]) -> Option<NamedFile> {
     let normalized = transcript_path(s, cwd)?;
     if !inside(&normalized, cwd) && !touched.contains(&normalized) {
         return None;
     }
-    open_local_file(&normalized, false)?;
-    Some(NamedFile { path: normalized, view_only: false })
+    let here = open_local_file(&normalized, false).map(|_| normalized.clone());
+    let bare = !s.contains(['/', '\\']) && !Path::new(s).is_absolute();
+    let elsewhere = bare
+        .then(|| {
+            recent.iter().find(|p| {
+                **p != normalized
+                    && touched.contains(*p)
+                    && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| same_name(n, s))
+                    && open_local_file(p, false).is_some()
+            })
+        })
+        .flatten();
+    match (elsewhere, here) {
+        (Some(path), other) => Some(NamedFile { path: path.clone(), view_only: false, other }),
+        (None, Some(path)) => Some(NamedFile { path, view_only: false, other: None }),
+        (None, None) => None,
+    }
+}
+
+/// File names compare as Windows compares them: without case.
+fn same_name(a: &str, b: &str) -> bool {
+    if cfg!(windows) { a.to_lowercase() == b.to_lowercase() } else { a == b }
 }
 
 pub(super) fn inside(path: &Path, cwd: &Path) -> bool {

@@ -76,6 +76,9 @@ impl AppState {
     pub(crate) fn write_window(&mut self) -> Result<(), claude_switch_core::Refusal> {
         self.win_file.split = self.splitter.to_setting();
         self.win_file.session_split = self.session_view.splitter.to_setting();
+        let panel = self.session_view.markdown;
+        (self.win_file.markdown_split, self.win_file.markdown_reading) =
+            (panel.split.to_setting(), panel.reading.key().to_owned());
         winfile::save(self.source.window_file().as_deref(), &self.win_file)
     }
 

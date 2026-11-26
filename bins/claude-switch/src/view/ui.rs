@@ -19,6 +19,7 @@ use super::links::NamedFile;
 use super::model::{Follow, Group, Model};
 use super::outputs::{Destination, Output};
 use super::working::{Footer, Turn};
+pub use markdown::Panel;
 use rows::{HEAD, Id, PIC, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface};
 
@@ -48,6 +49,7 @@ enum Action {
     Picture(ItemId, usize),
     File(NamedFile),
     Editor,
+    Reading,
     CloseMarkdown,
     Open,
     Close,
@@ -92,6 +94,13 @@ pub struct Ui {
     epoch: Option<Instant>,
     mouse: (f32, f32),
     working: Option<Footer>,
+    /// The docked Markdown panel's width and reading width, the window's, given by the host.
+    panel: markdown::Panel,
+    /// The area the panel and the conversation share while the panel is docked: where the
+    /// divider is dragged.
+    panel_area: Option<Rect>,
+    /// The panel's width or reading width changed here, for the host to keep.
+    panel_changed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -241,9 +250,14 @@ impl Ui {
         }
         let full = Rect::new(x, top, width, (footer - top).max(0.0));
         let (content, dock) = if self.markdown.is_some() {
-            let (content, dock) = markdown::split(full);
+            let (content, grip, dock) = self.panel.split(full);
+            self.panel_area = grip.map(|_| full);
+            if let Some(grip) = grip {
+                self.draw_divider(p, pal, grip);
+            }
             (content, Some(dock))
         } else {
+            self.panel_area = None;
             (full, None)
         };
         let visible = content.w > GUTTER;

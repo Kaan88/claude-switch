@@ -291,11 +291,19 @@ The embedded Markdown viewer renders assistant answers and named Markdown files.
 heights are cached and only visible slices are rasterized. Bare or inline-code Markdown paths and
 explicit Markdown link destinations are actionable when the reader worker finds a regular file.
 Relative and absolute file paths stay inside the session’s working folder, except for exact paths
-named by a successful Write/Edit in the currently loaded transcript. Parent hops (`..`), device
+named by a successful Write/Edit in the currently loaded transcript. A bare file name (no folder)
+that is also the name of such a written file outside the folder means the newest of those writes;
+the session folder's file of that name, when there is one, is offered beside it in the viewer
+("Also in <folder>"). This grants nothing new: only already written paths are candidates. Parent hops (`..`), device
 and network paths, redirects (including junctions), and nonexistent files are not actionable. Bash command text
 and output do not infer file links. Successful Write/Edit paths to existing Markdown files get one
 button per file at the end of the loaded turn. Click a path or button to preview up to 1 MiB of
-UTF-8 Markdown on the right in wide Chat or in place of the reading body when narrow. The preview
+UTF-8 Markdown on the right in wide Chat or in place of the reading body when narrow. A divider
+between the conversation and the docked viewer drags its width (at least 300 px, the conversation
+at least 320 px); the viewer's toolbar cycles a reading width (Narrow 560, Medium 720, Wide 900
+px or Full, a centred column, after mdview's page widths). Both are one setting for the window,
+shared by every tab and kept in `window.ini` (`markdown_split`, `markdown_reading`). The viewer
+shows the file name and, under it, its full path. The preview
 does not follow links in the document; images and optional math/diagram engine jobs are disabled
 in both renderer surfaces. **Open in editor** rechecks the named file and asks the OS to open it
 with its default association. Ctrl+click on an inline file link instead reveals it. HTTP(S) links

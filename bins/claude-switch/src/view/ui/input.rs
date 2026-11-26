@@ -105,6 +105,10 @@ impl Ui {
         self.start = None;
         self.dragging = false;
         self.scroll_drag = None;
+        if self.divider_press(x, y) {
+            self.pressed = None;
+            return false;
+        }
         if self.scroll_press(x, y) {
             self.pressed = None;
             return false;
@@ -143,6 +147,9 @@ impl Ui {
     }
 
     pub fn moved(&mut self, x: f32, y: f32) -> bool {
+        if let Some(changed) = self.divider_move(x, y) {
+            return changed;
+        }
         if let Some(drag) = self.scroll_drag {
             return self.drag_to(drag, y);
         }
@@ -174,10 +181,17 @@ impl Ui {
     }
 
     pub fn owns_pointer(&self, x: f32, y: f32) -> bool {
-        self.dragging || self.scroll_dragging() || self.overlay_open() || self.area.contains(x, y)
+        self.dragging
+            || self.scroll_dragging()
+            || self.panel.split.dragging()
+            || self.overlay_open()
+            || self.area.contains(x, y)
     }
 
     pub fn pointer_cursor(&self, x: f32, y: f32) -> Option<Cursor> {
+        if self.divider_hot(x, y) {
+            return Some(Cursor::ResizeEw);
+        }
         if self.scroll_dragging() || self.scroll_surface(x, y).is_some() {
             return Some(Cursor::Default);
         }
@@ -197,6 +211,9 @@ impl Ui {
     }
 
     pub(in crate::view) fn release(&mut self, x: f32, y: f32, mods: Mods, m: &mut Model) -> Release {
+        if self.divider_release() {
+            return Release::Handled;
+        }
         if let Some(drag) = self.scroll_drag.take() {
             self.drag_to(drag, y);
             return Release::Handled;
@@ -276,6 +293,7 @@ impl Ui {
                     pane.editor();
                 }
             }
+            Action::Reading => self.next_reading(),
             Action::CloseMarkdown => self.close_markdown(),
             Action::Open => {
                 if let Some(o) = &self.overlay {
