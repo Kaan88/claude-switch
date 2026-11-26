@@ -557,3 +557,22 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     same way as the handover's summarizer (an OpenCode worker/model or the Claude CLI), opt-in, sending only the
     excerpts "Suggest names" already sends, with a confirmation before a run that sends anything. An on-device
     embedding model was the alternative offered; not chosen. Not started.
+57. **Better handovers: a fitting focus chosen by itself, and a sharper fixed format** (owner, 2026-11-27, from a
+    cc-fable review of six real handovers: sections cut mid-word at 800 characters, "Standing instructions" turned
+    into a to-do list, a permission guessed ("presumably approved"), job and session ids missing, space spent on
+    finished history, the focus echoed back, rarely who decided).
+    - Focus chosen by itself, not presets (owner): Switch picks the focus that fits the session from the transcript,
+      locally and without a model: a coordination session (most tool calls hand work to workers or agents, few
+      edits of its own), non-code work (no edits of code files; e.g. subtitle or CAD tools and files), else the
+      default. The dialog shows which kind was picked and the text, editable; the user's own focus text replaces it;
+      Settings › Handover lets each of the three texts be edited and reset. The three texts, verbatim:
+      - Default: "The reader continues this work unattended and remembers nothing. Put the newest first, so anything cut off is the oldest; leave out finished history. stands: each background job, worker or review still running or unread, with its job/session id, worktree, branch and last commit; uncommitted or unpushed work; where a merge stopped. decisions: who decided (user or assistant) and why; mark them settled. instructions: only rules still in force, in their latest form; no next steps; never assume a permission was given. open: promised follow-ups with their trigger; recorded requests not yet done, by number. Do not restate this focus."
+      - Coordination: "This session coordinates workers and writes no code itself. stands: one line per worker or job: id, model, worktree, branch, brief file, state (running, finished unread, reviewed, merged) and what was promised when it reports; the merge order and where it stopped. instructions: which model does which kind of work, as last set, and other rules still in force. Leave out what the workers changed in the code. Newest first. Do not restate this focus."
+      - Non-code: "No code here. stands: the file or job in hand, how far it got (episode, line, part), what was applied and what was only proposed. decisions: terminology, style and guideline choices with their reason, so they stay consistent. instructions: rules still in force, such as what may be edited and what is read-only. open: checks and corrections still owed. Newest first. Do not restate this focus."
+    - Fixed prompt and sections (`crates/core/src/compact.rs`): a seventh field "In flight and promised" (jobs,
+      workers, reviews with id, worktree, branch, state; "when X reports, do Y"); "instructions" defined as rules
+      only; the cut at about 1,500 characters on a line boundary with a visible `[cut]` (still asking for 800); tell
+      the summarizer it sees assistant text only and the user's prompts are appended, and never to infer that a
+      permission was given or a rule lifted; when partial summaries conflict the later wins and items a later part
+      shows done are dropped; Files leaves out temp and scratchpad paths and keeps about the 30 most recent; the
+      task list is marked as possibly stale.
