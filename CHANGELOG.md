@@ -25,6 +25,7 @@
 - Chat: Claude Code's menus, pickers and dialogs show as cards in the chat and are answered there;
   slash commands no longer open the terminal drawer.
 - Chat: Run in background for a running shell command, while Claude Code offers it.
+- Chat: an Esc button on cards leaves a menu or declines a question or permission prompt.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

@@ -626,3 +626,47 @@ fn run_in_background_is_offered_only_with_the_clis_hint_and_waits_for_it_to_go()
     f.sync();
     assert!(f.chat().question.background.is_none());
 }
+
+#[test]
+fn esc_leaves_a_menu_or_declines_a_prompt_only_while_the_screen_shows_it() {
+    let now = Instant::now();
+    // A menu, readable or not: Esc, then done once the menu is gone.
+    for screen in [picker(0), "\x1b[2J\x1b[H Settings\r\n  Theme  Dark\r\n\r\n Esc to cancel".to_owned()] {
+        let mut f = Fixture::idle();
+        f.screen(&screen, now);
+        assert!(press(f.tab(), now, Hit::Escape));
+        assert_eq!(f.writes(), [ESC.to_vec()]);
+        assert!(!press(f.tab(), now, Hit::Escape), "one step at a time");
+        f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+        advance(f.tab(), now, true);
+        assert!(f.chat().question.step.is_none() && f.chat().question.error.is_none());
+    }
+
+    // A footer without Esc: nothing is written.
+    let mut f = Fixture::idle();
+    f.screen(&picker(0).replace("Enter to confirm · Esc to exit", "Enter to select"), now);
+    press(f.tab(), now, Hit::Escape);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NO_ESC));
+
+    // The pending call's permission prompt: Esc declines it.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+
+    // Another call's prompt, or a question the screen does not show: nothing.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.screen(&prompt("rm -rf target", 0, None), now);
+    press(f.tab(), now, Hit::Escape);
+    assert!(f.writes().is_empty());
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen("\x1b[?2004h❯ ", now);
+    press(f.tab(), now, Hit::Escape);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NOT_SHOWN));
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(1, None), now);
+    press(f.tab(), now, Hit::Escape);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+}

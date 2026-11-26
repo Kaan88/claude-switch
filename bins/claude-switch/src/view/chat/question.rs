@@ -41,6 +41,8 @@ const BLOCKED: &str = "Chat cannot answer now. Check the terminal.";
 pub(super) const WAITING: &str = "Sending your answer to the terminal…";
 const ASKING: &str = "Waiting for your answer";
 const APPROVING: &str = "Waiting for your approval";
+const ESC: &[u8] = b"\x1b";
+const NO_ESC: &str = "This menu does not offer Esc. Use the terminal.";
 const CTRL_B: &[u8] = b"\x02";
 const NOT_BACKGROUND: &str = "The command did not move to the background. Check the terminal.";
 const NO_HINT: &str = "The terminal no longer offers to run this command in the background.";
@@ -142,6 +144,8 @@ pub enum Hit {
     Open,
     /// Ctrl+B for the running shell command.
     Background,
+    /// Esc: leave the menu, or decline the question or prompt.
+    Escape,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,6 +182,10 @@ enum Subject {
     Menu {
         title: String,
         choices: Vec<String>,
+    },
+    /// A menu Chat cannot read: its rows as shown.
+    Panel {
+        rows: Vec<String>,
     },
 }
 
@@ -285,6 +293,11 @@ fn read(
             let panel = screens::panel(screen)?;
             let menu = panel.menu?;
             (panel.title == *title && menu.texts() == *choices).then_some((menu, None, None))
+        }
+        Subject::Panel { rows } => {
+            let panel = screens::panel(screen)?;
+            let empty = screens::Menu { entries: Vec::new(), lines: Vec::new(), footer: 0 };
+            (panel.menu.is_none() && panel.rows == *rows).then_some((empty, None, None))
         }
     }
 }
@@ -519,6 +532,9 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         tab.pane.as_mut().unwrap().chat.question_failed(error);
         return true;
     };
+    if hit == Hit::Escape {
+        return escape(tab, now, Some(item), subject);
+    }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
     let shown = chat.question.shown.clone().unwrap_or_default();
     let text = collapse(chat.question.field.text());
@@ -574,6 +590,30 @@ fn start(tab: &mut Tab, now: Instant, mut step: Step, from: usize) -> bool {
     true
 }
 
+/// Esc while the screen shows the same question, prompt or menu; then the step waits for it to close.
+fn escape(tab: &mut Tab, now: Instant, item: Option<ItemId>, subject: Subject) -> bool {
+    if !ready(tab) {
+        tab.pane.as_mut().unwrap().chat.question_failed(BLOCKED);
+        return true;
+    }
+    if read(&subject, &tab.term.screen, None).is_none() {
+        tab.pane.as_mut().unwrap().chat.question_failed(CHANGED);
+        return true;
+    }
+    let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
+    let step = Step { item, subject, target: 0, then: Then::Choose, stage: Stage::Sent, due: now + RESULT, epoch };
+    match write(tab, ESC) {
+        Ok(()) => {
+            let chat = &mut tab.pane.as_mut().unwrap().chat;
+            chat.question.error = None;
+            chat.question.focus = false;
+            chat.question.step = Some(step);
+        }
+        Err(error) => tab.pane.as_mut().unwrap().chat.question_failed(error),
+    }
+    true
+}
+
 /// Ctrl+B, only while the CLI still offers it for the same call, which alone is pending.
 fn press_background(tab: &mut Tab, now: Instant) -> bool {
     let chat = &tab.pane.as_ref().unwrap().chat;
@@ -619,6 +659,18 @@ fn advance_background(tab: &mut Tab, now: Instant) -> bool {
 
 /// A click in a CLI menu's card: the same checks, against the menu's title and choices.
 fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
+    if hit == Hit::Escape {
+        if !shown.esc {
+            tab.pane.as_mut().unwrap().chat.question_failed(NO_ESC);
+            return true;
+        }
+        let subject = if shown.choices.is_empty() {
+            Subject::Panel { rows: shown.rows }
+        } else {
+            Subject::Menu { title: shown.title, choices: shown.choices }
+        };
+        return escape(tab, now, None, subject);
+    }
     let Hit::Option(target) = hit else { return false };
     if target >= shown.choices.len() {
         return false;
@@ -726,7 +778,7 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
         // A menu that moved on (closed, or opened the next one) is done at once.
         Stage::Sent
             if may_act
-                && matches!(step.subject, Subject::Menu { .. })
+                && matches!(step.subject, Subject::Menu { .. } | Subject::Panel { .. })
                 && read(&step.subject, screen, None).is_none() =>
         {
             Action::Closed
@@ -892,6 +944,19 @@ impl Draw<'_> {
             Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
             _ if chat.question.menu.is_some() => self.menu(p, chat, inner, hits),
             _ => self.background(p, chat, inner, hits),
+        }
+        // Esc leaves a menu or declines what the card shows, under the same checks as a choice.
+        let escape = match pending(model).map(|p| p.kind) {
+            _ if chat.question.step.is_some() => false,
+            Some(Kind::Question(_)) => chat.question.answerable.is_some(),
+            Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
+            _ => chat.question.menu.as_ref().is_some_and(|m| m.esc),
+        };
+        if escape {
+            let r = Rect::new(inner.right() - 64.0, inner.y - 2.0, 64.0, HEADER + 2.0);
+            let target = Target::Chat(Control::Question(Hit::Escape));
+            super::paint::button(p, pal, r, "Esc", self.hover == Some(target), false);
+            hits.push((r, target));
         }
         p.restore(clip);
     }

@@ -751,6 +751,11 @@ no turn or pending call, no menu); the next click is taken only after the indica
 mode that does not change or cannot be read within two seconds stops with a notice. The chip shows
 only where the toolbar row has room.
 
+**Esc.** A card's Esc button writes one Escape only under the same checks as its choices: the screen
+still shows that question, the pending call's own prompt, or the same menu (a menu Chat cannot read
+is matched by its rows) whose footer offers Esc. It then waits as a choice does; a menu step ends as
+soon as the menu is gone. Stop keeps its own rule: Escape at most once per freshly verified turn.
+
 **Background controls.** While the only pending call is a shell command (Bash or PowerShell), no
 prompt or menu shows, and the CLI's "ctrl+b to run in background" hint is within six rows of the
 input, a card offers Run in background. A click re-checks all of that and writes one Ctrl+B; it is
