@@ -35,6 +35,9 @@ cargo build --release --locked -p claude-switch
 
 The executable is `target\release\claude-switch.exe`. The [markdown-shared-rs](https://github.com/Kaan88/markdown-shared-rs) toolkit is fetched by Cargo.
 
+`claude-switch --help` lists its options; `claude-switch --demo` starts it with made-up sessions
+and accounts. Unknown options are refused rather than ignored.
+
 ## Accounts and settings
 
 The first account uses your existing Claude CLI and Desktop profiles. Each extra account gets separate profile folders and sign-ins. Switch links CLI transcripts, skills, agents, plugins, and settings from the first account where there is no conflict. It seeds user-level MCP server settings in a missing secondary `.claude.json`, not in an existing profile file. Credentials and running-session records stay separate.
@@ -56,7 +59,7 @@ Claude Switch checks its tabs and the running-session records across accounts be
 | Ctrl+Shift+W | Close the terminal tab |
 | Ctrl+Shift+T | Open a plain shell in the selected session's folder |
 | Ctrl+Shift+K | Open the command palette |
-| Ctrl+Shift+C / Ctrl+Shift+V | Copy / paste |
+| Ctrl+Shift+C / Ctrl+V or Ctrl+Shift+V | Copy / paste |
 | Ctrl+C | Copy if text is selected; otherwise send Ctrl+C to the program |
 | Shift+Page Up / Shift+Page Down | Scroll back / forward |
 | Enter in an ended tab | Close the tab |
@@ -238,8 +241,12 @@ palette. Pick 2, 4, 8, or 12 weeks and optionally one folder. The preview shows 
 sessions and their transcript size. Right-click a session or folder for a targeted archive.
 Pinned and running sessions are skipped. The session menu shows the reason; folder archive
 can still preview other eligible sessions. Archived sessions stay on disk and still appear in
-search, labelled **Archived**. Use the **Archived** chip to browse them, and the Archive menu
+search, labelled **Archived**. Use the **Archived here** chip to browse them, and the Archive menu
 to unarchive a selection or all. **Hide** remains a separate local mark.
+
+Claude Desktop has its own archive, separate from this one. Sessions archived there are left out
+unless **Settings → Sessions → Show sessions archived in the desktop app** is on; their details
+then say **Desktop archive: yes**. Unarchive them in the desktop app.
 
 **Summary report…** saves a local Markdown file, including prompt excerpts. Its suggested
 location is `Documents\Claude Switch\archive-<date>.md`. The app asks before saving or opening it
@@ -316,7 +323,10 @@ eight lines; toggle **Following** to freeze the tail or choose **Full output** f
 **Stop…** asks before opening the CLI’s own shell manager. Switch never stops a shell itself.
 **Outputs** collects HTTP(S) links, artifacts, pull requests, and saved files and pictures. The
 conversation also shows output cards. Links open in the default browser; local previews open in
-the viewer. Both tabs are also available in **Session view**.
+the viewer.
+
+**Session view** has the same pages as tabs: **Conversation**, **Tasks**, **Agents**, **Shells**,
+**Files** and **Outputs**.
 
 | Shortcut in a session tab | Action |
 | --- | --- |
@@ -330,6 +340,9 @@ the viewer. Both tabs are also available in **Session view**.
 | **Attach…** or file drop | Choose files or **Paste picture** from the menu, or drop files into Chat |
 | `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
 | **Mode** | Shows Claude Code's permission mode and moves to the next one, as Shift+Tab does, when the prompt is idle and empty |
+| `@` in the composer | Complete a file or folder path in the session folder. ↑/↓ selects, Tab or Enter inserts |
+| Ctrl+R in the composer | Search your earlier prompts in this session (those already loaded). Ctrl+R again steps, Enter fills |
+| **↳ suggestion** chip or Tab in the empty composer | Put Claude Code’s grey next-prompt suggestion into the draft (nothing is sent) |
 | **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first. Effort shows the session's level, also after `/effort` typed in the terminal; **(default)** marks the model's default |
 | **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending; the queue also runs in background tabs |
 | **Press Enter** | Retry only the Enter key after the input was staged, without pasting it again |

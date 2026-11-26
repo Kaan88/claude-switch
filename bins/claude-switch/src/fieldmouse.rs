@@ -169,19 +169,6 @@ const fn ctrl() -> Mods {
 }
 
 impl AppState {
-    fn front_target(&self, x: f32, y: f32) -> Option<Target> {
-        if self.palette.is_some() || self.accounts_dd.is_open() || self.menu.is_some() {
-            return None;
-        }
-        let modal = self.dialog.is_some();
-        self.hits
-            .iter()
-            .rev()
-            .filter(|(_, t)| !modal || matches!(t, Target::Dialog(_)))
-            .find(|(r, _)| r.contains(x, y))
-            .map(|(_, t)| *t)
-    }
-
     /// The text field under the pointer in the front layer, if one takes the mouse now.
     pub(crate) fn field_under(&self, x: f32, y: f32) -> Option<FieldId> {
         if let Some(Dialog::Settings(form)) = &self.dialog {
@@ -190,7 +177,9 @@ impl AppState {
                 .flatten()
                 .map(FieldId::Settings);
         }
-        let target = self.front_target(x, y)?;
+        // The front layer, as for hover: nothing under the palette, a dropdown, a menu, the
+        // picture overlay or the usage popup reaches a field.
+        let target = self.front_target_at(x, y)?;
         match (&self.dialog, target) {
             (None, Target::Search) => Some(FieldId::Search),
             (Some(Dialog::Name { .. }), Target::Dialog(dialogs::FIELD)) => Some(FieldId::Name),
@@ -453,6 +442,18 @@ mod tests {
         app.dialog = Some(dialogs::name_dialog("Rename", "old", dialogs::NameFor::Tab(1)));
         app.hits.push((hit.area, Target::Dialog(dialogs::FIELD)));
         assert_eq!(app.field_under(x, y), Some(FieldId::Name));
+    }
+
+    #[test]
+    fn an_open_usage_popup_keeps_the_field_menu_and_i_beam_from_the_field_under_it() {
+        let (mut app, hit) = search_app();
+        let (x, y) = (hit.area.x + 3.0, hit.area.cy());
+        app.usage.popup.open = true;
+        assert!(!app.over_field(x, y));
+        assert!(!app.field_menu(x, y, Instant::now()));
+        assert!(app.menu.is_none());
+        app.usage.popup.open = false;
+        assert!(app.field_menu(x, y, Instant::now()));
     }
 
     #[test]

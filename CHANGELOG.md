@@ -46,6 +46,8 @@
 - The conversation in Chat and Session view can be selected across messages and copied with
   Ctrl+C or the right-click menu (Copy, Select all, Copy message, Copy as Markdown); code blocks
   have a Copy button.
+- Chat composer: `@` completes paths in the session folder, Ctrl+R searches earlier prompts, and
+  Claude Code's grey next-prompt suggestion appears as a chip that fills the draft.
 - The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
 - Chat: permission prompts can be answered from a card in the chat, with the tool call and the
   terminal's own choices; the working line says "Waiting for your approval".
@@ -57,6 +59,13 @@
 - Chat: a Mode chip shows the permission mode and cycles it like Shift+Tab at an idle prompt.
 - Chat: messages keep their line breaks; a message of several lines is submitted once Claude Code
   shows it on its input line.
+- The two archives have distinct names: the **Archived here** chip is Switch's own archive;
+  **Show sessions archived in the desktop app** and the details row **Desktop archive: yes** are
+  Claude Desktop's.
+- Colour pickers in Settings have Apply and Cancel: Enter or a click outside applies the colour,
+  Escape restores the old one. Before, the chosen colour was not applied.
+- Unknown command-line options are refused with a short usage text instead of being ignored (an
+  ignored typo started the real app); `--help` lists every option, hidden ones marked.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 - Handover: `/switch-handover:switch-compact` and `claude-switch compact --open` open the new chat as
@@ -125,7 +134,7 @@
 - Mark background tabs that need attention and optionally notify through the Windows tray.
 - Warn at 80% and 95% usage and offer handover to another account with recent headroom.
 - Add an optional tray menu with per-account usage and close-to-tray behavior.
-- Share the OpenCode CLI client as the MIT-licensed `opencode-cli` crate; show OpenCode health, running sessions, a guarded restart, and the optional Config Studio shortcut in Settings → Workers.
+- Share the OpenCode CLI client as the MIT-licensed `opencode-cli` crate; show OpenCode health, running sessions, a guarded restart, and the optional Config Studio shortcut in Settings → OpenCode.
 - Open oversized handovers by absolute Markdown path rather than refusing the launch at the Windows command-line safety threshold.
 - Add an optional Chat layout over the same embedded Claude Code terminal, with draft recall, tool previews, a details panel and an automatic terminal drawer.
 - Group sessions by repository and worktree, proven thread, or topic; add optional Recent sittings and local Related suggestions in details. Keep the original Folder option and add opt-in topics to the existing name review.

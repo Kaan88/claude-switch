@@ -11,6 +11,13 @@ Built with the owner's toolkit (`markdown-shared-rs`: `mdshared-ui` with the `ho
   against temporary folders. No toolkit dependency. `serde_json` is its one dependency.
 - `bins/claude-switch`: the window.
 
+The window's command line is read by `cli_args`. An unknown option, a stray word or a missing or
+unreadable value is refused with a short usage text and exit code 2, so a typo such as `--dmeo`
+cannot start the real app in place of the demo. `--help` (also `-h`, `/?`) lists every option,
+the testing, diagnostic and internal ones under "Hidden" headings, and exits 0. The text goes to the
+console the app was started from, or to a message box when there is none. `compact` is read first
+and keeps its own parser.
+
 ## Facts this is built on (checked on this computer, 2026-11-26)
 
 **Transcripts.** Every session, CLI or desktop, is one file
@@ -252,8 +259,8 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
 shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
 running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
 
-**Not there:** more than one terminal in a tab, moving tabs by drag, search or links in the terminal,
-font-family settings, tabs restored after a restart; Shift+Insert and the Insert key (the window host
+**Not there:** more than one terminal in a tab, search or links in the terminal,
+font-family settings; Shift+Insert and the Insert key (the window host
 has no name for Insert); input-method composition (the host turns input methods off on Windows).
 
 ## Session view
@@ -276,7 +283,8 @@ with no transcript no turn can be running). Later sends wait until that exact fi
 naming another session first, or a file whose recorded folder differs, keeps the refusal. Such a tab is
 not yet routed, marked seen or restored.
 
-Conversation, Agents and Tasks are separate views of the incremental transcript reader. Conversation
+Session view has six pages over the incremental transcript reader: Conversation, Tasks, Agents,
+Shells, Files and Outputs. Chat shows the same five beside the conversation in its Details panel. Conversation
 opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
 following. Both Chat and Session view support wheel scrolling, thumb drag, and track clicks that page
 by a viewport. Earlier history is loaded on request. Agent transcripts are reachable from expanded
@@ -571,9 +579,15 @@ compositor colour. Terminal opacity is set separately below. The tab strip stays
 
 Automatic terminal colours use Dark (`#101010`) or Light according to the effective window theme.
 Match window uses the window bar background. Custom uses the background, text and accent picked on
-the Terminal page; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
+the Terminal page; the renderer adjusts pairs below 7:1. An applied colour takes effect at once, and 9–24 logical px font-size
 changes resize all open screens and pseudo-terminals. Cursor shape and background opacity are
 described under [Terminal cursor and backdrop](#terminal-cursor-and-backdrop).
+
+The four colour rows (accent, terminal background, text and accent) use the toolkit's confirming
+picker (`Form::show_as_colour_with_confirmation`). The picker previews a choice without saving it;
+Apply, Enter or a press outside the picker saves it, and that press activates nothing underneath.
+Cancel and Escape put the opening colour back. Tab reaches both buttons. Held Enter or Escape
+repeats are ignored while the picker is open, so the key that opened it cannot also close it.
 
 Tab marks, hover, menu entrances, the dialog dimmer, sessions-list selection and settings controls
 animate briefly. Reduce motion snaps them to their targets, as does the system setting. Tab content
@@ -664,8 +678,6 @@ JSONL without touching the listed paths.
 
 ## Window placement and reopening terminal tabs
 
-This supersedes the earlier notes that tabs cannot be moved or restored.
-
 The window saves the normal placement and maximized bit in `window.ini` via the toolkit’s
 Windows placement capture. Restore keeps a rectangle when any one connected work area shows
 at least 100 × 100 physical pixels of it. Otherwise it centers the normal rectangle in the
@@ -712,12 +724,16 @@ Open action uses the session’s last app when there is no folder preference; Ne
 CLI in that case. A removed account falls back to the selected account without changing the
 preferred app. Defaults do not change the global account selection.
 
-Archive is independent of Hide and of the Desktop app’s archive flag. An age threshold counts
+Archive is independent of Hide and of the Desktop app’s archive flag (`isArchived`). The UI keeps
+the two apart by name: "Archived" alone always means Switch's archive (the **Archived here** chip,
+the row's Archived mark); the desktop app's flag is **Show sessions archived in the desktop app**
+in Settings → Sessions (off by default; such rows are dimmed when shown) and **Desktop archive: yes**
+in the details. An age threshold counts
 back whole weeks from now, excluding the boundary itself and unknown ages. The preview shows
 the eligible IDs and their indexed transcript bytes. Commit considers only those IDs, rechecks
 pins, live sessions, embedded tabs, recent launch reservations and transcript modification
 times, then saves the marks as one update. An incomplete running scan refuses the operation.
-Archived rows are omitted from ordinary views but found in searches; the Archived chip
+Archived rows are omitted from ordinary views but found in searches; the Archived here chip
 appears only while there are archived sessions in the index. Unarchiving preserves Hide marks.
 No archive operation relocates, deletes, or edits a transcript.
 The session menu explains why a pinned or running row cannot be archived. Folder archive
@@ -967,6 +983,15 @@ Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+**Composer conveniences**, all local (`view/chat/popups.rs`). `@` at the caret opens a list of
+the session folder's files and folders, read once per tab on a worker: breadth first, at most 8
+deep and 5000 entries, without hidden folders, `node_modules`, `target` and other build folders,
+and without following links or junctions. Choosing inserts `@path` (quoted when it holds a space).
+Ctrl+R searches the prompts the transcript reader already holds, newest first, each once; it loads
+no older history. The CLI's grey suggestion for the next prompt is read from the live, empty
+prompt row (`screen::clean_prompt`) only as one unbroken faint run starting at the caret, and never
+as the CLI's fixed hints (`Try "…"`, `<…>`, an ellipsis, "for shortcuts"). It shows as a chip in
+the empty composer; the chip or Tab fills the draft. Nothing is sent: no Tab reaches the CLI.
 The message box shows three lines when empty and grows with the draft's wrapped rows up to 40% of
 the chat column, then scrolls. The terminal drawer is sized against the smallest box, so typing
 never resizes the terminal; a window too short to keep 80 px of conversation gets the two-line box.
@@ -983,7 +1008,8 @@ nearest end. One drag is held at a time (`fieldmouse.rs`). A right click opens t
 Copy, Paste, Select all (`TextField::context_menu`), drawn above a dialog; outside the selection it
 first moves the caret. Settings text rows keep the form's own mouse selection; the app adds the
 triple click, the I-beam and the same menu, applied through the form's Ctrl+X/C/V/A, with Cut and
-Copy enabled whenever the row has text. Colour rows and an open colour picker take no caret. The
+Copy enabled whenever the row has text. Colour rows and an open colour picker take no caret. A field under the picture overlay
+or the usage popup gets neither the menu nor the I-beam. The
 I-beam shows only over a field that takes the mouse now, the composer, the handover editor and
 terminal text.
 

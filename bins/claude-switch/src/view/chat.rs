@@ -9,6 +9,7 @@ mod input;
 mod layout;
 mod paint;
 pub(super) mod question;
+mod popups;
 mod recall;
 mod rename;
 mod shortcuts;
@@ -170,6 +171,7 @@ pub struct Chat {
     image_wait: Option<ImageWait>,
     staging: submission::Staging,
     commands: commands::Picker,
+    popups: popups::Popups,
     cli_report: submission::CliReport,
     output_epoch: u64,
     sample: Option<(u64, Option<(u64, ChatPhase)>)>,

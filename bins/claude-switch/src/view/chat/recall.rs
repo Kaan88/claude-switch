@@ -20,6 +20,11 @@ struct Browsing {
     draft: ComposerEditor,
 }
 
+/// A prompt the user typed, as Up and Ctrl+R offer it.
+pub(super) fn prompt_text(item: &Item) -> Option<&str> {
+    text(item)
+}
+
 fn text(item: &Item) -> Option<&str> {
     match &item.kind {
         ItemKind::Prompt { text, synthetic: false, .. } if !text.trim().is_empty() => Some(text),

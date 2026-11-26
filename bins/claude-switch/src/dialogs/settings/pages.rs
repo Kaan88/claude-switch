@@ -234,6 +234,11 @@ impl Settings {
         self.form.pointer_move(x, y) || changed
     }
 
+    /// Whether a colour row's picker is open.
+    pub(crate) fn colour_open(&self) -> bool {
+        self.form.colour_open().is_some()
+    }
+
     /// The enabled text row whose box is under the pointer, for the I-beam and the field menu.
     pub(crate) fn text_row_at(&self, x: f32, y: f32) -> Option<u32> {
         if self.form.colour_open().is_some() || !self.form.body_rect().contains(x, y) {
@@ -363,5 +368,59 @@ mod tests {
         assert!(matches!(settings.release(first.cx(), first.cy()), SettingsEvent::Form(_)));
         settings.press(second.cx(), second.cy(), mods, 1);
         assert!(matches!(settings.release(second.cx(), second.cy()), SettingsEvent::Page(1)));
+    }
+    #[test]
+    fn colour_rows_change_only_when_applied_and_an_outside_press_applies_without_clicking_through() {
+        let st = AppState::new(Source::Demo, None, Default::default());
+        let mut gfx = Gfx::new();
+        let mut bitmap = Bitmap::new(760, 480);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        let mut settings = Settings::new(&st, 0);
+        let viewport = settings.place(&mut p, MIN_WINDOW);
+        settings.form.layout(&mut p, viewport);
+        let mods = Mods::default();
+        let id = super::super::SET_ACCENT_COLOUR;
+        let before = settings.form.colour(id);
+        let index = settings.form.rows().iter().position(|r| r.id() == Some(id)).unwrap();
+        let open = |settings: &mut Settings, p: &mut Painter| {
+            let opened = settings.form.colour(id);
+            let swatch = settings.form.swatch_rect(index);
+            settings.press(swatch.cx(), swatch.cy(), mods, 1);
+            settings.release(swatch.cx(), swatch.cy());
+            assert!(settings.colour_open());
+            settings.form.layout(p, viewport);
+            let buttons = settings.form.picker_confirmation_layout().expect("a confirming picker");
+            assert!(buttons.apply.w > 0.0 && buttons.cancel.w > 0.0);
+            // A press in the square changes the preview only.
+            let square = buttons.picker.square;
+            let (x, y) = (square.x + 4.0, square.y + 4.0);
+            assert!(!matches!(settings.press(x, y, mods, 1), SettingsEvent::Form(Outcome::Changed { .. })));
+            assert!(!matches!(settings.release(x, y), SettingsEvent::Form(Outcome::Changed { .. })));
+            assert_eq!(settings.form.colour(id), opened, "staged, not applied");
+        };
+
+        open(&mut settings, &mut p);
+        settings.key(&KeyName::Escape, mods, None);
+        assert!(!settings.colour_open());
+        assert_eq!(settings.form.colour(id), before, "Escape restores");
+
+        open(&mut settings, &mut p);
+        assert!(
+            matches!(settings.key(&KeyName::Enter, mods, None), SettingsEvent::Form(Outcome::Changed { id: c, .. }) if c == id)
+        );
+        assert!(!settings.colour_open());
+        let applied = settings.form.colour(id);
+        assert_ne!(applied, before);
+
+        // An outside press on the rail applies and does not open that page.
+        settings.form.set_value(id, mdshared_ui::settings::Value::Text("#123456".into()));
+        open(&mut settings, &mut p);
+        let second = settings.layout.category(1);
+        assert!(matches!(
+            settings.press(second.cx(), second.cy(), mods, 1),
+            SettingsEvent::Form(Outcome::Changed { .. })
+        ));
+        assert!(!settings.colour_open());
+        assert!(matches!(settings.release(second.cx(), second.cy()), SettingsEvent::Form(_)));
     }
 }

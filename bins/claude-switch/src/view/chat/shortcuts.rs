@@ -144,6 +144,9 @@ impl AppState {
         }
         let open = chat.editor.text.starts_with('/') && !chat.editor.text.contains('\n');
         self.chat_open_picker(open);
+        if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+            pane.chat.popup_edited(&pane.cwd);
+        }
     }
 
     pub(super) fn chat_picker_key(&mut self, cx: &mut Cx<'_, Msg>, key: &KeyName) -> bool {

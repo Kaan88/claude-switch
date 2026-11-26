@@ -168,7 +168,8 @@ fn page_form(st: &AppState, index: usize) -> Form {
     let (name, rows) = PAGES[index];
     let mut form = Form::new(name, rows(st)).single_page();
     for id in [SET_ACCENT_COLOUR, SET_TERM_BACKGROUND, SET_TERM_FOREGROUND, SET_TERM_ACCENT] {
-        form.show_as_colour(id);
+        // Changes stay in the picker until Apply, Enter or a press outside; Escape restores.
+        form.show_as_colour_with_confirmation(id);
     }
     form
 }
@@ -246,7 +247,8 @@ fn sessions(st: &AppState) -> Vec<Row> {
             .help("Off: they open in a separate console window."),
         Row::toggle(SET_CLASSIC_VIEW, "Classic terminal view for Claude tabs", st.config.classic_terminal_view)
             .help("Chat cannot send while the CLI draws its full-screen view. Applies to new tabs."),
-        Row::toggle(SET_ARCHIVED, "Show archived sessions", st.config.show_archived),
+        Row::toggle(SET_ARCHIVED, "Show sessions archived in the desktop app", st.config.show_archived)
+            .help("Claude Desktop's own archive. Switch's Archive is separate."),
         Row::toggle(SET_WORKERS_SHOWN, "Show sessions started by tools", st.config.show_workers)
             .help("Sessions that tools and subagents started through the SDK, not you."),
         Row::toggle(SET_HIDDEN, "Show hidden", st.config.show_hidden)
@@ -596,6 +598,17 @@ mod tests {
 
     fn navigate(st: &mut AppState, key: KeyName) {
         assert!(super::super::key(st, Instant::now(), &key, Mods::default(), None));
+    }
+
+    #[test]
+    fn the_two_archives_have_distinct_names() {
+        let st = AppState::new(Source::Demo, None, WindowFile::default());
+        let rows = sessions(&st);
+        let desktop = rows.iter().find(|r| r.id() == Some(SET_ARCHIVED)).unwrap();
+        assert!(matches!(desktop, Row::Toggle { label, help, .. }
+            if label == "Show sessions archived in the desktop app"
+                && help == "Claude Desktop's own archive. Switch's Archive is separate."));
+        assert_eq!(crate::list::model::Filter::Archived.label(), "Archived here");
     }
 
     #[test]

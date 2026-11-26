@@ -59,7 +59,7 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
         ("Last ran in", if s.last_app == App::Cli { "the CLI".into() } else { "the desktop app".into() }),
     ];
     if s.archived {
-        facts.push(("Archived", "yes, in the desktop app".into()));
+        facts.push(("Desktop archive", "yes".into()));
     }
     if let Some(topic) = st.marks.topic(&s.id) {
         facts.push(("Topic", topic.to_owned()));
