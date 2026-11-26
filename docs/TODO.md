@@ -122,3 +122,23 @@ and in the README, not committed, and not copied to the installed clone
 - Name suggestion tests use an injected fake program. Live Claude authentication, CLI flag
   compatibility and returned titles still need an explicitly authorized smoke test.
 - Waiting is deliberately heuristic; see `DESIGN.md` for its limits.
+
+## Reported after 0.1.0 (owner, 2026-11-26): recorded, nothing changed yet
+
+1. **A newly added third account keeps saying "Not signed in" under usage** although its sign-in tab
+   ended with "Login successful" and the account's header line says "Signed in to the CLI". The text
+   comes from `usage_ui.rs` `state` (`Error::NoFile | Error::NotLoggedIn`, or no reading with
+   `signed_in == Some(false)`). To find out: whether the usage attempt made before the sign-in is kept
+   and never retried when the sign-in tab ends, whether Refresh is disabled in that state (it looks
+   greyed in the owner's screenshot), and whether the new selective credential reader (W06) refuses
+   what a fresh login writes.
+2. **"Open Desktop as this account" answers "The Claude desktop app was not found on this computer"**
+   (`Refusal::NoDesktopApp` from `core/launch.rs` `desktop_exe()`), on a PC where the desktop app is
+   installed and the first account shows "Desktop app used". To find out: where the installed app
+   really is (per-user installer, Store/MSIX package) against what `desktop_exe()` looks for, and
+   whether the native-executable rule of the review rounds narrowed the search.
+3. **Settings should be split into proper categories** (a category list with one page each) instead
+   of one long scrolling list.
+4. Seen in the same screenshot, not reported: the "This week by app" rows (Claude Code, Chats,
+   Cowork, Other) show no figures; the Refresh buttons are cut off at the dialog's right edge; the
+   first account shows no Session row while the second does.
