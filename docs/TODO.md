@@ -328,6 +328,15 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
       unless a fork can start from the handover text alone. The old chat stays open, marked handed
       over.
     Docs checked 2026-11-26: env-vars, hooks (PreCompact can block but not replace), statusline.
+    Changed (owner, 2026-11-27): the handover continues IN PLACE by default, in the same tab and CLI process: at an
+    idle prompt, through the Chat view's gate, Switch sends `/clear`, waits for the CLI's new session id (item 36's
+    following), then sends the handover text as the first message; the new transcript is linked to the old one as
+    its continuation (thread), and the old one is marked handed over. The same applies to the manual handover
+    (dialog, `/switch-compact`). Settings › Handover makes Switch's compaction configurable: where it continues
+    (this tab / a new tab), the summarizer, the focus text default, the agent for a new tab, and the automatic
+    trigger (Off / Ask first / Automatic, threshold). Option kept as an idea only, not to build: write Switch's
+    summary into the transcript as a compaction record so the session id stays; undocumented format, may be
+    rejected or misread by the CLI, and against the rule that the app never edits a transcript.
 26. **The conversation cannot be copied: no right-click menu, Ctrl+C does nothing** (owner,
     2026-11-26), in the Chat view's conversation (and the Session view). Expected: select text with
     the mouse across messages, Ctrl+C copies, right-click gives Copy, Select all and, on a message,
