@@ -353,3 +353,11 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     applies and Escape cancels, and clicking outside either applies (with the value visible) or is
     clearly a cancel; whichever, consistent with the toolkit's other popups. Report to the toolkit
     session; the app takes the fix through the pin.
+    Toolkit status (toolkit session, 2026-11-26): TextField mouse selection and its menu are PR #55
+    (`textfield::Pointer`, `FieldHit::cursor`, `TextField::context_menu`/`apply_context_action`,
+    `selection_for_export`, `clicks::ClickCounter`); the colour picker fix (item 31) is in work on
+    fix/colour-picker-confirm. Already on the toolkit's main at 137121c: `theme::Palette`, `tokens`
+    (high contrast), `appearance` schemes (dark, light, warm, cool) for item 28, and
+    `anim::PageTransition` plus `settings::pages::Form`'s `draw_animated` for item 29. No terminal
+    colour schemes yet (toolkit roadmap T7). CS1's review fixes are fbfc5ee (safe to move the pin,
+    page fades over the translucent terminal included).
