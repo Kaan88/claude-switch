@@ -328,6 +328,15 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
       unless a fork can start from the handover text alone. The old chat stays open, marked handed
       over.
     Docs checked 2026-11-26: env-vars, hooks (PreCompact can block but not replace), statusline.
+    Changed (owner, 2026-11-27): the handover continues IN PLACE by default, in the same tab and CLI process: at an
+    idle prompt, through the Chat view's gate, Switch sends `/clear`, waits for the CLI's new session id (item 36's
+    following), then sends the handover text as the first message; the new transcript is linked to the old one as
+    its continuation (thread), and the old one is marked handed over. The same applies to the manual handover
+    (dialog, `/switch-compact`). Settings › Handover makes Switch's compaction configurable: where it continues
+    (this tab / a new tab), the summarizer, the focus text default, the agent for a new tab, and the automatic
+    trigger (Off / Ask first / Automatic, threshold). Option kept as an idea only, not to build: write Switch's
+    summary into the transcript as a compaction record so the session id stays; undocumented format, may be
+    rejected or misread by the CLI, and against the rule that the app never edits a transcript.
 26. **The conversation cannot be copied: no right-click menu, Ctrl+C does nothing** (owner,
     2026-11-26), in the Chat view's conversation (and the Session view). Expected: select text with
     the mouse across messages, Ctrl+C copies, right-click gives Copy, Select all and, on a message,
@@ -464,3 +473,118 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     (`compact_open.rs` `open_handover_tab`); a new window only when Switch is not running, and then the Switch window,
     not a bare console. Find what `--open` launches today (`compact_cli.rs`, `compact_runner.rs`, `run.rs`
     `CREATE_NEW_CONSOLE`) and how a second process can hand the request to the running one.
+41. **"Could not save session marks: marks.json changed on disk. Restart before saving marks."** (owner, 2026-11-27,
+    screenshot). Cause seen: two Claude Switch processes ran at once, the owner's window and the one
+    `compact --open` started (`--compact-open-window`, item 40); each holds its own copy of the marks and the second
+    save is refused (`crates/core/src/marks.rs` `save`). Item 40 removes the usual cause; also make the save hold
+    with two writers: under the existing lock, re-read the file and apply only this process's own changes (per
+    session and field) onto it, refusing only a true conflict (both changed the same field) with a plain message; never
+    ask for a restart. Same check for settings (`config.rs`: "Settings changed on disk").
+42. **Answer permission prompts in the Chat view** (owner, 2026-11-27, decided: "give that up, otherwise all I see is
+    that chat has stopped. convenience trumps"). This replaces DESIGN.md's rule that permission prompts are answered
+    only in the terminal. Wanted: when the CLI asks to allow a tool (edit, bash, MCP, web fetch, plan approval and
+    the like), the Chat view shows a card with the tool call from the transcript (command, file and diff, MCP tool
+    and arguments) and the exact choices the CLI offers (Yes / Yes and don't ask again for ... / No, with the text
+    field for telling Claude what to do instead), and the working line says "Waiting for your approval" instead of
+    Working. Safety kept where it costs nothing: the card's choices come from the screen's own menu; a click sends
+    keys only while the screen shows that same prompt for that same tool call (fail closed and say why, never a
+    blind keystroke); the app never answers by itself, and nothing is pre-selected. Built on item 38's question
+    card. Update DESIGN.md's rule with the owner's reason.
+43. **The composer's Context and Effort chips are stale or empty** (owner, 2026-11-27, screenshot: "Effort —",
+    "Context 275k" after a /compact, with "could not be verified" beside them, item 36).
+    - Context: the figure comes from the last assistant turn's usage, so after a compaction it keeps the
+      pre-compaction size until the next answer. On the transcript's compaction record (`compact_boundary`, with
+      `compactMetadata.preTokens`; check the real shape in a transcript, read-only) show the size as unknown
+      ("Context — after compact") or an estimate from the summary, and take the real figure from the next turn.
+      Same in the Session view and wherever "Context now" shows. Also check that /compact in a tab does not change
+      the session id (if it does, item 36 covers following it).
+    - Effort: the chip only learns the level from an `/effort` reply in this session (`submission/report.rs`
+      `reported_effort`), so a fresh session shows "—". Show the level the session started with, from the same
+      sources the CLI uses, in its order (the `--effort` flag the tab was started with, `CLAUDE_CODE_EFFORT_LEVEL`
+      or the like in the tab's environment, `effortLevel` in the account's and project's settings, else the model's
+      default, marked as default); check the names in Claude Code's docs. Read-only, never written.
+    - Seen 2026-11-27: `/effort` typed in the terminal ("Set effort level to medium (saved as your default for new
+      sessions)") left the chip at "—". Cause in code: `observe_cli` reads reports only from the screen and only
+      while `tracking`, which `CliReport::begin` turns on just for a command the Chat view itself sent; a command
+      typed in the terminal is never read. The transcript holds the reply as a `<local-command-stdout>` record: read
+      the newest "Set effort level to …" and "Set model to …" from the transcript, whoever typed the command, and
+      keep the screen reading only for the chip's own confirmation.
+
+Audit 2026-11-27 (read-only, cc-opus): what still sends the user to the terminal. Owner's rule for all of these: the Chat view must cover everything the CLI does; convenience over the old terminal-only rules (item 42). Each keeps the one safeguard: keys are sent only while the screen shows the matching prompt or menu, the choice is picked by its row text, and anything unexpected fails closed with a reason and an Open terminal button.
+
+Additions to item 42 from the audit: fail closed for two pending tools at once, a background-subagent prompt, or rows
+    that differ from the pending `tool_use` input; keep the dangerous-`rm` 2-minute countdown visible; the Tab comment
+    field; find out whether number keys or arrows+Enter select. `attention.rs` already recognises the prompt layout.
+44. **Plan approval card**: the ExitPlanMode plan from the transcript as Markdown with the CLI's options as buttons,
+    under item 42's gate; an option is offered only when the screen shows it.
+45. **Permission mode chip**: show the mode (footer `⏸ plan mode on`, `⏵⏵ accept edits on`, or a transcript field if
+    one exists); a click sends one Shift+Tab (`CSI Z`) at a verified idle empty prompt, the next only after the
+    indicator changed; unreadable indicator stops.
+46. **Keep line breaks in messages**: today the send turns line feeds and tabs into spaces. Paste with line feeds in
+    the bracketed paste and press Enter only after the input row shows the text or its `[Pasted text #n +N lines]`
+    marker, as the picture send does.
+47. **Command results and shell mode in the conversation**: `<local-command-stdout>` and `<bash-input>`/`<bash-stdout>`
+    records as mono cards under their command (filtered out today, `prompt_clean.rs`); interactive panels get a
+    card; a `!` toggle in the composer once shell mode by paste is verified.
+48. **CLI menus and dialogs as cards**: any menu, picker or startup dialog the CLI shows (the native /model and
+    /effort pickers, /config, /permissions, /mcp, folder trust, the fullscreen offer, settings errors, MCP sign-in
+    and elicitation, the rate-limit menu) is copied from the screen into a card with its rows as buttons, answered
+    under item 42's gate; a menu Switch cannot read shows its rows read-only with Open terminal. Replaces the
+    DESIGN.md rule that menus stay in the drawer.
+49. **Rewind from a prompt bubble**: "Rewind to here…" on user bubbles; Esc Esc at a verified empty prompt, Up until
+    the highlighted row equals the chosen prompt, the action chosen by its row text, every step re-verified; build
+    after 42 and 48 have proven the gate.
+50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
+    blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
+    records (catalogue the subtypes the current CLI writes first).
+51. **TaskCreate/TaskUpdate in the Tasks tab** beside TodoWrite, reusing `handover/native_tasks.rs`.
+52. **Composer conveniences**: `@` file autocomplete over the session folder; Ctrl+R search over earlier prompts; the
+    CLI's grey next-prompt suggestion as a chip that fills the composer (never sends Tab).
+53. **Background controls**: "Run in background" on a running Bash row (Ctrl+B, only while the CLI shows its hint and
+    that tool alone is pending); "Stop agent" through the CLI's agent panel under the same rules.
+54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
+    prompt goes through item 42/48's gate.
+55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·
+    ↓ 1.1k tokens)"). The CLI's spinner glyphs (· ✢ ✳ ✶ ✻ ✽) have different widths in the interface font, so the
+    word after them moves with each frame; the counters (seconds, tokens) shift the rest too. Draw the glyph in a
+    fixed-width slot (the widest glyph of the set, centred) and start the text at a fixed x; use tabular figures, or a
+    fixed slot per counter, so changing digits do not move what follows (`view/working.rs`, and the Session view's
+    copy of the line).
+56. **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
+    later item. not now."). Today search is literal text and Related is word overlap (DESIGN.md, Session
+    organization). Wanted: a search that finds a session by what it was about ("where we fixed push"), questions
+    about past sessions, and grouping by meaning across projects. Done by a model the owner picks in Settings, the
+    same way as the handover's summarizer (an OpenCode worker/model or the Claude CLI), opt-in, sending only the
+    excerpts "Suggest names" already sends, with a confirmation before a run that sends anything. An on-device
+    embedding model was the alternative offered; not chosen. Not started.
+57. **Better handovers: a fitting focus chosen by itself, and a sharper fixed format** (owner, 2026-11-27, from a
+    cc-fable review of six real handovers: sections cut mid-word at 800 characters, "Standing instructions" turned
+    into a to-do list, a permission guessed ("presumably approved"), job and session ids missing, space spent on
+    finished history, the focus echoed back, rarely who decided).
+    - Focus chosen by itself, not presets (owner): Switch picks the focus that fits the session from the transcript,
+      locally and without a model: a coordination session (most tool calls hand work to workers or agents, few
+      edits of its own), non-code work (no edits of code files; e.g. subtitle or CAD tools and files), else the
+      default. The dialog shows which kind was picked and the text, editable; the user's own focus text replaces it;
+      Settings › Handover lets each of the three texts be edited and reset. The three texts, verbatim:
+      - Default: "The reader continues this work unattended and remembers nothing. Put the newest first, so anything cut off is the oldest; leave out finished history. stands: each background job, worker or review still running or unread, with its job/session id, worktree, branch and last commit; uncommitted or unpushed work; where a merge stopped. decisions: who decided (user or assistant) and why; mark them settled. instructions: only rules still in force, in their latest form; no next steps; never assume a permission was given. open: promised follow-ups with their trigger; recorded requests not yet done, by number. Do not restate this focus."
+      - Coordination: "This session coordinates workers and writes no code itself. stands: one line per worker or job: id, model, worktree, branch, brief file, state (running, finished unread, reviewed, merged) and what was promised when it reports; the merge order and where it stopped. instructions: which model does which kind of work, as last set, and other rules still in force. Leave out what the workers changed in the code. Newest first. Do not restate this focus."
+      - Non-code: "No code here. stands: the file or job in hand, how far it got (episode, line, part), what was applied and what was only proposed. decisions: terminology, style and guideline choices with their reason, so they stay consistent. instructions: rules still in force, such as what may be edited and what is read-only. open: checks and corrections still owed. Newest first. Do not restate this focus."
+    - Fixed prompt and sections (`crates/core/src/compact.rs`): a seventh field "In flight and promised" (jobs,
+      workers, reviews with id, worktree, branch, state; "when X reports, do Y"); "instructions" defined as rules
+      only; the cut at about 1,500 characters on a line boundary with a visible `[cut]` (still asking for 800); tell
+      the summarizer it sees assistant text only and the user's prompts are appended, and never to infer that a
+      permission was given or a rule lifted; when partial summaries conflict the later wins and items a later part
+      shows done are dropped; Files leaves out temp and scratchpad paths and keeps about the 30 most recent; the
+      task list is marked as possibly stale.
+58. **Pictures in the conversation as thumbnails, as in Claude Desktop** (owner, 2026-11-27, screenshot: a tool
+    result's picture shows only as a bar "Picture · Tool result picture 1"). Show every picture in the conversation
+    (the user's pasted pictures, pictures in tool results such as screenshots and Read of an image) as an inline
+    thumbnail at a bounded size (about 240 px on the long side, aspect kept), decoded off the window thread and
+    cached, with the label as its caption; a click opens it enlarged (the existing viewer). Same in the Session
+    view. Keep a placeholder with the reason when a picture cannot be decoded or is over the size limit.
+    Other embeds (owner: "make it clear what other embeds are"): every non-text item in the conversation says what
+    it is at a glance, with an icon and a plain kind label instead of a generic bar: PDF or document (name, pages
+    if known, Open), file attachment (name, size, Open / Show in folder), link or artifact (title and host, Open),
+    pull request (repo and number), saved output file, Markdown file (opens the side panel), audio or other binary
+    (kind and size). Where a cheap preview exists (a picture, the first page of a PDF if the toolkit can render it),
+    show it as the thumbnail; otherwise the icon. The Details panel's Outputs uses the same labels.
