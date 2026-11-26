@@ -44,13 +44,14 @@ impl AppState {
     pub fn draw_chat(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect, pal: &Palette) {
         let account = self.tabs.shown().and_then(|t| t.account.as_deref()).map(|slug| self.account_name(slug));
         let hover = self.hover;
+        let mouse = self.background_pointer();
         let focused = cx.focused() && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return };
         let chat = &mut pane.chat;
         let l = chat.layout;
         let now = cx.now();
         let motion = cx.anim().animates();
-        pane.ui.draw(p, pal, l.conversation, &mut pane.model, self.mouse, now, motion);
+        pane.ui.draw(p, pal, l.conversation, &mut pane.model, mouse, now, motion);
         if pane.ui.animating() && motion {
             cx.animating(l.conversation);
         }

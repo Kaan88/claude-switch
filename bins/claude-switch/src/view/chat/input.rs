@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use claude_switch_core::transcript::ItemKind;
-use mdshared_ui::cursor::Cursor;
 use mdshared_ui::host::{Cx, KeyPress};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::platform;
@@ -197,20 +196,18 @@ impl AppState {
         }
     }
 
-    pub fn chat_move(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> Option<bool> {
+    pub fn chat_move(&mut self, x: f32, y: f32) -> Option<bool> {
         if !self.chat_active() || self.picture_overlay() || !self.nothing_over() {
             return None;
         }
         let chat = &mut self.tabs.shown_mut()?.pane.as_mut()?.chat;
         if chat.resize_drawer(y) {
-            cx.set_cursor(Cursor::ResizeNs);
             return Some(true);
         }
         if chat.editor_drag {
             let at = chat.editor_at(x, y);
             let changed = at != chat.editor.caret;
             chat.editor.move_to(at, true);
-            cx.set_cursor(Cursor::Text);
             return Some(changed);
         }
         None

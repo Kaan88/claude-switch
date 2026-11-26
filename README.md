@@ -72,6 +72,10 @@ Right-click a session and choose **Compact and open…**, or use the command pal
 pane’s **Open as…** menu. Pick a model from OpenCode and the account to start Claude Code as.
 After the first-use consent for that provider, review and edit the handover before starting the new
 session. The character/token estimate updates as you edit. You can also copy or export it as Markdown.
+The editor's **Agent** picker starts at **Default (Claude)**, with no `--agent` override.
+Choose a custom CLI agent from the target account, the project, or supported installed plugins
+before selecting **Open in CLI**. Changing the target account resets the choice.
+There is no supported agent option for starting a handover in Desktop.
 The original transcript is read-only. The details pane’s **Handovers** button lists up to 20 local
 copies per session; the new session’s row says **From** followed by the old name.
 
@@ -182,7 +186,8 @@ selected account takes its place. Without a default, **Open** uses the session�
 Choose **Archive older sessions…** from the Sessions list’s **Archive** menu or the command
 palette. Pick 2, 4, 8, or 12 weeks and optionally one folder. The preview shows the number of
 sessions and their transcript size. Right-click a session or folder for a targeted archive.
-Pinned and running sessions are skipped. Archived sessions stay on disk and still appear in
+Pinned and running sessions are skipped. The session menu shows the reason; folder archive
+can still preview other eligible sessions. Archived sessions stay on disk and still appear in
 search, labelled **Archived**. Use the **Archived** chip to browse them, and the Archive menu
 to unarchive a selection or all. **Hide** remains a separate local mark.
 

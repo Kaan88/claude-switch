@@ -12,6 +12,22 @@ pub struct NewHandover {
     pub parent: String,
 }
 
+impl NewHandover {
+    pub fn with_agent(mut self, agent: Option<&str>) -> Result<Self, String> {
+        add_agent(&mut self.launch.args, agent)?;
+        Ok(self)
+    }
+}
+
+fn add_agent(args: &mut Vec<String>, agent: Option<&str>) -> Result<(), String> {
+    if let Some(agent) = agent {
+        let [flag, name] = launch::session_agent_args(agent).map_err(|e| e.to_string())?;
+        let boundary = args.iter().position(|arg| arg == "--").ok_or("Missing first-prompt argument boundary.")?;
+        args.splice(boundary..boundary, [flag.into(), name.into()]);
+    }
+    Ok(())
+}
+
 pub fn validate_prompt(text: &str) -> Result<(), String> {
     if text.trim().is_empty() || text.trim_start().starts_with(['/', '!']) {
         return Err("The first prompt must be nonempty text, not a slash or shell command.".into());
@@ -143,6 +159,21 @@ mod tests {
 
     mod fixture {
         include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../crates/opencode/tests/support/mod.rs"));
+    }
+
+    #[test]
+    fn agent_is_one_option_before_the_literal_prompt_and_default_adds_nothing() {
+        let saved = Path::new("unused.md");
+        let first = "Review this text with --agent embedded";
+        let mut args = first_args("new-id", first, saved).unwrap();
+        add_agent(&mut args, None).unwrap();
+        assert_eq!(args, ["--session-id", "new-id", "--", first]);
+        for invalid in ["--help", "notes:--bad", "two words", "bad\0name", "", "notes::review"] {
+            assert!(add_agent(&mut args, Some(invalid)).is_err(), "{invalid:?}");
+            assert_eq!(args, ["--session-id", "new-id", "--", first]);
+        }
+        add_agent(&mut args, Some("plugin:core:review")).unwrap();
+        assert_eq!(args, ["--session-id", "new-id", "--agent", "plugin:core:review", "--", first]);
     }
 
     #[test]

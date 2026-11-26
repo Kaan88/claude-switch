@@ -543,11 +543,7 @@ impl AppState {
             Item::new(PIN, pin).hint("Ctrl+D").enabled(!self.is_archived(s)),
             Item::new(HIDE, hide).hint("Delete"),
             Item::new(HIDE_FOLDER, folder).enabled(!s.cwd.as_os_str().is_empty()),
-            if self.is_archived(s) {
-                Item::new(UNARCHIVE_ROW, "Unarchive session")
-            } else {
-                Item::new(ARCHIVE_ROW, "Archive session…").enabled(self.can_archive(s))
-            },
+            archive_row_item(self.is_archived(s), self.row_flags(s)),
             Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(COPY_ID, "Copy session id").sep(),
             Item::new(COPY_PATH, "Copy folder path").enabled(!s.cwd.as_os_str().is_empty()),
@@ -599,6 +595,21 @@ pub fn open_warning(carry: Option<&str>, desktop_lists_it: bool) -> Option<Strin
         (None, true) => Some(DESKTOP_WARNING.to_string()),
         (None, false) => None,
     }
+}
+
+fn archive_row_item(archived: bool, flags: crate::list::model::Flags) -> Item<u32> {
+    if archived {
+        return Item::new(UNARCHIVE_ROW, "Unarchive session");
+    }
+    let hint = match (flags.pinned, flags.running) {
+        (false, false) => "",
+        (true, false) => "Pinned",
+        (false, true) => "Running",
+        (true, true) => "Pinned and running",
+    };
+    Item::new(ARCHIVE_ROW, "Archive session…")
+        .enabled(claude_switch_core::archive::eligible(flags.pinned, flags.running, archived))
+        .hint(hint)
 }
 
 #[cfg(test)]

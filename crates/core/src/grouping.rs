@@ -4,7 +4,7 @@ use crate::sessions::{folder_key, folder_name};
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-mod local;
+pub mod local;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
