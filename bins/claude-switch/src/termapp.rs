@@ -95,6 +95,7 @@ impl AppState {
         let before = self.tabs.active;
         let id = self.tabs.open(new, t);
         self.report_switch(before);
+        self.see_shown();
         Ok(id)
     }
 
@@ -126,6 +127,10 @@ impl AppState {
         let before = self.tabs.active;
         if self.tabs.activate(id) {
             self.report_switch(before);
+            self.see_shown();
+            if !self.terminal_shown() {
+                self.rebuild_view();
+            }
         }
     }
 
@@ -133,6 +138,10 @@ impl AppState {
         let before = self.tabs.active;
         self.tabs.step(forward);
         self.report_switch(before);
+        self.see_shown();
+        if !self.terminal_shown() {
+            self.rebuild_view();
+        }
     }
 
     /// Closes a tab, asking first while its program runs.
@@ -165,6 +174,8 @@ impl AppState {
         } else {
             self.tabs.close(id);
         }
+        self.see_shown();
+        self.rebuild_view();
     }
 
     /// The window is asked to close: true when it can at once; otherwise the question is open.
@@ -499,6 +510,10 @@ impl AppState {
         }
         if w.strip {
             cx.request_redraw(crate::tabs::strip_rect(TITLE_H, cx.size().0));
+            if !self.terminal_shown() {
+                self.rebuild_view();
+                cx.request_redraw(self.list_area);
+            }
         }
     }
 

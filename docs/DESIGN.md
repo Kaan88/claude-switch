@@ -185,10 +185,11 @@ following. Earlier history is loaded on request. Consecutive tools collapse toge
 opens its own transcript. The reported agent state comes from the transcript sidecar, so a missing
 completion flag is shown as unknown rather than guessed.
 
-Conversation uses the toolkit's `Painter::rich_text` for selectable, wrapped headings, emphasis,
-bullets, quotes, code and links. It is a Markdown subset, not a web renderer: no inline HTML, remote
-images or tables. Local file links are resolved on click; only recognized document, source and
-media types open in their default applications. Ctrl+click reveals any recognized existing file.
+Conversation renders each assistant answer with mdview-preview's headless Markdown renderer.
+Row heights are cached by answer and width; only visible slices are rasterized. Selection and
+HTTP(S) links use the pane's existing input handling. Markdown images and optional engine jobs
+are disabled; transcript attachments still use the picture pipeline. Prompts and tool lines
+keep the toolkit's selectable text and local file links (Ctrl+click reveals an existing file).
 
 Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
 picture work run off the window thread; worker results wake the window rather than making it redraw
@@ -226,3 +227,42 @@ Tab marks, hover, menu entrances, the dialog dimmer, sessions-list selection and
 animate briefly. Reduce motion snaps them to their targets, as does the system setting. Tab content
 switches instantly; terminal text never cross-fades. Real-mode running-session scans are unchanged,
 but a polling tick no longer redraws the window unless visible state changes.
+
+## Recent sessions and local marks
+
+Recent is the default. It sorts sessions across folders by activity, newest first, with local
+calendar headings: Today, Yesterday, This week (Monday onward), Earlier this month and Older.
+It uses the current local offset for the comparison; historical daylight-saving transitions
+are not resolved separately. Folders keeps folder grouping, and both modes put pins first.
+Only the visible rows and sticky heading are drawn. Mode and Show hidden are config preferences.
+
+Rows show the latest `last-prompt` record (`lastPrompt`) or real user message found in the
+bounded transcript tail. Search and the quick switcher match the local name, original title,
+last prompt and folder; the switcher orders by fuzzy match quality, then recency. Opening from
+it uses the existing resume checks, and Ctrl+Enter opens the other-account menu.
+
+The Waiting filter is a hint, not a process signal. A live session is waiting if its newest
+meaningful record is an assistant end-of-turn message, or assistant text without an explicit
+stop reason or tool call. A tool call, a tool result or a newer user prompt is not waiting.
+Sidechains, metadata and summaries do not count. The heuristic can mistake streamed assistant
+text for a finished turn, cannot detect approvals or stalls before a line is written, and can
+miss turns whose meaningful records are beyond the bounded tail. Running sessions and the
+selected transcript are checked for changes in the background; Refresh and returning focus
+also rescan the index.
+
+Local names, pins, per-session and per-folder hiding, and last-seen transcript timestamps live
+in `marks.json` beside `config.json`. The file is replaced atomically, with unknown keys kept;
+the app leaves a damaged marks file alone. Showing details or a tab clears Unseen for its
+known transcript version. Remembered session marks expire only after the transcript has been
+observed missing for at least 90 days. Hiding is reversible from Undo or Show hidden; it never
+deletes a folder or changes a transcript. A blank local name restores the transcript title.
+
+**Suggest names is opt-in.** It sends the first real prompt and up to the last three real prompts
+from each chosen session (at most 500 characters per prompt) to Claude and uses a little of
+the selected worker account's usage. The batch asks first, then takes at most 20 unnamed,
+non-hidden sessions from the last seven days. The CLI runs headlessly with Haiku, in an empty
+temporary folder, with session persistence disabled. Projects belonging to those temporary
+folders are never indexed, even with tool sessions shown. You can cancel a run; each suggestion
+must be accepted or edited before it is stored locally.
+This is the additional process the core can start. For naming, the worker-account setting
+uses the app's current account for Same, the next account for Other, or the configured account.

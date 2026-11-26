@@ -32,6 +32,16 @@ pub const CLOSE_TAB: u32 = 16;
 pub const OPEN_COPY: u32 = 17;
 pub const SESSION_VIEW: u32 = 18;
 pub const PASTE: u32 = 19;
+pub const SWITCHER: u32 = 20;
+const RENAME: u32 = 21;
+const PIN: u32 = 22;
+const SUGGEST: u32 = 23;
+const SUGGEST_BATCH: u32 = 24;
+pub const HIDE: u32 = 25;
+const HIDE_FOLDER: u32 = 26;
+const COPY_ID: u32 = 27;
+const COPY_PATH: u32 = 28;
+const REVEAL: u32 = 29;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -57,6 +67,11 @@ pub const COMMANDS: &[Command] = &[
     Command::new(REFRESH, "view.refresh", "Refresh").keys("F5"),
     Command::new(FIND, "view.find", "Search sessions").keys("Ctrl+F"),
     Command::new(PALETTE, "view.palette", "Command palette").keys("Ctrl+K"),
+    Command::new(SWITCHER, "session.switch", "Quick switcher").keys("Ctrl+P"),
+    Command::new(RENAME, "session.rename", "Rename session").keys("F2"),
+    Command::new(PIN, "session.pin", "Pin / unpin session").keys("Ctrl+D"),
+    Command::new(SUGGEST, "session.suggest", "Suggest names for the selected session"),
+    Command::new(SUGGEST_BATCH, "session.suggest_recent", "Suggest names for all unnamed recent sessions"),
     Command::new(ACCOUNTS, "app.accounts", "Accounts…"),
     Command::new(SETTINGS, "app.settings", "Settings…"),
     Command::new(ABOUT, "app.about", "About"),
@@ -73,6 +88,18 @@ impl AppState {
             SETTINGS => self.dialog = Some(dialogs::settings(self)),
             ABOUT => self.dialog = Some(Dialog::About),
             PALETTE => self.open_palette(),
+            SWITCHER => self.quick_switcher(),
+            RENAME => self.ask_rename_session(),
+            SUGGEST | SUGGEST_BATCH => self.ask_naming(id == SUGGEST_BATCH),
+            HIDE_FOLDER if let Some(key) = self.context_folder.take() => self.toggle_group_hidden(now, key),
+            HIDE | HIDE_FOLDER => self.toggle_hidden(now, id == HIDE_FOLDER),
+            PIN => {
+                if let Some(&i) = self.selected.as_ref().and_then(|id| self.by_id.get(id)) {
+                    self.toggle_pin(i);
+                    self.reveal_selected();
+                }
+            }
+            COPY_ID | COPY_PATH | REVEAL => self.session_file_action(now, id),
             SESSION_VIEW => self.toggle_session_view(),
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
@@ -214,7 +241,7 @@ impl AppState {
             Err(r) => self.error("Not opened", r.to_string()),
             Ok(l) => {
                 let name = self.account_name(account);
-                let done = format!("Opened a copy of \u{201c}{}\u{201d} as {name}", session.title);
+                let done = format!("Opened a copy of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
                 self.start(now, &l, None, Some(account), done);
             }
         }
@@ -228,13 +255,18 @@ impl AppState {
             return;
         }
         self.running = self.source.running(&self.config);
+        self.index_running();
+        self.rebuild_view();
         match self.source.resume(&self.config, &session, account, app, &self.running) {
             Err(r @ Refusal::AlreadyRunning(_)) => self.warn("Already open", r.to_string()),
             Err(r) => self.error("Not opened", r.to_string()),
             Ok(l) => {
                 let where_ = if app == App::Cli { "a terminal" } else { "the desktop app" };
-                let done =
-                    format!("Opened \u{201c}{}\u{201d} in {where_} as {}", session.title, self.account_name(account));
+                let done = format!(
+                    "Opened \u{201c}{}\u{201d} in {where_} as {}",
+                    self.title_of(&session),
+                    self.account_name(account)
+                );
                 self.start(now, &l, Some((id, account)), Some(account), done);
             }
         }
@@ -306,6 +338,7 @@ impl AppState {
     pub fn main_menu(&mut self, anchor: Rect) {
         let k = |id| self.keymap.hint(id);
         let items = vec![
+            Item::new(SWITCHER, "Quick switcher").hint(if self.terminal_shown() { "Ctrl+Shift+P" } else { "Ctrl+P" }),
             Item::new(ACCOUNTS, "Accounts…"),
             Item::new(SETTINGS, "Settings…"),
             Item::new(PALETTE, "Command palette").hint(k(PALETTE)).sep(),
@@ -328,11 +361,12 @@ impl AppState {
             entries.push(Entry::new(ACCOUNT_BASE + k as u32, format!("Switch to account {}", a.name)).group(1));
         }
         for (i, s) in self.sessions.iter().enumerate() {
-            if (s.archived && !self.config.show_archived) || (s.worker && !self.config.show_workers) {
+            if !self.listed(s) {
                 continue;
             }
             let folder = s.cwd.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
-            entries.push(Entry::new(SESSION_BASE + i as u32, format!("Open {}", s.title)).hint(folder).group(2));
+            entries
+                .push(Entry::new(SESSION_BASE + i as u32, format!("Open {}", self.title_of(s))).hint(folder).group(2));
         }
         let mut p = Palette::new();
         p.set_groups(vec![(0, "Commands".into()), (1, "Accounts".into()), (2, "Sessions".into())]);
@@ -340,6 +374,72 @@ impl AppState {
         p.set_placeholder("Type a command or a session");
         p.open("");
         self.palette = Some(p);
+    }
+
+    pub fn row_menu(&mut self, entry: usize, anchor: Rect) {
+        if let Some(mdshared_ui::sections::Entry::Heading(g)) = self.sections.entry(entry) {
+            if let Some(key) = self.groups[g].key.strip_prefix("folder:") {
+                let label = if self.marks.folder_hidden(key) { "Unhide folder" } else { "Hide folder" };
+                self.context_folder = Some(key.to_string());
+                self.menu = Some((
+                    MenuKind::Row,
+                    Menu::new(vec![Item::new(HIDE_FOLDER, label)], 0.0, 0.0, false).around(anchor),
+                ));
+            }
+            return;
+        }
+        let Some(i) = self.session_at(entry) else { return };
+        let id = self.sessions[i].id.clone();
+        self.context_folder = None;
+        self.select(&id);
+        let s = &self.sessions[i];
+        let pin = if self.marks.pinned(&id) { "Unpin" } else { "Pin" };
+        let hide = if self.marks.hidden(&id) { "Unhide session" } else { "Hide session" };
+        let folder = if self.marks.folder_hidden(&claude_switch_core::sessions::folder_key(&s.cwd)) {
+            "Unhide folder"
+        } else {
+            "Hide folder"
+        };
+        let items = vec![
+            Item::new(OPEN_CLI, "Open in CLI"),
+            Item::new(OPEN_DESKTOP, "Open in Desktop"),
+            Item::new(OPEN_AS, "Open as…"),
+            Item::new(OPEN_COPY, "Open a copy"),
+            Item::new(RENAME, "Rename").hint("F2").sep(),
+            Item::new(SUGGEST, "Suggest name"),
+            Item::new(PIN, pin).hint("Ctrl+D"),
+            Item::new(HIDE, hide).hint("Delete"),
+            Item::new(HIDE_FOLDER, folder).enabled(!s.cwd.as_os_str().is_empty()),
+            Item::new(COPY_ID, "Copy session id").sep(),
+            Item::new(COPY_PATH, "Copy folder path").enabled(!s.cwd.as_os_str().is_empty()),
+            Item::new(REVEAL, "Reveal transcript in Explorer"),
+        ];
+        self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(228.0)));
+    }
+
+    fn session_file_action(&mut self, now: Instant, action: u32) {
+        use mdshared_ui::platform::set_clipboard_text;
+        let Some(s) = self.selected_session() else { return };
+        match action {
+            COPY_ID => {
+                set_clipboard_text(&s.id);
+                self.toast("Session id copied".into(), now);
+            }
+            COPY_PATH => {
+                set_clipboard_text(&s.cwd.to_string_lossy());
+                self.toast("Folder path copied".into(), now);
+            }
+            REVEAL if self.source.is_demo() => self.toast("Demo: Explorer was not started".into(), now),
+            REVEAL => {
+                let path = s.file.clone();
+                if !path.is_file() {
+                    self.warn("Transcript not found", path.display().to_string());
+                } else if let Err(e) = std::process::Command::new("explorer.exe").arg("/select,").arg(path).spawn() {
+                    self.error("Could not open Explorer", e.to_string());
+                }
+            }
+            _ => {}
+        }
     }
 }
 

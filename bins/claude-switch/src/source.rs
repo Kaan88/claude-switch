@@ -2,10 +2,11 @@
 //! made-up data of `--demo` ([`crate::demo`]). Every call the window makes into the core goes
 //! through here, so the demo doesn't touch personal files. Its session-view fixture uses only temp.
 
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 
-use claude_switch_core::sessions::{self, Group, PreviewLine};
+use claude_switch_core::sessions::{self, PreviewLine};
 use claude_switch_core::share::{self, ShareState};
 use claude_switch_core::{
     Account, AccountStatus, App, Config, Launch, Refusal, Roots, Running, Session, accounts, config, launch, running,
@@ -26,6 +27,11 @@ pub struct Scan {
     pub sessions: Vec<Session>,
     pub running: Vec<Running>,
     pub statuses: Vec<(String, AccountStatus)>,
+}
+
+pub struct ActivityScan {
+    pub running: Vec<Running>,
+    pub updates: Vec<(String, u64, String, bool)>,
 }
 
 impl Source {
@@ -73,11 +79,28 @@ impl Source {
         }
     }
 
-    pub fn group(&self, list: &[Session]) -> Vec<Group> {
-        match self {
-            Source::Real(_) => sessions::group_by_folder(list),
-            Source::Demo => demo::group(list),
+    pub fn activity(
+        &self,
+        c: &Config,
+        files: HashMap<String, (PathBuf, u64)>,
+        mut watch: HashSet<String>,
+    ) -> ActivityScan {
+        let running = self.running(c);
+        let mut updates = Vec::new();
+        if !self.is_demo() {
+            watch.extend(running.iter().map(|r| r.session_id.clone()));
+            for id in watch {
+                let Some((file, previous)) = files.get(&id) else { continue };
+                let modified = claude_switch_core::modified_ms(file);
+                if modified != 0
+                    && modified != *previous
+                    && let Some((prompt, ended)) = sessions::row_activity(file)
+                {
+                    updates.push((id, modified, prompt, ended));
+                }
+            }
         }
+        ActivityScan { running, updates }
     }
 
     /// The last few messages. Runs on a worker thread.

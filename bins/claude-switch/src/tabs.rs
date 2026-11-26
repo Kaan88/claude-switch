@@ -180,7 +180,7 @@ pub fn draw(
     p: &mut Painter,
     pal: &Palette,
     anim: &mut Animator,
-    tabs: &Tabs,
+    (tabs, marks): (&Tabs, &claude_switch_core::marks::Marks),
     strip: Rect,
     look: &Look,
     hits: &mut Vec<(Rect, Target)>,
@@ -190,7 +190,15 @@ pub fn draw(
     p.fill(strip, pal.title);
     p.fill(Rect::new(0.0, strip.bottom() - p.px(), w, p.px()), pal.line);
     let mut labels: Vec<_> = vec![(SESSIONS, Cow::Borrowed("Sessions"), None, false)];
-    labels.extend(tabs.list.iter().map(|t| (t.id, t.title(), Some(t.color), t.term.ended.is_some())));
+    labels.extend(tabs.list.iter().map(|t| {
+        let ended = t.term.ended.is_some();
+        let title = match t.session.as_deref().and_then(|id| marks.name(id)) {
+            Some(name) if ended => format!("{name}{ENDED_SUFFIX}").into(),
+            Some(name) => Cow::Borrowed(name),
+            None => t.title(),
+        };
+        (t.id, title, Some(t.color), ended)
+    }));
     let natural: Vec<f32> = labels.iter().map(|(_, l, _, _)| chrome::tab_natural_width(p, l)).collect();
     let avail = (w - 2.0 * LEFT - if look.session_view.is_some() { 112.0 } else { 0.0 }).max(0.0);
     let widths = chrome::tab_widths(&natural, avail);

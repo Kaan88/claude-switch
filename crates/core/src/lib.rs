@@ -18,6 +18,8 @@ pub mod accounts;
 pub mod clock;
 pub mod config;
 pub mod launch;
+pub mod marks;
+pub mod naming;
 pub mod running;
 pub mod sessions;
 pub mod share;
@@ -116,6 +118,12 @@ pub struct Session {
     /// The best title there is: the custom title, else the generated one, else the desktop record's,
     /// else the first prompt cut to 80 characters, else the id's first eight characters.
     pub title: String,
+    /// The last recorded prompt, for display and search.
+    pub last_prompt: String,
+    /// The last meaningful transcript record appears to end an assistant turn.
+    pub turn_ended: bool,
+    /// Transcript modification time, independent of Desktop activity.
+    pub transcript_ms: u64,
     /// The working folder the session ran in. Empty when no line of the transcript named one.
     pub cwd: PathBuf,
     /// The git branch named by the newest line that has one.
@@ -253,6 +261,10 @@ pub struct Config {
     pub show_archived: bool,
     /// Show the sessions started by tools and subagents ([`Session::worker`]) in the list.
     pub show_workers: bool,
+    /// Show hidden sessions and folders.
+    pub show_hidden: bool,
+    /// Use the folder-grouped view instead of Recent.
+    pub folders_view: bool,
     /// Terminal colour scheme id; unknown ids are treated as automatic by the window.
     pub terminal_scheme: String,
     /// Terminal font size in logical pixels.

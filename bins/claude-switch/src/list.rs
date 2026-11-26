@@ -1,9 +1,10 @@
 //! The session list: folders as sticky headings, sessions as two-line rows, laid out by
 //! `sections::Sections` so only the rows in view are drawn. Also the relative times.
 
+pub mod model;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use claude_switch_core::App;
 use mdshared_ui::anim::{Animator, document};
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::glyph;
@@ -14,9 +15,7 @@ use mdshared_ui::sections::Entry;
 use mdshared_ui::tokens::legible;
 
 use crate::state::{AppState, Focus, Msg, Target};
-
-/// Sizes from this one up show beside the row.
-const LARGE: u64 = 1024 * 1024;
+use model::Filter;
 
 pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
@@ -43,39 +42,37 @@ pub fn ago_at(now_ms: u64, then_ms: u64, offset: i32) -> String {
     }
 }
 
-pub fn app_name(app: App) -> &'static str {
-    match app {
-        App::Cli => "CLI",
-        App::Desktop => "Desktop",
-    }
-}
-
 pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut Painter, area: Rect) {
     let pal = *st.pal();
     p.fill(area, pal.pane);
+    controls(st, p, area);
+    let area = Rect::new(area.x, area.y + 70.0, area.w, (area.h - 70.0).max(0.0));
     st.list_area = area;
+    st.list_scroll_track = None;
     st.sections.view = area.h;
     st.sections.scroll = st.sections.clamp_scroll(st.sections.scroll);
     st.hits.push((area, Target::ListBlank));
     if st.groups.is_empty() {
         let text = if !st.scanned {
             "Reading the sessions\u{2026}"
-        } else if st.search.is_empty() {
-            "No sessions were found on this computer."
+        } else if st.search.is_empty() && st.filter == Filter::All {
+            "No sessions to show."
         } else {
-            "No session matches the search."
+            "No sessions match this view."
         };
         p.text_center(Face::Ui, 13.0, Rect::new(area.x, area.y + 40.0, area.w, 24.0), text, pal.muted);
         return;
     }
     let old = p.clip(area);
     let now = now_ms();
-    let cursor = st.selected.clone().and_then(|id| st.entry_of(&id));
+    let offset = claude_switch_core::clock::local_offset_minutes();
+    let cursor = st.selected.as_ref().and_then(|id| st.entry_of(id));
+    let first_hit = st.hits.len();
     for i in st.sections.visible() {
         let r = st.sections.rect(area, i);
         match st.sections.entry(i) {
             Some(Entry::Heading(g)) => heading(st, p, r, g, i),
-            Some(Entry::Row { .. }) if row(st, cx.anim(), p, r, i, cursor == Some(i), now) => cx.animating(r),
+            Some(Entry::Row { .. }) if row(st, cx.anim(), p, r, i, cursor == Some(i), (now, offset)) => cx.animating(r),
             _ => {}
         }
     }
@@ -84,12 +81,88 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
     {
         heading(st, p, r, g, i);
     }
-    st.list_scroll_track = None;
+    for (r, _) in &mut st.hits[first_hit..] {
+        let bottom = r.bottom().min(area.bottom());
+        r.y = r.y.max(area.y);
+        r.h = (bottom - r.y).max(0.0);
+    }
     if let Some((track, thumb)) = st.sections.thumb(area) {
         draw_scrollbar(p, &pal, track, thumb, false);
         st.list_scroll_track = Some(track);
     }
     p.restore(old);
+}
+
+fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
+    let pal = *st.pal();
+    p.fill(Rect::new(r.x, r.y, r.w, 70.0), pal.bar);
+    let seg = Rect::new(r.x + 12.0, r.y + 8.0, 151.0, 28.0);
+    p.frame(seg, 7.0, pal.field, pal.line);
+    for (i, label) in ["Recent", "Folders"].into_iter().enumerate() {
+        let folders = i == 1;
+        let target = Target::ListMode(folders);
+        let selected = st.config.folders_view == folders;
+        let pill = Rect::new(seg.x + 2.0 + i as f32 * 74.0, seg.y + 2.0, 73.0, 24.0);
+        if selected || st.hover == Some(target) {
+            p.rbox(pill, 5.0, if selected { pal.on } else { pal.hover });
+        }
+        p.text_center(Face::Semibold, 12.0, pill, label, if selected { pal.text } else { pal.muted });
+        st.hits.push((pill, target));
+    }
+    let visible = if st.config.show_hidden { &Filter::ALL[..] } else { &Filter::ALL[..5] };
+    let gap = 4.0;
+    let widths: Vec<_> = visible.iter().map(|f| p.measure(Face::Semibold, 11.5, f.label()) + 14.0).collect();
+    let total = widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32;
+    let scale = ((r.w - 24.0) / total).clamp(0.0, 1.0);
+    let mut x = r.x + 12.0;
+    for (&filter, width) in visible.iter().zip(widths) {
+        let rect = Rect::new(x, r.y + 43.0, width * scale, 22.0);
+        let target = Target::ListFilter(filter);
+        let on = st.filter == filter;
+        p.frame(
+            rect,
+            10.0,
+            if on {
+                pal.on
+            } else if st.hover == Some(target) {
+                pal.hover
+            } else {
+                pal.bar
+            },
+            if on { pal.accent } else { pal.line },
+        );
+        p.text_center(Face::Semibold, 11.5, rect, filter.label(), if on { pal.text } else { pal.muted });
+        st.hits.push((rect, target));
+        x += (width + gap) * scale;
+    }
+    p.fill(Rect::new(r.x, r.y + 70.0 - p.px(), r.w, p.px()), pal.line);
+}
+
+pub fn draw_undo(st: &mut AppState, p: &mut Painter, window: Rect) {
+    let Some(undo) = &st.undo_hide else { return };
+    let pal = *st.pal();
+    let r = Rect::new(window.cx() - 111.0, window.bottom() - 54.0, 222.0, 38.0);
+    p.frame(r, 8.0, pal.bar, pal.line);
+    p.text(
+        Face::Ui,
+        13.0,
+        r.x + 13.0,
+        r.cy(),
+        if undo.folder { "Folder hidden" } else { "Session hidden" },
+        pal.text,
+        132.0,
+    );
+    let button = Rect::new(r.right() - 70.0, r.y + 5.0, 64.0, 28.0);
+    mdshared_ui::overlay::draw_dialog_button(
+        p,
+        &pal,
+        button,
+        "Undo",
+        false,
+        st.hover == Some(Target::UndoHide),
+        st.pressed == Some(Target::UndoHide),
+    );
+    st.hits.push((button, Target::UndoHide));
 }
 
 fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
@@ -104,7 +177,12 @@ fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
     let name_w = p.text(Face::Semibold, 12.5, r.x + 28.0, r.cy(), &vg.name, pal.text, r.w * 0.55);
     let count = vg.rows.len().to_string();
     p.text(Face::Ui, 12.0, r.x + 36.0 + name_w, r.cy(), &count, pal.muted, 60.0);
-    let path = vg.rows.first().and_then(|&r| st.sessions.get(r)).map(|s| s.cwd.display().to_string());
+    let path = vg
+        .key
+        .strip_prefix("folder:")
+        .and_then(|_| vg.rows.first())
+        .and_then(|&r| st.sessions.get(r))
+        .map(|s| s.cwd.display().to_string());
     if let Some(path) = path {
         let x = r.x + 52.0 + name_w + p.measure(Face::Ui, 12.0, &count);
         p.text(Face::Ui, 11.5, x, r.cy(), &path, pal.faint, (r.right() - 12.0 - x).max(0.0));
@@ -113,12 +191,20 @@ fn heading(st: &mut AppState, p: &mut Painter, r: Rect, g: usize, i: usize) {
     st.hits.push((r, Target::Entry(i)));
 }
 
-fn row(st: &mut AppState, anim: &mut Animator, p: &mut Painter, r: Rect, i: usize, selected: bool, now: u64) -> bool {
+fn row(
+    st: &mut AppState,
+    anim: &mut Animator,
+    p: &mut Painter,
+    r: Rect,
+    i: usize,
+    selected: bool,
+    clock: (u64, i32),
+) -> bool {
     let pal = *st.pal();
     let Some(si) = st.session_at(i) else { return false };
     let s = &st.sessions[si];
     let rr = Rect::new(r.x + 6.0, r.y + 1.0, r.w - 12.0, r.h - 2.0);
-    let hovered = st.hover == Some(Target::Entry(i));
+    let hovered = matches!(st.hover, Some(Target::Entry(e) | Target::Pin(e)) if e == i);
     let pressed = st.pressed == Some(Target::Entry(i));
     let moving = if st.high_contrast {
         draw_row_fill(p, &pal, rr, hovered, pressed, selected);
@@ -134,52 +220,66 @@ fn row(st: &mut AppState, anim: &mut Animator, p: &mut Painter, r: Rect, i: usiz
     if selected && st.key_used && st.focus == Focus::List {
         mdshared_ui::focus::draw_ring(p, &pal, rr, 5.0);
     }
-    // A session in a tab of this window runs here, whatever the files say yet.
-    let running = match st.tab_account(&s.id) {
-        Some(acct) => Some((acct, None)),
-        None => st.running_of(&s.id).map(|r| (r.account.clone(), Some(r.app))),
-    };
+    let flags = st.row_flags(s);
     let x = rr.x + 24.0;
-    let right = rr.right() - 12.0;
-    let line1 = rr.y + 16.0;
-    let line2 = rr.y + 34.0;
-    if let Some((acct, _)) = &running {
-        let c = st.account_color(acct);
+    let right = rr.right() - 10.0;
+    let line1 = rr.y + 13.0;
+    let line2 = rr.y + 31.0;
+    let line3 = rr.y + 48.0;
+    if flags.running || flags.unseen {
+        let c = st
+            .tab_account(&s.id)
+            .or_else(|| st.running_of(&s.id).map(|r| r.account.clone()))
+            .map_or(pal.accent, |acct| st.account_color(&acct));
         p.rbox(Rect::new(rr.x + 9.0, line1 - 4.0, 8.0, 8.0), 4.0, c);
     }
-    let when = ago(now, s.last_active_ms);
-    let ww = p.text_right(Face::Ui, 12.0, right, line1, &when, pal.muted);
+    let star = Rect::new(right - 23.0, line1 - 10.0, 24.0, 22.0);
+    let when = ago_at(clock.0, s.last_active_ms, clock.1);
+    let time_right = star.x - 5.0;
+    let ww = p.text_right(Face::Ui, 11.5, time_right, line1, &when, pal.muted);
     let title_c = if s.archived { pal.muted } else { pal.text };
-    p.text(Face::Ui, 13.0, x, line1, &s.title, title_c, right - ww - 12.0 - x);
-
-    // The second line: where it last ran, the branch, the size, and whether it runs now.
-    let badge = app_name(s.last_app);
-    let bw = p.measure(Face::Ui, 11.0, badge) + 12.0;
-    let b = Rect::new(x, line2 - 8.0, bw, 16.0);
-    p.frame(b, 4.0, if selected { pal.pane } else { pal.field }, pal.line);
-    p.text_center(Face::Ui, 11.0, b, badge, pal.muted);
-    let cx = b.right() + 8.0;
-    let mut tail = Vec::new();
-    if let Some(br) = &s.branch {
-        tail.push(br.clone());
+    p.text(Face::Semibold, 13.0, x, line1, st.title_of(s), title_c, (time_right - ww - 10.0 - x).max(0.0));
+    let prompt = if s.last_prompt.is_empty() { "No prompt in the transcript tail" } else { &s.last_prompt };
+    p.text(Face::Ui, 12.0, x, line2, prompt, pal.muted, right - x);
+    let mut states = Vec::new();
+    if flags.waiting {
+        states.push("Waiting for you");
+    } else if flags.running {
+        states.push("Running");
     }
-    if s.bytes >= LARGE {
-        tail.push(mdshared_app::fmt::size(s.bytes));
+    if flags.unseen {
+        states.push("Unseen");
     }
-    if s.archived {
-        tail.push("archived".into());
+    if flags.hidden {
+        states.push("Hidden");
     }
-    let mut run_w = 0.0;
-    if let Some((acct, app)) = &running {
-        let c = legible(st.account_color(acct), if selected { pal.on } else { pal.pane }, 4.5);
-        let place = app.map_or("this app", app_name);
-        let text = format!("running in {place} \u{b7} {}", st.account_name(acct));
-        run_w = p.text_right(Face::Semibold, 11.5, right, line2, &text, c) + 12.0;
-    }
-    if !tail.is_empty() {
-        p.text(Face::Ui, 12.0, cx, line2, &tail.join("  \u{b7}  "), pal.muted, (right - run_w - cx).max(0.0));
-    }
+    let fg = legible(pal.accent, if selected { pal.on } else { pal.pane }, 4.5);
+    let status = states.join("  ·  ");
+    let status_w =
+        if status.is_empty() { 0.0 } else { p.text_right(Face::Semibold, 11.0, right, line3, &status, fg) + 12.0 };
+    p.text(
+        Face::Ui,
+        11.0,
+        x,
+        line3,
+        &crate::session_marks::folder_label(s),
+        pal.muted,
+        (right - status_w - x).max(0.0),
+    );
     st.hits.push((r, Target::Entry(i)));
+    if hovered || flags.pinned {
+        if st.hover == Some(Target::Pin(i)) {
+            p.rbox(star, 5.0, pal.hover);
+        }
+        p.text_center(
+            Face::Ui,
+            16.0,
+            star,
+            if flags.pinned { "★" } else { "☆" },
+            if flags.pinned { fg } else { pal.muted },
+        );
+        st.hits.push((star, Target::Pin(i)));
+    }
     moving
 }
 

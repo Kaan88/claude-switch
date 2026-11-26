@@ -4,11 +4,8 @@
 
 use std::time::Instant;
 
-use claude_switch_core::config::{TERMINAL_FONT_MAX, TERMINAL_FONT_MIN};
+use claude_switch_core::App;
 use claude_switch_core::share::{LinkState, ShareState};
-use claude_switch_core::{App, WorkersUse};
-use mdshared_app::backdrop::Backdrop;
-use mdshared_ui::colour_picker::parse_hex;
 use mdshared_ui::gfx::{Face, Painter, Rect, Wrap};
 use mdshared_ui::host::Cx;
 use mdshared_ui::keys::{KeyName, Mods};
@@ -16,15 +13,17 @@ use mdshared_ui::overlay::{
     DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_backdrop_presence, draw_dialog_button,
     draw_dialog_card_with,
 };
-use mdshared_ui::settings::{Form, Outcome, Row, Style, Value};
+use mdshared_ui::settings::{Form, Style};
 use mdshared_ui::textfield::{FieldColors, TextField};
 use mdshared_ui::theme::Palette;
 
+use crate::session_panel::Panel;
 use crate::state::{AppState, Msg, Target};
-use crate::termtheme::{self, ACCENT_SOURCES, PRESETS, WINDOW_THEMES, preset_index};
 
 #[path = "newsession.rs"]
 mod newsession;
+mod settings;
+pub use settings::{settings, settings_outcome};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
@@ -37,24 +36,6 @@ const ACT_DESKTOP: u32 = 1;
 const ACT_RENAME: u32 = 2;
 const ACT_REMOVE: u32 = 3;
 const ACT_LINK: u32 = 4;
-
-const SET_WORKERS: u32 = 1;
-const SET_EMBEDDED: u32 = 2;
-const SET_ARCHIVED: u32 = 3;
-const SET_WORKERS_SHOWN: u32 = 4;
-const SET_THEME: u32 = 5;
-const SET_TERM_COLOURS: u32 = 6;
-const SET_TERM_FONT: u32 = 7;
-const SET_BACKDROP: u32 = 8;
-const SET_ACCENT: u32 = 9;
-const SET_ACCENT_COLOUR: u32 = 10;
-const SET_REDUCE_MOTION: u32 = 11;
-const SET_CORNERS: u32 = 12;
-const SET_SHADOWS: u32 = 13;
-const SET_CURSOR_BLINK: u32 = 14;
-const SET_TERM_BACKGROUND: u32 = 15;
-const SET_TERM_FOREGROUND: u32 = 16;
-const SET_TERM_ACCENT: u32 = 17;
 
 /// What a confirmation leads to.
 #[derive(Clone, Debug)]
@@ -76,6 +57,7 @@ pub enum Pending {
     CloseTab(u64),
     /// Close the window, with terminal tabs that run.
     Quit,
+    Suggest(Vec<String>),
 }
 
 impl Pending {
@@ -97,6 +79,7 @@ pub enum Dialog {
     Accounts { scroll: f32, shares: Vec<(String, Vec<ShareState>)> },
     Name { title: String, field: TextField, stops: Vec<f32>, then: NameFor, error: Option<String> },
     NewSession(Box<newsession::NewSession>),
+    Session(Box<Panel>),
     Settings(Box<Form>),
     About,
 }
@@ -105,81 +88,6 @@ pub fn accounts(st: &AppState) -> Dialog {
     let shares =
         st.config.accounts.iter().filter(|a| !a.primary).map(|a| (a.slug.clone(), st.source.share_status(a))).collect();
     Dialog::Accounts { scroll: 0.0, shares }
-}
-
-pub fn settings(st: &AppState) -> Dialog {
-    let mut options = vec!["Same account as the session".to_string(), "The other account".to_string()];
-    options.extend(st.config.accounts.iter().map(|a| format!("Always {}", a.name)));
-    let value = match &st.config.workers {
-        WorkersUse::Same => 0,
-        WorkersUse::Other => 1,
-        WorkersUse::Account(slug) => st.config.accounts.iter().position(|a| &a.slug == slug).map_or(0, |k| k + 2),
-    };
-    let refs: Vec<&str> = options.iter().map(String::as_str).collect();
-    let themes = WINDOW_THEMES.map(|(_, name)| name);
-    let theme = WINDOW_THEMES.iter().position(|(id, _)| *id == st.config.window_theme).unwrap_or(0);
-    let scheme_names: Vec<_> = PRESETS.iter().map(|preset| preset.name).collect();
-    let mut theme_row = Row::choice(SET_THEME, "Theme", &themes, theme);
-    if st.forced_dark.is_some() {
-        theme_row = theme_row.help("The --theme launch flag overrides this setting.");
-    }
-    let a = &st.config.appearance;
-    let auto = termtheme::scheme("auto", st.pal());
-    let accent = ACCENT_SOURCES.iter().position(|(id, _)| *id == a.accent_source).unwrap_or(1);
-    let accent_names = ACCENT_SOURCES.map(|(_, label)| label);
-    let colour = |id, label, saved: &Option<String>, fallback| {
-        Row::text(id, label, termtheme::swatch(saved.as_deref(), fallback))
-    };
-    let rows = vec![
-        Row::header("Appearance"),
-        theme_row,
-        Row::choice(
-            SET_BACKDROP,
-            Backdrop::TITLE,
-            &Backdrop::LABELS,
-            Backdrop::parse(&a.backdrop).unwrap_or_default().index(),
-        )
-        .help("Windows 11, for the title bar. Terminal text stays opaque."),
-        Row::choice(SET_ACCENT, "Accent source", &accent_names, accent),
-        colour(SET_ACCENT_COLOUR, "Window accent", &a.accent_colour, st.pal().accent)
-            .help("Used when Accent source is Custom."),
-        Row::toggle(SET_REDUCE_MOTION, "Reduce motion", a.reduce_motion)
-            .help("Windows’ reduced-motion preference also applies."),
-        Row::number(SET_CORNERS, "Dialog and menu corners", i32::from(a.corner_radius), 0, 16).unit("px"),
-        Row::toggle(SET_SHADOWS, "Soft shadows", a.soft_shadows),
-        Row::header("Terminal"),
-        Row::choice(SET_TERM_COLOURS, "Terminal colours", &scheme_names, preset_index(&st.config.terminal_scheme)),
-        Row::number(
-            SET_TERM_FONT,
-            "Terminal font size",
-            i32::from(st.config.terminal_font_size),
-            i32::from(TERMINAL_FONT_MIN),
-            i32::from(TERMINAL_FONT_MAX),
-        )
-        .unit("px"),
-        Row::toggle(SET_CURSOR_BLINK, "Blink terminal cursor", a.cursor_blink)
-            .help("Follows the program and system when enabled."),
-        Row::header("Custom colours"),
-        colour(SET_TERM_BACKGROUND, "Terminal background", &a.terminal_background, auto.background)
-            .help("Select Custom in Terminal colours."),
-        colour(SET_TERM_FOREGROUND, "Terminal text", &a.terminal_foreground, auto.foreground)
-            .help("Adjusted to at least 7:1 contrast."),
-        colour(SET_TERM_ACCENT, "Terminal accent", &a.terminal_accent, st.pal().accent)
-            .help("Tints the selection, cursor and active tab mark."),
-        Row::header("Workers"),
-        Row::choice(SET_WORKERS, "Account the bridge's workers use", &refs, value),
-        Row::header("Sessions"),
-        Row::toggle(SET_EMBEDDED, "Open CLI sessions in a tab of this window", st.config.embedded_terminal)
-            .help("Off: they open in Windows Terminal, or a console window without it."),
-        Row::toggle(SET_ARCHIVED, "Show archived sessions", st.config.show_archived),
-        Row::toggle(SET_WORKERS_SHOWN, "Show sessions started by tools", st.config.show_workers)
-            .help("Sessions that tools and subagents started through the SDK, not you."),
-    ];
-    let mut form = Form::new("Settings", rows);
-    for id in [SET_ACCENT_COLOUR, SET_TERM_BACKGROUND, SET_TERM_FOREGROUND, SET_TERM_ACCENT] {
-        form.show_as_colour(id);
-    }
-    Dialog::Settings(Box::new(form))
 }
 
 fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
@@ -191,17 +99,17 @@ fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
 
 // ---- drawing ---------------------------------------------------------------------------------
 
-struct Draw<'a> {
-    hits: &'a mut Vec<(Rect, Target)>,
-    hover: Option<Target>,
+pub(crate) struct Draw<'a> {
+    pub hits: &'a mut Vec<(Rect, Target)>,
+    pub hover: Option<Target>,
     pressed: Option<Target>,
-    pal: Palette,
+    pub pal: Palette,
     radius: f32,
     shadow: f32,
 }
 
 impl Draw<'_> {
-    fn card(&self, p: &mut Painter, r: Rect) -> Rect {
+    pub fn card(&self, p: &mut Painter, r: Rect) -> Rect {
         draw_dialog_card_with(p, &self.pal, r, self.radius, Some(self.shadow))
     }
 
@@ -212,7 +120,7 @@ impl Draw<'_> {
     }
 
     /// Footer buttons from the right, the first given rightmost.
-    fn footer(&mut self, p: &mut Painter, footer: Rect, buttons: &[(&str, bool, u32)]) {
+    pub fn footer(&mut self, p: &mut Painter, footer: Rect, buttons: &[(&str, bool, u32)]) {
         let y = footer.y + (DIALOG_FOOTER - 32.0) / 2.0;
         let mut right = footer.right() - DIALOG_PAD;
         for &(label, primary, id) in buttons {
@@ -222,7 +130,7 @@ impl Draw<'_> {
         }
     }
 
-    fn title(&self, p: &mut Painter, card: Rect, text: &str) {
+    pub fn title(&self, p: &mut Painter, card: Rect, text: &str) {
         p.text(
             Face::Semibold,
             16.0,
@@ -304,6 +212,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
             draw_accounts((&st.config, &st.statuses), &mut d, p, w, h, scroll, shares)
         }
         Dialog::NewSession(picker) => picker.draw(&mut d, p, w, h),
+        Dialog::Session(panel) => panel.draw(&mut d, p, window),
         Dialog::Settings(_) => {}
     }
     st.dialog = Some(dialog);
@@ -425,6 +334,7 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::Copy { id, account }) => st.copy_now(now, &id, &account),
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
             (OK, Pending::Quit) => st.quit = true,
+            (OK, Pending::Suggest(ids)) => st.start_naming(ids),
             (OK, Pending::Remove { slug }) => {
                 match st.source.remove(&mut st.config, &slug) {
                     Ok(()) => accounts_changed(st, now),
@@ -467,6 +377,7 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
                 st.dialog = Some(Dialog::NewSession(picker));
             }
         }
+        Dialog::Session(panel) => panel.click(st, now, id, x, false),
         d @ Dialog::Settings(_) => st.dialog = Some(d),
     }
 }
@@ -546,6 +457,17 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
             }
         }
         Dialog::NewSession(picker) => picker.key(k, mods, text),
+        Dialog::Session(panel) => {
+            let id = panel.key(st, k, mods, text);
+            if let Some(id) = id
+                && let Dialog::Session(panel) = dialog
+            {
+                panel.click(st, now, id, 0.0, mods.ctrl);
+            } else {
+                st.dialog = Some(dialog);
+            }
+            return true;
+        }
         _ => {}
     }
     st.dialog = Some(dialog);
@@ -563,6 +485,11 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
 }
 
 pub fn text_input(st: &mut AppState, text: &str) {
+    if let Some(Dialog::Session(mut panel)) = st.dialog.take_if(|d| matches!(d, Dialog::Session(_))) {
+        panel.text_input(st, text);
+        st.dialog = Some(Dialog::Session(panel));
+        return;
+    }
     match &mut st.dialog {
         Some(Dialog::Name { field, .. }) => {
             field.insert(text);
@@ -578,117 +505,7 @@ pub fn wheel(st: &mut AppState, x: f32, y: f32, dy: f32) {
             form.wheel(x, y, -dy);
         }
         Some(Dialog::Accounts { scroll, .. }) => *scroll = (*scroll - dy).max(0.0),
+        Some(Dialog::Session(panel)) => panel.wheel(dy),
         _ => {}
-    }
-}
-
-/// What a settings form's event gave.
-pub fn settings_outcome(st: &mut AppState, o: Outcome) {
-    match o {
-        Outcome::Closed => st.dialog = None,
-        Outcome::Changed { id, value } => {
-            match (id, value) {
-                (SET_WORKERS, Value::Choice(i)) => {
-                    st.config.workers = match i {
-                        0 => WorkersUse::Same,
-                        1 => WorkersUse::Other,
-                        k => st
-                            .config
-                            .accounts
-                            .get(k - 2)
-                            .map_or(WorkersUse::Same, |a| WorkersUse::Account(a.slug.clone())),
-                    };
-                    if let Err(e) = st.source.write_workers(&st.config) {
-                        st.error("The workers' setting was not written", e.to_string());
-                    }
-                }
-                (SET_EMBEDDED, Value::Bool(b)) => st.config.embedded_terminal = b,
-                (SET_ARCHIVED, Value::Bool(b)) => {
-                    st.config.show_archived = b;
-                    st.rebuild_view();
-                }
-                (SET_WORKERS_SHOWN, Value::Bool(b)) => {
-                    st.config.show_workers = b;
-                    st.rebuild_view();
-                }
-                (SET_THEME, Value::Choice(i)) if i < WINDOW_THEMES.len() => {
-                    st.config.window_theme = WINDOW_THEMES[i].0.into();
-                }
-                (SET_TERM_COLOURS, Value::Choice(i)) if i < PRESETS.len() => {
-                    st.config.terminal_scheme = PRESETS[i].id.into();
-                }
-                (SET_TERM_FONT, Value::Number(n)) => {
-                    st.config.terminal_font_size =
-                        n.clamp(i32::from(TERMINAL_FONT_MIN), i32::from(TERMINAL_FONT_MAX)) as u8;
-                }
-                (SET_BACKDROP, Value::Choice(i)) => {
-                    st.config.appearance.backdrop = Backdrop::from_index(i).key().into()
-                }
-                (SET_ACCENT, Value::Choice(i)) if i < ACCENT_SOURCES.len() => {
-                    if ACCENT_SOURCES[i].0 == "custom" && st.config.appearance.accent_colour.is_none() {
-                        st.config.appearance.accent_colour = Some(termtheme::hex(st.pal().accent));
-                    }
-                    st.config.appearance.accent_source = ACCENT_SOURCES[i].0.into();
-                }
-                (SET_REDUCE_MOTION, Value::Bool(b)) => st.config.appearance.reduce_motion = b,
-                (SET_SHADOWS, Value::Bool(b)) => st.config.appearance.soft_shadows = b,
-                (SET_CURSOR_BLINK, Value::Bool(b)) => st.config.appearance.cursor_blink = b,
-                (SET_CORNERS, Value::Number(n)) => st.config.appearance.corner_radius = n.clamp(0, 16) as u8,
-                (id, Value::Text(text)) => {
-                    let a = &mut st.config.appearance;
-                    let field = match id {
-                        SET_ACCENT_COLOUR => &mut a.accent_colour,
-                        SET_TERM_BACKGROUND => &mut a.terminal_background,
-                        SET_TERM_FOREGROUND => &mut a.terminal_foreground,
-                        SET_TERM_ACCENT => &mut a.terminal_accent,
-                        _ => return,
-                    };
-                    let Some(colour) = parse_hex(&text) else { return };
-                    *field = Some(termtheme::hex(colour));
-                }
-                _ => return,
-            }
-            st.retheme();
-            st.save_config();
-        }
-        _ => {}
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{source::Source, term::Term, winfile::WindowFile};
-
-    #[test]
-    fn appearance_changes_apply_to_hidden_tabs_and_the_flag_still_wins() {
-        for forced in [None, Some(true)] {
-            let mut st = AppState::new(Source::Demo, forced, WindowFile::default());
-            settings_outcome(&mut st, Outcome::Changed { id: SET_THEME, value: Value::Choice(1) });
-            assert_eq!(st.config.window_theme, "light");
-            assert_eq!(st.pal().dark, forced.unwrap_or(false));
-            settings_outcome(
-                &mut st,
-                Outcome::Changed { id: SET_TERM_COLOURS, value: Value::Choice(preset_index("black")) },
-            );
-            assert_eq!(st.config.terminal_scheme, "black");
-
-            let ids = ["a", "b"].map(|label| {
-                let new =
-                    crate::tabs::NewTab { label: label.into(), color: st.pal().muted, session: None, account: None };
-                st.tabs.open(new, Term::empty(st.grid))
-            });
-            st.show_sessions();
-            let area = Rect::new(0.0, 80.0, 760.0, 400.0);
-            st.layout_terminals(area, area, 1.0);
-            let before = st.grid;
-            settings_outcome(&mut st, Outcome::Changed { id: SET_TERM_FONT, value: Value::Number(24) });
-            st.layout_terminals(area, area, 1.0);
-            assert!(st.grid.0 < before.0 && st.grid.1 < before.1);
-            for id in ids {
-                let screen = &st.tabs.get(id).unwrap().term.screen;
-                assert_eq!((screen.cols(), screen.rows()), (usize::from(st.grid.0), usize::from(st.grid.1)));
-            }
-        }
     }
 }

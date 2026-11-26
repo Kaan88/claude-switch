@@ -1,13 +1,11 @@
 //! The window loop's side of the state: the host's events routed to the open layer (palette,
 //! drop-down, menu, dialog, then the window), timers, and the frame drawn from top to bottom.
 
-use std::sync::{Arc, Mutex};
-
 use mdshared_ui::chrome::{TITLE_H, WinButton};
 use mdshared_ui::cursor::Cursor;
 use mdshared_ui::dropdown::Outcome as DdOutcome;
-use mdshared_ui::gfx::{Painter, Rect};
-use mdshared_ui::host::{App, Button, Cx, Event, KeyPress};
+use mdshared_ui::gfx::Rect;
+use mdshared_ui::host::{Button, Cx, KeyPress};
 use mdshared_ui::keys::KeyName;
 use mdshared_ui::palette::Outcome as PalOutcome;
 use mdshared_ui::splitter::Axis;
@@ -16,10 +14,11 @@ use mdshared_ui::tooltip::Over;
 use crate::actions;
 use crate::dialogs::{self, Dialog};
 use crate::state::{AppState, Focus, MenuKind, Msg, POLL, Target};
-use crate::tabs::SESSIONS;
 use crate::termkeys;
 use crate::topbar::{self, Bar};
-use crate::{list, windowlook, winfile};
+use crate::{list, winfile};
+
+mod events;
 
 impl AppState {
     fn resume_polling(&mut self, now: std::time::Instant) {
@@ -45,12 +44,21 @@ impl AppState {
     /// The panes' area below the title row and the info bar, as the last frame laid it out.
     fn main_area(&self, cx: &Cx<'_, Msg>) -> Rect {
         let (w, h) = cx.size();
-        let top = self.list_area.y.max(TITLE_H);
+        let top = self.main_top.max(TITLE_H);
         Rect::new(0.0, top, w, h - top)
     }
 
     fn timers(&self, cx: &mut Cx<'_, Msg>) {
-        for at in [self.next_poll, self.tip.deadline(), self.toasts.deadline()].into_iter().flatten() {
+        for at in [
+            self.next_poll,
+            self.tip.deadline(),
+            self.toasts.deadline(),
+            self.undo_hide.as_ref().map(|u| u.until),
+            self.marks_flush_at,
+        ]
+        .into_iter()
+        .flatten()
+        {
             cx.wake_at(at);
         }
     }
@@ -88,6 +96,29 @@ impl AppState {
             Target::OpenDesktop => self.command(now, actions::OPEN_DESKTOP, None),
             Target::OpenAs => self.command(now, actions::OPEN_AS, self.rect_of(t)),
             Target::OpenCopy => self.command(now, actions::OPEN_COPY, None),
+            Target::ListMode(folders) if self.config.folders_view != folders => {
+                self.config.folders_view = folders;
+                self.save_config();
+                self.rebuild_view();
+                self.sections.scroll = 0.0;
+                self.reveal_selected();
+            }
+            Target::ListFilter(filter) => {
+                self.filter = filter;
+                self.rebuild_view();
+                self.sections.scroll = 0.0;
+                if filter != list::model::Filter::Unseen
+                    && self.selected.as_deref().is_none_or(|id| self.entry_of(id).is_none())
+                {
+                    self.select_first();
+                }
+            }
+            Target::Pin(e) => {
+                if let Some(i) = self.session_at(e) {
+                    self.toggle_pin(i);
+                }
+            }
+            Target::UndoHide => self.undo_hidden(now),
             Target::InfoClose => self.info = None,
             Target::Dialog(id) => dialogs::click(self, now, id, x),
             _ => {}
@@ -127,7 +158,11 @@ impl AppState {
         if let Some((kind, menu)) = self.menu.take()
             && let Some(id) = menu.chosen()
         {
-            let anchor = self.rect_of(if kind == MenuKind::OpenAs { Target::OpenAs } else { Target::MenuButton });
+            let anchor = match kind {
+                MenuKind::Main => self.rect_of(Target::MenuButton),
+                MenuKind::OpenAs => self.rect_of(Target::OpenAs),
+                MenuKind::Row => Some(Rect::new(self.mouse.0, self.mouse.1, 0.0, 0.0)),
+            };
             self.command(cx.now(), id, anchor);
         }
     }
@@ -215,7 +250,9 @@ impl AppState {
                 self.dropdown_outcome(o);
             }
             Focus::List => {
-                if list::key(self, &name) {
+                if name == KeyName::Delete && !mods.ctrl && !mods.alt && !mods.shift {
+                    self.hide_from_keyboard(now);
+                } else if list::key(self, &name) {
                     self.key_used = true;
                 } else if name == KeyName::Enter {
                     self.command(now, actions::OPEN_LAST, None);
@@ -304,8 +341,9 @@ impl AppState {
             }
             Some(Target::Entry(e)) => {
                 self.focus = Focus::List;
+                let row = self.session_at(e).is_some();
                 list::click(self, e);
-                if clicks == 2 && self.session_at(e).is_some() {
+                if clicks == 2 && row {
                     self.command(cx.now(), actions::OPEN_LAST, None);
                 }
             }
@@ -405,166 +443,5 @@ impl AppState {
             _ => Cursor::Default,
         });
         changed
-    }
-}
-
-impl App for AppState {
-    type Message = Msg;
-
-    fn start(&mut self, cx: &mut Cx<'_, Msg>) {
-        self.proxy = Some(Arc::new(Mutex::new(cx.proxy())));
-        windowlook::apply(self, cx);
-        let now = cx.now();
-        self.refresh(now);
-        self.resume_polling(now);
-        self.start_debug(cx);
-        self.start_demo_session();
-        self.timers(cx);
-    }
-
-    fn event(&mut self, cx: &mut Cx<'_, Msg>, event: Event) {
-        match event {
-            Event::PointerMove { x, y } => {
-                if self.moved(cx, x, y) {
-                    cx.request_redraw_all();
-                }
-                self.timers(cx);
-                return;
-            }
-            Event::PointerLeave => {
-                self.hover = None;
-                self.session_pointer_left();
-                self.tip.hover(cx.now(), None);
-                cx.request_redraw_all();
-            }
-            Event::Press { x, y, button: Button::Left, clicks } => self.press(cx, x, y, clicks),
-            Event::Release { x, y, button: Button::Left } => self.release(cx, x, y),
-            Event::Press { x, y, button, clicks } => {
-                if !self.nothing_over() || self.picture_overlay() {
-                    return;
-                }
-                match self.hit(x, y) {
-                    Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Middle && id != SESSIONS => {
-                        self.ask_close_tab(id)
-                    }
-                    Some(Target::Terminal) => self.term_press(x, y, button, clicks, cx.mods()),
-                    _ => return,
-                }
-            }
-            Event::Release { x, y, button } => {
-                if self.picture_overlay() || !self.term_release(x, y, button, cx.mods()) {
-                    return;
-                }
-            }
-            Event::Wheel { dy, .. } if self.nothing_over() && self.terminal_shown() => {
-                let (x, y) = self.mouse;
-                if !self.session_wheel(cx.size().0, x, y, dy) && self.term_area.contains(x, y) {
-                    self.term_wheel(dy, cx.mods());
-                }
-            }
-            Event::Wheel { dy, .. } => {
-                let (x, y) = self.mouse;
-                if let Some(p) = &mut self.palette {
-                    p.wheel(dy);
-                } else if self.accounts_dd.is_open() {
-                    self.accounts_dd.wheel(x, y, dy);
-                } else if let Some((_, menu)) = &mut self.menu {
-                    menu.scroll_by(-dy);
-                } else if self.dialog.is_some() {
-                    dialogs::wheel(self, x, y, dy);
-                } else if self.list_area.contains(x, y) {
-                    self.sections.scroll = self.sections.clamp_scroll(self.sections.scroll - f64::from(dy));
-                    self.moved(cx, x, y);
-                }
-            }
-            Event::Key(k) => self.key(cx, k),
-            Event::Text(t) => {
-                if self.dialog.is_some() {
-                    dialogs::text_input(self, &t);
-                } else if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
-                    self.term_text(&t);
-                } else if self.focus == Focus::Search && self.palette.is_none() && self.search.insert(&t) {
-                    self.after_search();
-                }
-            }
-            Event::Focus(false) => self.term_focus(false),
-            Event::Focus(true) => {
-                self.term_focus(true);
-                self.retheme();
-                let now = cx.now();
-                if self.last_scan.is_none_or(|t| now.duration_since(t).as_secs() >= 3) {
-                    self.refresh(now);
-                }
-                self.resume_polling(now);
-            }
-            Event::Resize { w, h } => {
-                if !cx.maximized() && w > 0.0 && h > 0.0 {
-                    self.win_file.w = w;
-                    self.win_file.h = h;
-                }
-                self.resume_polling(cx.now());
-            }
-            Event::Theme { .. } | Event::Contrast(_) => {
-                self.retheme();
-            }
-            Event::Wake(now) => {
-                self.terminal_drop_due(cx, now);
-                self.session_tick(cx, false);
-                if let Some(at) = self.typed_due(now) {
-                    cx.wake_at(at);
-                }
-                if self.tip.tick(now) | self.toasts.tick(now) {
-                    cx.request_redraw_all();
-                }
-                if self.next_poll.is_some_and(|t| t <= now) {
-                    // An idle window that cannot be seen stops polling until it is shown again.
-                    if cx.window().is_minimized() == Some(true) {
-                        self.next_poll = None;
-                    } else {
-                        self.poll_running();
-                        self.next_poll = Some(now + POLL);
-                    }
-                }
-                self.timers(cx);
-                return;
-            }
-            Event::CloseRequested if self.ask_quit() => self.quit = true,
-            _ => {}
-        }
-        if self.quit {
-            self.save_window();
-            cx.exit();
-            return;
-        }
-        windowlook::apply(self, cx);
-        cx.request_redraw_all();
-        self.timers(cx);
-    }
-
-    fn raw(&mut self, cx: &mut Cx<'_, Msg>, event: &winit::event::WindowEvent) {
-        if let winit::event::WindowEvent::DroppedFile(file) = event {
-            self.terminal_drop(cx, file.clone());
-        }
-    }
-
-    fn message(&mut self, cx: &mut Cx<'_, Msg>, m: Msg) {
-        match m {
-            Msg::Woke => {
-                if self.take_jobs() {
-                    cx.request_redraw_all();
-                }
-            }
-            Msg::Term => self.term_woke(cx),
-            Msg::SessionView => self.session_ready(cx),
-            Msg::AttachPictures(id, files) => {
-                if self.paste_paths(id, &files) {
-                    cx.request_redraw(self.term_area);
-                }
-            }
-        }
-    }
-
-    fn draw(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, _damage: Rect) {
-        crate::app_draw::draw(self, cx, p);
     }
 }

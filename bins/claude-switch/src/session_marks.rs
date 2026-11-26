@@ -1,0 +1,273 @@
+//! List projection and app-owned marks. No drawing.
+
+use std::time::{Duration, Instant};
+
+use claude_switch_core::sessions::{folder_key, folder_name, group_by_folder};
+use claude_switch_core::{Session, clock};
+use mdshared_ui::sections::Sections;
+
+use crate::list::model::{self, BUCKETS, Calendar, Filter, Flags};
+use crate::source::{ActivityScan, Source};
+use crate::state::{AppState, HEAD_H, ROW_H, ViewGroup};
+
+pub struct UndoHide {
+    pub key: String,
+    pub folder: bool,
+    pub until: Instant,
+}
+
+impl AppState {
+    pub fn title_of<'a>(&'a self, session: &'a Session) -> &'a str {
+        self.marks.name(&session.id).unwrap_or(&session.title)
+    }
+
+    pub fn hidden_session(&self, s: &Session) -> bool {
+        self.marks.hidden(&s.id) || self.marks.folder_hidden(&folder_key(&s.cwd))
+    }
+
+    pub fn listed(&self, s: &Session) -> bool {
+        (self.config.show_archived || !s.archived)
+            && (self.config.show_workers || !s.worker)
+            && (self.config.show_hidden || !self.hidden_session(s))
+    }
+
+    pub fn row_flags(&self, s: &Session) -> Flags {
+        let running =
+            self.running_ids.contains(&s.id) || self.tabs.by_session(&s.id).is_some_and(|tab| tab.term.running());
+        Flags {
+            running,
+            waiting: running && s.turn_ended,
+            pinned: self.marks.pinned(&s.id),
+            unseen: self.marks.unseen(&s.id, s.transcript_ms),
+            hidden: self.hidden_session(s),
+        }
+    }
+
+    pub fn index_running(&mut self) {
+        self.running_ids = self.running.iter().map(|r| r.session_id.clone()).collect();
+    }
+
+    pub fn apply_activity(&mut self, activity: ActivityScan) -> bool {
+        let mut changed = self.running != activity.running;
+        self.running = activity.running;
+        if changed {
+            self.index_running();
+        }
+        let mut updated = false;
+        let mut selected_updated = false;
+        for (id, at, prompt, ended) in activity.updates {
+            if let Some(&i) = self.by_id.get(&id) {
+                let s = &mut self.sessions[i];
+                // A full scan may have applied while this poll was in flight.
+                if at <= s.transcript_ms {
+                    continue;
+                }
+                s.transcript_ms = at;
+                s.last_active_ms = s.last_active_ms.max(at);
+                s.last_prompt = prompt;
+                s.turn_ended = ended;
+                updated = true;
+                selected_updated |= self.selected.as_deref() == Some(&id);
+            }
+        }
+        if updated {
+            self.all_groups = group_by_folder(&self.sessions);
+            if selected_updated && let Some(id) = self.selected.clone() {
+                self.load_details(&id, true);
+            }
+            self.see_shown();
+            changed = true;
+        }
+        let now = crate::list::now_ms();
+        let offset = clock::local_offset_minutes();
+        let date_changed =
+            !self.config.folders_view && self.recent_local_day != Some((model::local_day(now, offset), offset));
+        if changed || date_changed {
+            self.rebuild_view_at(now, offset);
+        }
+        changed || date_changed
+    }
+
+    pub fn rebuild_view(&mut self) {
+        self.rebuild_view_at(crate::list::now_ms(), clock::local_offset_minutes());
+    }
+
+    fn rebuild_view_at(&mut self, now: u64, offset: i32) {
+        let calendar = Calendar::at(now, offset);
+        self.recent_local_day = Some((model::local_day(now, offset), offset));
+        let query = self.search.text().trim();
+        let mut pinned = Vec::new();
+        let mut buckets: [Vec<usize>; 5] = Default::default();
+        let mut groups = Vec::new();
+        for g in &self.all_groups {
+            let mut rows = Vec::new();
+            let key = folder_key(&g.cwd);
+            let folder_hidden = self.marks.folder_hidden(&key);
+            for &i in &g.sessions {
+                let s = &self.sessions[i];
+                let hidden = folder_hidden || self.marks.hidden(&s.id);
+                if (!self.config.show_archived && s.archived)
+                    || (!self.config.show_workers && s.worker)
+                    || (!self.config.show_hidden && hidden)
+                    || (!query.is_empty()
+                        && model::score(query, self.marks.name(&s.id), s, &g.name).is_none()
+                        && s.branch.as_ref().is_none_or(|b| mdshared_app::fuzzy::score(query, b).is_none()))
+                {
+                    continue;
+                }
+                let flags = if self.filter == Filter::All { Flags::default() } else { self.row_flags(s) };
+                if !flags.matches(self.filter) {
+                    continue;
+                }
+                if self.marks.pinned(&s.id) {
+                    pinned.push(i);
+                } else if self.config.folders_view {
+                    rows.push(i);
+                } else {
+                    buckets[calendar.bucket(s.last_active_ms)].push(i);
+                }
+            }
+            if !rows.is_empty() {
+                groups.push(ViewGroup { name: g.name.clone(), key: format!("folder:{key}"), rows });
+            }
+        }
+        let newest = |&i: &usize| (std::cmp::Reverse(self.sessions[i].last_active_ms), i);
+        if !pinned.is_empty() {
+            pinned.sort_unstable_by_key(newest);
+            groups.insert(0, ViewGroup { name: "Pinned".into(), key: "pinned".into(), rows: pinned });
+        }
+        for (i, mut rows) in buckets.into_iter().enumerate() {
+            if !rows.is_empty() {
+                rows.sort_unstable_by_key(newest);
+                groups.push(ViewGroup { name: BUCKETS[i].into(), key: format!("recent:{i}"), rows });
+            }
+        }
+        let scroll = self.sections.scroll;
+        self.sections = Sections::new(self.sections.view, ROW_H);
+        self.row_locations.clear();
+        for (k, g) in groups.iter().enumerate() {
+            self.sections.add_group(g.rows.len(), Some(HEAD_H));
+            self.sections.set_collapsed(k, query.is_empty() && self.collapsed.contains(&g.key));
+            self.row_locations.extend(g.rows.iter().enumerate().map(|(r, &i)| (i, (k, r))));
+        }
+        self.groups = groups;
+        self.sections.scroll = self.sections.clamp_scroll(scroll);
+    }
+
+    pub fn save_marks(&mut self) {
+        self.marks_flush_at = None;
+        if let Source::Real(roots) = &self.source {
+            if self.marks_read_only {
+                self.warn(
+                    "Could not save session marks",
+                    "marks.json is read-only in this window. Restart after repairing it.".into(),
+                );
+            } else if let Err(e) = self.marks.save(roots) {
+                self.error("Could not save session marks", e.to_string());
+            }
+        }
+    }
+
+    pub fn prune_marks(&mut self) {
+        if !self.source.is_demo()
+            && !self.marks_read_only
+            && self.marks.prune(self.sessions.iter().map(|s| (s.id.as_str(), s.file.as_path())), crate::list::now_ms())
+        {
+            self.save_marks();
+        }
+    }
+
+    pub fn see_shown(&mut self) {
+        if !self.window_focused || self.marks_read_only {
+            return;
+        }
+        let id = if self.terminal_shown() {
+            self.tabs.shown().and_then(|tab| tab.session.as_deref())
+        } else {
+            self.selected.as_deref()
+        };
+        let Some(s) = id.and_then(|id| self.by_id.get(id)).map(|&i| &self.sessions[i]) else { return };
+        if self.marks.see(&s.id, &s.file, s.transcript_ms) {
+            if !self.source.is_demo() {
+                self.marks_flush_at = Some(Instant::now() + Duration::from_millis(650));
+            }
+            if self.filter == Filter::Unseen {
+                self.rebuild_view();
+            }
+        }
+    }
+
+    pub fn rename_session(&mut self, id: &str, name: &str) {
+        if let Some(&i) = self.by_id.get(id)
+            && self.marks.rename(id, &self.sessions[i].file, name)
+        {
+            self.save_marks();
+            self.rebuild_view();
+        }
+    }
+
+    pub fn toggle_pin(&mut self, i: usize) {
+        let Some(s) = self.sessions.get(i) else { return };
+        if self.marks.pin(&s.id, &s.file, !self.marks.pinned(&s.id)) {
+            self.save_marks();
+            self.rebuild_view();
+        }
+    }
+
+    pub fn toggle_hidden(&mut self, now: Instant, folder: bool) {
+        let Some(s) = self.selected.as_ref().and_then(|id| self.by_id.get(id)).map(|&i| &self.sessions[i]) else {
+            return;
+        };
+        let key = if folder { folder_key(&s.cwd) } else { s.id.clone() };
+        let hide = if folder { !self.marks.folder_hidden(&key) } else { !self.marks.hidden(&key) };
+        self.set_hidden(now, key, folder, hide);
+    }
+
+    pub fn hide_from_keyboard(&mut self, now: Instant) {
+        if let Some(s) = self.selected_session()
+            && !self.hidden_session(s)
+        {
+            self.set_hidden(now, s.id.clone(), false, true);
+        }
+    }
+
+    pub fn toggle_group_hidden(&mut self, now: Instant, key: String) {
+        let hide = !self.marks.folder_hidden(&key);
+        self.set_hidden(now, key, true, hide);
+    }
+
+    fn set_hidden(&mut self, now: Instant, key: String, folder: bool, hide: bool) {
+        let changed = if folder {
+            self.marks.hide_folder(&key, hide)
+        } else if let Some(&i) = self.by_id.get(&key) {
+            self.marks.hide(&key, &self.sessions[i].file, hide)
+        } else {
+            false
+        };
+        if changed {
+            self.save_marks();
+            self.rebuild_view();
+            if self.selected.as_deref().is_some_and(|id| self.entry_of(id).is_none()) {
+                if self.filter == Filter::Unseen {
+                    self.selected = None;
+                    self.preview = None;
+                } else {
+                    self.select_first();
+                }
+            }
+            if hide {
+                self.undo_hide = Some(UndoHide { key, folder, until: now + Duration::from_secs(6) });
+            }
+        }
+    }
+
+    pub fn undo_hidden(&mut self, now: Instant) {
+        if let Some(undo) = self.undo_hide.take().filter(|u| u.until >= now) {
+            self.set_hidden(now, undo.key, undo.folder, false);
+        }
+    }
+}
+
+pub fn folder_label(s: &Session) -> String {
+    folder_name(&s.cwd)
+}

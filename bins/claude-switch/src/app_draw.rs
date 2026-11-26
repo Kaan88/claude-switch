@@ -29,6 +29,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
     cx.frost(p, Bar::layout(w).row);
     cx.set_maximize_button(Some(max));
     let top = topbar::draw_below_title(st, cx, p, w);
+    st.main_top = top;
 
     let area = Rect::new(0.0, top, w, (h - top).max(0.0));
     let term_area = st.layout_session_view(cx, area);
@@ -53,6 +54,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
         b.draw_presence(p, &pal, shown.t);
         cx.animating(b.presence_bounds().inset(-8.0));
     }
+    list::draw_undo(st, p, window);
     if let Some(over) = st.tip.shown() {
         Bubble::tip(p, &over.text, over.anchor, w, h).draw(p, &pal);
     }

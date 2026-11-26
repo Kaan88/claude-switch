@@ -19,6 +19,8 @@ mod details;
 mod dialogs;
 mod list;
 mod run;
+mod session_marks;
+mod session_panel;
 mod source;
 mod state;
 mod tabs;

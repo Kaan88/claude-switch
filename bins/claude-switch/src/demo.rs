@@ -1,4 +1,4 @@
-//! Made-up data for `--demo`: two accounts, a few dozen sessions in several folders, two of them
+//! Made-up data for `--demo`: two accounts, hundreds of sessions in several folders, two of them
 //! running. It stands in for every call of [`crate::source::Source`] so the window can be seen
 //! without accessing real accounts or starting a process. The live view uses temporary fixtures.
 
@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use claude_switch_core::sessions::{Group, PreviewLine};
+use claude_switch_core::sessions::PreviewLine;
 use claude_switch_core::share::{LinkState, SHARED, ShareState};
 use claude_switch_core::{
     Account, AccountStatus, App, Config, Launch, Place, Refusal, Running, Session, WorkersUse, running,
@@ -44,7 +44,8 @@ const TITLES: [&str; 12] = [
 ];
 
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+    static BASE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *BASE.get_or_init(|| SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64))
 }
 
 fn account(slug: &str, name: &str, color: [u8; 3], primary: bool) -> Account {
@@ -67,6 +68,8 @@ pub fn config() -> Config {
         embedded_terminal: true,
         show_archived: false,
         show_workers: false,
+        show_hidden: false,
+        folders_view: false,
         terminal_scheme: "auto".into(),
         terminal_font_size: claude_switch_core::config::TERMINAL_FONT_DEFAULT,
         window_theme: "system".into(),
@@ -77,16 +80,27 @@ pub fn config() -> Config {
 fn sessions() -> Vec<Session> {
     let now = now_ms();
     let mut out = Vec::new();
-    for i in 0..44u64 {
+    for i in 0..360u64 {
         let (cwd, branch) = FOLDERS[(i as usize * 5 + i as usize / 3) % FOLDERS.len()];
-        let age_min = i * i * 37 + i * 11;
+        let age_min = i * i * 60_480 / (359 * 359) + i.min(20) * 3;
+        let at = now.saturating_sub(age_min * 60_000);
+        let title = TITLES[i as usize % TITLES.len()];
         let desktop = i % 4 == 1;
         out.push(Session {
             id: format!("{:08x}-1c2d-4e5f-8a9b-{:012x}", 0x5eed_0000 + i * 7919, i * 104_729),
-            title: TITLES[i as usize % TITLES.len()].to_string(),
+            title: title.to_string(),
+            last_prompt: match i % 5 {
+                0 => "Can you show me why it comes back after the second swipe?".into(),
+                1 => "Keep the account picker compact at smaller window sizes.".into(),
+                2 => "Compare a clean build with an incremental build and report the difference.".into(),
+                3 => "Add a regression test for dragging past the minimum width.".into(),
+                _ => format!("{title}; start with a small example."),
+            },
+            turn_ended: i % 3 == 1,
+            transcript_ms: at,
             cwd: PathBuf::from(cwd),
             branch: (i % 6 != 5).then(|| branch.to_string()),
-            last_active_ms: now.saturating_sub(age_min * 60_000),
+            last_active_ms: at,
             bytes: (i * 7_919 % 97 + 1) * 180_000,
             last_app: if desktop { App::Desktop } else { App::Cli },
             desktop_id: desktop.then(|| format!("local_{i:04}")),
@@ -143,22 +157,18 @@ pub fn scan(c: &Config) -> Scan {
     Scan { sessions: sessions(), running: running(), statuses }
 }
 
-/// The same grouping the core's `group_by_folder` promises, for the made-up sessions.
-pub fn group(list: &[Session]) -> Vec<Group> {
-    let mut groups: Vec<Group> = Vec::new();
-    let mut order: Vec<usize> = (0..list.len()).collect();
-    order.sort_by(|&a, &b| list[b].last_active_ms.cmp(&list[a].last_active_ms));
-    for i in order {
-        let key = list[i].cwd.to_string_lossy().to_lowercase();
-        match groups.iter_mut().find(|g| g.cwd.to_string_lossy().to_lowercase() == key) {
-            Some(g) => g.sessions.push(i),
-            None => {
-                let name = list[i].cwd.file_name().map_or("(no folder)".into(), |n| n.to_string_lossy().into_owned());
-                groups.push(Group { cwd: list[i].cwd.clone(), name, sessions: vec![i] });
-            }
+pub fn seed_marks(marks: &mut claude_switch_core::marks::Marks, sessions: &[Session]) {
+    for (i, s) in sessions.iter().enumerate() {
+        if matches!(i, 2 | 5 | 18) {
+            marks.pin(&s.id, &s.file, true);
+        }
+        if i == 5 {
+            marks.rename(&s.id, &s.file, "Quiet the CRLF noise");
+        }
+        if i % 3 == 0 {
+            marks.see(&s.id, &s.file, s.transcript_ms);
         }
     }
-    groups
 }
 
 pub fn preview(s: &Session, max: usize) -> Vec<PreviewLine> {

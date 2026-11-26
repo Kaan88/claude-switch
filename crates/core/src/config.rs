@@ -190,6 +190,8 @@ pub fn load(roots: &Roots) -> Config {
         embedded_terminal,
         show_archived,
         show_workers,
+        show_hidden: flag("showHidden", false),
+        folders_view: flag("foldersView", false),
         terminal_scheme,
         terminal_font_size,
         window_theme,
@@ -213,6 +215,8 @@ pub fn save(roots: &Roots, config: &Config) -> Result<(), Refusal> {
         "embeddedTerminal": config.embedded_terminal,
         "showArchived": config.show_archived,
         "showWorkers": config.show_workers,
+        "showHidden": config.show_hidden,
+        "foldersView": config.folders_view,
         "terminalScheme": config.terminal_scheme,
         "terminalFontSize": config.terminal_font_size,
         "windowTheme": config.window_theme,
@@ -271,6 +275,8 @@ mod tests {
         assert!(c.embedded_terminal);
         assert!(!c.show_archived);
         assert!(!c.show_workers);
+        assert!(!c.show_hidden);
+        assert!(!c.folders_view);
         assert_eq!((c.terminal_scheme.as_str(), c.terminal_font_size, c.window_theme.as_str()), ("auto", 13, "system"));
     }
 
@@ -285,6 +291,8 @@ mod tests {
         c.embedded_terminal = false;
         c.show_archived = true;
         c.show_workers = true;
+        c.show_hidden = true;
+        c.folders_view = true;
         c.terminal_scheme = "campbell".into();
         c.terminal_font_size = 21;
         c.window_theme = "light".into();

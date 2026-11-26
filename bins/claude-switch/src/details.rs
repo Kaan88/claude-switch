@@ -24,7 +24,7 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     let x = area.x + PAD;
     let w = (area.w - 2.0 * PAD).max(40.0);
     let mut y = area.y + 22.0;
-    y += p.paragraph_wrapped(Face::Semibold, 18.0, x, y, w, &s.title, pal.text, Wrap::Words) + 4.0;
+    y += p.paragraph_wrapped(Face::Semibold, 18.0, x, y, w, st.title_of(&s), pal.text, Wrap::Words) + 4.0;
     let folder = if s.cwd.as_os_str().is_empty() { "(no folder)".to_string() } else { s.cwd.display().to_string() };
     y += p.paragraph_wrapped(Face::Mono, 12.0, x, y, w, &folder, pal.muted, Wrap::Anywhere) + 14.0;
 

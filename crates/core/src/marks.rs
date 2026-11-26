@@ -1,0 +1,223 @@
+//! App-owned metadata. A damaged file is never replaced with empty defaults.
+
+use crate::util::{io_refusal, write_json};
+use crate::{Refusal, Roots};
+use serde_json::{Value, json};
+use std::path::Path;
+
+const RETAIN_MS: u64 = 90 * 86_400_000;
+
+#[derive(Clone, Debug)]
+pub struct Marks {
+    data: Value,
+    original: Option<Vec<u8>>,
+}
+
+impl Default for Marks {
+    fn default() -> Self {
+        Self { data: json!({}), original: None }
+    }
+}
+
+fn read(path: &Path) -> Result<Option<Vec<u8>>, Refusal> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if !meta.file_type().is_file() => {
+            return Err(Refusal::Io(format!(
+                "{} is not a regular file; session marks were not opened.",
+                path.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io_refusal("inspect", path, &e)),
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(io_refusal("read", path, &e)),
+    }
+}
+
+fn path(roots: &Roots) -> std::path::PathBuf {
+    roots.config_file().with_file_name("marks.json")
+}
+
+impl Marks {
+    pub fn load(roots: &Roots) -> Result<Self, Refusal> {
+        let path = path(roots);
+        let Some(bytes) = read(&path)? else { return Ok(Self::default()) };
+        let data: Value = serde_json::from_slice(&bytes).map_err(|e| io_refusal("decode", &path, &e))?;
+        if !data.is_object() || ["sessions", "folders"].iter().any(|k| data.get(k).is_some_and(|v| !v.is_object())) {
+            return Err(Refusal::Io(format!("The structure of {} is not recognized.", path.display())));
+        }
+        Ok(Self { data, original: Some(bytes) })
+    }
+
+    pub fn save(&mut self, roots: &Roots) -> Result<(), Refusal> {
+        let path = path(roots);
+        if read(&path)? != self.original {
+            return Err(Refusal::Io(format!("{} changed on disk. Restart before saving marks.", path.display())));
+        }
+        write_json(&path, &self.data)?;
+        self.original = read(&path)?;
+        Ok(())
+    }
+
+    pub fn name(&self, id: &str) -> Option<&str> {
+        self.data["sessions"][id]["name"].as_str().filter(|name| !name.is_empty())
+    }
+
+    pub fn pinned(&self, id: &str) -> bool {
+        self.data["sessions"][id]["pinned"] == true
+    }
+
+    pub fn hidden(&self, id: &str) -> bool {
+        self.data["sessions"][id]["hidden"] == true
+    }
+
+    pub fn folder_hidden(&self, key: &str) -> bool {
+        self.data["folders"][key]["hidden"] == true
+    }
+
+    pub fn unseen(&self, id: &str, modified: u64) -> bool {
+        modified > self.data["sessions"][id]["seenMs"].as_u64().unwrap_or(0)
+    }
+
+    fn set(&mut self, group: &str, key: &str, field: &str, value: Value) -> bool {
+        if self.data[group][key][field] == value || self.data[group].get(key).is_some_and(|v| !v.is_object()) {
+            return false;
+        }
+        self.data[group][key][field] = value;
+        true
+    }
+
+    fn session(&mut self, id: &str, file: &Path, field: &str, value: Value) -> bool {
+        if !self.set("sessions", id, field, value) {
+            return false;
+        }
+        if let Some(file) = file.to_str().filter(|_| file.is_absolute()) {
+            self.set("sessions", id, "file", json!(file));
+        }
+        true
+    }
+
+    pub fn rename(&mut self, id: &str, file: &Path, name: &str) -> bool {
+        self.session(id, file, "name", json!(name.trim()))
+    }
+
+    pub fn pin(&mut self, id: &str, file: &Path, pinned: bool) -> bool {
+        self.session(id, file, "pinned", json!(pinned))
+    }
+
+    pub fn hide(&mut self, id: &str, file: &Path, hidden: bool) -> bool {
+        self.session(id, file, "hidden", json!(hidden))
+    }
+
+    pub fn hide_folder(&mut self, key: &str, hidden: bool) -> bool {
+        self.set("folders", key, "hidden", json!(hidden))
+    }
+
+    pub fn see(&mut self, id: &str, file: &Path, modified: u64) -> bool {
+        self.unseen(id, modified) && self.session(id, file, "seenMs", json!(modified))
+    }
+
+    /// Only forget a known transcript after at least 90 days of observed absence.
+    /// `found` includes unfiltered sessions; an inaccessible file isn't evidence of deletion.
+    pub fn prune<'a>(&mut self, found: impl IntoIterator<Item = (&'a str, &'a Path)>, now_ms: u64) -> bool {
+        let Some(marks) = self.data.get_mut("sessions").and_then(Value::as_object_mut) else { return false };
+        let mut changed = false;
+        let mut present = std::collections::HashSet::new();
+        for (id, file) in found {
+            let Some(entry) = marks.get_mut(id).and_then(Value::as_object_mut) else { continue };
+            present.insert(id);
+            if let Some(path) = file.to_str().filter(|_| file.is_absolute())
+                && entry.get("file").and_then(Value::as_str) != Some(path)
+            {
+                entry.insert("file".into(), json!(path));
+                changed = true;
+            }
+        }
+        marks.retain(|id, entry| {
+            let Some(entry) = entry.as_object_mut() else { return true };
+            let Some(file) = entry.get("file").and_then(Value::as_str).map(Path::new) else { return true };
+            let missing = !present.contains(id.as_str())
+                && file.is_absolute()
+                && std::fs::metadata(file).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+            if !missing {
+                changed |= entry.remove("missingSinceMs").is_some();
+                return true;
+            }
+            if let Some(since) = entry.get("missingSinceMs").and_then(Value::as_u64) {
+                let keep = now_ms.saturating_sub(since) < RETAIN_MS;
+                changed |= !keep;
+                keep
+            } else {
+                entry.insert("missingSinceMs".into(), json!(now_ms));
+                changed = true;
+                true
+            }
+        });
+        changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::testing::{TempDir, put};
+
+    #[test]
+    fn round_trip_preserves_unknowns_and_never_touches_transcripts() {
+        let t = TempDir::new("marks");
+        let roots = t.roots();
+        let file = t.0.join("transcript.jsonl");
+        put(&file, "private transcript");
+        put(&path(&roots), r#"{"extra":42,"sessions":{"s":{"future":true},"broken":5}}"#);
+        let mut m = Marks::load(&roots).unwrap();
+        assert!(m.rename("s", &file, "  New name  "));
+        assert!(m.pin("s", &file, true));
+        assert!(m.hide("s", &file, true));
+        assert!(m.hide_folder("folder", true));
+        assert!(m.see("s", &file, 10));
+        assert!(!m.rename("broken", &file, "don't overwrite"));
+        m.save(&roots).unwrap();
+        let mut m = Marks::load(&roots).unwrap();
+        assert_eq!(m.name("s"), Some("New name"));
+        assert!(m.pinned("s") && m.hidden("s") && m.folder_hidden("folder"));
+        assert!(!m.unseen("s", 10) && m.unseen("s", 11));
+        assert_eq!(m.data["extra"], 42);
+        assert_eq!(m.data["sessions"]["s"]["future"], true);
+        assert_eq!(m.data["sessions"]["broken"], 5);
+        assert!(m.rename("s", &file, ""));
+        assert_eq!(m.name("s"), None);
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "private transcript");
+    }
+
+    #[test]
+    fn damage_and_concurrent_replacement_do_not_get_overwritten() {
+        let t = TempDir::new("marks-broken");
+        let roots = t.roots();
+        let mut m = Marks::load(&roots).unwrap();
+        put(&path(&roots), r#"{"sessions":1,"folders":{"keep":true}}"#);
+        assert!(Marks::load(&roots).is_err());
+        assert!(m.save(&roots).is_err());
+        assert_eq!(std::fs::read_to_string(path(&roots)).unwrap(), r#"{"sessions":1,"folders":{"keep":true}}"#);
+    }
+
+    #[test]
+    fn a_missing_transcript_has_a_full_grace_period() {
+        let t = TempDir::new("marks-expire");
+        let file = t.0.join("transcript.jsonl");
+        let mut m = Marks::default();
+        m.pin("s", &file, true);
+        assert!(m.prune([], 10));
+        assert!(!m.prune([], 10 + RETAIN_MS - 1));
+        put(&file, "returned");
+        assert!(m.prune([], 10 + RETAIN_MS));
+        assert!(m.pinned("s"));
+        std::fs::remove_file(file).unwrap();
+        assert!(m.prune([], 20 + RETAIN_MS));
+        assert!(m.prune([], 20 + 2 * RETAIN_MS));
+        assert!(!m.pinned("s"));
+    }
+}

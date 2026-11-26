@@ -6,8 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use claude_switch_core::sessions::PreviewLine;
-use claude_switch_core::{AccountStatus, Config, Running, Session, running};
-use mdshared_app::fuzzy;
+use claude_switch_core::{AccountStatus, Config, Running, Session};
 use mdshared_app::job::Job;
 use mdshared_ui::anim::Stack;
 use mdshared_ui::appearance::Appearance;
@@ -27,6 +26,7 @@ use mdshared_ui::tokens::Tokens;
 use mdshared_ui::tooltip::Tooltip;
 
 use crate::dialogs::Dialog;
+use crate::list::model::Filter;
 use crate::source::{Scan, Source};
 use crate::tabs::Tabs;
 use crate::winfile::WindowFile;
@@ -42,7 +42,7 @@ pub enum Msg {
 
 /// The height of a folder heading and of a session row in the list.
 pub const HEAD_H: f32 = 30.0;
-pub const ROW_H: f32 = 50.0;
+pub const ROW_H: f32 = 62.0;
 /// How often the running sessions are read while the window is shown.
 pub const POLL: Duration = Duration::from_secs(5);
 /// How many messages the preview shows.
@@ -69,6 +69,10 @@ pub enum Target {
     MenuButton,
     /// An entry of the list (heading or row), by its index in [`AppState::sections`].
     Entry(usize),
+    Pin(usize),
+    ListMode(bool),
+    ListFilter(Filter),
+    UndoHide,
     ListBlank,
     Splitter,
     OpenCli,
@@ -92,6 +96,7 @@ pub enum Target {
 pub enum MenuKind {
     Main,
     OpenAs,
+    Row,
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.
@@ -119,6 +124,14 @@ pub struct AppState {
     /// The core's groups of all sessions, newest first.
     pub all_groups: Vec<claude_switch_core::sessions::Group>,
     pub groups: Vec<ViewGroup>,
+    pub row_locations: HashMap<usize, (usize, usize)>,
+    pub filter: Filter,
+    pub recent_local_day: Option<(i64, i32)>,
+    pub marks: claude_switch_core::marks::Marks,
+    pub marks_read_only: bool,
+    pub marks_flush_at: Option<Instant>,
+    pub undo_hide: Option<crate::session_marks::UndoHide>,
+    pub naming_job: Option<Job<crate::session_panel::NameResults>>,
     pub sections: Sections,
     pub collapsed: HashSet<String>,
     pub selected: Option<String>,
@@ -133,7 +146,8 @@ pub struct AppState {
     pub preview_job: Option<(String, Job<Vec<PreviewLine>>)>,
     pub last_account: Option<(String, String)>,
     pub scan_job: Option<Job<Scan>>,
-    pub running_job: Option<Job<Vec<Running>>>,
+    pub running_job: Option<Job<crate::source::ActivityScan>>,
+    pub running_ids: HashSet<String>,
     pub scanned: bool,
     pub last_scan: Option<Instant>,
     pub next_poll: Option<Instant>,
@@ -141,6 +155,7 @@ pub struct AppState {
     pub info: Option<InfoBar>,
     pub dialog: Option<Dialog>,
     pub menu: Option<(MenuKind, Menu<u32>)>,
+    pub context_folder: Option<String>,
     pub palette: Option<Palette>,
     pub keymap: Keymap,
     pub tip: Tooltip<Target>,
@@ -152,6 +167,7 @@ pub struct AppState {
     pub win_file: WindowFile,
     pub proxy: Option<Arc<Mutex<Proxy<Msg>>>>,
     pub list_area: Rect,
+    pub main_top: f32,
     pub list_scroll_track: Option<Rect>,
     /// The terminal tabs, and what the last frame laid out for them.
     pub tabs: Tabs,
@@ -173,6 +189,11 @@ pub struct AppState {
 impl AppState {
     pub fn new(source: Source, forced_dark: Option<bool>, win_file: WindowFile) -> AppState {
         let config = source.load_config();
+        let marks = match &source {
+            Source::Real(roots) => claude_switch_core::marks::Marks::load(roots),
+            Source::Demo => Ok(Default::default()),
+        };
+        let marks_error = marks.as_ref().err().map(ToString::to_string);
         let high_contrast = mdshared_ui::platform::system_high_contrast();
         let (tokens, appearance, term_colours) = appearance(&config, forced_dark, high_contrast);
         let mut splitter = Splitter::new(Hold::A(440.0)).min(300.0, 340.0);
@@ -193,6 +214,14 @@ impl AppState {
             statuses: HashMap::new(),
             all_groups: Vec::new(),
             groups: Vec::new(),
+            row_locations: HashMap::new(),
+            filter: Filter::All,
+            recent_local_day: None,
+            marks: marks.unwrap_or_default(),
+            marks_read_only: marks_error.is_some(),
+            marks_flush_at: None,
+            undo_hide: None,
+            naming_job: None,
             sections: Sections::new(400.0, ROW_H),
             collapsed: HashSet::new(),
             selected: None,
@@ -207,6 +236,7 @@ impl AppState {
             last_account: None,
             scan_job: None,
             running_job: None,
+            running_ids: HashSet::new(),
             scanned: false,
             last_scan: None,
             next_poll: None,
@@ -214,6 +244,7 @@ impl AppState {
             info: None,
             dialog: None,
             menu: None,
+            context_folder: None,
             palette: None,
             keymap: Keymap::new(crate::actions::COMMANDS),
             tip: Tooltip::new(),
@@ -226,6 +257,7 @@ impl AppState {
             win_file,
             proxy: None,
             list_area: Rect::default(),
+            main_top: 0.0,
             list_scroll_track: None,
             tabs: Tabs::default(),
             cell_font: CellFont::new(),
@@ -238,6 +270,9 @@ impl AppState {
             debug_type: Vec::new(),
             debug_list: false,
         };
+        if let Some(error) = marks_error {
+            s.error("Session marks are read-only", error);
+        }
         s.rebuild_accounts();
         s
     }
@@ -306,7 +341,15 @@ impl AppState {
             return;
         }
         let (source, config) = (self.source.clone(), self.config.clone());
-        self.running_job = Job::start(self.wake_fn(), move |_, _| source.running(&config)).ok();
+        let files = self.sessions.iter().map(|s| (s.id.clone(), (s.file.clone(), s.transcript_ms))).collect();
+        let watch = self
+            .running
+            .iter()
+            .map(|r| r.session_id.clone())
+            .chain(self.tabs.list.iter().filter_map(|tab| tab.session.clone()))
+            .chain(self.selected.clone())
+            .collect();
+        self.running_job = Job::start(self.wake_fn(), move |_, _| source.activity(&config, files, watch)).ok();
     }
 
     /// Takes what finished jobs give. True when something changed.
@@ -325,11 +368,8 @@ impl AppState {
         {
             let r = job.take();
             self.running_job = None;
-            if let Some(r) = r
-                && r != self.running
-            {
-                self.running = r;
-                changed = true;
+            if let Some(r) = r {
+                changed |= self.apply_activity(r);
             }
         }
         if let Some((id, job)) = &self.preview_job
@@ -342,57 +382,32 @@ impl AppState {
             self.preview_job = None;
             changed = true;
         }
-        changed
+        self.take_naming_job() | changed
     }
 
     pub fn apply_scan(&mut self, scan: Scan) {
         self.sessions = scan.sessions;
         self.running = scan.running;
+        self.index_running();
         self.statuses = scan.statuses.into_iter().collect();
         self.by_id = self.sessions.iter().enumerate().map(|(i, s)| (s.id.clone(), i)).collect();
-        self.all_groups = self.source.group(&self.sessions);
+        self.all_groups = claude_switch_core::sessions::group_by_folder(&self.sessions);
+        if !self.scanned && self.source.is_demo() {
+            crate::demo::seed_marks(&mut self.marks, &self.sessions);
+        }
+        self.prune_marks();
         self.scanned = true;
         self.rebuild_accounts();
         self.rebuild_view();
         let keep = self.selected.clone();
         self.last_account = None;
         match keep {
-            Some(id) if self.by_id.contains_key(&id) => self.load_details(&id, true),
+            Some(id) if self.by_id.contains_key(&id) => {
+                self.see_shown();
+                self.load_details(&id, true);
+            }
             _ => self.select_first(),
         }
-    }
-
-    /// The groups and rows that pass the search and the archive setting.
-    pub fn rebuild_view(&mut self) {
-        let query = self.search.text().trim().to_string();
-        let mut groups = Vec::new();
-        for g in &self.all_groups {
-            let rows: Vec<usize> = g
-                .sessions
-                .iter()
-                .copied()
-                .filter(|&i| {
-                    let s = &self.sessions[i];
-                    (self.config.show_archived || !s.archived)
-                        && (self.config.show_workers || !s.worker)
-                        && (query.is_empty() || matches(&query, s, &g.name))
-                })
-                .collect();
-            if !rows.is_empty() {
-                groups.push(ViewGroup { name: g.name.clone(), key: g.cwd.to_string_lossy().to_lowercase(), rows });
-            }
-        }
-        let scroll = self.sections.scroll;
-        let view = self.sections.view;
-        self.sections = Sections::new(view, ROW_H);
-        for (k, g) in groups.iter().enumerate() {
-            self.sections.add_group(g.rows.len(), Some(HEAD_H));
-            if query.is_empty() && self.collapsed.contains(&g.key) {
-                self.sections.set_collapsed(k, true);
-            }
-        }
-        self.groups = groups;
-        self.sections.scroll = self.sections.clamp_scroll(scroll);
     }
 
     /// The session of a list entry, when it is a row.
@@ -406,12 +421,8 @@ impl AppState {
     /// The list entry that shows a session.
     pub fn entry_of(&self, id: &str) -> Option<usize> {
         let i = *self.by_id.get(id)?;
-        for (g, vg) in self.groups.iter().enumerate() {
-            if let Some(row) = vg.rows.iter().position(|&r| r == i) {
-                return self.sections.index(Entry::Row { group: g, row });
-            }
-        }
-        None
+        let &(group, row) = self.row_locations.get(&i)?;
+        self.sections.index(Entry::Row { group, row })
     }
 
     pub fn selected_session(&self) -> Option<&Session> {
@@ -438,9 +449,10 @@ impl AppState {
         }
         self.selected = Some(id.to_string());
         self.load_details(id, false);
+        self.see_shown();
     }
 
-    fn load_details(&mut self, id: &str, again: bool) {
+    pub(crate) fn load_details(&mut self, id: &str, again: bool) {
         let Some(&i) = self.by_id.get(id) else { return };
         let session = self.sessions[i].clone();
         self.last_account = Some((id.to_string(), self.source.last_account(&self.config, &session)));
@@ -466,7 +478,10 @@ impl AppState {
     }
 
     pub fn running_of(&self, id: &str) -> Option<&Running> {
-        running::find(&self.running, id)
+        if !self.running_ids.contains(id) {
+            return None;
+        }
+        claude_switch_core::running::find(&self.running, id)
     }
 
     pub fn toast(&mut self, text: String, now: Instant) {
@@ -515,100 +530,5 @@ fn appearance(config: &Config, forced_dark: Option<bool>, high_contrast: bool) -
     (tokens, look, terminal)
 }
 
-/// Whether the query matches the session's title, its folder's name or its branch.
-pub fn matches(query: &str, s: &Session, folder: &str) -> bool {
-    fuzzy::score(query, &s.title).is_some()
-        || fuzzy::score(query, folder).is_some()
-        || s.branch.as_deref().is_some_and(|b| fuzzy::score(query, b).is_some())
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn state() -> AppState {
-        let mut s = AppState::new(Source::Demo, Some(false), WindowFile::default());
-        s.apply_scan(crate::demo::scan(&s.config));
-        s
-    }
-
-    #[test]
-    fn the_demo_list_groups_every_unarchived_session_and_selects_the_newest() {
-        let s = state();
-        let shown: usize = s.groups.iter().map(|g| g.rows.len()).sum();
-        assert_eq!(shown, s.sessions.iter().filter(|x| !x.archived && !x.worker).count());
-        assert_eq!(s.selected.as_deref(), Some(s.sessions[0].id.as_str()));
-        assert_eq!(s.groups.len(), 7);
-    }
-
-    #[test]
-    fn a_search_keeps_only_matching_sessions_and_an_empty_one_brings_all_back() {
-        let mut s = state();
-        let before = s.sections.len();
-        s.search.set_text("splitter");
-        s.rebuild_view();
-        let shown: Vec<&Session> = s.groups.iter().flat_map(|g| g.rows.iter().map(|&i| &s.sessions[i])).collect();
-        assert!(!shown.is_empty());
-        assert!(
-            shown
-                .iter()
-                .all(|x| fuzzy::score("splitter", &x.title).is_some() || x.cwd.to_string_lossy().contains("splitter"))
-        );
-        s.search.clear();
-        s.rebuild_view();
-        assert_eq!(s.sections.len(), before);
-    }
-
-    #[test]
-    fn rows_map_to_their_sessions_and_back() {
-        let s = state();
-        for e in 0..s.sections.len() {
-            if let Some(i) = s.session_at(e) {
-                assert_eq!(s.entry_of(&s.sessions[i].id), Some(e));
-            }
-        }
-    }
-
-    #[test]
-    fn worker_sessions_show_only_with_the_setting() {
-        let mut s = state();
-        let workers = s.sessions.iter().filter(|x| x.worker && !x.archived).count();
-        assert!(workers > 0);
-        let shown = |s: &AppState| s.groups.iter().map(|g| g.rows.len()).sum::<usize>();
-        let hidden = shown(&s);
-        s.config.show_workers = true;
-        s.rebuild_view();
-        assert_eq!(shown(&s), hidden + workers);
-    }
-
-    #[test]
-    fn a_session_open_in_a_tab_counts_as_open_there() {
-        let mut s = state();
-        let id = s.sessions[3].id.clone();
-        assert!(s.tab_of_session(&id).is_none());
-        let new = crate::tabs::NewTab {
-            label: "work · x · Resume".into(),
-            color: [0, 0, 0],
-            session: Some(id.clone()),
-            account: Some("work".into()),
-        };
-        let tab = s.tabs.open(new, crate::term::Term::empty((10, 3)));
-        assert_eq!(s.tab_of_session(&id), Some(tab));
-        assert_eq!(s.tab_account(&id).as_deref(), Some("work"));
-        s.tabs.activate(crate::tabs::SESSIONS);
-        s.open(Instant::now(), &id, "main".into(), claude_switch_core::App::Cli);
-        assert_eq!(s.tabs.active, Some(tab), "opening it again shows its tab");
-        assert!(s.dialog.is_none() && s.info.is_none());
-        s.close_tab_now(tab);
-        assert!(s.tab_of_session(&id).is_none());
-    }
-
-    #[test]
-    fn a_collapsed_folder_stays_collapsed_after_a_rebuild() {
-        let mut s = state();
-        let key = s.groups[0].key.clone();
-        s.collapsed.insert(key);
-        s.rebuild_view();
-        assert!(s.sections.is_collapsed(0));
-    }
-}
+mod tests;

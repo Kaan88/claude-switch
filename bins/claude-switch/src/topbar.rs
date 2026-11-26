@@ -165,7 +165,7 @@ pub fn draw_below_title(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Ms
             session_view: st.tabs.shown().and_then(|t| t.pane.as_ref()).map(|_| st.session_visible(w)),
         };
         let strip = tabs::strip_rect(top, w);
-        if tabs::draw(p, &pal, cx.anim(), &st.tabs, strip, &look, &mut st.hits) {
+        if tabs::draw(p, &pal, cx.anim(), (&st.tabs, &st.marks), strip, &look, &mut st.hits) {
             cx.animating(strip);
         }
         top += tabs::STRIP_H;

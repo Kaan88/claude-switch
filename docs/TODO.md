@@ -113,3 +113,11 @@ as the second account, Windows Terminal, the desktop hand-over.
 The worker-account setting (`claudeAccounts`, `claudeWorkersUse` in `workers.json`) is written, tested
 and in the README, not committed, and not copied to the installed clone
 (`~/.claude/mcp-servers/opencode-agent`). The app's Settings dialog writes the two keys.
+
+## Recent sessions
+
+- Implemented: Recent/Folders, prompt search and quick switcher, local names, pins, hiding/Undo,
+  running/waiting/unseen filters and opt-in name suggestions with review and cancellation.
+- Name suggestion tests use an injected fake program. Live Claude authentication, CLI flag
+  compatibility and returned titles still need an explicitly authorized smoke test.
+- Waiting is deliberately heuristic; see `DESIGN.md` for its limits.

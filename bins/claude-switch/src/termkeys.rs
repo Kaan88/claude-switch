@@ -38,6 +38,7 @@ pub fn shortcut(name: &KeyName, mods: Mods) -> Option<u32> {
         (KeyName::Char('w'), true) => actions::CLOSE_TAB,
         (KeyName::Char('t'), true) => actions::NEW_SHELL,
         (KeyName::Char('k'), true) => actions::PALETTE,
+        (KeyName::Char('p'), true) => actions::SWITCHER,
         (KeyName::Char('e'), true) => actions::SESSION_VIEW,
         _ => return None,
     })
@@ -269,6 +270,8 @@ mod tests {
         assert_eq!(k(KeyName::Char('w'), CTRL_SHIFT, None), KeyAction::Command(actions::CLOSE_TAB));
         assert_eq!(k(KeyName::Char('t'), CTRL_SHIFT, None), KeyAction::Command(actions::NEW_SHELL));
         assert_eq!(k(KeyName::Char('k'), CTRL_SHIFT, None), KeyAction::Command(actions::PALETTE));
+        assert_eq!(k(KeyName::Char('p'), CTRL_SHIFT, None), KeyAction::Command(actions::SWITCHER));
+        assert_eq!(k(KeyName::Char('p'), CTRL, None), send(b"\x10"));
         assert_eq!(k(KeyName::Char('e'), CTRL_SHIFT, None), KeyAction::Command(actions::SESSION_VIEW));
         assert_eq!(k(KeyName::Char('w'), CTRL, Some("\u{17}")), send(b"\x17"), "Ctrl+W is the program's");
         assert_eq!(k(KeyName::Char('c'), CTRL_SHIFT, None), KeyAction::Copy);

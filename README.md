@@ -60,3 +60,23 @@ Claude Switch reads Claude Code's local files. Claude Switch itself sends nothin
 [MIT](LICENSE).
 
 Claude Switch is an unofficial tool. It is not made by or affiliated with Anthropic. “Claude” is a trademark of Anthropic.
+
+## Find and manage sessions
+
+**Recent** puts all folders in one newest-first view; **Folders** groups them by project. Pins
+appear first in both views. Search includes the last prompt, and the All, Running, Waiting, Pinned
+and Unseen filters help you narrow the list. Right-click a row to open it, rename or pin it,
+hide it or its folder, copy its ID or folder path, or reveal its transcript in Explorer.
+Hidden sessions are not deleted; turn on **Show hidden** in Settings to find and unhide them.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+P in Sessions / Ctrl+Shift+P in a terminal | Quick switcher |
+| ↑ / ↓, Enter, Ctrl+Enter, Esc in the switcher | Move, open, open as another account, close |
+| F2 | Rename locally; clear the field to restore the transcript title |
+| Ctrl+D | Pin or unpin the selected session |
+| Delete in the list | Hide the selected session; the toast offers Undo |
+
+**Suggest names** is optional. After you confirm, Claude receives the first prompt and up to
+the last three prompts (500 characters each), using the worker account's usage. Suggestions
+are never saved unless you accept them. Rename, pins and hiding never edit transcripts.
