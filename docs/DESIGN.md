@@ -552,7 +552,19 @@ the indexed one, and reports skipped entries together.
 The Sessions tab is fixed. Terminal tabs reorder when dragged past a neighbor’s midpoint.
 Right-click actions target the tab under the pointer, not the selected session row. The
 account-copy path uses the same fork and cache warning as the Sessions list, and compaction
-opens the handover dialog. Tab renames last until close. Close others keeps the clicked tab
+opens the handover dialog. Renaming a tab that runs a Claude session the list knows renames
+the session: its Switch mark (so the list, search, the tab label and a restored tab use it;
+`terminal-tabs.json` still holds identifiers only) and, when the tab's live identity is verified,
+Claude Code's own name through `/rename <name>`. That command is never typed directly: it waits
+on the tab until the tab is shown in the Chat view and is handed to the Chat view's slash gate,
+which refuses a running turn, a pending tool, a menu, a full-screen view or a prompt that is not
+idle and empty, and shows why; its own retry clears the refusal once the prompt is idle, and
+the next tick sends. A tab that starts running another session drops the waiting rename. A blank
+name clears the mark and sends nothing (a bare `/rename` would make Claude Code generate a name).
+Claude Code's docs say a session answers to the name set with `/rename` or `--name` in
+cross-session messaging; its per-process record (`~/.claude/sessions/<pid>.json`, `name`,
+`nameSource: "user"`) is not documented. The transcript is never edited. A plain terminal tab,
+or a session not yet indexed, keeps a label-only rename until close. Close others keeps the clicked tab
 and asks once if any of the others still run. Ctrl+Tab and Ctrl+Shift+Tab keep cycling as
 before; Ctrl+1–9 selects a tab only in Sessions or after opening the command palette with
 Ctrl+Shift+K, because the terminal encoder can turn Ctrl+digits into meaningful input bytes.

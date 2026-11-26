@@ -141,6 +141,31 @@ impl AppState {
         }
     }
 
+    /// A tab that runs a Claude session renames the session: its mark (list, search, the tab
+    /// label, restored tabs) and, through the Chat view's gate, Claude Code's own name. A plain
+    /// terminal tab, or a session the list does not know yet, only changes its label.
+    pub fn rename_tab(&mut self, now: Instant, id: u64, name: &str) {
+        let name = name.trim();
+        let Some(tab) = self.tabs.get(id) else { return };
+        let session = tab.pane.as_ref().and(tab.resume_id.clone().or_else(|| tab.session.clone()));
+        let Some(session) = session.filter(|session| self.by_id.contains_key(session)) else {
+            if let Some(tab) = self.tabs.get_mut(id) {
+                tab.rename = (!name.is_empty()).then(|| name.to_owned());
+            }
+            return;
+        };
+        if !self.rename_session(&session, name) {
+            return; // Not saved; the marks error was reported.
+        }
+        let live = !name.is_empty() && self.recheck_tab_identity(id).as_deref() == Some(session.as_str());
+        let Some(tab) = self.tabs.get_mut(id) else { return };
+        tab.rename = None;
+        tab.cli_rename = live.then(|| (session, name.to_owned()));
+        if live {
+            self.toast("Renamed. Claude Code gets /rename from the Chat view when its prompt is idle.".into(), now);
+        }
+    }
+
     pub fn close_other_tabs(&mut self, keep: u64) {
         if self.tabs.get(keep).is_none() {
             return;
@@ -193,6 +218,43 @@ mod tests {
         app.close_other_tabs(c);
         assert_eq!(app.tabs.active, Some(c));
         assert_eq!(app.tabs.list.len(), 1);
+    }
+
+    #[test]
+    fn renaming_a_claude_tab_renames_the_session_and_queues_the_cli_rename() {
+        let mut app = AppState::new(Source::Demo, Some(false), Default::default());
+        app.apply_scan(crate::demo::scan(&app.config));
+        let session = app.sessions.iter().find(|s| s.desktop_id.is_none()).unwrap().clone();
+        let tab = app.tabs.open(
+            NewTab { label: "tab".into(), color: [0; 3], session: Some(session.id.clone()), account: None },
+            Term::empty((8, 4)),
+        );
+        let pane = app.new_session_pane(crate::view::model::Source::Demo(session.file.clone()), session.cwd.clone());
+        app.tabs.get_mut(tab).unwrap().pane = Some(pane);
+        let now = Instant::now();
+        app.rename_tab(now, tab, "  toolkit ");
+        assert_eq!(app.marks.name(&session.id), Some("toolkit"), "the list and search use the mark");
+        let t = app.tabs.get(tab).unwrap();
+        assert_eq!(t.rename, None, "the label follows the mark, which also survives a restart");
+        assert_eq!(t.cli_rename, Some((session.id.clone(), "toolkit".into())));
+        app.rename_tab(now, tab, "");
+        assert_eq!(app.marks.name(&session.id), None, "blank goes back to the derived name");
+        assert_eq!(app.tabs.get(tab).unwrap().cli_rename, None, "and asks Claude Code for nothing");
+    }
+
+    #[test]
+    fn renaming_a_plain_terminal_tab_changes_only_its_label() {
+        let mut app = AppState::new(Source::Demo, Some(false), Default::default());
+        app.apply_scan(crate::demo::scan(&app.config));
+        let session = app.sessions[0].id.clone();
+        let shell = app
+            .tabs
+            .open(NewTab { label: "pwsh".into(), color: [0; 3], session: None, account: None }, Term::empty((8, 4)));
+        let marks = app.marks.clone();
+        app.rename_tab(Instant::now(), shell, "build");
+        let t = app.tabs.get(shell).unwrap();
+        assert_eq!((t.rename.as_deref(), t.cli_rename.as_ref()), (Some("build"), None));
+        assert_eq!(app.marks.name(&session), marks.name(&session));
     }
 
     #[test]

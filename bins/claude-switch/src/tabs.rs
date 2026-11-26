@@ -30,6 +30,9 @@ pub struct Tab {
     /// The title the program set (OSC 0 or 2); empty when it set none.
     pub program_title: String,
     pub rename: Option<String>,
+    /// A `/rename` for Claude Code's own session name: (session, name), sent through the Chat
+    /// view's slash gate when its prompt is idle; dropped if the tab's session changes.
+    pub cli_rename: Option<(String, String)>,
     pub color: [u8; 3],
     /// Current session for list routing, badges and seen marks; never the pane's pinned identity.
     pub session: Option<String>,
@@ -107,6 +110,7 @@ impl Tabs {
             label,
             program_title: String::new(),
             rename: None,
+            cli_rename: None,
             color,
             resume_id: session.clone(),
             session,

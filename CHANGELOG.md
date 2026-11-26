@@ -11,6 +11,10 @@
   (**None (plain Claude)** first) and **Summary written by** names the OpenCode model. A saved
   agent the target account lacks is shown as missing and skipped with a notice instead of failing
   the launch with `--agent '…' not found`.
+- Tabs: renaming a tab that runs a Claude session renames the session (list, search, restored
+  tabs) and, at an idle prompt and through the Chat view's usual checks, Claude Code's own name
+  with `/rename`, so other sessions can reach it by that name. Plain terminal tabs keep a
+  label-only rename.
 
 ## 0.1.1 (2026-11-26)
 

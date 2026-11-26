@@ -532,9 +532,7 @@ fn submit_name(st: &mut AppState, now: Instant, field: TextField, stops: Vec<f32
         NameFor::Add => st.source.add_account(&mut st.config, &name).map(drop),
         NameFor::Rename(slug) => st.source.rename(&mut st.config, slug, &name),
         NameFor::Tab(id) => {
-            if let Some(tab) = st.tabs.get_mut(*id) {
-                tab.rename = (!name.is_empty()).then_some(name);
-            }
+            st.rename_tab(now, *id, &name);
             return;
         }
     };

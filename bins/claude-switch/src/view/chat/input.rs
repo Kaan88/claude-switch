@@ -141,6 +141,12 @@ impl AppState {
         if self.progress_chat_tabs(now, window_allows_writes) {
             cx.request_redraw_all();
         }
+        if window_allows_writes && self.send_cli_rename(now) {
+            cx.request_redraw_all();
+        }
+        if self.cli_rename_waiting() {
+            cx.wake_at(now + SUBMISSION_POLL);
+        }
         for tab in &self.tabs.list {
             let Some(pane) = &tab.pane else { continue };
             if Self::has_chat_work(tab) || Some(tab.id) == active && pane.chat.enabled && pane.chat.commands.loading() {
