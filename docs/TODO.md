@@ -447,3 +447,13 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     otherwise (DESIGN.md: no generated permission answers). Also in the screenshot: the conversation
     above was empty in a fresh handover session (check that the Chat view attaches to the new
     transcript).
+26. **A tab rename is a label only** (owner, 2026-11-26: renamed the toolkit session's tab to "toolkit"; search
+    does not find it and other sessions cannot reach it by that name). "Rename tab…" (`tabcontrols.rs`, dialog in
+    `dialogs.rs:549`) sets `Tab::rename` in memory only: it is not in `terminal-tabs.json` (lost on restart), not in
+    the session marks (so the list and search do not know it), and Claude Code's live name for the session stays the
+    derived one (`~/.claude/sessions/<pid>.json`: `"name":"anim-03","nameSource":"derived"`), which is what
+    ListAgents and SendMessage use. Wanted: renaming a tab that runs a Claude session renames the session: the
+    session mark (list and search), the saved tab, and Claude Code's own name through the CLI's `/rename <name>`,
+    sent only through the Chat view's usual gate at an idle prompt (never into a running turn or a menu), so the
+    transcript is still never edited by the app. Check first whether `/rename` updates the live name other sessions
+    see (not verified); a plain terminal tab keeps a label-only rename.
