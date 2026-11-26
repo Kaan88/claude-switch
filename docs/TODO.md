@@ -382,3 +382,12 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     must say so or close and reopen in order)? Fonts (item 32): the toolkit queued FN1 (font list
     with monospace flag), FN2 (settable interface and mono font), FN3 (font picker row) with the
     owner's yes; build item 32 after they land.
+    Tried by the owner (2026-11-26): the browser's return opens another desktop instance (the
+    first profile), as suspected. With an email sign-in that instance shows a code, which can be
+    pasted into the window Switch opened, and the further account then works. With Google sign-in
+    the return signs in the other instance instead, so the further profile cannot be signed in that
+    way. To do: in the further account's Desktop window, Switch says once: "Sign in with your email
+    address (the same address as the Google account works), then paste the code shown in the other
+    Claude window here". Check whether "Continue with email" for a Google-made account reaches the
+    same account; and whether `claude://` can be routed to the right profile at all (likely not:
+    the protocol handler always starts the default profile).
