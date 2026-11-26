@@ -123,7 +123,17 @@ and in the README, not committed, and not copied to the installed clone
   compatibility and returned titles still need an explicitly authorized smoke test.
 - Waiting is deliberately heuristic; see `DESIGN.md` for its limits.
 
-## Reported after 0.1.0 (owner, 2026-11-26): recorded, nothing changed yet
+## Reported after 0.1.0 (owner, 2026-11-26)
+
+Status after the fix rounds on branch `integrate` (2026-11-26; GPT-6.2 Sol workers, two reviews by
+Claude Fable): items 1 to 13 and 15 to 21 are built and pass format, lint and the test suite; item 14
+is built for the Chat composer only, the text fields belong to the toolkit (asked for in its session).
+Nothing below was tried against a live Claude Code session, the real desktop app or a real install:
+the owner's checks are what is left. To check live first: the empty-prompt and slash-echo detection
+(items 7, 10, 11), the picture send (11), the desktop launch through the package alias (2), Stop via
+the CLI's shell manager (17), the new chat's name via `--name` (21), and the installer's PATH task (19).
+Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked and are not built.
+
 
 1. **A newly added third account keeps saying "Not signed in" under usage** although its sign-in tab
    ended with "Login successful" and the account's header line says "Signed in to the CLI". The text
