@@ -98,7 +98,7 @@ files (only numeric `<pid>.json` is read); entrypoints seen are `cli`, `sdk-cli`
 
 ## Usage
 
-**Show usage** (Settings → Accounts, on by default) controls both the figures and the credential read.
+**Show usage** (Settings → Usage, on by default) controls both the figures and the credential read.
 On demand, a worker reads only `claudeAiOauth.accessToken` and `expiresAt` from each account's
 CLI `.credentials.json`. Claude Switch never refreshes, writes or deletes credentials. Expired
 tokens are never sent; the window keeps any previous figures and says “Open a session to refresh.”
@@ -347,16 +347,16 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 ## Appearance
 
-Settings has navigable Appearance, Terminal, and Custom colours sections (as well as Workers and
-Sessions). The window theme is System, Light or Dark; `--theme light|dark` overrides that preference.
+The Appearance page controls the window. The window theme is System, Light or Dark;
+`--theme light|dark` overrides that preference.
 Windows high contrast takes priority. The toolkit's appearance model supplies the accent (clay by
 default, or system or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
 Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
 compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
 
 Automatic terminal colours use Dark (`#101010`) or Light according to the effective window theme.
-Match window uses the window bar background. Custom lets the user pick the background, text and
-accent; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
+Match window uses the window bar background. Custom uses the background, text and accent picked on
+the Terminal page; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
 changes resize all open screens and pseudo-terminals. Cursor shape and background opacity are
 described under [Terminal cursor and backdrop](#terminal-cursor-and-backdrop).
 
@@ -364,6 +364,18 @@ Tab marks, hover, menu entrances, the dialog dimmer, sessions-list selection and
 animate briefly. Reduce motion snaps them to their targets, as does the system setting. Tab content
 switches instantly; terminal text never cross-fades. Real-mode running-session scans are unchanged,
 but a polling tick no longer redraws the window unless visible state changes.
+
+## Settings pages
+
+The category list at left selects one page at right: Appearance, Terminal, Sessions, Usage,
+Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
+categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
+closing Settings. Each window remembers the last page while it runs; category selection is not saved.
+
+Controls still apply live. An ordinary config save merges only the top-level fields edited against
+the window's loaded baseline, refusing a conflicting change to the same field. It never republishes
+the separately persisted usage opt-in or handover consent; the tab-restore preference still uses
+`window.ini`. Switching categories does not write settings.
 
 ## Recent sessions and local marks
 
@@ -522,7 +534,7 @@ Switch still supplies its sanitized child environment and the handover-only stan
 policy. `opencode models` supplies provider/model IDs; richer model catalog data remains available
 via the generic runner. The library doesn't use GUI APIs or connect to the service itself.
 
-Settings → Workers probes OpenCode off the UI thread. It checks `service status` before
+Settings → OpenCode shows the results of background probes. The probe checks `service status` before
 `session.active`, because the direct API command can auto-start the service. The restart
 confirmation counts only `running` sessions, warns that jobs will be cut off, and identifies
 an unavailable count as unknown. Cancel is the default. The worker asks again if the count
@@ -681,7 +693,7 @@ transcript can be resumed or forked only when the chosen CLI can reach that same
 launch or sign-in refuses an independent tree rather than silently splitting transcript history.
 
 The Workers bridge is synchronized from committed settings, including after reset. Switch serializes
-its updates to the bridge file and preserves unrelated keys. If sync fails, use **Settings → Workers
+its updates to the bridge file and preserves unrelated keys. If sync fails, use **Settings → OpenCode
 → Sync bridge account settings** to retry. An unrecognized active-session response gives an unknown
 count. If a confirmed restart is in progress, normal exit waits for its completion, including the
 stop/start fallback and verification.

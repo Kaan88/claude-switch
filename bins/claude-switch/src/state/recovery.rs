@@ -67,7 +67,7 @@ impl AppState {
         {
             self.error(
                 "Worker accounts were not synced",
-                format!("{error} Use Settings → Workers → Sync bridge account settings to retry."),
+                format!("{error} Use Settings → OpenCode → Sync bridge account settings to retry."),
             );
         }
     }

@@ -10,7 +10,7 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 - Start a new CLI session in a chosen folder or open a copy of an existing session.
 - Make an editable handover with an OpenCode model and open it in a brand-new Claude Code session.
 - Keep separate logins while sharing transcripts and settings.
-- Check OpenCode’s version and active sessions in **Settings → Workers**, confirm a service restart, or open OpenCode Config Studio when installed.
+- Check OpenCode’s version and active sessions in **Settings → OpenCode**, confirm a service restart, or open OpenCode Config Studio when installed.
 - Open handovers that are too long for the command line by asking the new session to read the saved Markdown file.
 
 ## Screenshots
@@ -41,6 +41,9 @@ The first account uses your existing Claude CLI and Desktop profiles. Each extra
 
 **Open Desktop as this account** searches the installed Claude MSIX or known per-user and Program Files locations. It starts only the native executable with a trusted Anthropic signature, not a protocol handler or updater.
 
+Settings shows one page at a time. Use ↑/↓ in the category list, Tab to enter the page, and Escape
+to close. Reopening Settings in the same window returns to the last category. Changes apply as you make them.
+
 ## Duplicate-session safeguard
 
 Claude Switch checks its tabs and the running-session records across accounts before resuming. If the session is already running, it will not start another instance. If the session is already open in one of its tabs, it switches to that tab instead. A short cooldown also prevents a second launch before the running record appears.
@@ -60,13 +63,13 @@ Claude Switch checks its tabs and the running-session records across accounts be
 
 You can also middle-click a terminal tab to close it.
 
-The OpenCode controls are in **Settings → Workers**; there is no separate keyboard shortcut.
+The OpenCode controls are in **Settings → OpenCode**; there is no separate keyboard shortcut.
 Use `--demo --demo-workers` or `--demo --demo-compact-long` to preview those screens without
 starting OpenCode or Claude.
 
 ## Privacy
 
-Claude Switch has no telemetry. When **Show usage** is on (the default), a usage refresh reads the relevant account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Accounts to stop new token reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
+Claude Switch has no telemetry. When **Show usage** is on (the default), a usage refresh reads the relevant account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Usage to stop new token reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
 
 If usage says **Not signed in** after an external CLI login, choose **Refresh**. An embedded sign-in tab ending checks its account automatically. `—` in the usage figures means Claude did not report a usable value; it does not mean zero.
 
@@ -205,7 +208,7 @@ and never overwrites an existing file. Treat the report as private conversation 
 - Background Claude tabs get a Waiting mark. Choose **Toast and mark**, **Mark only**, or
   **Off** in Settings → Sessions. With the tray icon enabled, a Windows notice can open
   the waiting tab; otherwise **Toast and mark** uses the mark and a taskbar flash.
-- Settings → Accounts can warn at 80% and 95% usage. If another account has room, the usage
+- Settings → Usage can warn at 80% and 95% usage. If another account has room, the usage
   pop-up offers **Open this session as …** to start a handover with that account selected.
 - Settings → Notification area enables the tray icon and optionally **Close to tray**.
   The tooltip shows usage, and the menu opens running sessions, starts a new session,

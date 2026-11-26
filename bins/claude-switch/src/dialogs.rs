@@ -1,5 +1,5 @@
 //! The modal dialogs: a confirmation, the accounts, a name to type, the settings and About. Each
-//! is drawn with the toolkit's dialog pieces (`overlay`) or is a `settings::Form`; their
+//! is drawn with the toolkit's dialog pieces (`overlay`) or contains a `settings::Form`; their
 //! controls are recorded as [`Target::Dialog`] hits with the numbers below.
 
 use std::time::Instant;
@@ -14,7 +14,6 @@ use mdshared_ui::overlay::{
     DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_backdrop_presence, draw_dialog_button,
     draw_dialog_card_with,
 };
-use mdshared_ui::settings::{Form, Style};
 use mdshared_ui::textfield::{FieldColors, TextField};
 use mdshared_ui::theme::Palette;
 
@@ -28,7 +27,7 @@ mod opencode_rows;
 mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
-pub use settings::{settings, settings_outcome};
+pub(crate) use settings::{OPENCODE, TERMINAL, settings, settings_event};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
@@ -98,7 +97,7 @@ pub enum Dialog {
     ArchiveReport(crate::archive_report::Report),
     Compact(Box<crate::compact_dialog::Compact>),
     Session(Box<Panel>),
-    Settings(Box<Form>),
+    Settings(Box<settings::Settings>),
     About,
 }
 
@@ -168,14 +167,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     let look = st.appearance;
     let shadow = if st.high_contrast { 0.0 } else { look.shadow };
     if let Dialog::Settings(form) = &mut dialog {
-        let mut style = Style::CLASSIC;
-        style.radius = look.radius;
-        style.soft_shadow = Some(shadow);
-        style.backdrop = t;
-        form.set_style(style);
-        form.set_high_contrast(st.high_contrast);
-        terminal_appearance::sync(form, &st.config.appearance, st.high_contrast, p.frost_key().is_some());
-        form.draw_animated(p, st.pal(), window, true, cx.anim(), "settings");
+        form.draw(p, st, window, t, cx.anim());
         st.dialog = Some(dialog);
         return;
     }
@@ -552,7 +544,7 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
         Dialog::Settings(form) => {
             let o = form.key(k, mods, text);
             st.dialog = Some(dialog);
-            settings_outcome(st, o);
+            settings_event(st, o);
             return true;
         }
         Dialog::Name { field, .. } => {
