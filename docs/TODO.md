@@ -147,3 +147,6 @@ and in the README, not committed, and not copied to the installed clone
    not reach the list's hover state while a menu, dialog or palette is open above it. Also in that
    screenshot: "Archive session…" is greyed while "Archive folder…" is not; check that this is the
    pinned/running rule and not a mistake.
+   Update to 1 (owner, same day): after restarting the app the third account shows as signed in.
+   So the credentials were fine and the reader accepts them: the fault is that the usage state from
+   before the sign-in is kept, and is not read again when the sign-in tab ends (or on Refresh).
