@@ -23,6 +23,7 @@ pub mod fulltext;
 pub mod grouping;
 pub mod launch;
 pub mod marks;
+mod merge;
 pub mod naming;
 mod prompt_clean;
 pub mod running;

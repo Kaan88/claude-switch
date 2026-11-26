@@ -8,6 +8,10 @@
   checks; the dialog's button reads **Continue here**. The old session is marked handed over in
   its tab and in Sessions. A step that does not happen in time stops it with the reason and the
   saved file's path. Otherwise, or with a new tab chosen, it opens a new tab as before.
+- Two Claude Switch windows no longer stop each other from saving: session marks (names, pins,
+  hiding, handover links) and settings apply only each window's own changes onto the file as it is
+  now. Only the same field changed differently in both is refused, with a notice naming it, and
+  nothing asks for a restart.
 - Settings › Handovers: **Where it continues** (This tab, A new tab), **Summary written by**,
   **Default focus text** (used when you give no focus; editable, with Reset), **New chat starts
   as** (new tabs only), **Hand over automatically** and **When the context reaches**, in that order.

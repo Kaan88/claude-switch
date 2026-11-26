@@ -550,8 +550,11 @@ Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
 closing Settings. Each window remembers the last page while it runs; category selection is not saved.
 
-Controls still apply live. An ordinary config save merges only the top-level fields edited against
-the window's loaded baseline, refusing a conflicting change to the same field. It never republishes
+Controls still apply live. An ordinary config save, under the settings lock, re-reads the file and
+applies only the fields this window edited against its loaded baseline, inside groups such as
+`appearance` and `notifications` too, so two windows can change different settings. Only a field
+both windows changed differently is refused, with a notice naming it; the other window's value is
+kept and this window reloads the current settings, without asking for a restart. It never republishes
 the separately persisted usage opt-in or handover consent; the tab-restore preference still uses
 `window.ini`. Switching categories does not write settings.
 
@@ -579,7 +582,13 @@ also rescan the index.
 
 Local names, pins, per-session and per-folder hiding, and last-seen transcript timestamps live
 in `marks.json` beside `config.json`. The file is replaced atomically, with unknown keys kept;
-the app leaves a damaged marks file alone. Showing details or a tab clears Unseen for its
+the app leaves a damaged marks file alone. Two windows may both write it: under the file's lock, a
+save that finds the file changed since this window read it applies only this window's own changes,
+per session or folder and field, onto the file as it is now, and the window then has the other's
+changes too. Last-seen times take the later value, the missing-since stamp the earlier, and the
+transcript path the one on disk. Only a field both changed differently (two names for the same
+session, say) refuses the save with a notice naming it; the other window's value is kept, nothing
+else from that save is written, and the next change saves normally. No restart is needed. Showing details or a tab clears Unseen for its
 known transcript version. Remembered session marks expire only after the transcript has been
 observed missing for at least 90 days. Hiding is reversible from Undo or Show hidden; it never
 deletes a folder or changes a transcript. A blank local name restores the transcript title.

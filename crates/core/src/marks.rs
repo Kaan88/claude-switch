@@ -10,12 +10,62 @@ const RETAIN_MS: u64 = 90 * 86_400_000;
 #[derive(Clone, Debug)]
 pub struct Marks {
     data: Value,
+    /// The file's bytes when last read or written, and what they said: the base this window's
+    /// own changes are taken from when another window wrote in between.
     original: Option<Vec<u8>>,
+    base: Value,
 }
 
 impl Default for Marks {
     fn default() -> Self {
-        Self { data: json!({}), original: None }
+        Self { data: json!({}), original: None, base: json!({}) }
+    }
+}
+
+/// Sessions and folders, each a map of entries, each a map of fields.
+const DEPTH: usize = 3;
+
+fn decode(path: &Path, bytes: &[u8]) -> Result<Value, Refusal> {
+    let data: Value = serde_json::from_slice(bytes).map_err(|e| io_refusal("decode", path, &e))?;
+    if !data.is_object() || ["sessions", "folders"].iter().any(|k| data.get(k).is_some_and(|v| !v.is_object())) {
+        return Err(Refusal::Io(format!("The structure of {} is not recognized.", path.display())));
+    }
+    Ok(data)
+}
+
+/// Fields each window keeps up by itself are no conflict: the later `seenMs`, the earlier
+/// `missingSinceMs`, and the transcript `file` as on disk. True when `path` was one of them.
+fn bookkeeping(merged: &mut Value, ours: &Value, path: &[String]) -> bool {
+    let [group, key, field] = path else { return false };
+    let pick = |a: u64, b: u64| if field == "seenMs" { a.max(b) } else { a.min(b) };
+    let target = &mut merged[group.as_str()][key.as_str()];
+    match field.as_str() {
+        "file" => true,
+        "seenMs" | "missingSinceMs" => {
+            let mine = ours[group.as_str()][key.as_str()][field.as_str()].as_u64();
+            let theirs = target.get(field.as_str()).and_then(Value::as_u64);
+            match (mine, theirs) {
+                (Some(a), Some(b)) => target[field.as_str()] = json!(pick(a, b)),
+                (Some(a), None) if target.is_object() && field == "seenMs" => target[field.as_str()] = json!(a),
+                _ => {}
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// "the name of session 1a2b3c4d", for a conflict notice.
+fn describe(path: &[String]) -> String {
+    let short = |key: &str| key.chars().take(8).collect::<String>();
+    match path {
+        [group, key, field, ..] => {
+            let what = if group == "folders" { "folder" } else { "session" };
+            let key = if group == "folders" { key.clone() } else { short(key) };
+            format!("the {field} of {what} {key}")
+        }
+        [group, key] => format!("{group} entry {}", short(key)),
+        other => other.join("/"),
     }
 }
 
@@ -46,22 +96,49 @@ impl Marks {
     pub fn load(roots: &Roots) -> Result<Self, Refusal> {
         let path = path(roots);
         let Some(bytes) = read(&path)? else { return Ok(Self::default()) };
-        let data: Value = serde_json::from_slice(&bytes).map_err(|e| io_refusal("decode", &path, &e))?;
-        if !data.is_object() || ["sessions", "folders"].iter().any(|k| data.get(k).is_some_and(|v| !v.is_object())) {
-            return Err(Refusal::Io(format!("The structure of {} is not recognized.", path.display())));
-        }
-        Ok(Self { data, original: Some(bytes) })
+        let data = decode(&path, &bytes)?;
+        Ok(Self { base: data.clone(), data, original: Some(bytes) })
     }
 
+    /// Writes this window's changes. When another window wrote in between, only this window's
+    /// own changes (per entry and field) are applied onto the file as it is now, and this
+    /// window then also has the other one's; a field both changed differently refuses the save
+    /// and takes the other window's value.
     pub fn save(&mut self, roots: &Roots) -> Result<(), Refusal> {
         let path = path(roots);
         let _lock = lock_beside(&path)?;
-        if read(&path)? != self.original {
-            return Err(Refusal::Io(format!("{} changed on disk. Restart before saving marks.", path.display())));
+        let disk = read(&path)?;
+        if disk != self.original {
+            let theirs = match &disk {
+                Some(bytes) => decode(&path, bytes).map_err(|_| {
+                    Refusal::Io(format!(
+                        "Another window left {} damaged or unrecognized; nothing was saved.",
+                        path.display()
+                    ))
+                })?,
+                None => json!({}),
+            };
+            let merged = crate::merge::three_way(Some(&self.base), Some(&self.data), Some(&theirs), DEPTH);
+            let mut value = merged.value.unwrap_or_else(|| json!({}));
+            let conflicts: Vec<_> =
+                merged.conflicts.into_iter().filter(|p| !bookkeeping(&mut value, &self.data, p)).collect();
+            if let Some(first) = conflicts.first() {
+                let more = conflicts.len() - 1;
+                let more = if more > 0 { format!(" and {more} more") } else { String::new() };
+                self.data = value;
+                self.base = theirs;
+                self.original = disk;
+                return Err(Refusal::Io(format!(
+                    "Another Claude Switch window changed {}{more} at the same time. That window's change is kept; nothing else was saved, so try again.",
+                    describe(first)
+                )));
+            }
+            self.data = value;
         }
         let written = json_bytes(&path, &self.data)?;
         write_atomic(&path, &written)?;
         self.original = Some(written);
+        self.base = self.data.clone();
         Ok(())
     }
 
@@ -348,6 +425,38 @@ mod tests {
         assert!(Marks::load(&roots).is_err());
         assert!(m.save(&roots).is_err());
         assert_eq!(std::fs::read_to_string(path(&roots)).unwrap(), r#"{"sessions":1,"folders":{"keep":true}}"#);
+    }
+
+    #[test]
+    fn two_windows_keep_each_others_changes_and_refuse_only_the_same_field() {
+        let t = TempDir::new("marks-two");
+        let roots = t.roots();
+        let file = t.0.join("a.jsonl");
+        let mut one = Marks::load(&roots).unwrap();
+        let mut two = Marks::load(&roots).unwrap();
+        one.rename("a", &file, "From one");
+        one.save(&roots).unwrap();
+        two.pin("a", &file, true);
+        two.hide_folder("C:/w", true);
+        two.see("a", &file, 5);
+        two.save(&roots).expect("a different field of the same session saves");
+        assert_eq!(two.name("a"), Some("From one"), "and this window now has the other's change");
+        let back = Marks::load(&roots).unwrap();
+        assert_eq!((back.name("a"), back.pinned("a"), back.folder_hidden("C:/w")), (Some("From one"), true, true));
+        one.see("a", &file, 9);
+        one.save(&roots).expect("seen times merge: the later one");
+        assert!(!Marks::load(&roots).unwrap().unseen("a", 9));
+        assert!(one.pinned("a"));
+        two.rename("a", &file, "From two");
+        one.rename("a", &file, "Also one");
+        one.save(&roots).unwrap();
+        let e = two.save(&roots).expect_err("both renamed the same session").to_string();
+        assert!(e.contains("the name of session a") && !e.contains("Restart"), "{e}");
+        assert_eq!(two.name("a"), Some("Also one"), "the other window's name is kept");
+        assert_eq!(Marks::load(&roots).unwrap().name("a"), Some("Also one"));
+        two.hide("a", &file, true);
+        two.save(&roots).expect("after a conflict the next change saves");
+        assert!(Marks::load(&roots).unwrap().hidden("a"));
     }
 
     #[test]

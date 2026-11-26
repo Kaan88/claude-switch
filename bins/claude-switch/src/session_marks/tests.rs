@@ -92,7 +92,7 @@ fn mismatch_keeps_the_pinned_pane_but_removes_routing_and_seen_identity() {
 }
 
 #[test]
-fn competing_writer_rolls_back_rename_pin_hide_and_preserves_selection() {
+fn a_competing_writer_merges_unless_it_changed_the_same_field_which_rolls_back() {
     let mut st = AppState::new(Source::Demo, None, Default::default());
     st.apply_scan(crate::demo::scan(&st.config));
     st.select_first();
@@ -106,21 +106,29 @@ fn competing_writer_rolls_back_rename_pin_hide_and_preserves_selection() {
     let now = Instant::now();
     let key = folder_key(&s.cwd);
     std::fs::write(&marks, b"{\"otherWindow\":true}").unwrap();
-    st.source = Source::Real(roots);
+    st.source = Source::Real(roots.clone());
     st.marks_flush_at = Some(now);
-    st.rename_session(&s.id, "Not saved");
+    st.rename_session(&s.id, "Saved");
     st.toggle_pin(st.by_id[&s.id]);
-    st.toggle_hidden(now, false);
-    st.toggle_group_hidden(now, key.clone());
-    assert!(st.marks.name(&s.id).is_none());
-    assert!(!st.marks.pinned(&s.id));
-    assert!(!st.marks.hidden(&s.id));
-    assert!(!st.marks.folder_hidden(&key));
+    assert!(st.info.is_none(), "another window's unrelated change is merged");
+    let disk = Marks::load(&roots).unwrap();
+    assert_eq!((disk.name(&s.id), disk.pinned(&s.id)), (Some("Saved"), true));
+    assert!(std::fs::read_to_string(&marks).unwrap().contains("otherWindow"));
+    // Another window renames the same session meanwhile: a true conflict.
+    let mut other = Marks::load(&roots).unwrap();
+    other.rename(&s.id, &s.file, "Theirs");
+    other.save(&roots).unwrap();
+    st.rename_session(&s.id, "Not saved");
+    assert_ne!(st.marks.name(&s.id), Some("Not saved"));
     assert_eq!(st.selected.as_deref(), Some(s.id.as_str()));
-    assert!(st.undo_hide.is_none());
-    assert_eq!(st.marks_flush_at, Some(now));
     assert!(st.info.is_some());
-    assert_eq!(std::fs::read(&marks).unwrap(), b"{\"otherWindow\":true}");
+    assert_eq!(Marks::load(&roots).unwrap().name(&s.id), Some("Theirs"));
+    st.info = None;
+    st.toggle_hidden(now, false);
+    assert!(st.info.is_none(), "the next change saves");
+    assert!(Marks::load(&roots).unwrap().hidden(&s.id));
+    st.toggle_group_hidden(now, key.clone());
+    assert!(Marks::load(&roots).unwrap().folder_hidden(&key));
     std::fs::remove_dir_all(root).unwrap();
 }
 
