@@ -209,3 +209,9 @@ and in the README, not committed, and not copied to the installed clone
       "enter/leave" inside a Bash command); only paths that exist under the session's folder should
       become links.
     Approved (owner, same day): artboard E as drawn is the target for items 11 and 12.
+13. **The Session view (the narrow side panel beside a terminal) gets the same conversation design**
+    (owner, 2026-11-26, screenshot). Today it is the same grey cards as the Chat view, with tool calls
+    as cards of their own ("Read …", "Bash …", "2 tool calls"). Apply artboard E at panel width: the
+    user's messages tinted and right-aligned, Claude's answers without a card, tool calls as compact
+    mono rows grouped under the answer, Markdown files opening in the viewer. Share the drawing code
+    with the Chat view rather than keeping two looks; the panel keeps its own width and font size.
