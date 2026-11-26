@@ -287,3 +287,16 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     mock-ups: which chips show under the message box and in what order, the user's own commands with
     arguments, back to the defaults, and the switch for answering the CLI's menus from the chat
     (artboard C, not picked). Not started.
+23. **Fresh chats refuse every send: "The terminal is showing a full-screen view"** (owner,
+    2026-11-26, after 0.1.1). Likely cause, not yet confirmed on the owner's machine: Claude Code now
+    starts new sessions in its fullscreen renderer (the `tui` setting, research preview; default for
+    first use since 2026-05-06 / v2.1.239, per https://code.claude.com/docs/en/fullscreen.md), which
+    draws in the terminal's alternate screen. The Chat view treats any alternate screen as a
+    foreign full-screen program and vetoes sending (`view/chat/submission.rs`, `ALTERNATE`). Check
+    first: `/tui` in such a session names the renderer. Options, not decided: (a) accept the
+    alternate screen when the CLI's own input box and prompt are recognised there (the box is fixed
+    at the bottom; footer and prompt rows to be captured from a real fullscreen session), keeping
+    the veto for other full-screen programs; (b) start CLI tabs with
+    `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` (classic renderer) as a setting; (c) both, with (b) as
+    a fallback. On Windows the docs also suggest `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT=1` against
+    stale text under ConPTY. Not started (owner: record first).
