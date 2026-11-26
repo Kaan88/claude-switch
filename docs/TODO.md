@@ -191,3 +191,15 @@ and in the README, not committed, and not copied to the installed clone
     itself). Proposed: send the picture as Alt+V, wait until the CLI's input line shows the
     `[Image #n]` marker, then paste the text and Enter (never both at once, as DESIGN.md asks); keep a
     refusal on screen until its cause changes; a thumbnail inside the box; queue during a turn.
+    Picked (owner, same day): A (chips) and B (the "/" list). C and D are not decided.
+12. **Chat view text and reading** (owner, 2026-11-26), drawn in artboard E of the mock-ups above:
+    - The composer breaks lines inside words ("fo|rce"): wrap at word boundaries, and hyphenate only a
+      word longer than the line.
+    - Markdown files named in Claude's answers (links and paths such as `docs/TODO.md`) open with one
+      click in a side panel through the toolkit's Markdown viewer, with "Open in editor"; files Claude
+      wrote or edited in the turn also get a file chip under the answer.
+    - Claude's prose and its tool calls look too alike: prose in the body font at reading size with the
+      Claude mark, tool calls as compact one-line mono rows on a darker ground (status, tool name,
+      target, duration), expandable, indented under the answer they belong to.
+    - The composer per item 11: picture thumbnail inside the box, the waiting notice kept as a bar with
+      "Send now" and "Cancel", and Send becoming "Queue" during a turn.
