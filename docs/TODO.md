@@ -283,3 +283,7 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     handover dialog before opening. To find out: where the name comes from (the handover text's first
     heading becoming the session title, or the CLI's own naming), and whether the CLI takes a name on
     launch or the app should set it afterwards through Claude Switch's own session names.
+22. **Later: Settings › Chat › Quick commands** (owner, 2026-11-26: "note D"), artboard D of the
+    mock-ups: which chips show under the message box and in what order, the user's own commands with
+    arguments, back to the defaults, and the switch for answering the CLI's menus from the chat
+    (artboard C, not picked). Not started.

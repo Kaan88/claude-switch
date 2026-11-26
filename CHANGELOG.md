@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.1 (2026-11-26)
+
+- Chat: a clearer conversation (your messages in tinted bubbles, Claude's answers without a card,
+  tool calls as compact rows grouped under their answer) in the Chat and Session views, the CLI's live
+  working line with Stop, and Markdown files that open in a side panel.
+- Chat message box: chips for model, effort, context, compact and clear; a "/" list of built-in,
+  skill, plugin and own commands with pins; clipboard pictures that really send (the CLI confirms the
+  picture before Enter); a queue while a turn runs, with Send now and Cancel; notices that stay until
+  their cause changes; word wrap; mouse selection and a context menu; Up and Down through earlier
+  prompts, keeping the draft.
+- Details panel: clickable Tasks, Agents and Files rows; a Shells tab for background shells with
+  their output and Stop through the CLI's own manager; an Outputs tab for artifacts, pull requests,
+  links, pictures and files; scrollbars that can be dragged.
+- Handover: choose the new chat's agent (dialog, `--agent`, the plugin's `agent:<name>`, a default in
+  Settings), and the new chat is named after its source (`--name`). The plugin finds the installed
+  app when it is not on PATH, and Setup can add Claude Switch to PATH.
+- Accounts: usage is read again after a sign-in; Open Desktop finds the Store-installed app; usage
+  rows show figures or say why not; Refresh is no longer cut off.
+- Settings in category pages; menus no longer highlight the row underneath; the pointer no longer
+  stays a text caret; "Archive session…" says why it is unavailable.
+- Not yet tried against a live Claude Code session or the real desktop app; see docs/TODO.md.
+
 ## 0.1.0 (2026-11-26)
 
 - First release: a session list, terminal tabs and a Chat layout for Claude Code on Windows, with several accounts, usage at a glance and handovers through OpenCode.
