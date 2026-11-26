@@ -372,3 +372,13 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     and emoji/glyph fallback exist at 137121c. New toolkit work, waiting on the owner's yes: a list
     of installed families with a monospace flag (`fonts::families()`), and a setter for the
     interface font (today private consts `UI_FAMILY`/`MONO_FAMILY` in gfx.rs; touches every app).
+33. **"Open Desktop as <account>" shows the sign-in screen for the further accounts** (owner,
+    2026-11-26); only the first account opens signed in. By design so far: a further account's
+    Desktop runs as its own profile (`--user-data-dir=<desktop_dir>`, `launch.rs desktop_launch`),
+    whose sign-in is separate from that account's CLI sign-in and is never copied. To find out: does
+    a sign-in in that window complete and stay (then: say so in the app, "Sign in once in this
+    window"), or does the browser's return to the desktop app land in the first account's running
+    instance instead (then the profile can never be signed in while the first one runs, and Switch
+    must say so or close and reopen in order)? Fonts (item 32): the toolkit queued FN1 (font list
+    with monospace flag), FN2 (settable interface and mono font), FN3 (font picker row) with the
+    owner's yes; build item 32 after they land.
