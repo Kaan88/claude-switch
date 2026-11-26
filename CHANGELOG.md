@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Appearance: more palettes. Dark: Neutral, Near black, Warm, Blue-grey, High contrast; light:
+  Paper, Warm, Cool, High contrast; chosen from swatches in Settings › Appearance, each with
+  matching terminal colours, and Claude's accent on every one.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

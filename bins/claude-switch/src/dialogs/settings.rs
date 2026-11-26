@@ -8,6 +8,7 @@ use mdshared_app::backdrop::Backdrop;
 use mdshared_ui::colour_picker::parse_hex;
 use mdshared_ui::settings::{Form, Outcome, Row, Value};
 
+mod appearance;
 mod pages;
 pub(crate) use pages::Settings;
 
@@ -18,7 +19,7 @@ pub(super) const HANDOVERS: &str = "Handovers";
 type Page = (&'static str, fn(&AppState) -> Vec<Row>);
 // In display order. Adding a category only needs a label and a row builder here.
 const PAGES: &[Page] = &[
-    ("Appearance", appearance),
+    ("Appearance", appearance::rows),
     (TERMINAL, terminal),
     ("Sessions", sessions),
     ("Usage", usage),
@@ -94,35 +95,6 @@ fn page_form(st: &AppState, index: usize) -> Form {
 
 fn colour(id: u32, label: &str, saved: &Option<String>, fallback: mdshared_ui::gfx::Rgb) -> Row {
     Row::text(id, label, termtheme::swatch(saved.as_deref(), fallback))
-}
-
-fn appearance(st: &AppState) -> Vec<Row> {
-    let themes = WINDOW_THEMES.map(|(_, name)| name);
-    let theme = WINDOW_THEMES.iter().position(|(id, _)| *id == st.config.window_theme).unwrap_or(0);
-    let mut theme_row = Row::choice(SET_THEME, "Theme", &themes, theme);
-    if st.forced_dark.is_some() {
-        theme_row = theme_row.help("The --theme launch flag overrides this setting.");
-    }
-    let a = &st.config.appearance;
-    let accent = ACCENT_SOURCES.iter().position(|(id, _)| *id == a.accent_source).unwrap_or(0);
-    let accent_names = ACCENT_SOURCES.map(|(_, label)| label);
-    vec![
-        theme_row,
-        Row::choice(
-            SET_BACKDROP,
-            Backdrop::TITLE,
-            &Backdrop::LABELS,
-            Backdrop::parse(&a.backdrop).unwrap_or_default().index(),
-        )
-        .help("Windows 11 22H2 or later. Terminal opacity is set separately."),
-        Row::choice(SET_ACCENT, "Accent source", &accent_names, accent),
-        colour(SET_ACCENT_COLOUR, "Window accent", &a.accent_colour, st.pal().accent)
-            .help("Used when Accent source is Custom."),
-        Row::toggle(SET_REDUCE_MOTION, "Reduce motion", a.reduce_motion)
-            .help("Windows’ reduced-motion preference also applies."),
-        Row::number(SET_CORNERS, "Dialog and menu corners", i32::from(a.corner_radius), 0, 16).unit("px"),
-        Row::toggle(SET_SHADOWS, "Soft shadows", a.soft_shadows),
-    ]
 }
 
 fn terminal(st: &AppState) -> Vec<Row> {
@@ -312,6 +284,7 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
                         st.select_first();
                     }
                 }
+                (id, Value::Choice(i)) if appearance::choose(st, id, i) => {}
                 (SET_THEME, Value::Choice(i)) if i < WINDOW_THEMES.len() => {
                     st.config.window_theme = WINDOW_THEMES[i].0.into();
                 }
@@ -380,7 +353,17 @@ mod tests {
     fn every_setting_has_exactly_one_page() {
         let st = AppState::new(Source::Demo, None, WindowFile::default());
         let expected: &[&[u32]] = &[
-            &[SET_THEME, SET_BACKDROP, SET_ACCENT, SET_ACCENT_COLOUR, SET_REDUCE_MOTION, SET_CORNERS, SET_SHADOWS],
+            &[
+                SET_THEME,
+                appearance::SET_DARK_THEME,
+                appearance::SET_LIGHT_THEME,
+                SET_BACKDROP,
+                SET_ACCENT,
+                SET_ACCENT_COLOUR,
+                SET_REDUCE_MOTION,
+                SET_CORNERS,
+                SET_SHADOWS,
+            ],
             &[
                 SET_TERM_COLOURS,
                 SET_TERM_FONT,

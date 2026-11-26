@@ -53,6 +53,10 @@ pub struct AppearancePrefs {
     pub terminal_background: Option<String>,
     pub terminal_foreground: Option<String>,
     pub terminal_accent: Option<String>,
+    /// The palette used when the window is dark, and when it is light: ids the app resolves,
+    /// keeping an unknown one (from a newer version) as it was.
+    pub dark_theme: String,
+    pub light_theme: String,
 }
 
 impl Default for AppearancePrefs {
@@ -70,6 +74,8 @@ impl Default for AppearancePrefs {
             terminal_background: None,
             terminal_foreground: None,
             terminal_accent: None,
+            dark_theme: "dark".into(),
+            light_theme: "light".into(),
         }
     }
 }
@@ -103,6 +109,8 @@ impl AppearancePrefs {
             terminal_background: colour("terminalBackground"),
             terminal_foreground: colour("terminalForeground"),
             terminal_accent: colour("terminalAccent"),
+            dark_theme: theme_id(v, "darkTheme").unwrap_or(d.dark_theme),
+            light_theme: theme_id(v, "lightTheme").unwrap_or(d.light_theme),
         }
     }
 
@@ -120,8 +128,18 @@ impl AppearancePrefs {
             "terminalBackground": self.terminal_background,
             "terminalForeground": self.terminal_foreground,
             "terminalAccent": self.terminal_accent,
+            "darkTheme": self.dark_theme,
+            "lightTheme": self.light_theme,
         })
     }
+}
+
+/// A palette id: a short word of lower-case letters, digits and hyphens.
+fn theme_id(v: &Value, key: &str) -> Option<String> {
+    str_field(v, key)
+        .filter(|s| !s.is_empty() && s.len() <= 32)
+        .filter(|s| s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+        .map(str::to_owned)
 }
 
 /// Whether a slug read from the file can name a folder.
@@ -558,7 +576,8 @@ mod tests {
             &roots.config_file(),
             r#"{"appearance":{"backdrop":"glass","accentSource":"cover","cornerRadius":"wide",
                 "softShadows":null,"reduceMotion":"true","cursorBlink":99,"accentColour":"invalid",
-                 "cursorShape":"beam","terminalOpacity":"80","terminalBackground":5,"unrecognised":true}}"#,
+                 "cursorShape":"beam","terminalOpacity":"80","terminalBackground":5,"unrecognised":true,
+                 "darkTheme":"Black","lightTheme":"../x"}}"#,
         );
         assert_eq!(load(&roots).appearance, defaults);
         put(&roots.config_file(), r#"{"appearance":{"cornerRadius":999}}"#);
@@ -577,6 +596,8 @@ mod tests {
             terminal_background: Some(format!("#{:06x}", 12_345)),
             terminal_foreground: Some(format!("#{:06x}", 54_321)),
             terminal_accent: Some(format!("#{:06x}", 22_222)),
+            dark_theme: "warm-dark".into(),
+            light_theme: "from-a-newer-version".into(),
         };
         save(&roots, &c).unwrap();
         assert_eq!(load(&roots), c);

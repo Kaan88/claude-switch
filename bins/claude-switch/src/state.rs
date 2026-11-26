@@ -614,8 +614,11 @@ fn appearance(config: &Config, forced_dark: Option<bool>, high_contrast: bool) -
     let tokens = if high_contrast {
         Tokens::high_contrast_with(platform::system_contrast_colors().as_ref(), platform::system_is_dark())
     } else {
-        let mut tokens = Tokens::new(dark());
-        tokens.palette = crate::windowlook::palette(&tokens.palette, &look, platform::system_accent());
+        let dark = dark();
+        let a = &config.appearance;
+        let base = crate::termtheme::palettes::get(dark, if dark { &a.dark_theme } else { &a.light_theme });
+        let mut tokens = Tokens::new(dark);
+        tokens.palette = crate::windowlook::palette(&base.palette, &look, platform::system_accent());
         tokens
     };
     let terminal =

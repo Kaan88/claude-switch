@@ -1,12 +1,12 @@
 //! One native settings form at a time. Its controls (including swatches and popovers) keep
 //! their existing input handling; the app owns only the category rail and page lifetime.
 
-use super::{AppState, Form, PAGES, SettingsEvent, page_form, terminal_appearance};
+use super::{AppState, Form, PAGES, SettingsEvent, appearance, page_form, terminal_appearance};
 use mdshared_ui::anim::Animator;
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::overlay::draw_backdrop_presence;
-use mdshared_ui::settings::{Outcome, Style};
+use mdshared_ui::settings::{Outcome, Style, Value};
 
 const NAV_W: f32 = 146.0;
 const NAV_ROW: f32 = 32.0;
@@ -52,6 +52,9 @@ pub struct Settings {
     key_used: bool,
     hover: Option<usize>,
     pressed: Option<usize>,
+    /// The Appearance page's palette swatch under the pointer, and the one pressed.
+    swatch_hover: Option<(u32, usize)>,
+    swatch_pressed: Option<(u32, usize)>,
     layout: Layout,
 }
 
@@ -64,6 +67,8 @@ impl Settings {
             key_used: false,
             hover: None,
             pressed: None,
+            swatch_hover: None,
+            swatch_pressed: None,
             layout: Layout::default(),
         }
     }
@@ -140,6 +145,13 @@ impl Settings {
         self.form.set_style(style);
         self.form.set_high_contrast(st.high_contrast);
         self.form.draw_animated(p, pal, viewport, true, anim, ("settings", self.category()));
+        if self.index == 0 {
+            appearance::draw(p, st, &self.form, self.swatch_hover);
+        }
+    }
+
+    fn swatch_at(&self, x: f32, y: f32) -> Option<(u32, usize)> {
+        (self.index == 0 && self.form.colour_open().is_none()).then(|| appearance::hit(&self.form, x, y)).flatten()
     }
 
     pub(crate) fn key(&mut self, key: &KeyName, mods: Mods, text: Option<&str>) -> SettingsEvent {
@@ -204,7 +216,10 @@ impl Settings {
     pub(crate) fn press(&mut self, x: f32, y: f32, mods: Mods, clicks: u8) -> SettingsEvent {
         self.pressed = None;
         self.key_used = false;
+        let swatch = self.swatch_at(x, y);
         let outcome = self.form.press(x, y, mods, clicks);
+        // A press that only closed the form's open dropdown is not a choice.
+        self.swatch_pressed = swatch.filter(|_| outcome == Outcome::None);
         if self.layout.rail.contains(x, y) && outcome == Outcome::Closed {
             // The native form dismisses its open dropdown or picker first, returning
             // Redraw (or a reverted colour), not Closed. Do not click through them.
@@ -220,6 +235,13 @@ impl Settings {
     }
 
     pub(crate) fn release(&mut self, x: f32, y: f32) -> SettingsEvent {
+        if let Some((id, k)) = self.swatch_pressed.take()
+            && self.swatch_at(x, y) == Some((id, k))
+        {
+            self.rail_focus = false;
+            self.form.set_value(id, Value::Choice(k));
+            return SettingsEvent::Form(Outcome::Changed { id, value: Value::Choice(k) });
+        }
         if let Some(index) = self.pressed.take()
             && self.layout.hit(x, y) == Some(index)
         {
@@ -230,7 +252,9 @@ impl Settings {
 
     pub(crate) fn pointer_move(&mut self, x: f32, y: f32) -> bool {
         let hover = self.layout.hit(x, y);
-        let changed = std::mem::replace(&mut self.hover, hover) != hover;
+        let swatch = self.swatch_at(x, y);
+        let swatch_changed = std::mem::replace(&mut self.swatch_hover, swatch) != swatch;
+        let changed = (std::mem::replace(&mut self.hover, hover) != hover) | swatch_changed;
         self.form.pointer_move(x, y) || changed
     }
 
