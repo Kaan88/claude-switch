@@ -310,3 +310,29 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     decided: treat "live record names this tab's process and a valid new session ID, no transcript
     yet" as verified-for-the-first-send (pin that ID, then require the file to appear with it), keeping
     the refusal for a mismatching or missing record.
+    Items 23 and 24: fix after the required toolkit pull requests are merged (owner, 2026-11-26).
+25. **Automatic handover instead of Claude Code's own compaction, in Claude Switch's tabs only**
+    (owner, 2026-11-26; decided):
+    - Only for CLI tabs Claude Switch starts; nothing outside the app changes (no plugin hook, no
+      global setting). Those tabs start the CLI with `DISABLE_AUTO_COMPACT=1` (per process; manual
+      `/compact` still works) while the feature is on.
+    - Threshold: by default the point where Claude Code itself would have compacted, read from the
+      session's auto-compact window and percentage (`/autocompact`, `--autocompact`,
+      `autoCompactWindow`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, as far as they can be read); or a
+      percentage the owner sets. Context size from the transcript, as "Context now" already does.
+    - At the threshold, once the current turn has ended: make the handover with the configured
+      summarizer and open the new chat in the SAME account only (Off / Ask first / Automatic).
+    - The new chat must show as linked to the old one (a continuation in the session list and
+      Threads, through the existing handover provenance), not as an unrelated session. A real
+      `--fork-session` would carry the full context and defeat the purpose, so link, don't fork,
+      unless a fork can start from the handover text alone. The old chat stays open, marked handed
+      over.
+    Docs checked 2026-11-26: env-vars, hooks (PreCompact can block but not replace), statusline.
+26. **The conversation cannot be copied: no right-click menu, Ctrl+C does nothing** (owner,
+    2026-11-26), in the Chat view's conversation (and the Session view). Expected: select text with
+    the mouse across messages, Ctrl+C copies, right-click gives Copy, Select all and, on a message,
+    Copy message / Copy as Markdown; code blocks get a copy button. Partly depends on the toolkit
+    text work (item 14's pull requests); do after those are merged.
+27. **The message box is too small** (owner, 2026-11-26): make it the size Claude Desktop uses: about
+    three lines tall when empty, growing with the text up to roughly 40% of the view, then
+    scrolling; a drag handle to resize is optional.
