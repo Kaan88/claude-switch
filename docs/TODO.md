@@ -557,3 +557,45 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     same way as the handover's summarizer (an OpenCode worker/model or the Claude CLI), opt-in, sending only the
     excerpts "Suggest names" already sends, with a confirmation before a run that sends anything. An on-device
     embedding model was the alternative offered; not chosen. Not started.
+57. **Better handovers: a fitting focus chosen by itself, and a sharper fixed format** (owner, 2026-11-27, from a
+    cc-fable review of six real handovers: sections cut mid-word at 800 characters, "Standing instructions" turned
+    into a to-do list, a permission guessed ("presumably approved"), job and session ids missing, space spent on
+    finished history, the focus echoed back, rarely who decided).
+    - Focus chosen by itself, not presets (owner): Switch picks the focus that fits the session from the transcript,
+      locally and without a model: a coordination session (most tool calls hand work to workers or agents, few
+      edits of its own), non-code work (no edits of code files; e.g. subtitle or CAD tools and files), else the
+      default. The dialog shows which kind was picked and the text, editable; the user's own focus text replaces it;
+      Settings › Handover lets each of the three texts be edited and reset. The three texts, verbatim:
+      - Default: "The reader continues this work unattended and remembers nothing. Put the newest first, so anything cut off is the oldest; leave out finished history. stands: each background job, worker or review still running or unread, with its job/session id, worktree, branch and last commit; uncommitted or unpushed work; where a merge stopped. decisions: who decided (user or assistant) and why; mark them settled. instructions: only rules still in force, in their latest form; no next steps; never assume a permission was given. open: promised follow-ups with their trigger; recorded requests not yet done, by number. Do not restate this focus."
+      - Coordination: "This session coordinates workers and writes no code itself. stands: one line per worker or job: id, model, worktree, branch, brief file, state (running, finished unread, reviewed, merged) and what was promised when it reports; the merge order and where it stopped. instructions: which model does which kind of work, as last set, and other rules still in force. Leave out what the workers changed in the code. Newest first. Do not restate this focus."
+      - Non-code: "No code here. stands: the file or job in hand, how far it got (episode, line, part), what was applied and what was only proposed. decisions: terminology, style and guideline choices with their reason, so they stay consistent. instructions: rules still in force, such as what may be edited and what is read-only. open: checks and corrections still owed. Newest first. Do not restate this focus."
+    - Fixed prompt and sections (`crates/core/src/compact.rs`): a seventh field "In flight and promised" (jobs,
+      workers, reviews with id, worktree, branch, state; "when X reports, do Y"); "instructions" defined as rules
+      only; the cut at about 1,500 characters on a line boundary with a visible `[cut]` (still asking for 800); tell
+      the summarizer it sees assistant text only and the user's prompts are appended, and never to infer that a
+      permission was given or a rule lifted; when partial summaries conflict the later wins and items a later part
+      shows done are dropped; Files leaves out temp and scratchpad paths and keeps about the 30 most recent; the
+      task list is marked as possibly stale.
+58. **Pictures in the conversation as thumbnails, as in Claude Desktop** (owner, 2026-11-27, screenshot: a tool
+    result's picture shows only as a bar "Picture · Tool result picture 1"). Show every picture in the conversation
+    (the user's pasted pictures, pictures in tool results such as screenshots and Read of an image) as an inline
+    thumbnail at a bounded size (about 240 px on the long side, aspect kept), decoded off the window thread and
+    cached, with the label as its caption; a click opens it enlarged (the existing viewer). Same in the Session
+    view. Keep a placeholder with the reason when a picture cannot be decoded or is over the size limit.
+    Other embeds (owner: "make it clear what other embeds are"): every non-text item in the conversation says what
+    it is at a glance, with an icon and a plain kind label instead of a generic bar: PDF or document (name, pages
+    if known, Open), file attachment (name, size, Open / Show in folder), link or artifact (title and host, Open),
+    pull request (repo and number), saved output file, Markdown file (opens the side panel), audio or other binary
+    (kind and size). Where a cheap preview exists (a picture, the first page of a PDF if the toolkit can render it),
+    show it as the thumbnail; otherwise the icon. The Details panel's Outputs uses the same labels.
+59. **Maybe, idea only: OpenCode as a tab type, and as a handover target** (owner, 2026-11-27: "opencode makes more
+    sense as a tab ... leave this as a maybe idea"). A "New OpenCode tab" entry with the folder picker, running the
+    owner's normal OpenCode (Magic Context enabled, unlike the bridge's jobs), and "Continue in OpenCode" sending the
+    handover text as its first prompt, e.g. when a Claude account hits its limit. Codex CLI support was considered
+    and not chosen: every layer of the app is Claude Code specific (accounts, transcripts, live records, the send
+    gate's screen rules). Not started; decide before building.
+60. **Clearer names for the two archives** (owner, 2026-11-27: yes). Settings › Sessions "Show archived sessions"
+    becomes "Show sessions archived in the desktop app" (help: "Claude Desktop's own archive. Switch's Archive is
+    separate."); the Archived chip becomes "Archived here"; the details row "Archived: yes, in the desktop app"
+    becomes "Desktop archive: yes", so "Archived" alone always means Switch's archive. Update README, DESIGN and
+    the wiki's Sessions and Settings pages.
