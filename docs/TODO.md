@@ -157,3 +157,10 @@ and in the README, not committed, and not copied to the installed clone
    out: whether the send is now refused by one of the review rounds' vetoes (unverified pane identity,
    no fresh completed turn, bracketed paste state) and fails silently, where a typed "/" from the
    composer goes through the same path. A refusal must at least say why.
+8. **Compact and handover should offer the agent for the new chat** (owner, 2026-11-26). When a
+   handover is opened in a new chat (CLI or Desktop, this account or another), show a choice of
+   agent to start it with: the default (plain Claude) and the agents the target account has
+   (`~/.claude/agents/*.md`, the project's `.claude/agents/`, plugin agents), passed as
+   `claude --agent <name>` for the CLI. To find out: what the Desktop app accepts for this (it may take
+   none, in which case the choice is CLI-only and says so), and whether the choice belongs in the
+   handover editor before opening or in the "Open as…" menu. The default stays plain Claude.
