@@ -336,3 +336,20 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
 27. **The message box is too small** (owner, 2026-11-26): make it the size Claude Desktop uses: about
     three lines tall when empty, growing with the text up to roughly 40% of the view, then
     scrolling; a drag handle to resize is optional.
+28. **More dark and light themes** (owner, 2026-11-26), inspired by editors and IDEs: e.g. a few dark
+    (neutral dark, deeper near-black, a warm dark, a cool blue-grey, high contrast) and light (paper
+    white, warm light, cool light, high contrast) palettes, each with matching terminal colours,
+    previewed as swatches in Settings › Appearance; the Claude accent stays available on every one.
+    Check whether the toolkit already offers themes so other apps share them.
+29. **Smooth, fast transitions in Settings when switching category pages** (owner, 2026-11-26),
+    short (about 120-160 ms), respecting the system's reduced-motion setting and the app's own
+    animation switch; ideally the toolkit's existing page animation.
+30. **Settings › Handover › Default agent is a plain text box** (owner, 2026-11-26): make it a picker
+    over the same agent list the handover dialog already shows ("Default (Claude)" first, then the
+    account's, project's and plugins' agents), per account where the lists differ.
+31. **The colour picker does not apply the chosen colour** (owner, 2026-11-26; same in another app,
+    so probably the toolkit's picker): the selected colour's code is shown but not applied when
+    clicking outside, and there is no confirm button. Expected: a clear Apply/OK and Cancel, Enter
+    applies and Escape cancels, and clicking outside either applies (with the value visible) or is
+    clearly a cancel; whichever, consistent with the toolkit's other popups. Report to the toolkit
+    session; the app takes the fix through the pin.
