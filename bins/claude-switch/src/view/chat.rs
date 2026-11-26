@@ -6,6 +6,7 @@ mod editor;
 mod input;
 mod layout;
 mod paint;
+pub(super) mod question;
 mod recall;
 mod rename;
 mod shortcuts;
@@ -39,6 +40,8 @@ pub enum Reason {
     Permission,
     Identity,
     Ended,
+    /// Claude asked a question the card in the conversation can answer.
+    Question,
 }
 
 impl Reason {
@@ -50,6 +53,7 @@ impl Reason {
             Self::Permission => "Answer the permission question in the terminal.",
             Self::Identity => "The current session could not be verified. Check the terminal.",
             Self::Ended => "Claude Code has ended.",
+            Self::Question => "Answer Claude's question above.",
         }
     }
 }
@@ -130,6 +134,13 @@ enum Chip {
 pub struct Chat {
     pub enabled: bool,
     pub(crate) identity_unverified: bool,
+    /// The live record pinned a session whose transcript Claude Code has not written yet.
+    pub(crate) awaiting_transcript: bool,
+    /// A message went from Chat while awaiting; later sends wait for that transcript.
+    pub(super) first_sent: bool,
+    /// The tab was started with Claude Code's classic renderer (Settings).
+    pub(crate) classic_renderer: bool,
+    question: question::Card,
     drawer: Drawer,
     drawer_height: Option<f32>,
     resizing: Option<(f32, f32)>,
@@ -157,6 +168,8 @@ pub struct Chat {
     fresh: bool,
     require_prompt: Option<Option<u64>>,
     input_floor: Option<u64>,
+    /// The floor for the next reader's records, kept across its first reset (after a follow).
+    next_floor: Option<u64>,
     stopped: Option<(u64, u64)>,
     pending: Option<(u64, Instant)>,
     bell: bool,
@@ -234,7 +247,7 @@ impl Chat {
                     self.fresh = false;
                     self.require_prompt = Some(info.prompt);
                     self.pending = None;
-                    self.input_floor = None;
+                    self.input_floor = self.next_floor.take();
                 }
             }
             self.sample = Some(sample);
@@ -270,9 +283,12 @@ impl Chat {
         {
             return (Gate::Ready, None);
         }
+        // No transcript yet, so no turn has started and no old completion can mislead. The
+        // composer still needs a quiet, visibly empty prompt (`submission::blocked`).
+        let first = self.first_send_open(info);
         let mut decision = assess(Signals {
-            phase: info.latest.map(|(_, phase)| phase),
-            fresh: self.fresh,
+            phase: if first { Some(ChatPhase::EndTurn) } else { info.latest.map(|(_, phase)| phase) },
+            fresh: self.fresh || first,
             pending_for: info.pending.map(|id| {
                 self.pending
                     .filter(|(known, _)| *known == id)
@@ -289,12 +305,34 @@ impl Chat {
         if self.reason == Some(Reason::Tool) && self.pending.is_some() && decision.1.is_none() {
             decision = (Gate::Check, Some(Reason::Tool));
         }
+        // The card answers it: the same refusal, without sending the user to the terminal.
+        if decision.1 == Some(Reason::Tool) && info.pending.is_some() && self.question.answerable == info.pending {
+            decision.1 = Some(Reason::Question);
+        }
         decision
+    }
+
+    /// The first message of a new chat may go before its transcript exists.
+    fn first_send_open(&self, info: &ChatInfo) -> bool {
+        self.awaiting_transcript && !self.first_sent && info.latest.is_none() && info.pending.is_none()
+    }
+
+    /// The tab now follows another session of the same process: nothing staged carries over.
+    /// `end` is the followed transcript's length then: only records after it count as new.
+    pub(super) fn followed(&mut self, info: &ChatInfo, end: u64) {
+        self.interrupt_submission();
+        self.first_sent = false;
+        self.stopped = None;
+        self.pending = None;
+        self.watermark_input(info, Some(end));
+        self.next_floor = Some(end);
     }
 
     fn react(&mut self, reason: Option<Reason>) -> bool {
         let before = (self.drawer, self.reason);
         self.reason = reason;
+        // A question the card can answer does not open the drawer, and closes one it opened.
+        let reason = reason.filter(|r| *r != Reason::Question);
         match (self.drawer, reason) {
             (Drawer::Closed, Some(reason)) if Some(reason) != self.suppressed => self.drawer = Drawer::Auto(reason),
             (Drawer::Auto(_), Some(reason)) => self.drawer = Drawer::Auto(reason),

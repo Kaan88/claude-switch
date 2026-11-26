@@ -88,7 +88,7 @@ impl Chat {
         } else if self.image_wait.is_some() {
             Some("Waiting for Claude Code to confirm the picture…")
         } else {
-            None
+            self.question_notice()
         }
     }
 

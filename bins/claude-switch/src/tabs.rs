@@ -52,13 +52,15 @@ pub struct Tab {
 
 impl Tab {
     pub(crate) fn needs_identity(&self) -> bool {
-        self.pane.as_ref().is_some_and(|pane| pane.chat.identity_unverified)
+        // Awaiting: the record will not change when the transcript appears, so keep looking.
+        self.pane.as_ref().is_some_and(|pane| pane.chat.identity_unverified || pane.chat.awaiting_transcript)
     }
 
     pub(crate) fn apply_live_identity(&mut self, found: Option<&str>) -> bool {
         let Some(pane) = &mut self.pane else { return false };
         let pane_changed = pane.update_identity(found);
-        let verified = found.filter(|_| !pane.chat.identity_unverified);
+        // A session awaiting its first transcript is not yet one to route, mark or resume.
+        let verified = found.filter(|_| !pane.chat.identity_unverified && !pane.chat.awaiting_transcript);
         // An absent PID record must not permit a duplicate resume of an already open tab.
         // A conflicting positive record, on the other hand, clears that routing claim.
         let current = if found.is_none() { self.session.as_deref() } else { verified };

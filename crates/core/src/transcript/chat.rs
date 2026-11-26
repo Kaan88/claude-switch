@@ -51,8 +51,65 @@ impl ChatInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolCard {
-    Edit { path: String, added: usize, removed: usize, lines: Vec<String> },
-    Shell { command: String, result: Vec<String> },
+    Edit {
+        path: String,
+        added: usize,
+        removed: usize,
+        lines: Vec<String>,
+    },
+    Shell {
+        command: String,
+        result: Vec<String>,
+    },
+    /// The questions of an `AskUserQuestion` call, exactly as Claude asked them.
+    Questions(Vec<Question>),
+}
+
+/// One question of an `AskUserQuestion` call. Its texts are whole: the window matches them
+/// against the terminal before it answers, so a shortened text would never match.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Question {
+    pub header: String,
+    pub question: String,
+    pub options: Vec<QuestionOption>,
+    pub multi_select: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
+}
+
+const MAX_QUESTIONS: usize = 4;
+const MAX_OPTIONS: usize = 8;
+const MAX_QUESTION_TEXT: usize = 2000;
+
+fn whole(value: &Value, limit: usize) -> Option<String> {
+    let text = value.as_str()?.trim();
+    (text.chars().count() <= limit && !text.chars().any(|c| c.is_control() && c != '\n')).then(|| text.to_owned())
+}
+
+impl Question {
+    /// `None` for anything unexpected: the card is then not offered and the terminal answers.
+    fn parse(value: &Value) -> Option<Self> {
+        let options = value["options"].as_array()?;
+        (!options.is_empty() && options.len() <= MAX_OPTIONS).then_some(())?;
+        let options = options
+            .iter()
+            .map(|option| {
+                let label = whole(&option["label"], 200).filter(|label| !label.is_empty() && !label.contains('\n'))?;
+                let description = option.get("description").map_or(Some(String::new()), |d| whole(d, 1000))?;
+                Some(QuestionOption { label, description })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            header: value.get("header").map_or(Some(String::new()), |h| whole(h, 100))?,
+            question: whole(&value["question"], MAX_QUESTION_TEXT).filter(|q| !q.is_empty())?,
+            options,
+            multi_select: value.get("multiSelect").map_or(Some(false), Value::as_bool)?,
+        })
+    }
 }
 
 fn short(text: &str, limit: usize) -> String {
@@ -99,6 +156,11 @@ impl ToolCard {
             }
             "Bash" | "PowerShell" => {
                 Some(Self::Shell { command: short(input["command"].as_str()?, 500), result: Vec::new() })
+            }
+            "AskUserQuestion" => {
+                let questions = input["questions"].as_array()?;
+                (!questions.is_empty() && questions.len() <= MAX_QUESTIONS).then_some(())?;
+                Some(Self::Questions(questions.iter().map(Question::parse).collect::<Option<_>>()?))
             }
             _ => None,
         }
@@ -216,5 +278,36 @@ mod tests {
             Some(ToolCard::Edit { path: actual, .. }) if actual == path
         ));
         assert!(ToolCard::from_input("Write", &json!({"file_path":"x".repeat(4097),"content":"hello"})).is_none());
+    }
+
+    #[test]
+    fn questions_keep_whole_texts_and_refuse_anything_unexpected() {
+        let input = json!({"questions":[{
+            "question":"Who builds the parser?",
+            "header":"Who builds",
+            "multiSelect":false,
+            "options":[{"label":"Me","description":"I write it"},{"label":"You"}]
+        }]});
+        let Some(ToolCard::Questions(questions)) = ToolCard::from_input("AskUserQuestion", &input) else {
+            panic!("no card");
+        };
+        assert_eq!(questions.len(), 1);
+        let q = &questions[0];
+        assert_eq!(
+            (q.header.as_str(), q.question.as_str(), q.multi_select),
+            ("Who builds", "Who builds the parser?", false)
+        );
+        assert_eq!(q.options[0], QuestionOption { label: "Me".into(), description: "I write it".into() });
+        assert_eq!(q.options[1].description, "");
+        for bad in [
+            json!({"questions":[]}),
+            json!({"questions":[{"question":"?","options":[]}]}),
+            json!({"questions":[{"question":"","options":[{"label":"A"}]}]}),
+            json!({"questions":[{"question":"Q","options":[{"label":"A\u{1b}[2J"}]}]}),
+            json!({"questions":[{"question":"Q","options":[{"label":"x".repeat(201)}]}]}),
+            json!({"questions":[{"question":"Q","multiSelect":"yes","options":[{"label":"A"}]}]}),
+        ] {
+            assert_eq!(ToolCard::from_input("AskUserQuestion", &bad), None, "{bad}");
+        }
     }
 }

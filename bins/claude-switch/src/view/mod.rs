@@ -30,7 +30,8 @@ use crate::winfile::WindowFile;
 
 const AXIS: Axis = Axis::Horizontal;
 const POLL: Duration = Duration::from_millis(500);
-const SESSION_CHANGED: &str = "Session changed in the terminal. Reopen the session to attach its transcript.";
+pub(crate) const SESSION_CHANGED: &str =
+    "Session changed in the terminal. Reopen the session to attach its transcript.";
 
 fn enabled(preference: Option<bool>, width: f32) -> bool {
     preference.unwrap_or(width >= 1100.0)
@@ -64,8 +65,21 @@ impl Window {
     }
 }
 
+/// What a pane knows about its session, from the live record and the transcript folder.
+enum Identity {
+    Attached(PathBuf),
+    /// The record names a new session whose transcript the CLI has not written yet.
+    Awaiting,
+    Unverified,
+}
+
+type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;
+
 pub struct Pane {
     model: model::Model,
+    wake: Wake,
+    /// A new session this pane followed and the one it continues, for the Threads link.
+    pub(crate) continued: Option<(String, String)>,
     pub chat: chat::Chat,
     pub(crate) transcript_source: model::Source,
     verified_path: Option<PathBuf>,
@@ -78,6 +92,10 @@ pub struct Pane {
 
 impl Pane {
     fn transcript_end(&self) -> Option<u64> {
+        if self.chat.awaiting_transcript {
+            // No file yet: everything the CLI writes to it later is newer than this input.
+            return Some(0);
+        }
         let meta = std::fs::symlink_metadata(self.verified_path.as_ref()?).ok()?;
         meta.is_file().then_some(meta.len())
     }
@@ -101,29 +119,66 @@ impl Pane {
         }
     }
 
-    fn identity_path(&self, id: &str) -> Option<PathBuf> {
-        match &self.transcript_source {
-            model::Source::File(path) | model::Source::Demo(path) => Some(path.clone()),
-            model::Source::Discover { verified, .. } => {
-                let path = self.transcript_source.candidate_path(verified.get().map_or(id, String::as_str))?;
-                verified.get_or_init(|| id.to_owned());
-                Some(path)
-            }
+    /// What the live record's `id` proves for this pane's source; pins it when it is new.
+    fn resolve(&self, id: &str) -> Identity {
+        let id = self.pinned_id().unwrap_or(id).to_owned();
+        let discover = matches!(self.transcript_source, model::Source::Discover { .. });
+        match self.transcript_source.probe(&id) {
+            model::Probe::Found(path) if self.transcript_source.pin(&id) => Identity::Attached(path),
+            model::Probe::Missing if discover && self.transcript_source.pin(&id) => Identity::Awaiting,
+            _ => Identity::Unverified,
         }
+    }
+
+    /// The same process now names `id` (`/clear`, `/resume`, compaction): read that session
+    /// instead. Refused when the first message was sent for a transcript that never appeared,
+    /// or when `id`'s transcript exists but is not this tab's (another folder, invalid ID).
+    fn follow(&mut self, id: &str) -> bool {
+        if self.chat.awaiting_transcript && self.chat.first_sent {
+            return false;
+        }
+        let Some(source) = self.transcript_source.follow(&self.cwd, id) else { return false };
+        let previous = self.pinned_id().map(str::to_owned);
+        let end = match source.probe(id) {
+            model::Probe::Found(path) => std::fs::symlink_metadata(&path).map_or(u64::MAX, |m| m.len()),
+            // A session the CLI has yet to write (`/clear`, compaction) continues this one; an
+            // existing transcript (`/resume`) is another conversation and is not linked.
+            model::Probe::Missing => {
+                self.continued = previous.map(|old| (id.to_owned(), old));
+                0
+            }
+            model::Probe::Rejected => return false,
+        };
+        let wake = self.wake.clone();
+        self.model = model::Model::after(source.clone(), self.cwd.clone(), self.model.generation, move || wake());
+        self.transcript_source = source;
+        self.verified_path = None;
+        self.chat.followed(&self.model.chat, end);
+        true
     }
 
     pub(crate) fn update_identity(&mut self, found: Option<&str>) -> bool {
         let mismatch = self.pinned_id().zip(found).is_some_and(|(pin, id)| !pin.eq_ignore_ascii_case(id));
-        let path = found.filter(|_| !mismatch).and_then(|id| self.identity_path(id));
-        let unverified = path.is_none();
-        let changed = self.chat.identity_unverified != unverified
-            || (mismatch && self.model.error.as_deref() != Some(SESSION_CHANGED));
+        let followed = mismatch && found.is_some_and(|id| self.follow(id));
+        let refused = mismatch && !followed;
+        let identity = found.filter(|_| !refused).map_or(Identity::Unverified, |id| self.resolve(id));
+        let (path, awaiting) = match identity {
+            Identity::Attached(path) => (Some(path), false),
+            Identity::Awaiting => (None, true),
+            Identity::Unverified => (None, false),
+        };
+        let unverified = path.is_none() && !awaiting;
+        let changed = followed
+            || self.chat.identity_unverified != unverified
+            || self.chat.awaiting_transcript != awaiting
+            || (refused && self.model.error.as_deref() != Some(SESSION_CHANGED));
         if self.chat.identity_unverified != unverified {
             self.chat.invalidate(&self.model.chat);
         }
         self.verified_path = path;
         self.chat.identity_unverified = unverified;
-        if mismatch {
+        self.chat.awaiting_transcript = awaiting;
+        if refused {
             self.model.error = Some(SESSION_CHANGED.into());
         } else if !unverified && self.model.error.as_deref() == Some(SESSION_CHANGED) {
             self.model.error = None;
@@ -259,12 +314,16 @@ impl AppState {
 
     pub(crate) fn new_session_pane(&self, source: model::Source, cwd: PathBuf) -> Pane {
         let proxy = self.proxy.clone();
-        let model = model::Model::new(source.clone(), cwd.clone(), move || {
+        let wake: Wake = std::sync::Arc::new(move || {
             if let Some(proxy) = &proxy
                 && let Ok(proxy) = proxy.lock()
             {
                 proxy.send(Msg::SessionView);
             }
+        });
+        let model = model::Model::new(source.clone(), cwd.clone(), {
+            let wake = wake.clone();
+            move || wake()
         });
         let mut chat = chat::Chat::default();
         chat.identity_unverified = true;
@@ -273,6 +332,8 @@ impl AppState {
         ui.set_chat(chat.enabled);
         Pane {
             model,
+            wake,
+            continued: None,
             transcript_source: source,
             verified_path: None,
             ui,

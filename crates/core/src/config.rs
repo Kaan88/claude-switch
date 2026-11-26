@@ -230,6 +230,7 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
     };
     let flag = |k: &str, default: bool| file.get(k).and_then(Value::as_bool).unwrap_or(default);
     let embedded_terminal = flag("embeddedTerminal", true);
+    let classic_terminal_view = flag("classicTerminalView", true);
     let show_archived = flag("showArchived", false);
     let show_workers = flag("showWorkers", false);
     let terminal_scheme = str_field(&file, "terminalScheme").filter(|s| !s.is_empty()).unwrap_or("auto").to_string();
@@ -249,6 +250,7 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
         current,
         workers,
         embedded_terminal,
+        classic_terminal_view,
         show_archived,
         show_workers,
         show_usage: !damaged && flag("showUsage", true),
@@ -369,6 +371,7 @@ fn config_value(config: &Config) -> Value {
         "current": config.current,
         "workers": workers,
         "embeddedTerminal": config.embedded_terminal,
+        "classicTerminalView": config.classic_terminal_view,
         "showArchived": config.show_archived,
         "showWorkers": config.show_workers,
         "showUsage": config.show_usage,
@@ -460,7 +463,7 @@ mod tests {
         assert_eq!(main.desktop_dir, roots.primary_desktop_dir());
         assert_eq!(c.current, "main");
         assert_eq!(c.workers, WorkersUse::Same);
-        assert!(c.embedded_terminal);
+        assert!(c.embedded_terminal && c.classic_terminal_view);
         assert!(!c.show_archived);
         assert!(!c.show_workers);
         assert!(!c.show_hidden);
@@ -496,6 +499,7 @@ mod tests {
         c.current = "work".into();
         c.workers = WorkersUse::Account("work".into());
         c.embedded_terminal = false;
+        c.classic_terminal_view = false;
         c.show_archived = true;
         c.show_workers = true;
         c.show_hidden = true;

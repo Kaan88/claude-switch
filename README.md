@@ -264,6 +264,20 @@ composer, and a collapsible Details panel on wider windows.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
 to resize it, and answer permissions and other CLI dialogs there.
 
+When Claude asks a question (its AskUserQuestion tool), the question appears as a card under the
+conversation and the working line says **Waiting for your answer**. Click an option, or type an
+answer and choose **Answer**, or **Chat about this** to leave the question and send the text as
+your next message. Chat answers only while the terminal shows that same question, and only one
+single-choice question at a time; otherwise the card says why and the drawer opens for you to
+answer there. Permission questions are always answered in the terminal.
+
+Chat cannot send while Claude Code draws its full-screen view. **Settings › Sessions › Classic
+terminal view for Claude tabs** (on by default) starts new Claude tabs with Claude Code's classic
+renderer (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`, for that process only). In a tab started
+without it, type `/tui default` in the terminal. The first message of a new chat can be sent from
+Chat; after `/clear`, compaction or `/resume` in the terminal, Chat follows the tab to its new
+session.
+
 Chat and the narrower **Session view** share the same conversation design: your prompts are
 right-aligned bubbles, Claude’s replies are open prose, and compact tool rows expand for details.
 Long runs of consecutive tools start collapsed. Drag the scrollbar thumb or click its track to

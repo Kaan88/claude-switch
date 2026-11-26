@@ -35,6 +35,19 @@ pub struct Woken {
     pub output: bool,
 }
 
+/// The variable that makes Claude Code draw with its classic main-screen renderer. Per the docs
+/// (code.claude.com/docs/en/fullscreen), `1` wins over the saved `tui` setting and over
+/// `CLAUDE_CODE_NO_FLICKER`, for this process only.
+pub(crate) const CLASSIC_RENDERER: &str = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN";
+
+/// Asks a Claude tab for the classic renderer: the Chat view refuses to send to the alternate
+/// screen, where the CLI's fullscreen renderer draws. Other programs are left as they are.
+pub(crate) fn classic_renderer(launch: &mut Launch, enabled: bool) {
+    if enabled && launch.program == std::path::Path::new("claude") {
+        launch.env.insert(CLASSIC_RENDERER.into(), "1".into());
+    }
+}
+
 fn button_of(b: Button) -> Option<MouseButton> {
     match b {
         Button::Left => Some(MouseButton::Left),
@@ -76,9 +89,13 @@ impl AppState {
 
     /// Opens a tab that runs `l` and shows it.
     pub fn open_tab(&mut self, l: &Launch, session: Option<&str>, account: Option<&str>) -> io::Result<u64> {
-        let pane = self.pane_for_launch(l, session, account);
+        let mut pane = self.pane_for_launch(l, session, account);
         let signing_in = claude_switch_core::launch::is_login(l);
         let mut l = l.clone();
+        classic_renderer(&mut l, self.config.classic_terminal_view);
+        if let Some(pane) = &mut pane {
+            pane.chat.classic_renderer = l.env.contains_key(CLASSIC_RENDERER);
+        }
         l.program = crate::run::native_program(&l.program)?;
         let managed = pane.is_some() && !signing_in && self.auto_handover_env(&mut l);
         let id = self.open_command(&term::command(&l), l.label.clone(), session, account)?;

@@ -44,6 +44,7 @@ pub enum Control {
     Stop,
     Remove(usize),
     MoreChips,
+    Question(super::question::Hit),
 }
 
 impl AppState {
@@ -237,6 +238,13 @@ impl AppState {
             return false;
         }
         self.clear_session_text_focus();
+        if let Some(name) = k.name.as_ref()
+            && let Some(tab) = self.tabs.shown_mut()
+            && super::question::key(tab, cx.now(), name, mods, k.text.as_deref())
+        {
+            self.arm_chat_tick(cx);
+            return true;
+        }
         if mods.none()
             && let Some(key) = k.name.as_ref()
             && self.chat_picker_key(cx, key)
@@ -286,6 +294,9 @@ impl AppState {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+        if super::question::text(chat, text) {
+            return true;
+        }
         if !chat.locked() {
             chat.insert_text(text);
             self.chat_editor_changed();
@@ -321,6 +332,7 @@ impl AppState {
             chat.commands.open = false;
         }
         chat.drawer_focus = target == Some(Target::Terminal);
+        chat.question.focus &= matches!(target, Some(Target::Chat(Control::Question(_))));
         match target {
             Some(Target::Chat(Control::Grip)) => {
                 chat.resizing = Some((y, chat.layout.drawer.h));
@@ -398,6 +410,15 @@ impl AppState {
                 return;
             }
             Control::Model | Control::Effort => return self.chat_choice_menu(control),
+            Control::Question(hit) => {
+                // As Send: read the newest screen before matching the question on it.
+                self.term_woke(cx);
+                if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.as_ref().is_some_and(|p| p.chat.enabled))
+                {
+                    super::question::press(tab, cx.now(), hit);
+                }
+                return self.arm_chat_tick(cx);
+            }
             Control::Context => return self.chat_run_slash(cx, "/context".into(), false),
             Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
             Control::Clear => return self.chat_run_slash(cx, "/clear".into(), false),

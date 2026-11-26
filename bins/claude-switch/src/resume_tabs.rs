@@ -174,6 +174,7 @@ impl AppState {
     pub fn identify_tabs(&mut self) -> bool {
         let mut processes = None;
         let mut changed = self.verify_external_owners();
+        let mut continued = Vec::new();
         for tab in &mut self.tabs.list {
             if !tab.term.running() {
                 continue;
@@ -182,6 +183,7 @@ impl AppState {
             let processes = processes.get_or_insert_with(process::Processes::current);
             let found = live_id(&self.running, account, cwd, |pid| pid == pty.pid() || processes.wraps(pty.pid(), pid));
             changed |= apply_live_identity(tab, found);
+            continued.extend(tab.pane.as_mut().and_then(|pane| pane.continued.take()));
             if let Source::Real(roots) = &self.source
                 && let Some(id) = found.filter(|id| tab.resume_id.as_deref() == Some(*id))
                 && let Some(account) = &tab.account
@@ -199,6 +201,13 @@ impl AppState {
             }
         }
         self.restore.verified_owners.retain(|(id, _)| self.tabs.get(*id).is_some());
+        // The CLI moved a tab to a new session (`/clear`, compaction): Threads shows it as the
+        // continuation, as for a handover.
+        if !self.marks_read_only
+            && continued.iter().fold(false, |linked, (id, parent)| self.marks.set_parent(id, parent) | linked)
+        {
+            self.save_marks();
+        }
         changed
     }
 

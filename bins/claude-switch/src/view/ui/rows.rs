@@ -557,7 +557,7 @@ fn tool_detail(card: Option<&ToolCard>, summary: &str) -> (String, BodyKind) {
             format!("{command}\n\n{}", if result.is_empty() { "No text result.".into() } else { result.join("\n") }),
             BodyKind::Shell,
         ),
-        None => (summary.into(), BodyKind::Mono),
+        Some(ToolCard::Questions(_)) | None => (summary.into(), BodyKind::Mono),
     }
 }
 
