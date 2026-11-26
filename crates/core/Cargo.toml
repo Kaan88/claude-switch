@@ -1,0 +1,11 @@
+[package]
+name = "claude-switch-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+name = "claude_switch_core"
+
+[dependencies]
+serde_json = "1"
