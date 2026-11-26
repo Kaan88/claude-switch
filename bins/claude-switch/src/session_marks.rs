@@ -12,6 +12,11 @@ use crate::source::{ActivityScan, Source};
 use crate::state::{AppState, HEAD_H, ROW_H};
 use crate::tabs::Tab;
 
+/// How long a failed save of marks that must not be lost waits before it is tried again.
+pub const MARKS_RETRY: Duration = Duration::from_secs(5);
+/// How many times such a save is tried again before it waits for the next save or the exit.
+pub const MARKS_RETRIES: u8 = 3;
+
 #[cfg(test)]
 mod tests;
 
@@ -151,8 +156,22 @@ impl AppState {
         self.sections.scroll = self.sections.clamp_scroll(scroll);
     }
 
+    /// Saves the marks. While `marks_retries` is set (marks that must not be lost, such as a
+    /// handover's links), a failed save stays in memory and is tried again a little later (the
+    /// exit saves too while a retry is pending); after that, the next save of any kind carries it.
     pub fn save_marks(&mut self) -> bool {
         self.marks_flush_at = None;
+        let saved = self.write_marks();
+        if saved {
+            self.marks_retries = 0;
+        } else if self.marks_retries > 0 {
+            self.marks_retries -= 1;
+            self.marks_flush_at = Some(Instant::now() + MARKS_RETRY);
+        }
+        saved
+    }
+
+    fn write_marks(&mut self) -> bool {
         if let Source::Real(roots) = &self.source {
             if self.marks_read_only {
                 self.warn(
@@ -230,7 +249,7 @@ impl AppState {
             return true;
         }
         self.marks = previous;
-        self.marks_flush_at = flush;
+        self.marks_flush_at = self.marks_flush_at.or(flush);
         false
     }
 

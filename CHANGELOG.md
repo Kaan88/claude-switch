@@ -18,6 +18,9 @@
   paths and keeps the 30 most recent; the task list is marked possibly stale.
 - Handover in place: never clears the session when you sent a message after the handover was
   made (it stops and says to make it again), and never clears under a draft in the message box.
+- Handover: when saving the new session's links fails after continuing in place, they are kept
+  and saved again instead of being dropped; a new handover tab that fails to start no longer
+  removes an earlier handover's mark from the old session.
 - Marks: a session forgotten in one window while the other saw it no longer turns into an empty
   entry that refused pins and names for it; such entries in existing files are repaired on load.
 - Saved terminal tabs: a second window no longer replaces the first window's saved tabs with its

@@ -144,16 +144,16 @@ impl AppState {
             .as_deref()
             .and_then(|a| claude_switch_core::account(&self.config, a).ok())
             .map(|a| crate::view::handover_transcript(&a.cli_dir, &job.cwd, new));
-        let old = self.marks.clone();
         self.marks.set_handover_from(new, &job.from_name);
         self.marks.set_parent(new, &job.from_session);
         self.marks.set_handed_over_to(&job.from_session, new);
         if let Some(file) = &file {
             self.marks.rename(new, file, &job.name);
         }
-        if !self.save_marks() {
-            self.marks = old;
-        }
+        // The session is already continued: nothing would set these links again, so a failed
+        // save keeps them and tries again (and any later save writes them).
+        self.marks_retries = crate::session_marks::MARKS_RETRIES + 1;
+        self.save_marks();
         // Claude Code's own name follows (item 39): `/rename` at the next idle prompt, through the
         // Chat view's slash gate, once the first message has gone.
         if let Some(t) = self.tabs.get_mut(tab) {
@@ -188,6 +188,55 @@ mod tests {
         assert!(job.timeout_reason().contains("follow"));
         job.stage = Stage::Prompt;
         assert_eq!(job.deadline(), now + PROMPT_WAIT);
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_continuation_marks_and_tries_again() {
+        use crate::{source::Source, tabs::NewTab, term::Term};
+        use claude_switch_core::{Roots, marks::Marks};
+        let root = std::env::temp_dir().join(format!("cs-in-place-marks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let roots = Roots { home: root.join("home"), appdata: root.join("appdata") };
+        let mut st = AppState::new(Source::Real(roots.clone()), None, Default::default());
+        let file = roots.config_file().with_file_name("marks.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        // Another window leaves the file unreadable: the save refuses.
+        std::fs::write(&file, b"{\"sessions\":1}").unwrap();
+        let (old, new) = ("aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002");
+        let blank = NewTab { label: "t".into(), color: [0; 3], session: None, account: None };
+        let tab = st.tabs.open(blank, Term::empty((8, 4)));
+        let now = Instant::now();
+        st.tabs.get_mut(tab).unwrap().in_place = Some(InPlace {
+            from_session: old.into(),
+            from_name: "Old".into(),
+            name: "Old · continued".into(),
+            prompt: "## Goal".into(),
+            saved: PathBuf::from("h.md"),
+            cwd: PathBuf::from("."),
+            basis: 0,
+            stage: Stage::Sending,
+            since: now,
+        });
+        st.in_place_done(tab, new);
+        assert!(st.info.is_some(), "the failure is reported");
+        assert_eq!(st.marks.handed_over_to(old), Some(new), "kept in memory, not rolled back");
+        assert_eq!(st.marks.parent(new), Some(old));
+        assert!(st.marks_flush_at.is_some(), "and tried again");
+        // Each retry that fails schedules the next, a bounded number of times.
+        for _ in 0..crate::session_marks::MARKS_RETRIES {
+            assert!(!st.save_marks());
+            assert!(st.marks_flush_at.is_some());
+        }
+        assert!(!st.save_marks());
+        assert!(st.marks_flush_at.is_none(), "then it waits for the next save or the exit");
+        assert_eq!(st.marks.handed_over_to(old), Some(new), "still kept for that save");
+        std::fs::write(&file, b"{\"otherWindow\":true}").unwrap();
+        assert!(st.save_marks(), "the next save writes them, merged with the other window's");
+        let disk = Marks::load(&roots).unwrap();
+        assert_eq!((disk.handed_over_to(old), disk.parent(new)), (Some(new), Some(old)));
+        assert_eq!(disk.handover_from(new), Some("Old"));
+        assert!(std::fs::read_to_string(&file).unwrap().contains("otherWindow"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

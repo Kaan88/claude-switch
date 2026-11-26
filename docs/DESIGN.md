@@ -574,7 +574,11 @@ the old tab. The new chat is linked, not forked: it carries the handover provena
 (`handoverFrom`, `parentSessionId`), so it shows as a continuation in the list and Threads, and
 starts from the summary alone (a `--fork-session` would carry the full context). The old session
 is marked handed over (`handedOverTo` in marks): its tab title says “· handed over” and its row
-in Sessions starts with “Handed over”.
+in Sessions starts with “Handed over”. Once a session has continued in place, a failed save of
+these links (another window's lock or a damaged file) keeps them in memory: the save is tried
+again up to three times, 5 seconds apart, and the next save carries them after that. A new tab
+that fails to start removes only its own links; an earlier handover's mark on the old session
+stays.
 
 ### Continuing in place
 
