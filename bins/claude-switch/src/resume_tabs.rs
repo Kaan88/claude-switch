@@ -38,6 +38,8 @@ struct Entry {
 pub struct Restore {
     /// Another Claude Switch window holds the handover channel: that one restores the saved tabs.
     pub second_window: bool,
+    /// This window was a second one and took the saved tabs over as the last to close.
+    inherited: bool,
     pub save_failed: bool,
     pub window_save_failed: bool,
     baseline: Option<String>,
@@ -250,8 +252,8 @@ impl AppState {
     }
 
     pub fn save_tab_restore(&mut self) -> Result<(), Refusal> {
-        // The saved tabs are the first window's: a second one neither restores nor replaces them,
-        // so they survive whichever window closes last.
+        // The saved tabs are the first window's: a second one neither restores nor replaces them
+        // while the first runs, so they survive whichever window closes first.
         if self.restore.second_window {
             return Ok(());
         }
@@ -274,16 +276,31 @@ impl AppState {
             self.identify_tabs();
         }
         let rows = snapshot(&self.tabs);
+        if rows.is_empty() && self.restore.inherited {
+            return Ok(());
+        }
         if !rows.is_empty() || self.restore.pending.is_empty() && self.restore.waiting.is_none() {
             return self.restore.save_snapshot(&file, rows);
         }
         Ok(())
     }
 
+    /// A second window that closes after the first has gone (it could claim the handover channel)
+    /// is the last one: its tabs become the saved ones, over whatever the first window left. With
+    /// no tabs of its own it leaves the first window's (`save_tab_restore`).
+    pub fn inherit_tab_restore(&mut self) {
+        let Some(file) = path(&self.source) else { return };
+        // The snapshot as the first window left it; unreadable: stay a second window, write nothing.
+        if self.restore.second_window && self.restore.load_snapshot(&file).is_ok() {
+            self.restore.second_window = false;
+            self.restore.inherited = true;
+        }
+    }
+
     pub fn dismiss_tab_restore(&mut self) {
         let baseline = self.restore.baseline.take();
-        let second_window = self.restore.second_window;
-        self.restore = Restore { baseline, second_window, ..Restore::default() };
+        let (second_window, inherited) = (self.restore.second_window, self.restore.inherited);
+        self.restore = Restore { baseline, second_window, inherited, ..Restore::default() };
         if second_window {
             return;
         }
@@ -652,6 +669,55 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), written, "the first window's close survives");
         first.restore.baseline = Some(written);
         first.save_tab_restore().unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_second_window_that_closes_last_saves_its_tabs_and_one_without_tabs_keeps_the_firsts() {
+        let root = std::env::temp_dir().join(format!("cs-restore-last-{}", std::process::id()));
+        let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
+        let file = path(&disk).unwrap();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let first = Entry { id: A.into(), account: "main".into(), cwd: "C:/a".into(), active: true, chat: None };
+        std::fs::write(&file, encode([first.clone()])).unwrap();
+        let open = |tab: bool| {
+            let mut app = AppState::new(Source::Demo, None, Default::default());
+            app.restore.second_window = true;
+            app.restore.load_snapshot(&file).unwrap();
+            app.source = disk.clone();
+            if tab {
+                let new = NewTab { label: "b".into(), color: [0; 3], session: None, account: Some("main".into()) };
+                let id = app.tabs.open(new, Term::empty((8, 4)));
+                let tab = app.tabs.get_mut(id).unwrap();
+                tab.resume_id = Some(B.into());
+                tab.cwd = Some("C:/b".into());
+                app.tabs.active = Some(id);
+            }
+            app
+        };
+        // The first window closed meanwhile and saved other tabs than this window loaded.
+        let mut second = open(true);
+        let closed =
+            encode([first.clone(), Entry { id: "33333333-0000-0000-0000-000000000000".into(), ..first.clone() }]);
+        std::fs::write(&file, &closed).unwrap();
+        second.save_tab_restore().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), closed, "still a second window: nothing written");
+        // Closing as the last window (it now holds the channel): its tabs are the ones to restore.
+        second.inherit_tab_restore();
+        second.save_tab_restore().unwrap();
+        let saved = decode(&std::fs::read_to_string(&file).unwrap());
+        assert_eq!(saved.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), [B]);
+
+        // A last window with no tabs of its own leaves the first window's.
+        std::fs::write(&file, &closed).unwrap();
+        let mut empty = open(false);
+        empty.inherit_tab_restore();
+        empty.save_tab_restore().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), closed);
+        // Unless tabs are never restored: then the snapshot is cleared as for any window.
+        empty.win_file.restore_tabs = RestoreTabs::Never;
+        empty.save_tab_restore().unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "[]");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

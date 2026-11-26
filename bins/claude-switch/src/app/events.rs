@@ -332,6 +332,17 @@ impl AppState {
             cx.request_redraw_all();
             return;
         }
+        // The first window has gone if its channel can be claimed: this one is then the last to
+        // close and its tabs are the ones to restore. Should the exit stop below, it serves the
+        // channel like a first window.
+        if self.restore.second_window
+            && !self.source.is_demo()
+            && let crate::handover_pipe::Claim::Mine(listener) = crate::handover_pipe::claim()
+        {
+            self.compact.listener = Some(listener);
+            self.serve_handovers();
+            self.inherit_tab_restore();
+        }
         if !self.restore.save_failed
             && let Err(error) = self.save_tab_restore()
         {

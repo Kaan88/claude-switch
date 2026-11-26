@@ -759,7 +759,11 @@ folder. Ambiguous or unavailable identities are not guessed. Ask is the default;
 starts the batch after the first scan, Never clears the snapshot. The pending offer survives
 an exit with no replacement tabs. Only the window holding the handover channel restores and saves
 the snapshot; a second window started meanwhile neither restores it nor writes it on exit (its
-tabs are not saved), so the first window's tabs survive whichever window closes first.
+tabs are not saved), so the first window's tabs survive whichever window closes first. The one
+exception is a second window that closes after the first has gone: on exit it tries to claim the
+channel, and when it gets it (no other window holds it) it is the last window, re-reads the
+snapshot the first one left and replaces it with its own tabs. With no tabs of its own it leaves
+the first window's.
 Restoration uses the normal resume warning, process scan
 and launch reservation, always targets embedded tabs, ignores a stale saved folder in favor of
 the indexed one, and reports skipped entries together.
@@ -950,7 +954,9 @@ card shows a menu, sends are refused with "Choose in Claude Code's menu above" a
 closed; a slash command no longer opens the drawer by itself. A menu that may be a permission
 prompt never shows as a menu card: within 24 rows of its footer a "Do you want to"/"Would you like
 to" row, "Tab to amend", "don't ask again" or "tell Claude what to do", or Yes and No choices over
-"Esc to cancel". Unless a question card answers that menu, the gate treats it as a permission
+"Esc to cancel". Only the menu's own rows are read for these: those below the nearest rule above
+the footer (the CLI draws its prompts and menus under one), so the same words in the conversation
+above do not count; with no rule in those 24 rows, all of them do. Unless a question card answers that menu, the gate treats it as a permission
 prompt left to the terminal (drawer, notice).
 
 **Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
@@ -998,7 +1004,9 @@ A card answers ahead of a queued draft: the queue waits for the turn to end, whi
 answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer
 ("Chat about this", "No, and tell Claude") is refused while a draft is queued, saying to cancel it
 first. While a message is still on its way to the terminal, a card click says so and writes
-nothing.
+nothing; the notice goes once those keys have gone (a queued draft is not such keys). In turn, the
+queue is not released while a card's answer, a mode change or Ctrl+B is still in flight: the draft
+stays queued until it has ended.
 
 **Plan approval.** A pending `ExitPlanMode` call shows its plan as Markdown in the conversation, from
 the call's input (cut at 20,000 characters), always open. The card under it offers the plan menu's

@@ -24,7 +24,8 @@
 - Marks: a session forgotten in one window while the other saw it no longer turns into an empty
   entry that refused pins and names for it; such entries in existing files are repaired on load.
 - Saved terminal tabs: a second window no longer replaces the first window's saved tabs with its
-  own when it closes; only the window that restored them saves them.
+  own when it closes while the first still runs. A second window that closes last, after the
+  first has gone, saves its own tabs (when it has any) so they are the ones restored next time.
 - Handover channel: an elevated window refuses requests from lower-integrity processes; the
   window claims the channel before restoring tabs, so two windows starting together never both
   restore them; a client that connects and never writes no longer blocks later requests; the
