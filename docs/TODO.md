@@ -142,3 +142,8 @@ and in the README, not committed, and not copied to the installed clone
 4. Seen in the same screenshot, not reported: the "This week by app" rows (Claude Code, Chats,
    Cowork, Other) show no figures; the Refresh buttons are cut off at the dialog's right edge; the
    first account shows no Session row while the second does.
+5. **Hovering over an open context menu also highlights the list row underneath it** (owner,
+   2026-11-26; seen with the session list's menu over the Recent list). The pointer position should
+   not reach the list's hover state while a menu, dialog or palette is open above it. Also in that
+   screenshot: "Archive session…" is greyed while "Archive folder…" is not; check that this is the
+   pinned/running rule and not a mistake.
