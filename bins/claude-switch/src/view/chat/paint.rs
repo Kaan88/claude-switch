@@ -42,6 +42,7 @@ impl AppState {
         } else {
             Layout::new(area, panel, drawer, chat.drawer_height, chips, notice)
         };
+        super::question::place(chat, &pane.model);
         self.session_view.pane_area = chat.layout.conversation;
         chat.layout.drawer
     }
@@ -130,7 +131,10 @@ impl AppState {
                 button(p, pal, r, "Focus terminal", hover == Some(target), false);
                 self.hits.push((r, target));
             }
-        } else if chat.reason == Some(Reason::Tool) && l.conversation.h > 25.0 {
+        } else if chat.reason == Some(Reason::Tool)
+            && super::question::pending(&pane.model).is_none()
+            && l.conversation.h > 25.0
+        {
             let row = Rect::new(
                 l.conversation.x + 12.0,
                 l.conversation.bottom() - pane.ui.footer_height(l.conversation.w, pane.model.agent.is_none()) - 26.0,
@@ -141,6 +145,7 @@ impl AppState {
             p.text(Face::Ui, 11.5, row.x, row.cy(), Reason::Tool.label(), pal.muted, (row.w - 122.0).max(0.0));
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
         }
+        super::question::Draw { pal, hover, focused }.card(p, chat, &pane.model, &mut self.hits);
         if details_active {
             self.hits.extend(detail_hits);
         }

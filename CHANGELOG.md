@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Chat: new Claude tabs use Claude Code's classic renderer (Settings › Sessions › Classic terminal
+  view for Claude tabs, on by default), so Chat no longer refuses every send in fresh chats; the
+  refusal now says how to switch the renderer.
+- Chat: the first message of a new chat can be sent from Chat, and a tab follows its process to a
+  new session after `/clear`, compaction or `/resume` instead of asking to reopen it. A new session
+  is shown in Threads as the continuation of the old one.
+- Chat: Claude's questions (AskUserQuestion) appear as a card you can answer from the chat; the
+  working line says "Waiting for your answer".
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

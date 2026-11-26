@@ -269,7 +269,12 @@ only after the terminal PID, account and working directory identify one session 
 when identity is unverified or ambiguous rather than selecting the newest file in a shared project.
 For new and forked tabs the verified ID must name a fresh transcript in the launch folder's encoded
 directory. For wrapped processes, the live CLI PID must belong to the terminal's process tree; otherwise the pane
-stays unattached.
+stays unattached. Claude Code writes a new session's transcript only with its first prompt: while the
+live record names this tab's process and a valid ID whose file does not exist yet, the pane pins
+that ID and Chat may send one message (an ordinary Send needs the usual quiet, visibly empty prompt;
+with no transcript no turn can be running). Later sends wait until that exact file appears; a record
+naming another session first, or a file whose recorded folder differs, keeps the refusal. Such a tab is
+not yet routed, marked seen or restored.
 
 Conversation, Agents and Tasks are separate views of the incremental transcript reader. Conversation
 opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
@@ -659,7 +664,7 @@ transcript byte watermark before writing so a buffered earlier prompt cannot rea
 of terminal silence is a hint, not proof of a permission question. A slow tool can look the
 same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. No
-permission responses or dialog keys are generated. Stop sends Escape at most once per freshly
+permission responses are generated; the only dialog keys are a question card's (see Questions). Stop sends Escape at most once per freshly
 verified active turn.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
@@ -674,6 +679,27 @@ the exact text on the live input row, within two seconds. Compact and Clear (inc
 ask for confirmation.
 Interactive CLI results stay in the drawer. Chat does not generate answers to its menus; without
 observable progress or a quiet, empty prompt it cannot verify that the menu closed.
+
+**Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
+the call's input (header, question, options with descriptions), never from the screen. Chat answers
+only one single-choice question: before any key it requires the live screen to show a menu footer,
+the question text, and every option as `n. label` in order, followed only by "Type something" and
+"Chat about this", and not to look like a permission question. It moves the `❯` highlight with arrow
+keys, and writes Enter only after newer output shows the highlight on the chosen row. A typed answer
+is written on the "Type something" row and Enter follows only once the screen shows that text.
+"Chat about this" chooses that row and puts the card's text in the composer. Every step has a two
+second deadline; a mismatch, timeout or a question still open eight seconds after Enter stops, says
+why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
+stay terminal-only. While the card can answer, sends are refused with "Answer Claude's question
+above" and the drawer does not open by itself; the working line reads "Waiting for your answer".
+Permission prompts are never answered from Chat.
+
+**Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
+Sessions › Classic terminal view is on (the default): Claude Code then draws on the main screen,
+where the prompt checks above apply. The variable is set for that process only, never in Claude
+Code's settings. The alternate-screen veto stays for every tab; in a tab started without the
+variable it names the setting and `/tui default`. Recognizing the fullscreen renderer's own input box
+needs a capture from a real session and is not attempted.
 
 **Local data.** File chips use the existing path quoting. Ctrl+V prefers clipboard text. Use
 Ctrl+Shift+V or **Attach… → Paste picture** to choose the picture explicitly. Supported picture
@@ -800,8 +826,14 @@ can add `--shell cmd.exe` to preview it with an isolated command prompt instead.
 ## Tab identity and interaction checks
 
 The running-session poll retries unattached live tabs even when PID records are unchanged.
-An attached pane keeps its original transcript and draft. If a live record identifies a
-different session, the tab clears the current identity used by Open, local marks, and
+An attached pane keeps its draft. When the live record of the tab's own process names a
+different session (the CLI's `/clear`, compaction or `/resume`), the pane follows it: it reads that
+transcript (any age, same encoded folder, recorded folder must match) or awaits it as for a new
+chat, cancels anything queued or staged, and requires a prompt written after the change before an
+ordinary Send. A followed session the CLI had not written yet is recorded as the old one's
+continuation (`parentSessionId` in marks, as for handovers); an existing transcript is not. A change
+Switch cannot explain (the new transcript records another folder, or the record moves before a
+new chat's first message created its file) clears the current identity used by Open, local marks, and
 background transcript notices without moving that draft to the other session. A missing
 PID record retains the existing duplicate-resume guard, not permission to send or mark seen.
 Real Chat panes start with both Send paths blocked until verification. A verified tab missing from

@@ -55,6 +55,7 @@ const FORGET_HANDOVER_CONSENTS: u32 = 90;
 const SET_SUGGEST_TOPICS: u32 = 91;
 const SYNC_WORKERS: u32 = 94;
 const SET_HANDOVER_AGENT: u32 = 95;
+const SET_CLASSIC_VIEW: u32 = 96;
 
 pub(crate) fn settings(st: &mut AppState, category: Option<&str>) -> Dialog {
     let category = category.or(st.settings_category);
@@ -163,6 +164,8 @@ fn sessions(st: &AppState) -> Vec<Row> {
     vec![
         Row::toggle(SET_EMBEDDED, "Open CLI sessions in a tab of this window", st.config.embedded_terminal)
             .help("Off: they open in a separate console window."),
+        Row::toggle(SET_CLASSIC_VIEW, "Classic terminal view for Claude tabs", st.config.classic_terminal_view)
+            .help("Chat cannot send while the CLI draws its full-screen view. Applies to new tabs."),
         Row::toggle(SET_ARCHIVED, "Show archived sessions", st.config.show_archived),
         Row::toggle(SET_WORKERS_SHOWN, "Show sessions started by tools", st.config.show_workers)
             .help("Sessions that tools and subagents started through the SDK, not you."),
@@ -278,6 +281,7 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
                     };
                 }
                 (SET_EMBEDDED, Value::Bool(b)) => st.config.embedded_terminal = b,
+                (SET_CLASSIC_VIEW, Value::Bool(b)) => st.config.classic_terminal_view = b,
                 (SET_SUGGEST_TOPICS, Value::Bool(b)) => st.config.suggest_topics = b,
                 (SET_USAGE, Value::Bool(b)) => {
                     if let crate::source::Source::Real(roots) = &st.source
@@ -392,7 +396,15 @@ mod tests {
                 SET_TERM_FOREGROUND,
                 SET_TERM_ACCENT,
             ],
-            &[SET_EMBEDDED, SET_ARCHIVED, SET_WORKERS_SHOWN, SET_HIDDEN, SET_ATTENTION, SET_SUGGEST_TOPICS],
+            &[
+                SET_EMBEDDED,
+                SET_CLASSIC_VIEW,
+                SET_ARCHIVED,
+                SET_WORKERS_SHOWN,
+                SET_HIDDEN,
+                SET_ATTENTION,
+                SET_SUGGEST_TOPICS,
+            ],
             &[SET_USAGE, SET_USAGE_WARNINGS],
             &[SET_HANDOVER_AGENT, FORGET_HANDOVER_CONSENTS],
             &[SET_WORKERS, opencode_rows::REFRESH, opencode_rows::RESTART, opencode_rows::STUDIO, SYNC_WORKERS],
@@ -449,10 +461,13 @@ mod tests {
         navigate(&mut st, KeyName::Tab);
         assert_eq!(current(&st).form.focus_id(), Some(SET_EMBEDDED));
         navigate(&mut st, KeyName::Down);
+        assert_eq!(current(&st).form.focus_id(), Some(SET_CLASSIC_VIEW));
+        navigate(&mut st, KeyName::Down);
         assert_eq!(current(&st).form.focus_id(), Some(SET_ARCHIVED));
         let archived = st.config.show_archived;
         navigate(&mut st, KeyName::Space);
         assert_ne!(st.config.show_archived, archived);
+        navigate(&mut st, KeyName::Up);
         navigate(&mut st, KeyName::Up);
         assert_eq!(current(&st).category(), "Sessions");
         assert_eq!(current(&st).form.focus_id(), Some(SET_EMBEDDED));

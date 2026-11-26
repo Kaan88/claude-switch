@@ -30,15 +30,50 @@ pub enum Source {
     Discover { config: PathBuf, cwd: PathBuf, started: SystemTime, verified: Arc<std::sync::OnceLock<String>> },
 }
 
+/// What a session ID's transcript looks like on disk for a [`Source::Discover`] pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Probe {
+    /// The file exists, is new enough and records the tab's folder.
+    Found(PathBuf),
+    /// No file with that name yet: Claude Code writes it with the session's first prompt.
+    Missing,
+    /// Anything else: an invalid ID, an old or foreign file, or a read error.
+    Rejected,
+}
+
 impl Source {
-    pub(super) fn candidate_path(&self, id: &str) -> Option<PathBuf> {
-        match self {
-            Self::Discover { config, cwd, started, .. } => {
-                discover(&project(config, cwd), cwd, *started, id).ok().flatten()
+    /// A pane that follows `id` for the same process: an existing transcript of any age (`/resume`)
+    /// or one the CLI has yet to write (`/clear`). `None` when this source has no project folder.
+    pub(super) fn follow(&self, cwd: &Path, id: &str) -> Option<Self> {
+        let config = match self {
+            Self::Discover { config, .. } => config.clone(),
+            Self::File(path) => {
+                let dir = path.parent()?;
+                let config = dir.parent()?.parent()?.to_owned();
+                (project(&config, cwd) == dir).then_some(config)?
             }
-            Self::File(_) | Self::Demo(_) => None,
+            Self::Demo(_) => return None,
+        };
+        let verified = Arc::new(std::sync::OnceLock::new());
+        verified.set(id.to_owned()).ok()?;
+        Some(Self::Discover { config, cwd: cwd.to_owned(), started: SystemTime::UNIX_EPOCH, verified })
+    }
+
+    pub(super) fn probe(&self, id: &str) -> Probe {
+        match self {
+            Self::Discover { config, cwd, started, .. } => probe(&project(config, cwd), cwd, *started, id),
+            Self::File(path) | Self::Demo(path) => Probe::Found(path.clone()),
         }
     }
+
+    /// Pins `id` as this pane's session when nothing is pinned yet. False when another is.
+    pub(super) fn pin(&self, id: &str) -> bool {
+        match self {
+            Self::Discover { verified, .. } => verified.get_or_init(|| id.to_owned()).eq_ignore_ascii_case(id),
+            Self::File(_) | Self::Demo(_) => true,
+        }
+    }
+
     pub fn find_file(&self) -> Option<PathBuf> {
         match self {
             Self::File(path) | Self::Demo(path) => Some(path.clone()),
@@ -69,6 +104,19 @@ fn discover(dir: &Path, cwd: &Path, started: SystemTime, verified: &str) -> io::
         Err(e) => return Err(e),
     };
     Ok((meta.is_file() && meta.created()? >= started && super::discovery::cwd_matches(&path, cwd)).then_some(path))
+}
+
+fn probe(dir: &Path, cwd: &Path, started: SystemTime, id: &str) -> Probe {
+    if claude_switch_core::launch::validate_session_id(id).is_err() {
+        return Probe::Rejected;
+    }
+    match discover(dir, cwd, started, id) {
+        Ok(Some(path)) => Probe::Found(path),
+        Ok(None) if matches!(fs::symlink_metadata(dir.join(format!("{id}.jsonl"))), Err(e) if e.kind() == io::ErrorKind::NotFound) => {
+            Probe::Missing
+        }
+        _ => Probe::Rejected,
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -195,6 +243,12 @@ pub struct Model {
 
 impl Model {
     pub fn new(source: Source, cwd: PathBuf, wake: impl Fn() + Send + 'static) -> Self {
+        Self::after(source, cwd, 0, wake)
+    }
+
+    /// A reader whose generations continue after `generation`, so state keyed to an earlier
+    /// reader's generation (selection, shells, recall) cannot match this one.
+    pub fn after(source: Source, cwd: PathBuf, generation: u64, wake: impl Fn() + Send + 'static) -> Self {
         let temp = if matches!(source, Source::Demo(_)) { cwd.clone() } else { std::env::temp_dir() };
         let shell_logs = ShellLogs::new(&temp, &cwd);
         let worker_logs = shell_logs.clone();
@@ -209,7 +263,7 @@ impl Model {
                 root: None,
                 child: None,
                 session: None,
-                generation: 0,
+                generation,
                 chat: Default::default(),
                 refs: Default::default(),
                 shells: Default::default(),
@@ -251,7 +305,7 @@ impl Model {
             earlier_version: 0,
             error: None,
             revision: 0,
-            generation: 0,
+            generation,
             chat: Default::default(),
             files: Default::default(),
             outputs: Default::default(),

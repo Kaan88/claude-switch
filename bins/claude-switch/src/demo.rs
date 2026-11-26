@@ -66,6 +66,7 @@ pub fn config() -> Config {
         current: "main".into(),
         workers: WorkersUse::Same,
         embedded_terminal: true,
+        classic_terminal_view: true,
         show_archived: false,
         show_workers: false,
         show_usage: true,
