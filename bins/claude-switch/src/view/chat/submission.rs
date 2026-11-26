@@ -539,6 +539,38 @@ pub(super) fn slash_bytes(line: &str) -> Option<Vec<u8>> {
     Some(line.as_bytes().to_vec())
 }
 
+/// Built-in commands that only change settings or show a panel and never start a model turn. Any
+/// other command (skills, plugins, custom prompts, unknown names) is taken to start one.
+const LOCAL_COMMANDS: [&str; 22] = [
+    "model",
+    "effort",
+    "help",
+    "context",
+    "cost",
+    "usage",
+    "status",
+    "config",
+    "tui",
+    "permissions",
+    "mcp",
+    "theme",
+    "doctor",
+    "login",
+    "logout",
+    "add-dir",
+    "agents",
+    "hooks",
+    "memory",
+    "output-style",
+    "vim",
+    "exit",
+];
+
+fn local_command(line: &str) -> bool {
+    let name = line.strip_prefix('/').and_then(|s| s.split_ascii_whitespace().next()).unwrap_or("");
+    LOCAL_COMMANDS.iter().any(|c| name.eq_ignore_ascii_case(c))
+}
+
 pub(super) fn send_bytes(chips: &[Chip], text: &str) -> Option<Vec<u8>> {
     if text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t')) {
         return None;
@@ -632,6 +664,8 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
             chat.submitted();
         }
         Completion::Command { line, from_editor } => {
+            // A command that may start a model turn counts as the new chat's first send.
+            chat.first_sent |= chat.awaiting_transcript && !local_command(&line);
             chat.cli_report.begin(baseline.unwrap_or_default(), chat.output_epoch, chat.demo, chat.input_floor, &line);
             if from_editor {
                 chat.submitted();

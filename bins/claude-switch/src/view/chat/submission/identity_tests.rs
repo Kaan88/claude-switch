@@ -273,3 +273,19 @@ fn a_followed_session_links_only_to_a_verified_one() {
     f.tab().apply_live_identity(Some(B));
     assert_eq!(f.tab().pane.as_ref().unwrap().continued, Some((B.to_owned(), A.to_owned())));
 }
+
+#[test]
+fn a_command_that_may_start_a_turn_counts_as_a_new_chats_first_send() {
+    for (line, starts) in [("/effort high", false), ("/review", true)] {
+        let mut f = Fixture::new(if starts { "first-cmd-turn" } else { "first-cmd-local" }, discover);
+        assert!(f.tab().apply_live_identity(Some(A)));
+        let now = Instant::now();
+        f.chat().last_output = Some(now - QUIET);
+        AppState::submit_slash(f.tab(), now, line, false);
+        assert!(AppState::advance_submission(f.tab(), now, true), "{:?}", f.chat().error);
+        assert!(f.chat().writes.last().is_some_and(|w| w == b"\r"), "{line} was entered");
+        assert_eq!(f.chat().first_sent, starts, "{line}");
+        let expected = if starts { Some(NO_TRANSCRIPT) } else { None };
+        assert_eq!(f.send("hello", now), expected, "{line}");
+    }
+}
