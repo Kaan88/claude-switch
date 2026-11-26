@@ -36,6 +36,9 @@ pub(super) const PERMISSION_ASKS: [&str; 2] = ["Do you want to ", "Would you lik
 pub(super) const TELL_CLAUDE: &str = "tell Claude";
 /// A footer hint that Tab opens a comment on the highlighted choice, lower case.
 pub(super) const AMEND: &str = "tab to amend";
+/// How the comment field Tab opens shows on its choice's row: the choice, this mark, then the text
+/// typed so far. Without it the row is still a menu row, where digits pick choices.
+pub(super) const COMMENT_MARK: &str = ":";
 /// The plan approval question shown for `ExitPlanMode`.
 pub(super) const PLAN_ASKS: &str = "Would you like to proceed?";
 /// The plan approval choice that declines (keeps planning).
@@ -128,6 +131,17 @@ impl Menu {
     pub fn rows_from(&self, i: usize) -> Option<String> {
         let rows = self.lines.get(self.entries.get(i)?.row..self.footer)?;
         Some(collapse(&rows.join(" ")))
+    }
+
+    /// The text in the comment field open on entry `i`, whose choice reads `choice`: its row and
+    /// the rows it wraps onto, up to the next entry. `None` while the row shows no field.
+    pub fn comment(&self, i: usize, choice: &str) -> Option<String> {
+        let entry = self.entries.get(i)?;
+        let end = self.entries.get(i + 1).map_or(self.footer, |e| e.row);
+        let wrapped = self.lines.get(entry.row + 1..end)?.join(" ");
+        let rows = collapse(&format!("{} {wrapped}", entry.text));
+        let rest = rows.strip_prefix(choice)?.strip_prefix(COMMENT_MARK)?;
+        Some(rest.trim().to_owned())
     }
 
     /// The footer row, lower case.

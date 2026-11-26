@@ -936,7 +936,9 @@ only one single-choice question: before any key it requires the live screen to s
 the question text, and every option as `n. label` in order, followed only by "Type something" and
 "Chat about this", and not to look like a permission question. It moves the `❯` highlight with arrow
 keys, and writes Enter only after newer output shows the highlight on the chosen row. A typed answer
-is written on the "Type something" row and Enter follows only once the screen shows that text.
+is written on the "Type something" row and Enter follows only once the screen shows that text; an
+answer starting with a digit is refused, since that row shows no field of its own and digits pick
+choices.
 "Chat about this" chooses that row and puts the card's text in the composer. Every step has a two
 second deadline; a mismatch, timeout or a question still open eight seconds after Enter stops, says
 why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
@@ -956,7 +958,8 @@ a subagent's prompt, two pending calls, or any other prompt stays terminal-only 
 button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
 highlight there with the same choices; nothing is pre-selected and nothing is answered without a
 click. A decline with text uses the prompt's Tab comment field when the footer offers "Tab to
-amend" (Tab, the text, then Enter once the text is visible), or its "No, and tell Claude …" choice,
+amend" (Tab; the text only once the screen shows the field open on that row, the choice followed by
+":", since on a menu row digits pick choices; then Enter once the text is visible), or its "No, and tell Claude …" choice,
 whose text then goes to the composer. Shift+Tab is never sent at a prompt. The same deadlines and
 fail-closed rules as questions apply. While the card can answer, sends are refused with "Answer
 Claude's request above", the drawer stays closed and the working line reads "Waiting for your

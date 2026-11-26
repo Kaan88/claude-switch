@@ -37,6 +37,8 @@ const NOT_CLOSED: &str = "The answer was sent, but the prompt is still open. Che
 const TERMINAL_ONLY: &str = "Answer this in the terminal.";
 const NO_FIELD: &str = "The terminal's prompt has no such choice. Answer it in the terminal.";
 const BAD_TEXT: &str = "Type a short answer without control characters.";
+const DIGIT_FIRST: &str =
+    "Start the answer with a word, not a digit (digits pick a choice), or answer in the terminal.";
 const BLOCKED: &str = "Chat cannot answer now. Check the terminal.";
 pub(super) const WAITING: &str = "Sending your answer to the terminal…";
 const ASKING: &str = "Waiting for your answer";
@@ -544,6 +546,11 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             (Some(i), Then::Choose)
         }
         (Subject::Question(_), Hit::Answer) => match answer_text(&chat.question.field) {
+            // The row shows no field of its own: a leading digit could pick a choice instead.
+            Ok(text) if text.starts_with(|c: char| c.is_ascii_digit()) => {
+                chat.question.error = Some(DIGIT_FIRST);
+                return true;
+            }
             Ok(text) => (other, Then::Type(text)),
             Err(error) => {
                 chat.question.error = Some(error);
@@ -766,6 +773,15 @@ enum Action {
     Enter,
 }
 
+/// The text in the comment field open on the subject's highlighted `target` choice; `None` when
+/// the screen shows no such field.
+fn comment(subject: &Subject, screen: &Screen, target: usize) -> Option<String> {
+    let (Subject::Tool { choices, .. } | Subject::Plan { choices }) = subject else { return None };
+    let (menu, ..) = read(subject, screen, Some(target))?;
+    (menu.highlight() == Some(target)).then_some(())?;
+    menu.comment(target, choices.get(target)?)
+}
+
 /// What the screen says about an answer in flight. `may_act`: the window allows writes and the
 /// screen changed since the last key.
 fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
@@ -792,19 +808,22 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
             None if late => Action::Fail(CHANGED),
             _ => Action::Wait,
         },
-        Stage::Opening => match read(&step.subject, screen, Some(step.target)) {
-            Some((menu, ..)) if may_act && menu.highlight() == Some(step.target) => {
-                Action::Type(typed_text.unwrap_or_default().to_owned())
-            }
+        // Only a field the screen positively shows takes the text: on a menu row, digits pick choices.
+        Stage::Opening => match comment(&step.subject, screen, step.target) {
+            Some(typed) if may_act && typed.is_empty() => Action::Type(typed_text.unwrap_or_default().to_owned()),
             _ if late => Action::Fail(NO_COMMENT),
             _ => Action::Wait,
         },
         Stage::Typing => {
             let text = typed_text.unwrap_or_default();
-            let typed = read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
-                menu.highlight() == Some(step.target)
-                    && menu.rows_from(step.target).is_some_and(|rows| rows.contains(text))
-            });
+            let typed = if matches!(step.then, Then::Amend(_)) {
+                comment(&step.subject, screen, step.target).is_some_and(|typed| typed.contains(text))
+            } else {
+                read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
+                    menu.highlight() == Some(step.target)
+                        && menu.rows_from(step.target).is_some_and(|rows| rows.contains(text))
+                })
+            };
             if typed && may_act {
                 Action::Enter
             } else if late {

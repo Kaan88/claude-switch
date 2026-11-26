@@ -408,6 +408,34 @@ fn declining_with_a_comment_opens_the_prompts_field_and_types_before_enter() {
     assert_eq!(f.writes(), [b"\r".to_vec()]);
 }
 
+#[test]
+fn a_comment_is_typed_only_into_the_field_the_screen_shows_never_into_the_menu() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.chat().question.field.set_text("2 is wrong");
+    press(f.tab(), now, Hit::Deny);
+    f.writes();
+    f.screen(&prompt("cargo test --workspace", 2, None), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"	".to_vec()]);
+    // Newer output (a repaint) with the same menu: no field opened, so nothing is typed.
+    f.screen(&prompt("cargo test --workspace", 2, None), now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "digits would pick a choice in the menu");
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NO_COMMENT));
+
+    // A question's free-text row shows no field of its own: a leading digit is never typed.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    f.chat().question.field.set_text("2 of them");
+    press(f.tab(), now, Hit::Answer);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(DIGIT_FIRST));
+}
+
 /// The plan approval menu (its rows to confirm in a live session).
 fn plan_menu(highlight: usize) -> String {
     let choices = ["Yes, and use auto mode", "Yes, manually approve edits", "No, keep planning"];
