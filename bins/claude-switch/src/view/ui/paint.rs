@@ -14,7 +14,7 @@ impl Ui {
             let edge = if visible { latest.x - 5.0 } else { r.right() };
             let stop = Rect::new(edge - 48.0, y, 48.0, h);
             let (text_y, text_w) = if stacked { (r.y + 11.5, r.w) } else { (stop.cy(), stop.x - r.x - 6.0) };
-            p.text(Face::Ui, 12.0, r.x, text_y, &work.label, pal.text, text_w.max(0.0));
+            crate::view::working::draw_line(p, 12.0, r.x, text_y, &work.label, pal.text, text_w);
             if let Some(key) = work.stop {
                 self.button(p, pal, stop, "Stop", Action::Stop(key), false);
             } else {

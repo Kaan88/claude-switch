@@ -719,7 +719,10 @@ separately opens the embedded Markdown viewer or asks the system for the default
 document or media type. It uses only an existing, verified transcript-named file and rechecks at
 activation. When a turn is active, both conversation layouts show the CLI’s working line from
 visible screen rows, not scrollback. A missing or unreadable timer falls back to time measured
-since the app observed the turn. Stop uses the same fresh-turn safety checks as the composer and
+since the app observed the turn. The spinner glyph is drawn centred in a slot as wide as the
+widest glyph, the text after it starts at a fixed x, and each digit takes the widest digit's
+width, so neither the animation nor a ticking counter moves the line. Stop uses the same
+fresh-turn safety checks as the composer and
 is inactive when those checks fail.
 
 **Shells** uses only background `Bash` inputs whose successful paired result names a task ID and

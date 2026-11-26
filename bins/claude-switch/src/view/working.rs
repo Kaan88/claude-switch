@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use claude_switch_core::transcript::{ChatInfo, ChatPhase};
 use mdshared_term::Screen;
+use mdshared_ui::gfx::{Face, Painter, Rgb};
 use mdshared_ui::host::Cx;
 
 use crate::state::{AppState, Msg};
@@ -95,6 +96,64 @@ impl AppState {
         if let Some(at) = wake {
             cx.wake_at(at);
         }
+    }
+}
+
+/// The spinner glyphs the CLI cycles through; the slot is as wide as the widest of them.
+const GLYPHS: [&str; 12] = ["·", "✢", "✦", "✧", "✳", "✶", "✹", "✺", "✻", "✽", "*", "⏳"];
+
+/// `(x, text, slot)`: a piece of a working line; with a slot, it is centred in it.
+type Piece<'a> = (f32, &'a str, Option<f32>);
+
+/// Where each piece of a working line goes: the spinner glyph centred in a fixed slot, the text
+/// after it from a fixed x, and every digit centred in a slot as wide as the widest digit, so
+/// neither the animation nor a ticking counter moves what follows.
+fn pieces<'a>(label: &'a str, measure: &mut dyn FnMut(&str) -> f32) -> (Vec<Piece<'a>>, f32) {
+    let glyph_slot = GLYPHS.iter().map(|g| measure(g)).fold(0.0, f32::max);
+    let digit = ('0'..='9').map(|d| measure(d.encode_utf8(&mut [0; 4]))).fold(0.0, f32::max);
+    let gap = measure(" ");
+    let mut out = Vec::new();
+    // A glyph is the first character when a space follows it; the fallback has none, and its
+    // text still starts where a glyph's would.
+    let rest = match label.split_once(' ') {
+        Some((glyph, rest)) if glyph.chars().count() <= 2 && !glyph.starts_with(char::is_alphanumeric) => {
+            out.push((0.0, glyph, Some(glyph_slot)));
+            rest
+        }
+        _ => label,
+    };
+    let mut x = glyph_slot + gap;
+    let mut start = 0;
+    for (i, c) in rest.char_indices() {
+        if c.is_ascii_digit() {
+            if start < i {
+                let run = &rest[start..i];
+                out.push((x, run, None));
+                x += measure(run);
+            }
+            out.push((x, &rest[i..=i], Some(digit)));
+            x += digit;
+            start = i + 1;
+        }
+    }
+    if start < rest.len() {
+        let run = &rest[start..];
+        out.push((x, run, None));
+        x += measure(run);
+    }
+    (out, x)
+}
+
+/// Draws the working line from `x`; past `max` it is shown elided as plain text.
+pub(super) fn draw_line(p: &mut Painter, size: f32, x: f32, cy: f32, label: &str, color: Rgb, max: f32) {
+    let (pieces, width) = pieces(label, &mut |t| p.measure(Face::Ui, size, t));
+    if width > max {
+        p.text(Face::Ui, size, x, cy, label, color, max.max(0.0));
+        return;
+    }
+    for (at, text, slot) in pieces {
+        let offset = slot.map_or(0.0, |w| (w - p.measure(Face::Ui, size, text)) / 2.0);
+        p.text(Face::Ui, size, x + at + offset, cy, text, color, f32::INFINITY);
     }
 }
 
@@ -234,6 +293,45 @@ mod tests {
         ] {
             assert_eq!(parse(text), None, "{text}");
         }
+    }
+
+    #[test]
+    fn the_glyph_and_counters_keep_their_slots_so_the_text_after_them_stays_put() {
+        // Glyphs and digits of different widths, as in a proportional font.
+        let mut measure = |t: &str| {
+            t.chars()
+                .map(|c| match c {
+                    '·' => 3.0,
+                    '✻' => 11.0,
+                    '⏳' => 12.0,
+                    '1' => 4.0,
+                    '0'..='9' => 7.0,
+                    _ => 6.0,
+                })
+                .sum::<f32>()
+        };
+        let at = |label: &str, piece: &str, measure: &mut dyn FnMut(&str) -> f32| {
+            let (pieces, _) = pieces(label, measure);
+            pieces.iter().find(|(_, t, _)| *t == piece).map(|(x, _, _)| *x).unwrap()
+        };
+        let word = at("· Billowing… (13s · ↓ 1.1k tokens)", "Billowing… (", &mut measure);
+        assert_eq!(word, at("✻ Billowing… (13s · ↓ 1.1k tokens)", "Billowing… (", &mut measure));
+        assert_eq!(word, at("Working… (0s)", "Working… (", &mut measure), "the fallback starts there too");
+        assert_eq!(word, 12.0 + 6.0, "after the widest glyph and a space");
+        let tokens = |l: &str, m: &mut dyn FnMut(&str) -> f32| at(l, "s · ↓ ", m);
+        assert_eq!(
+            tokens("✻ Billowing… (13s · ↓ 1.1k tokens)", &mut measure),
+            tokens("✻ Billowing… (40s · ↓ 1.1k tokens)", &mut measure),
+            "a 1 is as wide as a 4"
+        );
+        let (pieces, _) = pieces("✻ Billowing… (13s)", &mut measure);
+        assert_eq!(pieces[0], (0.0, "✻", Some(12.0)), "the glyph is centred in its slot");
+        assert!(
+            pieces
+                .iter()
+                .filter(|(_, t, _)| t.len() == 1 && t.as_bytes()[0].is_ascii_digit())
+                .all(|p| p.2 == Some(7.0))
+        );
     }
 
     #[test]
