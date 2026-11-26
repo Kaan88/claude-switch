@@ -583,8 +583,14 @@ continues** is A new tab, or when Switch is not running, it opens a new tab as b
 
 Switch shows that tab in the Chat view (that tab only; the saved Chat default for new tabs is
 left as it was) and goes through the Chat view's gate for every write; it
-never writes to the terminal itself. At an idle prompt it sends `/clear` with the gate's slash
-command path (up to 90 seconds for the prompt to become idle), waits until the tab has followed
+never writes to the terminal itself. Right before `/clear` it checks that the handover still
+covers the session: the transcript's length is recorded when it is read for the handover (the
+dialog's, the automatic one's and `compact --open`'s, which passes it in its request), and a
+prompt recorded at or past that offset means the user sent something since, so it stops with that
+reason before clearing. It also waits while the composer holds a draft or a picture, or anything
+is queued or staging, and never clears under them; if they stay past the deadline it stops, the
+session uncleared. At an idle prompt it then sends `/clear` with the gate's slash command path (up
+to 90 seconds for the prompt to become idle), waits until the tab has followed
 the CLI to the new session that `/clear` starts (the same following as for any `/clear`; the
 running records are read every second meanwhile, up to 30 seconds; the new session counts as
 followed once the pane is pinned to it and awaits its transcript, which the CLI writes only with

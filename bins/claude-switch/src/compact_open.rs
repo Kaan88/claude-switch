@@ -233,9 +233,10 @@ impl AppState {
     ) -> Result<crate::handover_pipe::Outcome, String> {
         use crate::handover_pipe::Outcome;
         let account = request.explicit_account.then_some(request.account.as_str());
-        let result = if let Some(tab) = self.in_place_target(&request.session.id, account) {
+        let target = request.basis.and_then(|basis| Some((self.in_place_target(&request.session.id, account)?, basis)));
+        let result = if let Some((tab, basis)) = target {
             let names = (request.from.clone(), request.name.clone());
-            self.continue_in_place(tab, &request.session, names, &request.text, request.file.clone())
+            self.continue_in_place(tab, &request.session, names, &request.text, (request.file.clone(), basis))
                 .map(|()| Outcome::InPlace)
         } else {
             let Source::Real(roots) = &self.source else { return Err("Demo".into()) };

@@ -158,6 +158,7 @@ fn run(options: Options) -> Result<(), String> {
         agent: agent.map(str::to_owned),
         name: options.name.clone(),
         explicit_account: options.account.is_some(),
+        basis: Some(data.basis()),
     };
     match handover_pipe::send(&encode_request(&request)?) {
         handover_pipe::Sent::Answered(result) => match result? {
@@ -232,9 +233,12 @@ pub struct Handoff {
     name: Option<String>,
     /// `--as` was given: continue only in a tab of that account, else open a new tab.
     explicit_account: bool,
+    /// The transcript's length when the handover was made (`compact::Handover::basis`); without
+    /// it the window never continues in place.
+    basis: Option<u64>,
 }
 
-const REQUEST_VERSION: &str = "claude-switch-handover-2";
+const REQUEST_VERSION: &str = "claude-switch-handover-3";
 
 /// The running window's request: the same validated words as the window arguments, one a line.
 pub fn encode_request(request: &Handoff) -> Result<Vec<u8>, String> {
@@ -248,6 +252,7 @@ pub fn encode_request(request: &Handoff) -> Result<Vec<u8>, String> {
         request.agent.as_deref().unwrap_or("-"),
         name.as_deref().unwrap_or("-"),
         if request.explicit_account { "as" } else { "-" },
+        &request.basis.map_or_else(|| "-".to_owned(), |n| n.to_string()),
     ];
     let bytes = lines.join("\n").into_bytes();
     if bytes.len() > handover_pipe::MAX_REQUEST {
@@ -261,10 +266,17 @@ pub fn decode_request(bytes: &[u8]) -> Result<Handoff, String> {
     let invalid = "Invalid handover request.";
     let text = std::str::from_utf8(bytes).map_err(|_| invalid)?;
     let lines: Vec<&str> = text.split('\n').collect();
-    let [version, id, account, file, agent, name, explicit] = lines[..] else { return Err(invalid.into()) };
+    let [version, id, account, file, agent, name, explicit, basis] = lines[..] else { return Err(invalid.into()) };
     if version != REQUEST_VERSION || !matches!(explicit, "as" | "-") {
         return Err(invalid.into());
     }
+    let basis = match basis {
+        "-" => None,
+        n if !n.is_empty() && n.len() <= 20 && n.bytes().all(|b| b.is_ascii_digit()) => {
+            Some(n.parse::<u64>().map_err(|_| invalid)?)
+        }
+        _ => return Err(invalid.into()),
+    };
     let agent = (agent != "-").then(|| agent.to_owned());
     window::words(id, account, file, agent.as_deref())?;
     let name = (name != "-").then(|| names::decode(name)).transpose()?;
@@ -275,6 +287,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Handoff, String> {
         agent,
         name,
         explicit_account: explicit == "as",
+        basis,
     })
 }
 
@@ -289,6 +302,7 @@ pub struct Loaded {
     pub file: std::path::PathBuf,
     pub account: String,
     pub explicit_account: bool,
+    pub basis: Option<u64>,
     agent: Option<String>,
     marks: Option<Marks>,
 }
@@ -314,7 +328,7 @@ pub fn handoff(roots: &Roots, args: Handoff) -> Result<compact_open::NewHandover
 }
 
 pub fn load(roots: &Roots, args: Handoff) -> Result<Loaded, String> {
-    let Handoff { id, account, file, agent, name, explicit_account } = args;
+    let Handoff { id, account, file, agent, name, explicit_account, basis } = args;
     let config = config::load(roots);
     let file = compact::list(roots, &id)
         .map_err(|_| "Could not list saved handovers.")?
@@ -336,6 +350,7 @@ pub fn load(roots: &Roots, args: Handoff) -> Result<Loaded, String> {
         file,
         account,
         explicit_account,
+        basis,
         agent,
         marks: automatic.then_some(marks),
     })
@@ -356,7 +371,7 @@ pub fn window_args(mut args: impl Iterator<Item = String>) -> Result<(Handoff, S
     }
     window::words(&id, &account, &file, agent.as_deref())?;
     let name = name.map(|word| names::decode(word.strip_prefix("name=").ok_or(invalid)?)).transpose()?;
-    Ok((Handoff { id, account, file, agent, name, explicit_account: false }, ack))
+    Ok((Handoff { id, account, file, agent, name, explicit_account: false, basis: None }, ack))
 }
 
 /// The window started for a handover gives it to a Switch that started meanwhile, rather than
@@ -412,6 +427,7 @@ mod tests {
             agent: agent.map(str::to_owned),
             name: name.map(str::to_owned),
             explicit_account: agent.is_some(),
+            basis: agent.map(|_| 1234),
         };
         for (agent, name) in [(None, None), (Some("plugin:review"), Some("Dev's \"notes\" & $env:PATH 😺"))] {
             let bytes = encode_request(&make(agent, name)).unwrap();
@@ -420,12 +436,37 @@ mod tests {
             assert_eq!(back.agent.as_deref(), agent);
             assert_eq!(back.name.as_deref(), name);
             assert_eq!(back.explicit_account, agent.is_some());
+            assert_eq!(back.basis, agent.map(|_| 1234));
         }
         assert!(encode_request(&make(Some("bad agent"), None)).is_err());
         assert!(encode_request(&make(None, Some("two\nlines"))).is_err());
         let good = String::from_utf8(encode_request(&make(None, None)).unwrap()).unwrap();
         for bad in [
-            good.replace("claude-switch-handover-2", "claude-switch-handover-1"),
+            good.replace("claude-switch-handover-3", "claude-switch-handover-2"),
+            format!(
+                "{}
+12a",
+                good.strip_suffix(
+                    "
+-"
+                )
+                .unwrap()
+            ),
+            format!(
+                "{}
+",
+                good.strip_suffix("-").unwrap()
+            ),
+            format!(
+                "{}
+{}",
+                good.strip_suffix(
+                    "
+-"
+                )
+                .unwrap(),
+                "9".repeat(21)
+            ),
             good.replace("\n-\n-\n-", "\n-\n-\nyes"),
             good.replace("handover-001.md", "..\\other.md"),
             good.replace("work", "work & calc"),

@@ -36,6 +36,9 @@ pub struct InPlace {
     pub prompt: String,
     pub saved: PathBuf,
     pub cwd: PathBuf,
+    /// The transcript's length when the handover was made: a prompt recorded at or past it means
+    /// the user sent something since, and the handover no longer covers the session.
+    pub basis: u64,
     pub stage: Stage,
     pub since: Instant,
 }
@@ -95,7 +98,7 @@ impl AppState {
         session: &Session,
         (from, name): (String, String),
         text: &str,
-        saved: PathBuf,
+        (saved, basis): (PathBuf, u64),
     ) -> Result<(), String> {
         let prompt = crate::compact_open::first_prompt(text, &saved)?;
         if self.marks_read_only {
@@ -112,6 +115,7 @@ impl AppState {
             prompt,
             saved,
             cwd: session.cwd.clone(),
+            basis,
             stage: Stage::Clear,
             since: Instant::now(),
         });
@@ -174,6 +178,7 @@ mod tests {
             prompt: "## Goal".into(),
             saved: PathBuf::from("h.md"),
             cwd: PathBuf::from("."),
+            basis: 0,
             stage: Stage::Clear,
             since: now,
         };
