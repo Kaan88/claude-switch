@@ -184,7 +184,13 @@ pub fn draw_below_title(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Ms
             hover: st.hover,
             pressed: st.pressed,
             terminal: terminal.map(|s| (s.background, s.foreground, st.term_colours.1)),
-            session_view: st.tabs.shown().and_then(|t| t.pane.as_ref()).map(|_| st.session_visible(w)),
+            session_view: st
+                .tabs
+                .shown()
+                .and_then(|t| t.pane.as_ref())
+                .filter(|pane| !pane.chat.enabled)
+                .map(|_| st.session_visible(w)),
+            chat: st.tabs.shown().and_then(|t| t.pane.as_ref()).map(|pane| pane.chat.enabled),
         };
         let strip = tabs::strip_rect(top, w);
         if tabs::draw(p, &pal, cx.anim(), (&st.tabs, &st.marks), strip, &look, &mut st.hits) {

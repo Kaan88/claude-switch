@@ -293,8 +293,8 @@ Local Markdown files live in `handover/<session-id>-<time>.md` beside config; th
 are kept per session. An opened edited handover is kept as a new revision. Save As never
 overwrites an existing file. Native Claude Code receives `claude --session-id <new-uuid> -- <text>`
 in the original folder with the selected account's normal sanitized launch environment. The
-interactive CLI documents no stdin/file argument for a first prompt, so text is one native
-argument (no shell), limited to 15,000 UTF-16 units to allow for Windows quoting. The app uses the
+interactive CLI documents no stdin/file argument for a first prompt, so short text is one native
+argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file. The app uses the
 new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
 
 The CLI runs headlessly for `--print` (the default); explicit `--open` starts a new window with the
@@ -482,3 +482,70 @@ it neither closes the running tab nor sends the transcript at the click.
 
 `--demo --demo-notifications` uses two synthetic tabs and usage readings without a CLI launch or
 a request. The tray tooltip has a 127 UTF-16 unit Windows limit, so long lists may be truncated.
+
+## Shared OpenCode CLI and Workers controls
+
+`crates/opencode` is the MIT-licensed `opencode-cli` workspace library for Switch and other GUI
+clients. It centralizes native executable discovery, bounded no-window process capture and
+deadlines, service probes and verified restart, model IDs, and cancellable UTF-8 stdin prompts.
+Switch still supplies its sanitized child environment and the handover-only standalone agent
+policy. `opencode models` supplies provider/model IDs; richer model catalog data remains available
+via the generic runner. The library doesn't use GUI APIs or connect to the service itself.
+
+Settings → Workers probes OpenCode off the UI thread. It checks `service status` before
+`session.active`, because the direct API command can auto-start the service. The restart
+confirmation counts only `running` sessions, warns that jobs will be cut off, and identifies
+an unavailable count as unknown. Cancel is the default. The worker asks again if the count
+changes after confirmation. Restart tries the native restart, falls back to stop/start, and
+checks the active-session response before reporting success. Config Studio is only offered when
+its executable is found at the fixed Local AppData install location.
+
+For longer handovers, the preview names the file-based behavior. Open saves the exact preview
+under the app's data folder, including edits, before constructing a first prompt that names the
+absolute path and asks Claude to read it in full. It does not send the oversized text in a
+command-line argument. `--demo --demo-workers` and `--demo --demo-compact-long` show these
+behaviors with synthetic data and start no child programs.
+
+## Chat over the terminal
+
+Chat uses the same ConPTY and the same verified, incremental transcript reader as Session view.
+It adds no API, launch path, or second Claude client. The layout is saved per restorable tab,
+with the last explicitly selected layout as the new-tab default in `window.ini`. Drafts, attachment
+chips, and drawer state stay in memory only. The closed drawer keeps its previous PTY grid.
+Terminal layout keeps its normal Session view and controls. F6 switches layouts only after the
+command palette is open; a focused terminal still receives its ordinary F6. Ctrl+Shift+E remains reserved by the window
+and toggles the drawer in Chat.
+
+**What counts as ready.** Chat cannot tell whether the CLI has focus in its prompt, has a
+partially typed draft, or is showing an interactive question. Calling the CLI with a prompt is not
+the same thing as writing its PTY, and even a successful write only means input was handed to the
+terminal. An automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
+tool in the current turn, at least 750 ms without terminal output, bracketed-paste mode, and no
+alternate screen or blocking drawer signal. An old completion from a resumed transcript, missing
+stop reasons, an unrecognized title, and terminal quiet alone are not proof. The OSC title has no
+verified Claude readiness protocol: explicit busy labels only veto a send. On a transcript reset
+or after any composer send or direct terminal input, an old completion cannot rearm sending;
+a new prompt must be observed. There is still a race between observing the PTY and writing it.
+When uncertain, Chat retains the draft and says **Open the terminal to check**. **Send anyway**
+is explicit and still requires bracketed-paste mode outside the alternate screen.
+
+**When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
+of terminal silence is a hint, not proof of a permission question. A slow tool can look the
+same. A BEL, a slash sent by Chat, and process exit also open the drawer. Only an automatically
+opened drawer closes on observable turn progress; a manually opened one stays open. No
+permission responses or dialog keys are generated. Stop sends only Escape during a known turn.
+A typed initial slash is forwarded only when ready; otherwise it stays in the draft and the
+drawer opens for inspection. Slash menus may not write a transcript event; in that case Chat
+cannot verify that the menu has closed.
+
+**Local data.** Files and clipboard pictures are queued until send. The clipboard picture uses
+the existing Alt+V path; it is not copied to disk, and a changed clipboard makes Chat refuse
+the send until the chip is removed or replaced. Files use the existing path quoting. Then
+bracketed text and exactly one final Enter are written. The editor rejects embedded terminal
+control bytes. Recall uses loaded main-transcript prompts. Tool cards show bounded previews:
+Edit compares the unmatched middle after common leading and trailing lines, Write shows
+additions, and shell output uses only its first text lines. Changed files lists successful
+Edit/Write tool paths seen in loaded history, not a filesystem or Git diff. Context now uses
+reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
+is single-line; the composer reuses the app's multiline editor with toolkit text and drawing.
+Demo shows the waiting state, and its composer writes only to the synthetic terminal screen.

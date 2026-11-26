@@ -22,38 +22,14 @@ fn machine_output_accepts_only_text_and_refuses_unexpected_tools_without_leaking
     assert!(answer("{\"type\":\"error\",\"error\":{\"message\":\"private\"}}").is_err());
 }
 
-#[cfg(windows)]
-fn fake(cwd: &Path, script: &str) -> Command {
-    let program =
-        PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
-    command(&program, cwd, &["-NoProfile", "-NonInteractive", "-Command", script])
-}
-
-#[cfg(windows)]
 #[test]
-fn fake_reads_multiline_payload_only_from_stdin_and_stderr_is_not_disclosed() {
+fn handover_launch_keeps_the_isolated_working_directory_and_config() {
     let temp = Scratch::new().unwrap();
     let cwd = temp.0.clone();
     assert!(fs::read_dir(&cwd).unwrap().next().is_none());
-    let input = "private marker\nline 2 ".repeat(5_000);
-    let cmd = fake(&cwd, "[Console]::Out.Write([Console]::In.ReadToEnd())");
-    assert!(!cmd.get_args().any(|a| a.to_string_lossy().contains("private marker")));
+    let cmd = command(Path::new("fake-opencode"), &cwd, true);
+    assert_eq!(cmd.get_current_dir(), Some(cwd.as_path()));
     assert!(cmd.get_envs().any(|(key, value)| key == "PWD" && value.is_none()));
-    assert_eq!(invoke(cmd, Some(&input), || false, Duration::from_secs(15)).unwrap(), input);
-    let cmd = fake(&cwd, "[Console]::Error.Write('private diagnostic'); exit 3");
-    let error = invoke(cmd, None, || false, Duration::from_secs(15)).unwrap_err();
-    assert!(!error.contains("private diagnostic"));
-}
-
-#[cfg(windows)]
-#[test]
-fn fake_is_killed_on_timeout_and_cancel() {
-    let temp = Scratch::new().unwrap();
-    let cwd = temp.0.clone();
-    let cmd = || fake(&cwd, "Start-Sleep -Seconds 30");
-    assert_eq!(invoke(cmd(), None, || false, Duration::from_millis(100)).unwrap_err(), "OpenCode timed out.");
-    let start = Instant::now();
-    let cancelled = || start.elapsed() >= Duration::from_millis(100);
-    assert_eq!(invoke(cmd(), None, cancelled, Duration::from_secs(5)).unwrap_err(), "Cancelled.");
-    assert!(start.elapsed() < Duration::from_secs(5));
+    assert!(cmd.get_envs().any(|(key, value)| key == "OPENCODE_DISABLE_PROJECT_CONFIG" && value.unwrap() == "1"));
+    assert!(cmd.get_envs().any(|(key, value)| key == "OPENCODE_CONFIG" && value.is_none()));
 }

@@ -1,0 +1,194 @@
+//! Bounded Chat metadata taken from decoded transcript records, not the terminal screen.
+use serde_json::Value;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Active,
+    EndTurn,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChatInfo {
+    pub generation: u64,
+    pub latest: Option<(u64, Phase)>,
+    pub prompt: Option<u64>,
+    pub pending: Option<u64>,
+    pub model: Option<String>,
+    pub context: Option<u64>,
+    usage_at: Option<u64>,
+}
+
+impl ChatInfo {
+    pub(super) fn observe(&mut self, at: u64, phase: Phase) {
+        if self.latest.is_none_or(|(old, _)| at >= old) {
+            self.latest = Some((at, phase));
+        }
+    }
+
+    pub(super) fn usage(&mut self, at: u64, message: &Value) {
+        if self.usage_at.is_some_and(|old| old >= at) {
+            return;
+        }
+        let values = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
+            .into_iter()
+            .filter_map(|key| message["usage"][key].as_u64());
+        let context = values.reduce(u64::saturating_add);
+        let model = message["model"].as_str().filter(|s| !s.is_empty());
+        if model.is_some() || context.is_some() {
+            self.usage_at = Some(at);
+            if let Some(model) = model {
+                self.model = Some(model.chars().take(100).collect());
+            }
+            self.context = context;
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolCard {
+    Edit { path: String, added: usize, removed: usize, lines: Vec<String> },
+    Shell { command: String, result: Vec<String> },
+}
+
+fn short(text: &str, limit: usize) -> String {
+    let mut chars = text.chars();
+    let mut out: String = chars.by_ref().take(limit).collect();
+    if chars.next().is_some() {
+        out.push('…');
+    }
+    out
+}
+
+impl ToolCard {
+    pub(super) fn from_input(name: &str, input: &Value) -> Option<Self> {
+        match name {
+            "Write" | "Edit" => {
+                let path = input["file_path"].as_str()?;
+                let (mut old, mut new) = if name == "Write" {
+                    ("".lines(), input["content"].as_str()?.lines())
+                } else {
+                    (input["old_string"].as_str()?.lines(), input["new_string"].as_str()?.lines())
+                };
+                while let (Some(a), Some(b)) = (old.clone().next(), new.clone().next()) {
+                    if a != b {
+                        break;
+                    }
+                    old.next();
+                    new.next();
+                }
+                while let (Some(a), Some(b)) = (old.clone().next_back(), new.clone().next_back()) {
+                    if a != b {
+                        break;
+                    }
+                    old.next_back();
+                    new.next_back();
+                }
+                let (added, removed) = (new.clone().count(), old.clone().count());
+                let lines = old
+                    .take(10)
+                    .map(|s| format!("− {}", short(s, 180)))
+                    .chain(new.take(10).map(|s| format!("+ {}", short(s, 180))))
+                    .collect();
+                Some(Self::Edit { path: short(path, 512), added, removed, lines })
+            }
+            "Bash" | "PowerShell" => {
+                Some(Self::Shell { command: short(input["command"].as_str()?, 500), result: Vec::new() })
+            }
+            _ => None,
+        }
+    }
+}
+
+pub(super) fn result_lines(content: &Value) -> Vec<String> {
+    content
+        .as_str()
+        .into_iter()
+        .chain(
+            content
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|b| (b["type"] == "text").then(|| b["text"].as_str()).flatten()),
+        )
+        .flat_map(str::lines)
+        .take(10)
+        .map(|line| short(line, 180))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write;
+
+    #[test]
+    fn diff_omits_common_edges_and_keeps_counts_beyond_the_preview() {
+        let input = json!({"file_path":"src/a.rs","old_string":"start\nold\nend","new_string":"start\nnew\nmore\nend"});
+        assert_eq!(
+            ToolCard::from_input("Edit", &input),
+            Some(ToolCard::Edit {
+                path: "src/a.rs".into(),
+                added: 2,
+                removed: 1,
+                lines: ["− old", "+ new", "+ more"].map(str::to_owned).into()
+            })
+        );
+        let input = json!({"file_path":"a","content":"hello\n".repeat(100)});
+        assert!(matches!(ToolCard::from_input("Write", &input),
+            Some(ToolCard::Edit { added: 100, removed: 0, lines, .. }) if lines.len() == 10));
+    }
+
+    #[test]
+    fn shell_preview_reads_only_the_first_text_lines() {
+        let input = json!({"command":"Get-ChildItem"});
+        assert!(matches!(ToolCard::from_input("PowerShell", &input),
+            Some(ToolCard::Shell { command, result }) if command == "Get-ChildItem" && result.is_empty()));
+        assert_eq!(result_lines(&json!([{"type":"image"},{"type":"text","text":"one\ntwo"}])), ["one", "two"]);
+        assert_eq!(result_lines(&json!("line\n".repeat(50))).len(), 10);
+    }
+
+    #[test]
+    fn reader_tracks_pending_results_and_explicit_completion_from_the_main_transcript() {
+        use super::super::{ItemKind, Reader};
+        let dir = crate::util::testing::TempDir::new("chat-reader");
+        let path = dir.0.join("chat.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(file, r#"{{"type":"user","message":{{"content":"Please check the print layout."}}}}"#).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type":"assistant","message":{"model":"test-model","stop_reason":"tool_use",
+            "usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":30},
+            "content":[{"type":"tool_use","id":"a","name":"Bash","input":{"command":"preview --pocket"}}]}})
+        )
+        .unwrap();
+        let mut reader = Reader::open(&path, 8192).unwrap();
+        let info = reader.chat();
+        assert_eq!(info.latest.map(|(_, phase)| phase), Some(Phase::Active));
+        assert_eq!(info.latest.map(|(at, _)| at), info.pending);
+        assert_eq!(info.context, Some(60));
+        assert_eq!(info.model.as_deref(), Some("test-model"));
+
+        for row in [
+            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a","content":"first\nsecond"}]}}),
+            json!({"type":"assistant","message":{"content":"An incomplete streaming answer."}}),
+            json!({"type":"assistant","isSidechain":true,"message":{"content":"Child","stop_reason":"end_turn"}}),
+            json!({"type":"user","isMeta":true,"message":{"content":"synthetic prompt"}}),
+        ] {
+            writeln!(file, "{row}").unwrap();
+        }
+        reader.poll().unwrap();
+        let after = reader.chat();
+        assert_eq!(after.pending, None);
+        assert_eq!(after.prompt, info.prompt);
+        assert_eq!(after.latest.map(|(_, phase)| phase), Some(Phase::Unknown));
+        assert!(reader.items().any(|(_, item)| matches!(&item.kind,
+            ItemKind::Tool { card: Some(ToolCard::Shell { result, .. }), .. } if result == &["first", "second"])));
+        writeln!(file, "{}", json!({"type":"assistant","message":{"content":"Done.","stop_reason":"end_turn"}}))
+            .unwrap();
+        reader.poll().unwrap();
+        assert_eq!(reader.chat().latest.map(|(_, phase)| phase), Some(Phase::EndTurn));
+    }
+}

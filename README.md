@@ -10,6 +10,8 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 - Start a new CLI session in a chosen folder or open a copy of an existing session.
 - Make an editable handover with an OpenCode model and open it in a brand-new Claude Code session.
 - Keep separate logins while sharing transcripts and settings.
+- Check OpenCode’s version and active sessions in **Settings → Workers**, confirm a service restart, or open OpenCode Config Studio when installed.
+- Open oversized handovers without trimming them: the new Claude session is asked to read the saved Markdown file before continuing.
 
 ## Screenshots
 
@@ -52,6 +54,10 @@ Claude Switch checks its tabs and the running-session records across accounts be
 
 You can also middle-click a terminal tab to close it.
 
+The OpenCode controls are in **Settings → Workers**; there is no separate keyboard shortcut.
+Use `--demo --demo-workers` or `--demo --demo-compact-long` to preview the new screens without
+starting OpenCode or Claude.
+
 ## Privacy
 
 Claude Switch has no telemetry. When **Show usage** is on (the default), Claude Switch reads each account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Accounts to disable these reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
@@ -79,9 +85,11 @@ Use a session ID instead of `latest` to target one transcript; `--model provider
 the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requires prior provider
 consent. `--print` outputs Markdown and opens nothing; `--open` explicitly opts into starting
 the new session in a new Claude Switch window. Run it from the GUI instead to review first.
-A native `opencode.exe` and `claude.exe` must be on `PATH`. For the initial Claude prompt, handovers
-over 15,000 UTF-16 code units must be shortened or used manually. Claude Code's interactive
-startup takes that prompt as an argument, so it may be visible to local process-inspection tools.
+A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
+install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
+code units are saved in full; the new session's initial prompt asks it to read the saved
+Markdown file. Local process-inspection tools may see the short handover text or the longer
+handover's file path in the command line.
 
 ### Install the Claude Code plugin
 
@@ -184,3 +192,22 @@ and never overwrites an existing file. Treat the report as private conversation 
 | Shortcut in the account usage pop-up | Action |
 | --- | --- |
 | Shift+Enter | Open the suggested handover if offered |
+
+## Chat in a CLI tab
+
+Pick **Chat** or **Terminal** at the right of a Claude session’s tab strip. The choice stays
+with each tab and sets the default for new ones. Chat shows the local conversation, a multiline
+composer, tool previews, and a collapsible Tasks, Agents, and Changed files panel on wider windows.
+The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
+to resize it, and answer permissions and other CLI dialogs there.
+
+| Shortcut in a session tab | Action |
+| --- | --- |
+| Ctrl+Shift+K, then F6 (or choose **Switch Chat / Terminal**) | Switch layouts without sending a key to the CLI |
+| Ctrl+Shift+E | Toggle the terminal drawer in Chat or Session view in Terminal |
+| Enter / Shift+Enter in the composer | Send / insert a new line |
+| Up from an empty composer, then Up / Down | Recall earlier prompts from the loaded transcript |
+| Ctrl+V / file drop | Queue a clipboard image or file as a removable attachment |
+
+Chat keeps drafts when it cannot tell that the CLI is ready. Check the terminal before using
+**Send anyway**. A slash opens the CLI’s own menus in the drawer. Chat does not answer for you.

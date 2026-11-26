@@ -61,7 +61,7 @@ impl AppState {
 
     /// Whether the terminal shown has the keyboard: the window has it and nothing is over it.
     pub fn terminal_focused(&self) -> bool {
-        self.window_focused && self.nothing_over() && self.terminal_shown()
+        self.window_focused && self.nothing_over() && self.terminal_shown() && !self.chat_takes_input()
     }
 
     fn term_wake(&self) -> impl Fn() + Send + Sync + 'static {
@@ -209,8 +209,9 @@ impl AppState {
         for tab in &mut self.tabs.list {
             let had_selection = tab.term.selection.is_some();
             let r = tab.term.pump();
-            if tab.pane.is_some() {
-                tab.attention.terminal(&mut tab.term.screen, r.output, focused && shown == Some(tab.id));
+            if let Some(pane) = &mut tab.pane {
+                let bell = tab.attention.terminal(&mut tab.term.screen, r.output, focused && shown == Some(tab.id));
+                pane.chat.output(Instant::now(), r.output, bell);
             }
             w.strip |= r.ended;
             if let Some(title) = r.title {
@@ -261,6 +262,7 @@ impl AppState {
                 }
             }
             KeyAction::Send(bytes) if !ended => {
+                self.note_chat_terminal_input();
                 if let Some(tab) = self.tabs.shown_mut() {
                     tab.term.scroll = 0;
                     tab.term.selection = None;
@@ -274,6 +276,7 @@ impl AppState {
     /// Text an input method committed.
     pub fn term_text(&mut self, text: &str) {
         self.flush_drop_before_input();
+        self.note_chat_terminal_input();
         if let Some(tab) = self.tabs.shown_mut() {
             tab.term.scroll = 0;
             tab.term.write(text.as_bytes());
@@ -289,7 +292,11 @@ impl AppState {
     }
 
     pub fn paste(&mut self) {
+        if self.chat_paste() {
+            return;
+        }
         self.flush_drop_before_input();
+        self.note_chat_terminal_input();
         let text = platform::clipboard_text();
         if let Some(tab) = self.tabs.shown_mut() {
             let bytes = crate::view::attach::clipboard(text.as_deref(), &tab.term.screen.modes());
@@ -446,7 +453,16 @@ impl AppState {
         let split = self.session_view.splitter.rects(full, mdshared_ui::splitter::Axis::Horizontal).0;
         let (full_grid, pane_grid) = (grid(full), grid(split));
         for tab in &mut self.tabs.list {
-            let (cols, rows) = if open && tab.pane.is_some() { pane_grid } else { full_grid };
+            let (cols, rows) = if tab.pane.as_ref().is_some_and(|p| p.chat.enabled) {
+                if self.tabs.active != Some(tab.id) || shown.h <= 0.0 {
+                    continue;
+                }
+                grid(shown)
+            } else if open && tab.pane.is_some() {
+                pane_grid
+            } else {
+                full_grid
+            };
             tab.term.resize(cols, rows);
         }
         self.grid = (full_grid.0 as u16, full_grid.1 as u16);

@@ -149,8 +149,8 @@ pub fn handoff(roots: &Roots, args: (String, String, String)) -> Result<compact_
         .ok_or("The saved handover was not found.")?;
     let session =
         sessions::scan(roots, &config).into_iter().find(|s| s.id == id).ok_or("The original session was not found.")?;
-    let text = std::fs::read_to_string(file).map_err(|_| "Could not read the saved handover.")?;
-    compact_open::prepare(roots, &config, &session, name_of(roots, &session), &account, &text)
+    let text = std::fs::read_to_string(&file).map_err(|_| "Could not read the saved handover.")?;
+    compact_open::prepare(roots, &config, &session, name_of(roots, &session), &account, &text, &file)
 }
 
 pub fn window_args(args: &mut impl Iterator<Item = String>) -> Option<(String, String, String)> {

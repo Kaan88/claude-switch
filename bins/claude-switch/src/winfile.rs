@@ -47,6 +47,7 @@ pub struct WindowFile {
     /// `None` follows the window-width default.
     pub session_view: Option<bool>,
     pub session_split: String,
+    pub chat_default: bool,
 }
 
 impl Default for WindowFile {
@@ -59,6 +60,7 @@ impl Default for WindowFile {
             split: String::new(),
             session_view: None,
             session_split: String::new(),
+            chat_default: false,
         }
     }
 }
@@ -84,6 +86,7 @@ pub fn parse(text: &str) -> WindowFile {
             "split" => out.split = settings::unescape(v),
             "session_view" => out.session_view = v.trim().parse().ok(),
             "session_split" => out.session_split = settings::unescape(v),
+            "chat_default" => out.chat_default = v.trim().parse().unwrap_or(false),
             _ => {}
         }
     }
@@ -103,6 +106,7 @@ pub fn to_text(f: &WindowFile) -> String {
         w.line("session_view", if open { "true" } else { "false" });
     }
     w.line("session_split", &settings::escape(&f.session_split));
+    w.line("chat_default", if f.chat_default { "true" } else { "false" });
     w.finish()
 }
 
@@ -207,6 +211,7 @@ mod tests {
             split: "a:420".into(),
             session_view: Some(false),
             session_split: "b:450".into(),
+            chat_default: true,
             place: Some(saved(240)),
             restore_tabs: RestoreTabs::Always,
         };

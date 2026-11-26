@@ -1,6 +1,6 @@
 //! Handover dialog state, consent, and worker lifecycle. Drawing lives in `draw`.
 mod draw;
-mod editor;
+pub(crate) mod editor;
 use crate::compact_runner as runner;
 use crate::dialogs::{CANCEL, Dialog, OK};
 use crate::source::Source;
@@ -36,6 +36,7 @@ pub struct Cache {
     pub startup: Option<crate::compact_open::NewHandover>,
     pub standalone_window: bool,
     pub demo: Option<bool>,
+    pub demo_long: bool,
     pub history: Option<(String, Vec<PathBuf>)>,
 }
 
@@ -71,7 +72,7 @@ pub struct Compact {
     account: usize,
     focus: Editor,
     preview: Editor,
-    made: String,
+    saved: Option<PathBuf>,
     history: Vec<PathBuf>,
     phase: Phase,
     choice: Option<Choice>,
@@ -104,7 +105,11 @@ impl AppState {
             self.ask_compact(false);
             if preview && let Some(Dialog::Compact(dialog)) = &mut self.dialog {
                 dialog.phase = Phase::Preview;
-                dialog.preview.set(demo_text(&dialog.name));
+                let mut text = demo_text(&dialog.name);
+                if self.compact.demo_long {
+                    text.push_str(&"\nSynthetic handover evidence.".repeat(600));
+                }
+                dialog.preview.set(text);
             }
         }
     }
@@ -221,7 +226,7 @@ impl Compact {
             model: 0,
             focus: Editor::default(),
             preview: Editor::default(),
-            made: String::new(),
+            saved: None,
             history: Vec::new(),
             phase: Phase::Setup,
             choice: None,
@@ -291,13 +296,14 @@ impl Compact {
                 }
             }
             Ok(Update::Preview(text)) => {
-                self.made = text.clone();
                 self.preview.set(text);
                 self.phase = Phase::Preview;
-                if let Source::Real(roots) = &st.source
-                    && let Err(e) = compact::save(roots, &self.session.id, &self.preview.text)
-                {
-                    self.error(format!("Could not keep a local copy: {e}"));
+                self.saved = None;
+                if let Source::Real(roots) = &st.source {
+                    match compact::save(roots, &self.session.id, &self.preview.text) {
+                        Ok(path) => self.saved = Some(path),
+                        Err(e) => self.error(format!("Could not keep a local copy: {e}")),
+                    }
                 }
                 st.load_handover_history(&self.session.id);
             }
@@ -380,6 +386,8 @@ impl Compact {
             st.toast("Demo: no session was opened.".into(), now);
             return Ok(());
         };
+        crate::compact_open::validate_prompt(&self.preview.text)?;
+        let saved = crate::compact_open::keep(roots, &self.session.id, &self.preview.text, self.saved.as_deref())?;
         let request = crate::compact_open::prepare(
             roots,
             &st.config,
@@ -387,11 +395,9 @@ impl Compact {
             self.name.clone(),
             account,
             &self.preview.text,
+            &saved,
         )?;
-        if self.preview.text != self.made {
-            compact::save(roots, &self.session.id, &self.preview.text)
-                .map_err(|e| format!("Could not keep the edited handover: {e}"))?;
-        }
+        self.saved = Some(saved);
         st.open_handover_tab(request)
     }
 

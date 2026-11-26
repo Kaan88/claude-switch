@@ -74,7 +74,10 @@ impl App for AppState {
             }
             Event::Wheel { dy, .. } if self.nothing_over() && self.terminal_shown() && !self.usage.popup.open => {
                 let (x, y) = self.mouse;
-                if !self.session_wheel(cx.size().0, x, y, dy) && self.term_area.contains(x, y) {
+                if !(!self.picture_overlay() && self.chat_wheel(x, y, dy))
+                    && !self.session_wheel(cx.size().0, x, y, dy)
+                    && self.term_area.contains(x, y)
+                {
                     self.term_wheel(dy, cx.mods());
                 }
             }
@@ -100,13 +103,16 @@ impl App for AppState {
                 if self.dialog.is_some() {
                     dialogs::text_input(self, &t);
                 } else if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
-                    self.term_text(&t);
+                    if !self.chat_text(cx, &t) {
+                        self.term_text(&t);
+                    }
                 } else if self.focus == Focus::Search && self.palette.is_none() && self.search.insert(&t) {
                     self.after_search();
                 }
             }
             Event::Focus(false) => {
                 self.tabs.drag = None;
+                self.chat_end_drag(None);
                 self.usage.popup = Default::default();
                 self.term_focus(false);
             }
@@ -206,7 +212,8 @@ impl App for AppState {
                 let changed = self.take_jobs()
                     | self.take_usage_jobs(cx.now())
                     | self.take_desktop_job(cx.now())
-                    | self.take_compact_jobs();
+                    | self.take_compact_jobs()
+                    | self.take_opencode_job(cx.now());
                 let changed = changed | self.restore_tabs_if_always(cx.now());
                 self.attention_tick(cx);
                 self.usage_warning_tick(cx.now());
@@ -230,9 +237,12 @@ impl App for AppState {
                 self.report_saved(result);
                 cx.request_redraw_all();
             }
-            Msg::AttachPictures(id, files) => {
-                if self.paste_paths(id, &files) {
-                    cx.request_redraw(self.term_area);
+            Msg::AttachPictures(id, files, chat) => {
+                if chat {
+                    self.chat_attach(id, &files);
+                    cx.request_redraw_all();
+                } else if self.paste_paths(id, &files) {
+                    cx.request_redraw_all();
                 }
             }
         }

@@ -32,7 +32,7 @@ pub struct DropBatch {
 }
 
 impl AppState {
-    pub fn attach_picker(&self, cwd: Option<&std::path::Path>) {
+    pub fn attach_picker(&self, cwd: Option<&std::path::Path>, chat: bool) {
         let Some(id) = self.tabs.active else { return };
         let proxy = self.proxy.clone();
         platform::pick_files_async(cwd, "Pictures", &["png", "jpg", "jpeg", "webp", "gif"], move |files| {
@@ -40,16 +40,23 @@ impl AppState {
                 && let Some(proxy) = proxy
                 && let Ok(proxy) = proxy.lock()
             {
-                proxy.send(Msg::AttachPictures(id, files));
+                proxy.send(Msg::AttachPictures(id, files, chat));
             }
         });
     }
 
     pub fn paste_paths(&mut self, id: u64, files: &[PathBuf]) -> bool {
         let shown = self.tabs.active == Some(id);
+        if self.tabs.get(id).and_then(|tab| tab.pane.as_ref()).is_some_and(|pane| pane.chat.enabled) {
+            self.chat_attach(id, files);
+            return shown;
+        }
         if let Some(tab) = self.tabs.get_mut(id) {
             let text = paths(files);
             if !text.is_empty() {
+                if let Some(pane) = &mut tab.pane {
+                    pane.chat.invalidate(&pane.model.chat);
+                }
                 let redraw = tab.term.scroll != 0 && shown;
                 tab.term.scroll = 0;
                 tab.term.write(&termkeys::paste(&text, &tab.term.screen.modes()));
@@ -65,6 +72,11 @@ impl AppState {
             return;
         }
         let Some(id) = self.tabs.active else { return };
+        if self.chat_active() {
+            self.chat_attach(id, &[file]);
+            cx.request_redraw_all();
+            return;
+        }
         let now = cx.now();
         if self.session_view.drops.next.as_ref().is_some_and(|&(_, to, _)| to != id) {
             self.finish_terminal_drop();
@@ -90,7 +102,11 @@ impl AppState {
         if let Some((at, _, _)) = &self.session_view.drops.next {
             if *at <= now {
                 if self.finish_terminal_drop() {
-                    cx.request_redraw(self.term_area);
+                    if self.chat_active() {
+                        cx.request_redraw_all();
+                    } else {
+                        cx.request_redraw(self.term_area);
+                    }
                 }
             } else {
                 cx.wake_at(*at);

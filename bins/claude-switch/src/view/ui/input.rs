@@ -155,6 +155,12 @@ impl Ui {
                 }
                 self.cache = None;
             }
+            Action::Tool(id) => {
+                if !self.tool_expanded.remove(&id) {
+                    self.tool_expanded.insert(id);
+                }
+                self.cache = None;
+            }
             Action::Agent(id) => {
                 self.agent_origin = Some(self.page);
                 m.select_agent(Some(&id));
@@ -179,7 +185,7 @@ impl Ui {
         true
     }
 
-    fn show(&mut self, page: Page) {
+    pub(super) fn show(&mut self, page: Page) {
         self.page = page;
         self.selection = None;
         self.rows.clear();

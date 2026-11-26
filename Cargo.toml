@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "bins/claude-switch"]
+members = ["crates/core", "crates/opencode", "bins/claude-switch"]
 
 [workspace.package]
 edition = "2024"

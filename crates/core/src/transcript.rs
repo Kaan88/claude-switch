@@ -11,7 +11,9 @@ pub(crate) mod handover;
 const MAX_PICTURE: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_LINE: usize = 48 * 1024 * 1024;
 const MAX_SIDECAR: u64 = 1024 * 1024;
+mod chat;
 mod decode;
+pub use chat::{ChatInfo, Phase as ChatPhase, ToolCard};
 mod tail;
 use decode::*;
 pub(crate) use decode::{LineKind, line_kind};
@@ -54,6 +56,7 @@ pub enum ItemKind {
     Prompt {
         text: String,
         pictures: Vec<Picture>,
+        synthetic: bool,
     },
     Assistant {
         markdown: String,
@@ -65,6 +68,7 @@ pub enum ItemKind {
         state: ToolState,
         pictures: Vec<Picture>,
         subagent: Option<String>,
+        card: Option<ToolCard>,
     },
     Notice {
         kind: NoticeKind,
@@ -145,6 +149,21 @@ impl Reader {
 
     pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> + ExactSizeIterator {
         self.view.items.iter().map(|(&id, item)| (id, item))
+    }
+
+    pub fn chat(&self) -> ChatInfo {
+        let mut info = self.view.chat.clone();
+        info.generation = self.view.generation;
+        info.pending = self
+            .view
+            .items
+            .iter()
+            .rev()
+            .take_while(|(id, _)| info.prompt.is_none_or(|prompt| id.offset > prompt))
+            .find_map(|(id, item)| {
+                matches!(item.kind, ItemKind::Tool { state: ToolState::Running, .. }).then_some(id.offset)
+            });
+        info
     }
 
     pub fn item(&self, id: ItemId) -> Option<&Item> {
@@ -333,11 +352,13 @@ struct View {
     plans: BTreeMap<ItemId, Plan>,
     tasks: Vec<Task>,
     plans_dirty: bool,
+    chat: ChatInfo,
 }
 
 struct ToolResult {
     state: ToolState,
     pictures: Vec<Picture>,
+    lines: Vec<String>,
 }
 
 impl View {
@@ -350,6 +371,7 @@ impl View {
         let id = |block| ItemId { offset, block };
         let content = &value["message"]["content"];
         if flag(&value, "isCompactSummary") || flag(&value, "isApiErrorMessage") {
+            self.chat.observe(offset, ChatPhase::Unknown);
             let kind = if flag(&value, "isCompactSummary") { NoticeKind::Compaction } else { NoticeKind::ApiError };
             let text = [content, &value["content"], &value["message"], &value["error"], &value["error"]["message"]]
                 .into_iter()
@@ -391,14 +413,28 @@ impl View {
                                     .enumerate()
                                     .filter_map(|(j, block)| picture(i, Some(j), block))
                                     .collect();
-                                results.push((tool, id(i), ToolResult { state, pictures }));
+                                let lines = chat::result_lines(&block["content"]);
+                                results.push((tool, id(i), ToolResult { state, pictures, lines }));
                             }
                         }
                         _ => (),
                     }
                 }
                 if !texts.is_empty() || !pictures.is_empty() {
-                    self.add(id(0), timestamp, ItemKind::Prompt { text: texts.join("\n"), pictures }, changes);
+                    let synthetic = flag(&value, "isMeta");
+                    if !synthetic {
+                        self.chat.prompt = Some(self.chat.prompt.map_or(offset, |old| old.max(offset)));
+                        self.chat.observe(offset, ChatPhase::Active);
+                    }
+                    self.add(
+                        id(0),
+                        timestamp,
+                        ItemKind::Prompt { text: texts.join("\n"), pictures, synthetic },
+                        changes,
+                    );
+                }
+                if !results.is_empty() {
+                    self.chat.observe(offset, ChatPhase::Active);
                 }
                 for (tool, at, result) in results {
                     if self.results.get(tool).is_none_or(|(previous, _)| *previous < at) {
@@ -408,6 +444,13 @@ impl View {
                 }
             }
             LineKind::Assistant => {
+                self.chat.usage(offset, &value["message"]);
+                let phase = match value["message"]["stop_reason"].as_str() {
+                    Some("end_turn") if !blocks(content).any(|b| b["type"] == "tool_use") => ChatPhase::EndTurn,
+                    Some("tool_use") => ChatPhase::Active,
+                    _ => ChatPhase::Unknown,
+                };
+                self.chat.observe(offset, phase);
                 if let Some(markdown) = content.as_str().filter(|s| !s.is_empty()) {
                     self.add(id(0), timestamp, ItemKind::Assistant { markdown: markdown.into() }, changes);
                 }
@@ -424,6 +467,7 @@ impl View {
                             state: ToolState::Running,
                             pictures: Vec::new(),
                             subagent: None,
+                            card: ToolCard::from_input(name, input),
                         };
                         self.add(id(i), timestamp, item, changes);
                         self.tools.insert(tool.into(), id(i));
@@ -446,14 +490,26 @@ impl View {
 
     fn update_tool(&mut self, tool: &str, changes: &mut Changes) {
         let Some(&id) = self.tools.get(tool) else { return };
-        let Some(Item { kind: ItemKind::Tool { state, pictures, subagent, .. }, .. }) = self.items.get_mut(&id) else {
+        let Some(Item { kind: ItemKind::Tool { state, pictures, subagent, card, .. }, .. }) = self.items.get_mut(&id)
+        else {
             return;
         };
         let result = self.results.get(tool).map(|(_, result)| result);
         let new_state = result.map_or(ToolState::Running, |r| r.state);
         let new_pictures = result.map_or(&[][..], |r| r.pictures.as_slice());
         let new_agent = self.links.get(tool);
-        if *state != new_state || *pictures != new_pictures || subagent.as_ref() != new_agent {
+        let changed_result = if let Some(ToolCard::Shell { result: lines, .. }) = card {
+            let new = result.map_or(&[][..], |r| r.lines.as_slice());
+            if *lines != new {
+                *lines = new.to_vec();
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if *state != new_state || *pictures != new_pictures || subagent.as_ref() != new_agent || changed_result {
             *state = new_state;
             *pictures = new_pictures.to_vec();
             *subagent = new_agent.cloned();

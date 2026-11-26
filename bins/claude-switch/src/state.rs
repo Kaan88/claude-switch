@@ -37,7 +37,7 @@ pub enum Msg {
     Woke,
     Term,
     SessionView,
-    AttachPictures(u64, Vec<std::path::PathBuf>),
+    AttachPictures(u64, Vec<std::path::PathBuf>, bool),
     ArchiveReportSaved(crate::archive_report::ReportResult),
     Tray(crate::tray::Event),
 }
@@ -99,6 +99,8 @@ pub enum Target {
     /// The terminal of the tab shown.
     Terminal,
     SessionToggle,
+    ChatMode(bool),
+    Chat(crate::view::chat::Control),
     RestoreTabs,
     DismissTabs,
 }
@@ -179,6 +181,7 @@ pub struct AppState {
     pub dialog: Option<Dialog>,
     pub confirm_scroll: f32,
     pub compact: crate::compact_dialog::Cache,
+    pub opencode: crate::opencode_workers::Workers,
     pub menu: Option<(MenuKind, Menu<u32>)>,
     pub context_folder: Option<String>,
     pub palette: Option<Palette>,
@@ -285,6 +288,7 @@ impl AppState {
             dialog: None,
             confirm_scroll: 0.0,
             compact: Default::default(),
+            opencode: Default::default(),
             menu: None,
             context_folder: None,
             palette: None,

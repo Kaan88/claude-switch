@@ -1,6 +1,7 @@
 //! Session view integration with the window, terminal and splitter.
 
 pub mod attach;
+pub mod chat;
 mod discovery;
 mod links;
 pub(crate) mod model;
@@ -58,6 +59,7 @@ impl Window {
 
 pub struct Pane {
     model: model::Model,
+    pub chat: chat::Chat,
     pub(crate) transcript_source: model::Source,
     ui: ui::Ui,
     cwd: PathBuf,
@@ -66,6 +68,11 @@ pub struct Pane {
 }
 
 impl Pane {
+    pub fn restore_chat_layout(&mut self, chat: bool) {
+        self.chat.enabled = chat;
+        self.ui.set_chat(chat);
+    }
+
     pub(crate) fn verify_identity(&self, id: &str) {
         if let model::Source::Discover { verified, .. } = &self.transcript_source {
             let _ = verified.set(id.to_owned());
@@ -75,7 +82,8 @@ impl Pane {
 
 impl AppState {
     pub fn session_visible(&self, width: f32) -> bool {
-        self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) && self.session_width_enabled(width)
+        self.tabs.shown().is_some_and(|tab| tab.pane.is_some())
+            && (self.chat_active() || self.session_width_enabled(width))
     }
 
     pub fn session_width_enabled(&self, width: f32) -> bool {
@@ -83,7 +91,7 @@ impl AppState {
     }
 
     pub fn toggle_session_view(&mut self) {
-        if self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) {
+        if !self.chat_active() && self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) {
             self.win_file.session_view = Some(!self.session_visible(self.session_view.area.w));
             self.session_view.text_focus = false;
             self.save_window();
@@ -101,7 +109,7 @@ impl AppState {
         if !self.source.is_demo() || !self.tabs.is_empty() {
             return;
         }
-        let demo = match crate::demo::Transcript::new() {
+        let demo = match crate::demo::Transcript::new_chat() {
             Ok(demo) => demo,
             Err(e) => {
                 self.error("Could not start the demo transcript", e.to_string());
@@ -114,8 +122,9 @@ impl AppState {
                 "\x1b[1mClaude Code · demo\x1b[0m\r\n",
                 "\x1b[2mSynthetic session · no CLI process\x1b[0m\r\n\r\n",
                 "> Make a north ridge pocket guide.\r\n\r\n",
-                "  Open Session view for details.\r\n",
-                "  Try Conversation, Agents or Tasks.\r\n",
+                "  The demo is waiting for a decision about field-notes.md.\r\n",
+                "  No command will run here. Try Send anyway in Chat.\r\n",
+                "\x1b[?2004h",
                 "\x1b[?25l",
             )
             .as_bytes(),
@@ -132,6 +141,8 @@ impl AppState {
         );
         let mut pane = self.new_session_pane(model::Source::File(demo.path().to_owned()), demo.cwd().to_owned());
         pane._demo = Some(demo);
+        pane.chat = chat::Chat::demo();
+        pane.ui.chat_conversation(&mut pane.model);
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.pane = Some(pane);
         }
@@ -173,11 +184,20 @@ impl AppState {
                 proxy.send(Msg::SessionView);
             }
         });
-        Pane { model, transcript_source: source, ui: ui::Ui::default(), cwd, next: None, _demo: None }
+        let mut chat = chat::Chat::default();
+        chat.enabled = self.win_file.chat_default;
+        let mut ui = ui::Ui::default();
+        ui.set_chat(chat.enabled);
+        Pane { model, transcript_source: source, ui, cwd, next: None, _demo: None, chat }
     }
 
     pub fn layout_session_view(&mut self, cx: &mut Cx<'_, Msg>, area: Rect) -> Rect {
         self.session_view.area = area;
+        if self.chat_active() {
+            self.session_view.split_hover = false;
+            self.session_tick(cx, false);
+            return self.layout_chat(area);
+        }
         if self.session_visible(area.w) {
             let (terminal, _, pane) = self.session_view.splitter.rects(area, AXIS);
             self.session_view.pane_area = pane;
@@ -222,12 +242,13 @@ impl AppState {
             if tab.session.is_none() {
                 tab.session = pane.model.session_id().map(str::to_owned);
             }
-            if pane.ui.overlay_open() || area.w <= 0.0 {
+            if pane.chat.enabled || pane.ui.overlay_open() || area.w <= 0.0 {
                 cx.request_redraw_all();
             } else {
                 cx.request_redraw(area);
             }
         }
+        self.chat_input_tick(cx);
     }
 
     pub fn draw_session_view(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect, pal: &Palette) {
@@ -270,7 +291,7 @@ impl AppState {
     pub fn session_press(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32, clicks: u32) -> bool {
         let width = cx.size().0;
         let overlay = self.picture_overlay();
-        if !overlay && self.session_visible(width) {
+        if !overlay && !self.chat_active() && self.session_visible(width) {
             let split = &mut self.session_view.splitter;
             let area = self.session_view.area;
             if split.hit(area, AXIS, x, y) {
@@ -295,7 +316,7 @@ impl AppState {
         if over && let Some(pane) = self.shown_pane(width) {
             if pane.ui.press(x, y, clicks, cx.mods(), &mut pane.model) {
                 let cwd = pane.cwd.clone();
-                self.attach_picker(Some(&cwd));
+                self.attach_picker(Some(&cwd), false);
             }
             return true;
         }
@@ -322,8 +343,10 @@ impl AppState {
             cx.set_cursor(Cursor::ResizeEw);
             return Some(self.session_view.splitter.drag(area, AXIS, x, y));
         }
-        let hot =
-            self.session_visible(area.w) && !self.picture_overlay() && self.session_view.splitter.hit(area, AXIS, x, y);
+        let hot = !self.chat_active()
+            && self.session_visible(area.w)
+            && !self.picture_overlay()
+            && self.session_view.splitter.hit(area, AXIS, x, y);
         let split_changed = std::mem::replace(&mut self.session_view.split_hover, hot) != hot;
         if hot {
             cx.set_cursor(Cursor::ResizeEw);

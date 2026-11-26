@@ -43,8 +43,9 @@ impl Default for TabAttention {
 }
 
 impl TabAttention {
-    pub fn terminal(&mut self, screen: &mut mdshared_term::Screen, output: bool, attended: bool) {
-        let mut waiting = screen.take_bell();
+    pub fn terminal(&mut self, screen: &mut mdshared_term::Screen, output: bool, attended: bool) -> bool {
+        let bell = screen.take_bell();
+        let mut waiting = bell;
         if output {
             let rows = (screen.rows().saturating_sub(18)..screen.rows()).map(|row| screen.row_text(row));
             let permission = permission_prompt(rows);
@@ -54,6 +55,7 @@ impl TabAttention {
         if waiting {
             self.bell = Some(attended || self.bell == Some(true));
         }
+        bell
     }
 
     pub fn transcript(&self) -> Option<&claude_switch_core::Session> {

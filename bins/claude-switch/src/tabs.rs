@@ -179,6 +179,7 @@ pub struct Look {
     pub pressed: Option<Target>,
     pub terminal: Option<(Rgb, Rgb, Rgb)>,
     pub session_view: Option<bool>,
+    pub chat: Option<bool>,
 }
 
 /// Elide the launch label, not its ended marker, when the tab's text area is narrow.
@@ -224,7 +225,8 @@ pub fn draw(
         (t.id, title, Some(t.color), ended)
     }));
     let natural: Vec<f32> = labels.iter().map(|(_, l, _, _)| chrome::tab_natural_width(p, l)).collect();
-    let avail = (w - 2.0 * LEFT - if look.session_view.is_some() { 112.0 } else { 0.0 }).max(0.0);
+    let chat_reserve = if look.chat.is_some() { crate::view::chat::STRIP_RESERVE } else { 0.0 };
+    let avail = (w - 2.0 * LEFT - chat_reserve - if look.session_view.is_some() { 112.0 } else { 0.0 }).max(0.0);
     let widths = chrome::tab_widths(&natural, avail);
     let active = tabs.active.unwrap_or(SESSIONS);
     let hovered = |id: u64| matches!(look.hover, Some(Target::Tab(t) | Target::TabClose(t)) if t == id);
@@ -296,7 +298,7 @@ pub fn draw(
     p.restore(clip);
     p.restore_offset(origin);
     if let Some(open) = look.session_view {
-        let r = Rect::new(strip.right() - 117.0, strip.y + 7.0, 105.0, strip.h - 14.0);
+        let r = Rect::new(strip.right() - 117.0 - chat_reserve, strip.y + 7.0, 105.0, strip.h - 14.0);
         let target = Target::SessionToggle;
         let bg = if look.pressed == Some(target) || look.hover == Some(target) {
             pal.hover
@@ -308,6 +310,9 @@ pub fn draw(
         p.rbox(r, 5.0, bg);
         p.text_center(Face::Semibold, 12.0, r, "Session view", pal.text);
         hits.push((r, target));
+    }
+    if let Some(chat) = look.chat {
+        crate::view::chat::strip_button(p, pal, strip, chat, look.hover, hits);
     }
     moving
 }

@@ -30,6 +30,7 @@ struct Entry {
     account: String,
     cwd: PathBuf,
     active: bool,
+    chat: Option<bool>,
 }
 
 #[derive(Default)]
@@ -56,7 +57,7 @@ fn decode(text: &str) -> VecDeque<Entry> {
             let cwd = PathBuf::from(row["folder"].as_str()?);
             let active = row["active"].as_bool()?;
             (valid_id(id) && !account.is_empty() && cwd.is_absolute() && ids.insert(id.to_ascii_lowercase()))
-                .then(|| Entry { id: id.into(), account: account.into(), cwd, active })
+                .then(|| Entry { id: id.into(), account: account.into(), cwd, active, chat: row["chat"].as_bool() })
         })
         .collect()
 }
@@ -65,7 +66,8 @@ fn encode(rows: impl IntoIterator<Item = Entry>) -> String {
     Value::Array(
         rows.into_iter()
             .filter_map(|row| {
-                Some(json!({"id": row.id, "account": row.account, "folder": row.cwd.to_str()?, "active": row.active}))
+                Some(json!({"id": row.id, "account": row.account, "folder": row.cwd.to_str()?, "active": row.active,
+                    "chat":row.chat}))
             })
             .collect(),
     )
@@ -88,7 +90,13 @@ fn snapshot(tabs: &Tabs) -> Vec<Entry> {
         let id = t.resume_id.as_ref().filter(|id| valid_id(id))?.clone();
         let account = t.account.clone()?;
         let cwd = t.cwd.clone()?;
-        Some(Entry { id, account, cwd, active: tabs.active == Some(t.id) })
+        Some(Entry {
+            id,
+            account,
+            cwd,
+            active: tabs.active == Some(t.id),
+            chat: t.pane.as_ref().map(|p| p.chat.enabled),
+        })
     };
     let active = tabs.shown().and_then(entry).map(|t| t.id.to_ascii_lowercase());
     let mut ids = HashSet::new();
@@ -195,7 +203,7 @@ impl AppState {
                 .filter(|s| s.desktop_id.is_none())
                 .take(3)
                 .enumerate()
-                .map(|(i, s)| Entry { id: s.id, account: "main".into(), cwd: s.cwd, active: i == 1 })
+                .map(|(i, s)| Entry { id: s.id, account: "main".into(), cwd: s.cwd, active: i == 1, chat: None })
                 .collect();
         } else if let Some(file) = path(&self.source)
             && let Ok(Some(text)) = settings::read(&file)
@@ -338,6 +346,11 @@ impl AppState {
                 None
             }
         };
+        if let (Some(id), Some(chat)) = (id, item.chat)
+            && let Some(pane) = self.tabs.get_mut(id).and_then(|tab| tab.pane.as_mut())
+        {
+            pane.restore_chat_layout(chat);
+        }
         if item.active && id.is_some() {
             self.restore.active = id;
         }
@@ -386,8 +399,13 @@ mod tests {
 
     #[test]
     fn records_round_trip_and_untrusted_or_duplicate_rows_are_skipped() {
-        let entry =
-            Entry { id: A.into(), account: "main".into(), cwd: std::env::temp_dir().join("folder"), active: true };
+        let entry = Entry {
+            id: A.into(),
+            account: "main".into(),
+            cwd: std::env::temp_dir().join("folder"),
+            active: true,
+            chat: Some(true),
+        };
         let invalid = Entry { id: "--bogus".into(), ..entry.clone() };
         let text = encode([entry.clone(), invalid, entry.clone()]);
         assert_eq!(decode(&text), VecDeque::from([entry]));

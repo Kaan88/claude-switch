@@ -24,7 +24,9 @@ use crate::usage_ui::AccountUsage;
 
 #[path = "newsession.rs"]
 mod newsession;
+mod opencode_rows;
 mod settings;
+pub(crate) use opencode_rows::update_opencode_rows;
 pub use settings::{settings, settings_outcome};
 
 pub const OK: u32 = 1;
@@ -67,6 +69,7 @@ pub enum Pending {
         batch: bool,
     },
     UnarchiveAll,
+    RestartOpenCode(crate::opencode_workers::Restart),
 }
 
 impl Pending {
@@ -406,6 +409,7 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::Quit) => st.quit = true,
             (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
             (OK, Pending::UnarchiveAll) => st.unarchive(now, None),
+            (OK | CANCEL, Pending::RestartOpenCode(request)) => st.confirm_restart_opencode(request, id == OK),
             (OK, Pending::Remove { slug }) => {
                 match st.source.remove(&mut st.config, &slug) {
                     Ok(()) => accounts_changed(st, now),

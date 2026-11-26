@@ -84,6 +84,8 @@ impl AppState {
             Target::RestoreTabs => self.begin_tab_restore(now),
             Target::DismissTabs => self.dismiss_tab_restore(),
             Target::SessionToggle => self.toggle_session_view(),
+            Target::ChatMode(enabled) => self.set_chat_layout(enabled),
+            Target::Chat(control) => self.chat_control(cx, control),
             Target::Caption(WinButton::Max) => cx.toggle_maximize(),
             Target::Caption(WinButton::Min) => cx.minimize(),
             Target::SearchClear => {
@@ -206,13 +208,23 @@ impl AppState {
         let now = cx.now();
         let Some(name) = k.name.clone() else {
             // A key the toolkit has no name for may still have typed text for a program.
-            if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
+            if !self.chat_key(cx, &k) && self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
                 self.term_key(now, &k);
             }
             return;
         };
         let (mods, text) = (k.mods, k.text.as_deref());
         let bar = Bar::layout(cx.size().0);
+        if crate::view::chat::layout_shortcut(
+            &name,
+            mods,
+            self.palette.is_some(),
+            self.tabs.shown().is_some_and(|tab| tab.pane.is_some()),
+        ) {
+            self.palette = None;
+            self.set_chat_layout(!self.chat_active());
+            return;
+        }
         if self.palette.is_some()
             && let Some(id) = crate::tabcontrols::number(&name, mods, false).and_then(|n| self.tabs.numbered(n))
         {
@@ -263,14 +275,20 @@ impl AppState {
             }
             return;
         }
-        if let Some(id) = termkeys::shortcut(&name, mods)
+        let shortcut = termkeys::shortcut(&name, mods);
+        if shortcut == Some(actions::SESSION_VIEW) && self.chat_key(cx, &k) {
+            return;
+        }
+        if let Some(id) = shortcut
             && (id != actions::SESSION_VIEW || self.tabs.shown().is_some_and(|t| t.pane.is_some()))
         {
             self.command(now, id, None);
             return;
         }
         if self.terminal_shown() {
-            self.term_key(now, &k);
+            if !self.picture_overlay() && !self.chat_key(cx, &k) {
+                self.term_key(now, &k);
+            }
             Self::cursor_moved(cx);
             return;
         }
@@ -387,6 +405,10 @@ impl AppState {
             return;
         }
         self.usage.popup = Default::default();
+        if self.chat_press(cx, hover, x, y, clicks) {
+            self.clear_session_text_focus();
+            return;
+        }
         if self.session_press(cx, x, y, clicks) {
             return;
         }
@@ -445,6 +467,16 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
+        if self.chat_end_drag(Some(y)) {
+            return;
+        }
+        if let Some(t @ Target::Chat(_)) = self.pressed {
+            self.pressed = None;
+            if self.nothing_over() && self.hit(x, y) == Some(t) {
+                self.activate(cx, t, x);
+            }
+            return;
+        }
         if self.tabs.drag.take().is_some() {
             return;
         }
@@ -500,6 +532,9 @@ impl AppState {
     /// The pointer moved. True when something shows a change.
     fn moved(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> bool {
         self.mouse = (x, y);
+        if let Some(changed) = self.chat_move(cx, x, y) {
+            return changed;
+        }
         if self.tabs.drag.is_some() {
             return self.move_tab_drag(x, y);
         }
@@ -550,6 +585,8 @@ impl AppState {
         cx.set_cursor(match hover {
             _ if on_split => Cursor::ResizeEw,
             Some(Target::Terminal) if !program_mouse => Cursor::Text,
+            Some(Target::Chat(crate::view::chat::Control::Editor)) => Cursor::Text,
+            Some(Target::Chat(crate::view::chat::Control::Grip)) => Cursor::ResizeNs,
             Some(Target::Search) if self.dialog.is_none() => Cursor::Text,
             Some(Target::Dialog(dialogs::FIELD)) => Cursor::Text,
             _ => Cursor::Default,

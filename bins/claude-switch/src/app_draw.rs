@@ -38,8 +38,15 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
         st.layout_terminals(term_area, area, cx.scale());
     }
     if st.terminal_shown() {
-        st.draw_terminal(cx, p, term_area);
-        st.draw_session_view(cx, p, area, &pal);
+        if st.chat_active() {
+            st.draw_chat(cx, p, area, &pal);
+            if term_area.h > 0.0 {
+                st.draw_terminal(cx, p, term_area);
+            }
+        } else {
+            st.draw_terminal(cx, p, term_area);
+            st.draw_session_view(cx, p, area, &pal);
+        }
     } else {
         let rects = st.splitter.rects(area, Axis::Horizontal);
         list::draw(st, cx, p, rects.0);

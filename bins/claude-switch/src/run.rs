@@ -133,7 +133,12 @@ fn command(launch: &Launch, path: &OsString, pathext: &OsString) -> io::Result<C
         "bat" | "cmd" if safe_shim(&program, &launch.args) => {}
         _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unsupported executable or unsafe batch shim")),
     }
-    let mut cmd = Command::new(&program);
+    Ok(command_for(launch, &program))
+}
+
+/// Configure a command whose executable has already been resolved by the caller.
+pub fn command_for(launch: &Launch, program: &Path) -> Command {
+    let mut cmd = Command::new(program);
     cmd.args(&launch.args);
     if let Some(dir) = &launch.cwd {
         cmd.current_dir(dir);
@@ -145,7 +150,7 @@ fn command(launch: &Launch, path: &OsString, pathext: &OsString) -> io::Result<C
     for (k, v) in &launch.env {
         cmd.env(k, v);
     }
-    Ok(cmd)
+    cmd
 }
 
 fn safe_shim(program: &Path, args: &[String]) -> bool {

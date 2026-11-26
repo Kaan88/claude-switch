@@ -123,10 +123,12 @@ struct Update {
     agent: Option<String>,
     session: Option<String>,
     generation: u64,
+    chat: claude_switch_core::transcript::ChatInfo,
+    changed_files: Option<Vec<String>>,
 }
 
 enum Event {
-    Update(Update),
+    Update(Box<Update>),
     Picture(u64, Key, io::Result<Arc<Image>>),
     Error(Option<String>),
 }
@@ -141,6 +143,8 @@ pub struct Model {
     pub error: Option<String>,
     pub revision: u64,
     pub generation: u64,
+    pub chat: claude_switch_core::transcript::ChatInfo,
+    pub changed_files: Vec<String>,
     session: Option<String>,
     tx: mpsc::Sender<Command>,
     rx: mpsc::Receiver<Event>,
@@ -157,7 +161,8 @@ impl Model {
         let polling = Arc::new(AtomicBool::new(false));
         let queued = polling.clone();
         std::thread::spawn(move || {
-            let mut worker = Worker { source, root: None, child: None, session: None, generation: 0 };
+            let mut worker =
+                Worker { source, root: None, child: None, session: None, generation: 0, chat: Default::default() };
             let mut error = None;
             for command in commands {
                 if matches!(command, Command::Poll) {
@@ -194,6 +199,8 @@ impl Model {
             error: None,
             revision: 0,
             generation: 0,
+            chat: Default::default(),
+            changed_files: Vec::new(),
             session: None,
             tx,
             rx,
@@ -242,6 +249,10 @@ impl Model {
                     self.generation = u.generation;
                     self.agent = u.agent;
                     self.session = u.session;
+                    self.chat = u.chat;
+                    if let Some(files) = u.changed_files {
+                        self.changed_files = files;
+                    }
                     self.revision += 1;
                 }
                 Event::Picture(g, key, result) if g == self.generation => {
@@ -303,6 +314,7 @@ struct Worker {
     child: Option<(String, Reader)>,
     session: Option<String>,
     generation: u64,
+    chat: claude_switch_core::transcript::ChatInfo,
 }
 
 fn refs(item: &Item) -> &[Picture] {
@@ -404,8 +416,32 @@ impl Worker {
             agent: self.child.as_ref().map(|(id, _)| id.clone()),
             session: self.session.clone(),
             generation: self.generation,
+            chat: root.chat(),
             ..Update::default()
         };
+        let metadata_changed = self.chat != u.chat;
+        self.chat.clone_from(&u.chat);
+        use claude_switch_core::transcript::{ToolCard, ToolState};
+        if lists.reset
+            || lists.added.union(&lists.updated).any(|&id| {
+                root.item(id)
+                    .is_some_and(|item| matches!(item.kind, ItemKind::Tool { card: Some(ToolCard::Edit { .. }), .. }))
+            })
+        {
+            let mut seen = HashSet::new();
+            u.changed_files =
+                Some(
+                    root.items()
+                        .rev()
+                        .filter_map(|(_, item)| match &item.kind {
+                            ItemKind::Tool {
+                                state: ToolState::Ok, card: Some(ToolCard::Edit { path, .. }), ..
+                            } if seen.insert(path.to_ascii_lowercase()) => Some(path.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                );
+        }
         if lists.reset || lists.tasks_changed {
             u.tasks = Some(root.tasks().to_vec());
         }
@@ -418,8 +454,14 @@ impl Worker {
             u.items =
                 change.added.union(&change.updated).filter_map(|&id| Some((id, reader.item(id)?.clone()))).collect();
         }
-        Ok((reset || earlier_request || !u.items.is_empty() || u.tasks.is_some() || u.agents.is_some())
-            .then_some(Event::Update(u)))
+        Ok((reset
+            || earlier_request
+            || metadata_changed
+            || !u.items.is_empty()
+            || u.tasks.is_some()
+            || u.agents.is_some()
+            || u.changed_files.is_some())
+        .then(|| Event::Update(Box::new(u))))
     }
 }
 
@@ -438,6 +480,7 @@ mod tests {
             state: ToolState::Ok,
             pictures: vec![],
             subagent: agent,
+            card: None,
         };
         let id = |offset| ItemId { offset, block: 0 };
         let items = [

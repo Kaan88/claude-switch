@@ -32,6 +32,7 @@ enum Action {
     Agent(String),
     Back,
     Group(ItemId),
+    Tool(ItemId),
     Picture(ItemId, usize),
     Open,
     Close,
@@ -51,6 +52,8 @@ pub struct Ui {
     body: Rect,
     rows: Vec<Row>,
     expanded: BTreeSet<ItemId>,
+    tool_expanded: BTreeSet<ItemId>,
+    chat: bool,
     cache: Option<(u64, f32, f32, Palette)>,
     generation: Option<u64>,
     offset: f32,
@@ -74,6 +77,17 @@ const PAD: f32 = 12.0;
 const INSET: f32 = 12.0;
 
 impl Ui {
+    pub fn set_chat(&mut self, chat: bool) {
+        self.chat = chat;
+        self.cache = None;
+    }
+
+    pub fn chat_conversation(&mut self, model: &mut Model) {
+        self.set_chat(true);
+        self.show(Page::Conversation);
+        model.select_agent(None);
+    }
+
     #[allow(clippy::too_many_arguments)] // Frame inputs from the host; the pane does not hold the host context.
     pub fn draw(
         &mut self,
@@ -90,6 +104,7 @@ impl Ui {
         let phase = now.duration_since(*self.epoch.get_or_insert(now)).as_secs_f32();
         if self.generation.replace(m.generation).is_some_and(|g| g != m.generation) {
             self.expanded.clear();
+            self.tool_expanded.clear();
             self.selection = None;
             self.overlay = None;
             self.cache = None;
@@ -100,30 +115,36 @@ impl Ui {
         p.fill(area, pal.page);
         let x = area.x + PAD;
         let width = (area.w - 2.0 * PAD).max(1.0);
-        p.text(Face::Semibold, 17.0, x, area.y + 22.0, "Session view", pal.text, (width - 116.0).max(1.0));
-        self.button(
-            p,
-            pal,
-            Rect::new(area.right() - PAD - 110.0, area.y + 7.0, 110.0, 28.0),
-            "Attach picture…",
-            Action::Attach,
-            false,
-        );
-        let tabs_y = area.y + 44.0;
-        let mut bx = x;
-        for (page, label, frac) in
-            [(Page::Conversation, "Conversation", 0.45), (Page::Agents, "Agents", 0.285), (Page::Tasks, "Tasks", 0.265)]
-        {
-            let w = width * frac;
-            let count = match page {
-                Page::Conversation => None,
-                Page::Agents => Some(m.agents.len()),
-                Page::Tasks => Some(m.tasks.len()),
-            };
-            self.segment(p, pal, Rect::new(bx, tabs_y, (w - 3.0).max(1.0), 29.0), (label, count), page);
-            bx += w;
+        if !self.chat {
+            p.text(Face::Semibold, 17.0, x, area.y + 22.0, "Session view", pal.text, (width - 116.0).max(1.0));
+            self.button(
+                p,
+                pal,
+                Rect::new(area.right() - PAD - 110.0, area.y + 7.0, 110.0, 28.0),
+                "Attach picture…",
+                Action::Attach,
+                false,
+            );
         }
-        let mut top = tabs_y + 38.0;
+        let tabs_y = area.y + 44.0;
+        if !self.chat {
+            let mut bx = x;
+            for (page, label, frac) in [
+                (Page::Conversation, "Conversation", 0.45),
+                (Page::Agents, "Agents", 0.285),
+                (Page::Tasks, "Tasks", 0.265),
+            ] {
+                let w = width * frac;
+                let count = match page {
+                    Page::Conversation => None,
+                    Page::Agents => Some(m.agents.len()),
+                    Page::Tasks => Some(m.tasks.len()),
+                };
+                self.segment(p, pal, Rect::new(bx, tabs_y, (w - 3.0).max(1.0), 29.0), (label, count), page);
+                bx += w;
+            }
+        }
+        let mut top = if self.chat { area.y + 7.0 } else { tabs_y + 38.0 };
         if self.page == Page::Conversation
             && let Some(agent) = &m.agent
         {
@@ -137,10 +158,19 @@ impl Ui {
             p.text(Face::Ui, 12.0, x, top + 10.0, error, pal.warn, width);
             top += 24.0;
         }
-        let footer = area.bottom() - 40.0;
+        let compact_footer = self.chat && area.h < 125.0 && self.follow.active();
+        let footer = area.bottom()
+            - if compact_footer {
+                4.0
+            } else if self.chat {
+                25.0
+            } else {
+                40.0
+            };
         if self.page == Page::Conversation && m.has_earlier {
-            self.button(p, pal, Rect::new(x, top, 106.0, 26.0), "Load earlier", Action::Earlier, false);
-            top += 32.0;
+            let h = if self.chat { 21.0 } else { 26.0 };
+            self.button(p, pal, Rect::new(x, top, 106.0, h), "Load earlier", Action::Earlier, false);
+            top += h + 6.0;
         }
         self.body = Rect::new(x, top, width, (footer - top).max(0.0));
         self.layout(m, pal, p.scale);
@@ -157,6 +187,7 @@ impl Ui {
             let title = if matches!(row.id, Id::Agent(_)) { r } else { Rect::new(x, y, width, HEAD) };
             let act = match &row.id {
                 Id::Group(id) => Some(Action::Group(*id)),
+                Id::Tool(id) => Some(Action::Tool(*id)),
                 _ => row.agent.clone().map(Action::Agent),
             };
             if let Some(act) = act {
@@ -244,8 +275,15 @@ impl Ui {
         }
         p.fill(Rect::new(x, footer, width, p.px()), pal.line);
         if self.page == Page::Conversation {
-            let r = Rect::new(area.right() - PAD - 110.0, footer + 7.0, 110.0, 26.0);
-            if self.follow.active() {
+            let r = Rect::new(
+                area.right() - PAD - 110.0,
+                footer + if self.chat { 1.0 } else { 7.0 },
+                110.0,
+                if self.chat { 23.0 } else { 26.0 },
+            );
+            if compact_footer {
+                // Preserve the bottom of the current card in a short Chat viewport.
+            } else if self.follow.active() {
                 p.text_center(Face::Ui, 12.0, r, "Following latest", pal.muted);
             } else {
                 self.button(p, pal, r, "Jump to latest", Action::Latest, false);
@@ -284,7 +322,7 @@ impl Ui {
             let mut r = Rows { previous, list: Vec::new(), end: 0.0, width: self.body.w, pal, scale };
             match self.page {
                 Page::Conversation => {
-                    r.conversation(m, &self.expanded);
+                    r.conversation(m, &self.expanded, self.chat.then_some(&self.tool_expanded));
                     if r.list.is_empty() {
                         r.empty(
                             "Waiting for messages",

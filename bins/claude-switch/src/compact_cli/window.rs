@@ -46,7 +46,7 @@ fn spawn_window(exe: &Path, arguments: &str) -> std::io::Result<()> {
     spec.args = ["-NoProfile", "-NonInteractive", "-Command", OPEN].map(str::to_owned).to_vec();
     spec.env.insert("CS_HANDOVER_EXE".into(), exe.to_str().ok_or_else(|| io::Error::other("Non-Unicode path"))?.into());
     spec.env.insert("CS_HANDOVER_ARGS".into(), arguments.into());
-    let status = crate::compact_runner::launched_command(&spec)
+    let status = crate::run::command_for(&spec, &spec.program)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -154,7 +154,21 @@ impl Compact {
             d.pal.text,
             body.w,
         );
-        self.draw_editor(d, p, Rect::new(body.x, body.y + 48.0, body.w, body.h - 82.0), true);
+        let mut editor_y = 48.0;
+        if crate::compact_open::uses_file(&self.preview.text) {
+            let h = p.paragraph_wrapped(
+                Face::Ui,
+                12.0,
+                body.x,
+                body.y + 44.0,
+                body.w,
+                "Too long to pass directly: the new session will read it from the file",
+                d.pal.muted,
+                Wrap::Words,
+            );
+            editor_y += h + 4.0;
+        }
+        self.draw_editor(d, p, Rect::new(body.x, body.y + editor_y, body.w, body.h - 34.0 - editor_y), true);
         d.footer(
             p,
             footer,

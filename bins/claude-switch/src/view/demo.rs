@@ -18,7 +18,16 @@ pub struct Transcript {
 }
 
 impl Transcript {
+    #[cfg(test)]
     pub fn new() -> io::Result<Self> {
+        Self::open(false)
+    }
+
+    pub fn new_chat() -> io::Result<Self> {
+        Self::open(true)
+    }
+
+    fn open(chat: bool) -> io::Result<Self> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         let cwd = loop {
             let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
@@ -35,6 +44,10 @@ impl Transcript {
         let mut demo = Self { cwd, path, stop: None, writer: None };
         let mut file = File::create(&demo.path)?;
         seed(&demo, &mut file)?;
+        if chat {
+            seed_chat(&mut file)?;
+            return Ok(demo);
+        }
         let (stop, signal) = mpsc::channel();
         demo.stop = Some(stop);
         demo.writer = Some(thread::Builder::new().name("demo-transcript".into()).spawn(move || {
@@ -62,6 +75,45 @@ impl Transcript {
             let _ = writer.join();
         }
     }
+}
+
+fn seed_chat(file: &mut File) -> io::Result<()> {
+    record(file, 34, "user", json!("Shorten the north ridge caption."))?;
+    record(file, 35, "assistant", json!("I’ll keep the direction and the two silhouettes."))?;
+    record(
+        file,
+        36,
+        "assistant",
+        json!([tool(
+            "demo-edit",
+            "Edit",
+            json!({
+                "file_path":"field-notes.md", "old_string":"Look west at dusk.",
+                "new_string":"Face west at dusk.\nLook for two ridgelines."
+            })
+        )]),
+    )?;
+    record(file, 37, "user", json!([result("demo-edit", json!("Updated."))]))?;
+    record(file, 38, "assistant", json!("**The caption is shorter.** I’ll update the print heading next."))?;
+    record(
+        file,
+        39,
+        "assistant",
+        json!([tool(
+            "demo-wait",
+            "Edit",
+            json!({
+                "file_path":"field-notes.md", "old_string":"# North ridge", "new_string":"# North ridge · Pocket guide"
+            })
+        )]),
+    )?;
+    writeln!(
+        file,
+        "{}",
+        json!({"type":"assistant","message":{"model":"Demo Sonnet","stop_reason":"tool_use","usage":{
+            "input_tokens":843, "cache_read_input_tokens":3580
+        }}})
+    )
 }
 
 impl Drop for Transcript {

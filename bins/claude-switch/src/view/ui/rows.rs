@@ -1,7 +1,9 @@
 //! Stable row identities let a prepended history page move the scrollbar without moving the paragraph under the reader.
 use std::collections::{BTreeMap, BTreeSet};
 
-use claude_switch_core::transcript::{Item, ItemId, ItemKind, NoticeKind, Subagent, Task, TaskStatus, ToolState};
+use claude_switch_core::transcript::{
+    Item, ItemId, ItemKind, NoticeKind, Subagent, Task, TaskStatus, ToolCard, ToolState,
+};
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::theme::Palette;
 
@@ -12,6 +14,7 @@ use super::super::text::TextLayout;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Id {
     Message(ItemId),
+    Tool(ItemId),
     Group(ItemId),
     Agent(String),
     Task(usize),
@@ -204,7 +207,7 @@ impl Rows<'_> {
         self.add(Id::Empty, title, "", hint, false, Tone::Muted);
     }
 
-    pub fn conversation(&mut self, m: &Model, expanded: &BTreeSet<ItemId>) {
+    pub fn conversation(&mut self, m: &Model, expanded: &BTreeSet<ItemId>, tool_expanded: Option<&BTreeSet<ItemId>>) {
         for group in &m.groups {
             let ids = match group {
                 Group::One(id) => std::slice::from_ref(id),
@@ -248,16 +251,16 @@ impl Rows<'_> {
             }
             for &id in ids {
                 if let Some(item) = m.items.get(&id) {
-                    self.item(id, item, &m.agents);
+                    self.item(id, item, &m.agents, tool_expanded.map(|set| set.contains(&id)));
                 }
             }
         }
     }
 
-    fn item(&mut self, id: ItemId, item: &Item, agents: &[Subagent]) {
+    fn item(&mut self, id: ItemId, item: &Item, agents: &[Subagent], tool_open: Option<bool>) {
         let stamp = item.timestamp.as_deref().and_then(|s| s.get(11..19)).unwrap_or("");
         match &item.kind {
-            ItemKind::Prompt { text, pictures } => {
+            ItemKind::Prompt { text, pictures, .. } => {
                 self.add(Id::Message(id), "You", stamp, text, false, Tone::Accent);
                 self.pictures(id, pictures.len());
             }
@@ -271,7 +274,7 @@ impl Rows<'_> {
                 };
                 self.add(Id::Message(id), title, stamp, text, false, tone);
             }
-            ItemKind::Tool { name, summary, state, pictures, subagent, .. } => {
+            ItemKind::Tool { name, summary, state, pictures, subagent, card, .. } => {
                 let (status, tone) = if let Some(child) = subagent {
                     agent_status(agents.iter().find(|a| &a.id == child).and_then(|a| a.finished))
                 } else {
@@ -281,6 +284,36 @@ impl Rows<'_> {
                         ToolState::Failed => ("Failed", Tone::Warning),
                     }
                 };
+                if let (Some(card), Some(open)) = (card, tool_open) {
+                    let mark = if open { "▾" } else { "▸" };
+                    let (title, body) = match card {
+                        ToolCard::Edit { path, added, removed, lines } => {
+                            let file = std::path::Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or(path);
+                            (
+                                format!("{mark}  {file}   +{added} −{removed}"),
+                                lines
+                                    .iter()
+                                    .take(if open { 20 } else { 3 })
+                                    .map(String::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                            )
+                        }
+                        ToolCard::Shell { command, result } => {
+                            let mut text = command.clone();
+                            if open {
+                                text.push_str("\n\n");
+                                text.push_str(if result.is_empty() { "No text result." } else { "" });
+                                text.push_str(&result.join("\n"));
+                            }
+                            (format!("{mark}  {name}"), text)
+                        }
+                    };
+                    let row = self.add(Id::Tool(id), &title, status, &body, false, tone);
+                    row.busy = *state == ToolState::Running;
+                    self.pictures(id, pictures.len());
+                    return;
+                }
                 let label = if subagent.is_some() { format!("{name} ›") } else { name.to_owned() };
                 let text = format!("{label}   {}", summary.replace(['\n', '\r', '\u{2028}', '\u{2029}'], " "));
                 let width = CompactHead::new(self.width).text_w;

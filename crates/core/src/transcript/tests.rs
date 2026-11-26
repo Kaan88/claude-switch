@@ -177,7 +177,7 @@ fn prompt_pictures_are_lazy_and_bad_data_is_reported_only_when_loaded() {
     fs::write(&path, prefix.clone() + &line).unwrap();
     let mut reader = Reader::open(&path, 4096).unwrap();
     let items: Vec<_> = reader.items().map(|(_, item)| item).collect();
-    let ItemKind::Prompt { text, pictures } = &items[1].kind else { panic!() };
+    let ItemKind::Prompt { text, pictures, .. } = &items[1].kind else { panic!() };
     assert_eq!(text, "look");
     let pictures = pictures.clone();
     assert_eq!(pictures[0].line_offset, prefix.len() as u64);

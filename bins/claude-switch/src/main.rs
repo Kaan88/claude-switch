@@ -29,6 +29,7 @@ mod details;
 mod dialogs;
 mod folder_defaults;
 mod list;
+mod opencode_workers;
 mod resume_tabs;
 mod run;
 mod session_marks;
@@ -69,6 +70,8 @@ fn main() {
     let mut demo_compact = None;
     let mut demo_search = None;
     let mut demo_offscreen = false;
+    let mut demo_workers = false;
+    let mut demo_compact_long = false;
     let (mut shell, mut typed, mut list_tab) = (None, Vec::new(), false);
     let mut args = std::env::args().skip(1).peekable();
     if args.next_if(|a| a == "compact").is_some() {
@@ -85,6 +88,11 @@ fn main() {
             "--demo-search" => demo_search = args.next(),
             "--demo-compact" => demo_compact = Some(false),
             "--demo-compact-preview" => demo_compact = Some(true),
+            "--demo-compact-long" => {
+                demo_compact = Some(true);
+                demo_compact_long = true;
+            }
+            "--demo-workers" => demo_workers = true,
             "--demo-offscreen" => demo_offscreen = true,
             "--compact-open-window" => handoff = compact_cli::window_args(&mut args),
             "--usage-shape" => {
@@ -131,6 +139,10 @@ fn main() {
     state.compact.standalone_window = startup.is_some();
     state.compact.startup = startup;
     state.compact.demo = demo_compact.filter(|_| demo);
+    state.compact.demo_long = demo && demo_compact_long;
+    if demo && demo_workers {
+        state.opencode_settings(true);
+    }
     state.debug_shell = shell;
     state.notifications.demo = demo && demo_notifications;
     state.debug_list = list_tab || state.compact.demo.is_some();

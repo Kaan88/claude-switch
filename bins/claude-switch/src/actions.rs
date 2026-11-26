@@ -45,6 +45,7 @@ const HIDE_FOLDER: u32 = 26;
 const COPY_ID: u32 = 27;
 const COPY_PATH: u32 = 28;
 const REVEAL: u32 = 29;
+const CHAT_LAYOUT: u32 = 30;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -99,7 +100,7 @@ impl AppState {
             }
             REFRESH => self.refresh(now),
             ACCOUNTS => self.dialog = Some(dialogs::accounts(self, now)),
-            SETTINGS => self.dialog = Some(dialogs::settings(self)),
+            SETTINGS => self.opencode_settings(false),
             ABOUT => self.dialog = Some(Dialog::About),
             PALETTE => self.open_palette(),
             SWITCHER => self.quick_switcher(),
@@ -115,6 +116,7 @@ impl AppState {
             }
             COPY_ID | COPY_PATH | REVEAL => self.session_file_action(now, id),
             SESSION_VIEW => self.toggle_session_view(),
+            CHAT_LAYOUT => self.set_chat_layout(!self.chat_active()),
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
@@ -448,7 +450,10 @@ impl AppState {
             entries.push(Entry::new(PASTE, "Paste").group(0));
         }
         if self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) {
-            entries.push(Entry::new(SESSION_VIEW, "Toggle session view · Ctrl+Shift+E").group(0));
+            entries.push(Entry::new(CHAT_LAYOUT, "Switch Chat / Terminal · F6 in palette").group(0));
+            if !self.chat_active() {
+                entries.push(Entry::new(SESSION_VIEW, "Toggle session view · Ctrl+Shift+E").group(0));
+            }
         }
         for (k, a) in self.config.accounts.iter().enumerate() {
             entries.push(Entry::new(ACCOUNT_BASE + k as u32, format!("Switch to account {}", a.name)).group(1));

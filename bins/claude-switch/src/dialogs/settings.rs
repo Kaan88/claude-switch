@@ -1,3 +1,4 @@
+use super::opencode_rows;
 use super::*;
 use crate::termtheme::{self, ACCENT_SOURCES, PRESETS, WINDOW_THEMES, preset_index};
 use claude_switch_core::WorkersUse;
@@ -123,6 +124,8 @@ pub fn settings(st: &AppState) -> Dialog {
         Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents"),
     ];
     let mut rows = rows;
+    let workers = rows.iter().position(|row| row.id() == Some(SET_WORKERS)).expect("Workers row");
+    rows.splice(workers + 1..workers + 1, opencode_rows::rows(st));
     rows.extend([
         Row::header("Notification area"),
         Row::toggle(SET_TRAY, "Show tray icon", st.config.notifications.tray_icon),
@@ -150,6 +153,9 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
             }
         }
         Outcome::Action(FORGET_HANDOVER_CONSENTS) => st.forget_handover_consents(),
+        Outcome::Action(opencode_rows::REFRESH) => st.refresh_opencode(),
+        Outcome::Action(opencode_rows::RESTART) => st.ask_restart_opencode(),
+        Outcome::Action(opencode_rows::STUDIO) => st.open_config_studio(),
         Outcome::Changed { id, value } => {
             if st.config_damaged {
                 st.dialog = None;
