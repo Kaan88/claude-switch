@@ -494,6 +494,12 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
       sources the CLI uses, in its order (the `--effort` flag the tab was started with, `CLAUDE_CODE_EFFORT_LEVEL`
       or the like in the tab's environment, `effortLevel` in the account's and project's settings, else the model's
       default, marked as default); check the names in Claude Code's docs. Read-only, never written.
+    - Seen 2026-11-27: `/effort` typed in the terminal ("Set effort level to medium (saved as your default for new
+      sessions)") left the chip at "—". Cause in code: `observe_cli` reads reports only from the screen and only
+      while `tracking`, which `CliReport::begin` turns on just for a command the Chat view itself sent; a command
+      typed in the terminal is never read. The transcript holds the reply as a `<local-command-stdout>` record: read
+      the newest "Set effort level to …" and "Set model to …" from the transcript, whoever typed the command, and
+      keep the screen reading only for the chip's own confirmation.
 
 Audit 2026-11-27 (read-only, cc-opus): what still sends the user to the terminal. Owner's rule for all of these: the Chat view must cover everything the CLI does; convenience over the old terminal-only rules (item 42). Each keeps the one safeguard: keys are sent only while the screen shows the matching prompt or menu, the choice is picked by its row text, and anything unexpected fails closed with a reason and an Open terminal button.
 
