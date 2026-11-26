@@ -260,3 +260,10 @@ and in the README, not committed, and not copied to the installed clone
     Claude). Also found: the plugin called `claude-switch` from PATH, which the installer never sets;
     the plugin now falls back to the installed exe (commit 915ef71 on `integrate`); decide whether the
     installer should also offer to add itself to PATH.
+20. **Up in the Chat composer should step back through earlier prompts, as in the CLI and Desktop**
+    (owner, 2026-11-26: it does not). Code exists (`view/chat/input.rs`, `recall`) but only when the box
+    is empty and only over prompts loaded from the transcript; find why it does not work for the
+    owner (key routed elsewhere, the box not empty, history empty). Expected: Up on the first line
+    (any text) steps to the previous prompt and keeps the unsent draft; Down past the newest brings
+    the draft back; Escape leaves recall with the draft; prompts typed in the terminal count too;
+    no duplicates in a row.
