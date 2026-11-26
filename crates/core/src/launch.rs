@@ -67,6 +67,11 @@ pub fn desktop_exe() -> Option<PathBuf> {
 #[cfg(windows)]
 pub use desktop::guard_desktop_exe;
 
+#[cfg(windows)]
+pub fn is_desktop_request(launch: &Launch) -> bool {
+    launch.place == Place::Detached && launch.program == Path::new(desktop::REQUEST)
+}
+
 /// The environment changes that make the CLI use the account's folder.
 fn account_env(account: &Account) -> (BTreeMap<String, String>, Vec<String>) {
     if account.primary {
@@ -233,11 +238,17 @@ fn desktop_launch(exe: PathBuf, account: &Account) -> Launch {
 }
 
 /// The desktop app as `account`: the executable alone for the first account, with
-/// `--user-data-dir=<desktop_dir>` for a further one. [`Refusal::NoDesktopApp`] when it is not found.
+/// `--user-data-dir=<desktop_dir>` for a further one. The runner resolves and locks the
+/// installed executable at the point of process creation, never as a separate preflight.
 pub fn open_desktop(config: &Config, account: &str) -> Result<Launch, Refusal> {
     let account = find_account(config, account)?;
-    let exe = desktop_exe().ok_or(Refusal::NoDesktopApp)?;
-    Ok(desktop_launch(exe, account))
+    #[cfg(windows)]
+    return Ok(desktop_launch(PathBuf::from(desktop::REQUEST), account));
+    #[cfg(not(windows))]
+    {
+        let _ = account;
+        Err(Refusal::NoDesktopApp)
+    }
 }
 
 /// The first of `names` found in a folder of `path` (a `PATH`-style list).

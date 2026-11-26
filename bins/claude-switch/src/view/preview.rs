@@ -313,8 +313,10 @@ mod tests {
     #[test]
     fn only_existing_markdown_and_web_links_are_actionable_at_renderer_hit_positions() {
         let demo = crate::demo::Transcript::new().unwrap();
-        let files =
-            links::Files::from([("field-notes.md".into(), links::resolve("field-notes.md", demo.cwd()).unwrap())]);
+        let files = links::Files::from([(
+            "field-notes.md".into(),
+            links::resolve("field-notes.md", demo.cwd(), &Default::default()).unwrap(),
+        )]);
         let p = Preview::new(
             "[web](https://example.test) [local](field-notes.md#Heading) `field-notes.md` field-notes.md \
              [missing](gone.md) [mail](mailto:example@example.test)",

@@ -5,6 +5,31 @@ use super::rows::{CHIP_H, TOOL_H, chip_rect};
 use super::*;
 
 impl Ui {
+    pub(super) fn conversation_footer(&mut self, p: &mut Painter, pal: &Palette, r: Rect, visible: bool, main: bool) {
+        let stacked = r.h == 49.0;
+        let h = if self.chat { 23.0 } else { 26.0 };
+        let y = if stacked { r.bottom() - h } else { r.y + (r.h - h) / 2.0 };
+        let latest = Rect::new(r.right() - 110.0, y, 110.0, h);
+        if let Some(work) = self.working.as_ref().filter(|_| main) {
+            let edge = if visible { latest.x - 5.0 } else { r.right() };
+            let stop = Rect::new(edge - 48.0, y, 48.0, h);
+            let (text_y, text_w) = if stacked { (r.y + 11.5, r.w) } else { (stop.cy(), stop.x - r.x - 6.0) };
+            p.text(Face::Ui, 12.0, r.x, text_y, &work.label, pal.text, text_w.max(0.0));
+            if let Some(key) = work.stop {
+                self.button(p, pal, stop, "Stop", Action::Stop(key), false);
+            } else {
+                p.text_center(Face::Ui, 12.0, stop, "Stop", pal.muted);
+            }
+        }
+        if visible {
+            if self.follow.active() {
+                p.text_center(Face::Ui, 12.0, latest, "Following latest", pal.muted);
+            } else {
+                self.button(p, pal, latest, "Jump to latest", Action::Latest, false);
+            }
+        }
+    }
+
     pub(super) fn paint_rows(&mut self, p: &mut Painter, pal: &Palette, m: &mut Model, phase: f32, motion: bool) {
         let body = self.body;
         let clip = p.clip(body);

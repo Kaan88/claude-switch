@@ -21,22 +21,48 @@ use claude_switch_core::{Launch, Place};
 
 /// Starts the launch and returns once the process exists. Errors are the system's.
 pub fn run(launch: &Launch) -> io::Result<()> {
+    run_cancellable(launch, || false)
+}
+
+pub fn run_cancellable(launch: &Launch, cancelled: impl Fn() -> bool) -> io::Result<()> {
     if needs_terminal(launch) {
         return Err(io::Error::other("Desktop handoff requires a worker"));
     }
     #[cfg(windows)]
-    let _desktop_guard = if launch.place == Place::Detached
-        && launch.program.file_name().is_some_and(|name| name.eq_ignore_ascii_case("Claude.exe"))
+    let desktop_guard = if claude_switch_core::launch::is_desktop_request(launch) {
+        Some(claude_switch_core::launch::guard_desktop_exe().map_err(io::Error::other)?)
+    } else if launch.place == Place::Detached
+        && launch.program.file_name().is_some_and(|name| {
+            name.eq_ignore_ascii_case("Claude.exe") || name.eq_ignore_ascii_case("claude-desktop.exe")
+        })
     {
-        Some(claude_switch_core::launch::guard_desktop_exe(&launch.program)?)
+        return Err(io::Error::other("Claude Desktop requires a verified installation request."));
     } else {
         None
     };
-    let mut cmd = command_for(launch, &native_program(&launch.program)?);
+    #[cfg(windows)]
+    let program = match &desktop_guard {
+        Some(guard) => guard.program().to_owned(),
+        None => native_program(&launch.program)?,
+    };
+    #[cfg(not(windows))]
+    let program = native_program(&launch.program)?;
+    let mut cmd = command_for(launch, &program);
     if launch.place == Place::Detached {
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     }
+    if cancelled() {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
     cmd.spawn().map(drop)
+}
+
+pub fn needs_desktop_worker(launch: &Launch) -> bool {
+    #[cfg(windows)]
+    if claude_switch_core::launch::is_desktop_request(launch) {
+        return true;
+    }
+    needs_terminal(launch)
 }
 
 /// A detached launch the CLI only does with a terminal: `--desktop` ends at once with "can't run
@@ -301,6 +327,24 @@ mod tests {
         assert!(needs_terminal(&l));
         l.place = Place::Terminal;
         assert!(!needs_terminal(&l));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_requests_use_the_worker_and_unverified_explicit_executables_are_refused() {
+        let mut launch = launch(Place::Detached);
+        launch.program = "Claude.exe".into();
+        assert!(needs_desktop_worker(&launch));
+        assert!(!needs_terminal(&launch));
+        let tmp = scratch("unverified-desktop");
+        for name in ["Claude.exe", "claude-desktop.exe"] {
+            launch.program = tmp.join(name);
+            assert_eq!(
+                run(&launch).unwrap_err().to_string(),
+                "Claude Desktop requires a verified installation request."
+            );
+        }
+        std::fs::remove_dir(tmp).unwrap();
     }
 
     #[test]

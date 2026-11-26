@@ -23,7 +23,7 @@ fn put_tool(model: &mut Model, cwd: &Path, offset: u64, name: &str, path: &str, 
         card: None,
     };
     model.items.insert(id, Item { kind, timestamp: Some("2026-11-26T18:42:01Z".into()) });
-    if let Some(file) = links::resolve(path, cwd) {
+    if let Some(file) = links::resolve(path, cwd, &BTreeSet::new()) {
         model.files.insert(id, [(path.to_owned(), file)].into());
     }
     id
@@ -59,8 +59,11 @@ fn file_history_groups_named_successful_writes_and_edits_in_reverse_order() {
     let action = |ui: &Details, i, part| ui.action(&m, TAB, Side::Files, hit(&m, Side::Files, i, part));
     assert_eq!(action(&ui, 0, Part::Open), None, "unsafe association is not actionable");
     assert_eq!(action(&ui, 1, Part::Open), None, "missing file retains its history, not an open action");
-    assert_eq!(action(&ui, 2, Part::Open), Some(Action::DefaultApp(links::resolve(name, cwd).unwrap())));
-    assert_eq!(action(&ui, 3, Part::Open), Some(Action::Preview(links::resolve(md, cwd).unwrap())));
+    assert_eq!(
+        action(&ui, 2, Part::Open),
+        Some(Action::DefaultApp(links::resolve(name, cwd, &BTreeSet::new()).unwrap()))
+    );
+    assert_eq!(action(&ui, 3, Part::Open), Some(Action::Preview(links::resolve(md, cwd, &BTreeSet::new()).unwrap())));
     assert_eq!(action(&ui, 3, Part::Edit(1)), None);
     let Some(Action::Expand(key)) = action(&ui, 3, Part::Expand) else { panic!("expected a disclosure action") };
     ui.toggle(key.clone());

@@ -196,10 +196,10 @@ impl Ui {
         }
     }
 
-    pub fn release(&mut self, x: f32, y: f32, mods: Mods, m: &mut Model) -> bool {
+    pub(in crate::view) fn release(&mut self, x: f32, y: f32, mods: Mods, m: &mut Model) -> Release {
         if let Some(drag) = self.scroll_drag.take() {
             self.drag_to(drag, y);
-            return true;
+            return Release::Handled;
         }
         let drag = std::mem::take(&mut self.dragging);
         let pressed = self.pressed.take();
@@ -217,10 +217,14 @@ impl Ui {
                     self.open_markdown(file, m);
                 }
             }
-            return true;
+            return Release::Handled;
         }
         let Some(action) = pressed.filter(|a| Some(a) == self.hit(x, y).as_ref()) else {
-            return drag || self.overlay_open() || self.area.contains(x, y);
+            return if drag || self.overlay_open() || self.area.contains(x, y) {
+                Release::Handled
+            } else {
+                Release::Miss
+            };
         };
         match action {
             Action::Page(page) => {
@@ -240,6 +244,7 @@ impl Ui {
                 self.tool_jump = None;
                 self.follow.latest();
             }
+            Action::Stop(turn) => return Release::Stop(turn),
             Action::Group(id) => {
                 if !self.expanded.remove(&id) {
                     self.expanded.insert(id);
@@ -276,7 +281,7 @@ impl Ui {
             }
             Action::Close => self.overlay = None,
         }
-        true
+        Release::Handled
     }
 
     pub(in crate::view) fn open_markdown(&mut self, file: NamedFile, m: &mut Model) {
@@ -393,6 +398,47 @@ mod tests {
     use mdshared_ui::gfx::Gfx;
 
     #[test]
+    fn working_stop_in_both_surfaces_requires_the_same_turn_at_press_and_release() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let mut model = Model::new(crate::view::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(740, 220);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        for (chat, width) in [(false, 350.0), (true, 740.0)] {
+            let mut ui = Ui::default();
+            ui.set_chat(chat);
+            let draw = |ui: &mut Ui, p: &mut Painter, model: &mut Model| {
+                ui.draw(
+                    p,
+                    &mdshared_ui::theme::DARK,
+                    Rect::new(0.0, 0.0, width, 220.0),
+                    model,
+                    (-1.0, -1.0),
+                    Instant::now(),
+                    false,
+                );
+            };
+            let one = Turn(1, 2);
+            let two = Turn(1, 3);
+            ui.set_working(Some(Footer {
+                label: "✻ Shimmying… (53m 37s · ↓ 27.1k tokens)".into(), stop: Some(one)
+            }));
+            draw(&mut ui, &mut p, &mut model);
+            let r = ui.hits.iter().find_map(|(r, action)| (*action == Action::Stop(one)).then_some(*r)).unwrap();
+            let (x, y) = (r.cx(), r.cy());
+            ui.press(x, y, 1, Mods::default(), &mut model);
+            assert_eq!(ui.release(x, y, Mods::default(), &mut model), Release::Stop(one));
+            ui.press(x, y, 1, Mods::default(), &mut model);
+            ui.set_working(Some(Footer { label: "Working… (0s)".into(), stop: Some(two) }));
+            draw(&mut ui, &mut p, &mut model);
+            assert_eq!(ui.release(x, y, Mods::default(), &mut model), Release::Handled);
+            ui.set_working(None);
+            draw(&mut ui, &mut p, &mut model);
+            assert!(ui.hits.iter().all(|(_, action)| !matches!(action, Action::Stop(_))));
+        }
+    }
+
+    #[test]
     fn conversation_scrollbar_pages_drags_resumes_follow_and_releases_outside() {
         let demo = crate::demo::Transcript::new().unwrap();
         let source = crate::view::model::Source::File(demo.path().into());
@@ -419,7 +465,7 @@ mod tests {
             assert!(matches!(ui.pointer_cursor(800.0, 500.0), Some(Cursor::Default)));
             assert!(ui.moved(100.0, 120.0));
             assert_eq!(ui.offset, 0.0);
-            assert!(ui.release(800.0, 500.0, Mods::default(), &mut model));
+            assert_eq!(ui.release(800.0, 500.0, Mods::default(), &mut model), Release::Handled);
             assert_eq!(ui.offset, 800.0);
             assert!(ui.follow.active());
             assert!(!ui.scroll_dragging());
@@ -453,7 +499,7 @@ mod tests {
             let chip = ui.hits.iter().find_map(|(r, a)| matches!(a, Action::File(_)).then_some(*r)).unwrap();
             let (x, y) = (chip.cx(), chip.cy());
             ui.press(x, y, 1, Mods::default(), &mut model);
-            assert!(ui.release(x, y, Mods::default(), &mut model));
+            assert_eq!(ui.release(x, y, Mods::default(), &mut model), Release::Handled);
             // Visible pictures can wake the same worker while the named file is
             // still queued. Drive collection until the requested viewer is drawn.
             for _ in 0..8 {

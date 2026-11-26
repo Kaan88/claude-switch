@@ -216,6 +216,8 @@ pub enum Refusal {
     NotLoggedIn(String),
     /// The desktop app's executable was not found.
     NoDesktopApp,
+    /// Installed candidate exists, but it could not be verified for launch.
+    UnverifiedDesktopApp,
     /// A file or folder could not be read or written; the text names it and says why.
     Io(String),
     /// A name or value that cannot be used (an empty account name, a slug that exists).
@@ -239,6 +241,9 @@ impl std::fmt::Display for Refusal {
             Refusal::NoSuchSession(s) => write!(f, "There is no session {s}."),
             Refusal::NotLoggedIn(s) => write!(f, "The account \"{s}\" is not signed in to the CLI yet."),
             Refusal::NoDesktopApp => write!(f, "The Claude desktop app was not found on this computer."),
+            Refusal::UnverifiedDesktopApp => {
+                write!(f, "The Claude desktop app was found, but its installation could not be verified.")
+            }
             Refusal::Io(s) | Refusal::Invalid(s) => f.write_str(s),
         }
     }

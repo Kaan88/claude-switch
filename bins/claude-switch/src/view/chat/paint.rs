@@ -117,7 +117,7 @@ impl AppState {
         } else if chat.reason == Some(Reason::Tool) && l.conversation.h > 25.0 {
             let row = Rect::new(
                 l.conversation.x + 12.0,
-                l.conversation.bottom() - 26.0,
+                l.conversation.bottom() - pane.ui.footer_height(l.conversation.w, pane.model.agent.is_none()) - 26.0,
                 (l.conversation.w - 24.0).max(0.0),
                 24.0,
             );

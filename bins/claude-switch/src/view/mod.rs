@@ -9,6 +9,7 @@ mod pictures;
 mod preview;
 mod text;
 mod ui;
+mod working;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
@@ -39,6 +40,7 @@ pub struct Window {
     text_focus: bool,
     pub drops: attach::DropBatch,
     pub demo_permission: bool,
+    pub demo_working: bool,
 }
 
 impl Window {
@@ -54,6 +56,7 @@ impl Window {
             text_focus: false,
             drops: Default::default(),
             demo_permission: false,
+            demo_working: false,
         }
     }
 }
@@ -64,6 +67,7 @@ pub struct Pane {
     pub(crate) transcript_source: model::Source,
     verified_path: Option<PathBuf>,
     ui: ui::Ui,
+    working: working::Working,
     cwd: PathBuf,
     next: Option<Instant>,
     _demo: Option<crate::demo::Transcript>,
@@ -180,6 +184,9 @@ impl AppState {
         );
         let preview = self.config.appearance.backdrop != "off";
         let permission = self.session_view.demo_permission;
+        if self.session_view.demo_working {
+            terminal.feed("\r\n✻ Shimmying… (53m 37s · ↓ 27.1k tokens)\r\n  esc to interrupt".as_bytes());
+        }
         if permission {
             terminal.feed("\r\nDo you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\nEsc to cancel".as_bytes());
         }
@@ -261,7 +268,17 @@ impl AppState {
         chat.enabled = self.win_file.chat_default;
         let mut ui = ui::Ui::default();
         ui.set_chat(chat.enabled);
-        Pane { model, transcript_source: source, verified_path: None, ui, cwd, next: None, _demo: None, chat }
+        Pane {
+            model,
+            transcript_source: source,
+            verified_path: None,
+            ui,
+            working: Default::default(),
+            cwd,
+            next: None,
+            _demo: None,
+            chat,
+        }
     }
 
     pub fn layout_session_view(&mut self, cx: &mut Cx<'_, Msg>, area: Rect) -> Rect {
@@ -320,6 +337,7 @@ impl AppState {
             }
         }
         self.chat_input_tick(cx);
+        self.update_working(cx);
     }
 
     pub fn draw_session_view(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect, pal: &Palette) {
@@ -404,7 +422,15 @@ impl AppState {
         if !self.nothing_over() {
             return false;
         }
-        self.shown_pane(cx.size().0).is_some_and(|pane| pane.ui.release(x, y, cx.mods(), &mut pane.model))
+        let Some(pane) = self.shown_pane(cx.size().0) else { return false };
+        match pane.ui.release(x, y, cx.mods(), &mut pane.model) {
+            ui::Release::Miss => false,
+            ui::Release::Handled => true,
+            ui::Release::Stop(turn) => {
+                self.stop_conversation(cx, Some(turn));
+                true
+            }
+        }
     }
 
     pub fn session_move(&mut self, x: f32, y: f32) -> Option<bool> {

@@ -352,6 +352,7 @@ impl AppState {
 
     pub fn chat_control(&mut self, cx: &mut Cx<'_, Msg>, control: Control) {
         match control {
+            Control::Stop => return self.stop_conversation(cx, None),
             Control::Model | Control::Effort => return self.chat_choice_menu(control),
             Control::Context => return self.chat_run_slash(cx, "/context".into(), false),
             Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
@@ -361,13 +362,10 @@ impl AppState {
             }
             _ => {}
         }
-        if matches!(control, Control::Send | Control::Override | Control::SendNow | Control::PressEnter | Control::Stop)
-        {
-            // Don't let a pre-click tick submit the queue before processing an explicit Stop or Send now.
-            let woke = self.pump_terms();
-            if woke.output || woke.strip || woke.all {
-                cx.request_redraw_all();
-            }
+        if matches!(control, Control::Send | Control::Override | Control::SendNow | Control::PressEnter) {
+            // Don't let a pre-click tick submit the queue before processing an explicit Send now.
+            // Stop returned above through `stop_conversation`, which wakes the terminals itself.
+            self.term_woke(cx);
         }
         let Some(tab) = self.tabs.shown_mut() else { return };
         let Some(pane) = &mut tab.pane else { return };
@@ -407,19 +405,42 @@ impl AppState {
             Control::MoreChips => chat.chip_page = (chat.chip_page + 1) % chat.attachment_pages(),
             Control::Attach if !chat.locked() => self.chat_attach_menu(),
             Control::CancelSend => chat.stop_waiting(),
-            Control::Send | Control::Override | Control::SendNow => {
+            Control::Send | Control::Override | Control::SendNow
                 if control == Control::Send
                     || (control == Control::SendNow && chat.queue.is_some())
-                    || (control == Control::Override && chat.queue.is_none() && chat.error == Some(submission::CHECK))
-                {
-                    Self::chat_send(tab, cx.now(), control != Control::Send);
-                }
+                    || (control == Control::Override
+                        && chat.queue.is_none()
+                        && chat.error == Some(submission::CHECK)) =>
+            {
+                Self::chat_send(tab, cx.now(), control != Control::Send);
             }
             Control::PressEnter => Self::retry_enter(tab, cx.now()),
-            Control::Stop => Self::chat_stop(tab, cx.now()),
             _ => {}
         }
         self.arm_chat_tick(cx);
+    }
+
+    pub(in crate::view) fn stop_conversation(
+        &mut self,
+        cx: &mut Cx<'_, Msg>,
+        expected: Option<crate::view::working::Turn>,
+    ) {
+        self.term_woke(cx);
+        if !self.nothing_over() || self.picture_overlay() || self.usage.popup.open {
+            return;
+        }
+        let Some(tab) = self.tabs.shown_mut() else { return };
+        let Some(pane) = &mut tab.pane else { return };
+        let info = &pane.model.chat;
+        if pane.model.error.is_none()
+            && expected.is_none_or(|key| key.0 == info.generation && Some(key.1) == info.prompt)
+            && pane.chat.stop_ready(info, &tab.term, &tab.program_title, cx.now())
+        {
+            // One Stop path for the button and the working line: it also lets a queued draft
+            // learn that the turn was interrupted (submission.rs).
+            Self::chat_stop(tab, cx.now());
+            self.update_working(cx);
+        }
     }
 
     pub fn chat_attach(&mut self, id: u64, files: &[PathBuf]) {
