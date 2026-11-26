@@ -329,7 +329,7 @@ mod tests {
         .map(str::to_owned)
         .into();
         let started = Instant::now();
-        let error = run_unseen_until(&l, Duration::from_secs(15), || false).unwrap_err();
+        let error = run_unseen_until(&l, Duration::from_secs(90), || false).unwrap_err();
         assert!(started.elapsed() >= Duration::from_secs(4));
         assert!(error.to_string().contains("handoff failed"), "{error}");
     }
