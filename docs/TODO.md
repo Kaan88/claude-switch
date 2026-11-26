@@ -576,3 +576,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
       permission was given or a rule lifted; when partial summaries conflict the later wins and items a later part
       shows done are dropped; Files leaves out temp and scratchpad paths and keeps about the 30 most recent; the
       task list is marked as possibly stale.
+58. **Pictures in the conversation as thumbnails, as in Claude Desktop** (owner, 2026-11-27, screenshot: a tool
+    result's picture shows only as a bar "Picture · Tool result picture 1"). Show every picture in the conversation
+    (the user's pasted pictures, pictures in tool results such as screenshots and Read of an image) as an inline
+    thumbnail at a bounded size (about 240 px on the long side, aspect kept), decoded off the window thread and
+    cached, with the label as its caption; a click opens it enlarged (the existing viewer). Same in the Session
+    view. Keep a placeholder with the reason when a picture cannot be decoded or is over the size limit.
