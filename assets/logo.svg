@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 16 16" role="img" aria-labelledby="title">
+  <title id="title">Claude Switch: two opposing arrows</title>
+  <rect x="0.5" y="0.5" width="15" height="15" rx="3.5" fill="#D97757"/>
+  <polygon points="3,4 9,4 9,2 13,5 9,8 9,6 3,6" fill="#FAF9F5"/>
+  <polygon points="13,10 7,10 7,8 3,11 7,14 7,12 13,12" fill="#3D2A22"/>
+</svg>

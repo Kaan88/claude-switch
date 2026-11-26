@@ -1,1 +1,8 @@
 target/
+dist/
+*.png
+!/docs/**/*.png
+!/assets/logo-256.png
+.idea/
+.vscode/
+.vs/

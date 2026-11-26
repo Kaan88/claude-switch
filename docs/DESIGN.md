@@ -48,7 +48,8 @@ that pid is alive.
   `organizationName`, `planDisplayName`, and the user-scope `mcpServers`), and its own `projects`,
   `sessions`, `settings.json`, `skills`, `agents`, `plugins`. Without the variable the CLI uses
   `%USERPROFILE%\.claude`, and its `.claude.json` is `%USERPROFILE%\.claude.json` (beside the folder, not
-  in it). `claude auth status` prints JSON with `"loggedIn"`; `claude auth login` signs in.
+  in it). The Accounts dialog reads these per-account records directly and checks that the credentials
+  file exists without opening it. `claude auth status` prints JSON with `"loggedIn"`; `claude auth login` signs in.
 - Desktop: the app is an MSIX package; its executable is in the command registered for the `claude:`
   protocol (`HKCU\Software\Classes\claude\shell\open\command`). Started with
   `--user-data-dir=<dir>` it runs as a second, separate copy with its own login, beside the normal one.
@@ -73,11 +74,42 @@ A further account **shares** with the first, so nothing has to be kept in step b
 - copied on every launch from the first account's `.claude.json` into its own: the `mcpServers` key only;
 - never shared: `.credentials.json`, `oauthAccount`, `sessions`.
 
+A hard-linked file stops being a link when a program saves it by writing a temporary file and renaming
+it. Before every launch the links are looked at again: a copy with the same content is linked again; a
+copy that differs is the owner's to settle and is never overwritten (it shows as a conflict).
+
+Found on this computer and allowed for: the desktop records' folder also holds JSON files that are not
+session records (only files with a `cliSessionId` count); `sessions/` also holds `<pid>.<hash>.key`
+files (only numeric `<pid>.json` is read); entrypoints seen are `cli`, `sdk-cli`, `sdk-ts` and
+`claude-desktop`.
+
 ## The safeguard
 
-Before any launch or carry, the running sessions of every account are read again. A session that is
+Before resuming or carrying a session, the running sessions of every account are read again, including
+those in a removed account's remaining CLI folder. A session that is
 running anywhere is not started a second time; the app says where it runs (which app, which pid).
 Several different sessions on one account at once are fine.
+
+**Open a copy.** The button under the "Open elsewhere" bar and the "Open a copy in CLI" command palette
+entry use `launch::fork` (`claude --resume <id> --fork-session`) to continue in a new session. The
+desktop app keeps a live process for sessions it has open, even idle ones, so resuming those sessions
+is refused. Opening a copy leaves the original alone and is safe without a Desktop hand-over.
+
+**Desktop warning.** When a session is no longer running but the desktop app still lists it, opening
+it in the CLI asks first: do not continue it in Desktop while it is open here. If changing accounts
+also triggers the cold-cache warning, both warnings appear in one Continue/Cancel dialog, never two.
+
+A session that was just started is not in the running list for a few seconds. Every start is therefore
+written to `<appdata>/claude-switch/history.json` (session id, account, time) before the program is
+started, and a second start of the same session within 20 seconds is refused. The same file says which
+account a session last ran as, for the cold-cache warning.
+
+A launch never passes on the identity of the session the app itself was started from: the login and
+session variables of Claude Code (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDECODE`, …) are
+removed from the environment of everything it starts.
+
+Not settled (needs a second signed-in account to try): which copy of the desktop app receives
+`claude --desktop --resume` when two are running.
 
 ## What a launch is
 
@@ -85,9 +117,69 @@ One value, `Launch`, says program, arguments, folder and environment. The window
 an embedded terminal tab (`mdshared-pty` + `mdshared-term`), an external terminal window, or a detached
 process (the desktop app). The core never spawns anything itself except `claude auth status`.
 
+**New session.** The toolbar button asks for a folder and account first. It starts with the selected
+session's folder (or home when none is selected) and the current account. The four most recent
+distinct folders are shortcuts to fill the field. Start or Enter checks that the folder exists;
+Cancel or Escape closes the dialog without starting anything.
+
 ## Workers
 
 The owner's bridge (`claude-flash-bridge`) runs Claude Code workers with `claude -p`. A setting here says
 which account they use; it is written to `%USERPROFILE%\.config\opencode-bridge\workers.json` as the
 top-level keys `claudeAccounts` (the CLI folders) and `claudeWorkersUse` (`"same"`, `"other"`, or one of
 the folders). The bridge reads them.
+
+## Terminal tabs
+
+With the setting "Open CLI sessions in a tab of this window" on (the default), a launch that needs a
+terminal (`Place::Terminal`: resume or start a CLI session, sign in) opens a tab of the window instead of
+an external terminal; detached launches (the desktop app) are unchanged, and the demo starts nothing. A
+strip under the top bar shows the tabs; with no terminal tab it is hidden and the window is as before.
+
+- **The first tab** is "Sessions": the list and the details, always there, never closed.
+- **A terminal tab** holds the program in a pseudo-terminal (`mdshared-pty`, ConPTY), its screen with
+  10 000 lines of scrollback (`mdshared-term`), drawn by the toolkit's `termview` in the mono face at
+  13 logical px by default; the view's scroll offset and selection; its title (the launch's label, replaced by the title the
+  program sets); the account's colour as a dot; for a session, the session id and account slug. The grid
+  fills the client area under the strip; every layout change resizes the screen and the pseudo-terminal.
+- **When the program ends** the tab stays, showing its launch label with ` (ended)` in the strip and a
+  last line `[ended with code N - press Enter to close]`; Enter or the close button closes it.
+- **Keys** go to the program while a terminal tab is shown, as an xterm sends them. The window keeps
+  Ctrl+Tab and Ctrl+Shift+Tab (next and previous tab), Ctrl+Shift+W (close the tab), Ctrl+Shift+T (a
+  plain shell in the selected session's folder), Ctrl+Shift+K (the command palette; Ctrl+K is the
+  program's), Ctrl+Shift+C and Ctrl+Shift+V (copy, paste; Ctrl+C copies only while something is
+  selected) and Shift+Page Up/Down (scroll back). A middle click on a tab closes it.
+- **Mouse**: the wheel scrolls the scrollback 3 lines a notch, is reported to a program that asked for
+  the mouse, and is arrow keys on the alternate screen of one that did not. Drag selects (double click a
+  word, triple click a line, Alt a block); with mouse reporting on, Shift+drag selects. The drag requests
+  a redraw only when the selected cells change. Copying is by key only, not on release.
+
+**The safeguard, for tabs.** A session open in a tab counts as running at once, before any
+`sessions/<pid>.json` says so: opening it again shows its tab ("Already open in a tab"), and the list
+shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
+running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
+
+**Not there:** split panes, moving tabs by drag, search in the scrollback, links, font-family settings, tabs
+restored after a restart; Shift+Insert and the Insert key (the window host has no name for Insert);
+input-method composition (the host turns input methods off on Windows).
+
+## Appearance
+
+Settings has navigable Appearance, Terminal, and Custom colours sections (as well as Workers and
+Sessions). The window theme is System, Light or Dark; `--theme light|dark` overrides that preference.
+Windows high contrast takes priority. The toolkit's appearance model supplies the accent (theme,
+system or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
+Mica and Acrylic are optional on Windows 11 in the title bar, capped at 15% compositor colour.
+The terminal grid, its padding, and the strip it joins stay opaque.
+
+Automatic terminal colours use Dark (`#101010`) or Light according to the effective window theme.
+Match window uses the window bar background. Custom lets the user pick the background, text and
+accent; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
+changes resize all open screens and pseudo-terminals. The cursor is steady by default; enabling blink
+also respects the program's request, the system caret setting and reduced motion. The program sets
+the cursor shape.
+
+Tab marks, hover, menu entrances, the dialog dimmer, sessions-list selection and settings controls
+animate briefly. Reduce motion snaps them to their targets, as does the system setting. Tab content
+switches instantly; terminal text never cross-fades. Real-mode running-session scans are unchanged,
+but a polling tick no longer redraws the window unless visible state changes.

@@ -1,0 +1,51 @@
+name: Release
+
+'on':
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Find or install Inno Setup
+        run: |
+          $candidates = @(
+            foreach ($base in ${env:ProgramFiles(x86)}, $env:ProgramFiles, "$env:LOCALAPPDATA\Programs") {
+              if ($base) {
+                Join-Path $base 'Inno Setup 6\ISCC.exe'
+                Join-Path $base 'Inno Setup 7\ISCC.exe'
+              }
+            }
+          )
+          $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed ($LASTEXITCODE)." }
+            $iscc = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'Could not locate ISCC.exe.' }
+          "ISCC=$iscc" >> $env:GITHUB_ENV
+      - name: Build and package
+        run: .\tools\package.ps1 -AppVersion $env:GITHUB_REF_NAME.Substring(1) -Iscc $env:ISCC
+      - name: Publish installer and bare executable
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: |
+            dist/claude-switch-setup.exe
+            target/release/claude-switch.exe
