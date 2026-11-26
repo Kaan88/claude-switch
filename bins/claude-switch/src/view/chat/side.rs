@@ -218,10 +218,11 @@ pub(in crate::view) fn activate(pane: &mut Pane, tab: u64, side: Side, hit: Hit)
     Activated::None
 }
 
-/// The newest plan update in the loaded conversation: where the task list was last set.
+/// The newest plan or native task update in the loaded conversation: where the task list was
+/// last set.
 fn plan_update(model: &Model) -> Option<ItemId> {
     model.items.iter().rev().find_map(|(&id, item)| {
-        matches!(&item.kind, ItemKind::Tool { name, .. } if matches!(name.as_str(), "TodoWrite" | "mcp__ccd_turn__update_plan"))
+        matches!(&item.kind, ItemKind::Tool { name, .. } if matches!(name.as_str(), "TodoWrite" | "mcp__ccd_turn__update_plan" | "TaskCreate" | "TaskUpdate"))
             .then_some(id)
     })
 }

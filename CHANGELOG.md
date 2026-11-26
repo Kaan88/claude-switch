@@ -19,6 +19,7 @@
   (click to enlarge) instead of a "Picture" bar; a picture that cannot be shown says why. Other
   outputs say what they are with an icon and a kind (PDF, document, link, pull request with its
   repository and number, …), in the conversation and in Details › Outputs.
+- Details panel: the Tasks tab follows Claude Code's TaskCreate/TaskUpdate tasks, not only TodoWrite.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 
