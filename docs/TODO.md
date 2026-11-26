@@ -433,3 +433,17 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     item 14: move the pin from 137121c to 7fd559f and wire the search box, name dialogs, new session
     and settings fields to it. Waiting for the owner's go.
 
+25. **Answer Claude's questions in the Chat view** (owner, 2026-11-26, screenshot: an AskUserQuestion
+    menu "Who builds" with four options, "Type something" and "Chat about this", shown only in the
+    terminal drawer). This is mock-up C, now wanted for questions. Today the drawer sometimes opens
+    for a question and sometimes not, the conversation shows "Working… (3m 11s)" while Claude is
+    waiting for the answer, and the composer says "Open the terminal to check". Wanted: the question
+    as a card in the conversation, built from the transcript's AskUserQuestion tool call (header,
+    question, options with descriptions, multi-select where set), not scraped from the screen; a
+    click answers it by sending the option's keys only after the screen shows that same menu (fail
+    closed, say why); "Type something" and "Chat about this" as a text field in the card; the working
+    line says "Waiting for your answer" instead of Working; the drawer opens by itself only when the
+    card cannot be answered from the chat. Permission questions stay terminal-only unless decided
+    otherwise (DESIGN.md: no generated permission answers). Also in the screenshot: the conversation
+    above was empty in a fresh handover session (check that the Chat view attaches to the new
+    transcript).
