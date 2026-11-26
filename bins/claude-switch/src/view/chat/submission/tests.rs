@@ -1,4 +1,7 @@
+use super::report::{Choice, reported_effort, reported_model};
 use super::*;
+use crate::view::chat::QUIET;
+use mdshared_term::Screen;
 
 #[test]
 fn image_confirmation_requires_the_cursor_prompt_and_a_whole_numeric_marker() {
@@ -62,8 +65,51 @@ fn unchanged_screen_reports_are_not_confirmation_but_repeated_new_reports_are() 
 
 #[test]
 fn slash_refuses_controls_and_requires_a_command_name() {
-    assert_eq!(slash_bytes("/model sonnet").unwrap(), b"/model sonnet\r");
+    assert_eq!(slash_bytes("/model sonnet").unwrap(), b"/model sonnet");
     assert!(slash_bytes("/").is_none());
     assert!(slash_bytes("/ model").is_none());
     assert!(slash_bytes("/effort low\r/model").is_none());
+}
+
+#[test]
+fn boxed_prompt_ignores_sgr_faint_placeholders_but_never_typed_text_or_menus() {
+    fn boxed(content: &str) -> Screen {
+        let mut screen = Screen::new(80, 12, 0);
+        screen.feed(
+            format!(
+                "    ╭{}╮\r\n    │ ❯ {content}{}│\r\n    ╰{}╯\r\n    Sonnet 5.5 · ? for shortcuts\x1b[2;9H",
+                "─".repeat(41),
+                " ".repeat(38 - content.replace("\x1b[2m", "").replace("\x1b[22m", "").chars().count()),
+                "─".repeat(41)
+            )
+            .as_bytes(),
+        );
+        screen
+    }
+    let faint = "\x1b[2mTry \"fix lint errors\"\x1b[22m";
+    let mut screen = boxed(faint);
+    assert!(clean_prompt(&screen));
+    screen.feed(b"\x1b[2;14H");
+    assert!(clean_prompt(&screen), "cursor can sit before or on the placeholder");
+    assert!(!clean_prompt(&boxed("Try \"fix lint errors\"")));
+    assert_eq!(prompt(&boxed("/model sonnet")).as_deref(), Some("/model sonnet"));
+    assert_eq!(prompt(&boxed("[Image #3]")).as_deref(), Some("[Image #3]"));
+    screen.feed(" \x1b[5;1H↑↓ navigate · Enter to select · Esc to cancel\x1b[2;9H".as_bytes());
+    assert!(!clean_prompt(&screen));
+    let mut screen = boxed(faint);
+    screen.feed(b"\x1b[5;1HDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel\x1b[2;9H");
+    assert!(!clean_prompt(&screen));
+    let mut screen = boxed(faint);
+    screen.feed("\x1b[?1049h❯ ".as_bytes());
+    assert!(!clean_prompt(&screen));
+}
+
+#[test]
+fn an_apparently_empty_row_cannot_be_the_head_or_tail_of_wrapped_terminal_input() {
+    let mut screen = Screen::new(12, 8, 0);
+    screen.feed("❯           existing text\x1b[1;3H".as_bytes());
+    assert!(!clean_prompt(&screen));
+    let mut screen = Screen::new(12, 8, 0);
+    screen.feed("earlier text❯ ".as_bytes());
+    assert!(!clean_prompt(&screen));
 }

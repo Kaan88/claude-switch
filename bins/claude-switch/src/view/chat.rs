@@ -144,6 +144,7 @@ pub struct Chat {
     retry: Option<Intent>,
     queue: Option<Queue>,
     image_wait: Option<ImageWait>,
+    staging: submission::Staging,
     commands: commands::Picker,
     cli_report: submission::CliReport,
     output_epoch: u64,
@@ -161,6 +162,8 @@ pub struct Chat {
     demo_progress: bool,
     #[cfg(test)]
     writes: Vec<Vec<u8>>,
+    #[cfg(test)]
+    fail_enter_once: bool,
     layout: Layout,
 }
 
@@ -192,6 +195,10 @@ impl Chat {
 
     pub(super) fn invalidate_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.interrupt_submission();
+        self.watermark_input(info, end);
+    }
+
+    pub(super) fn watermark_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.invalidate(info);
         self.input_floor = Some(end.unwrap_or(u64::MAX));
     }

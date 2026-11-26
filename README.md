@@ -250,10 +250,12 @@ edit jumps to that tool call in the conversation.
 | Up from an empty composer, then Up / Down | Recall earlier prompts from the loaded transcript |
 | Click, drag or Shift+click; double- or triple-click | Place the caret, extend a selection, select a word, or select everything |
 | Right-click in the composer | Cut, Copy, Paste, Select all |
-| Ctrl+V, **Attach…**, or file drop | Paste text or attach a clipboard picture; pick or drop files. Attachments appear inside the box |
+| Ctrl+V / Ctrl+Shift+V | Paste text if available (otherwise a picture) / paste a picture explicitly |
+| **Attach…** or file drop | Choose files or **Paste picture** from the menu, or drop files into Chat |
 | `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
 | **Model**, **Effort**, **Context**, **Compact**, **Clear** | Apply a choice or run the CLI command. Compact and Clear ask first |
-| **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending |
+| **Queue**, **Send now**, **Cancel** | Wait for the turn to end, try sending now, or keep the draft without sending; the queue also runs in background tabs |
+| **Press Enter** | Retry only the Enter key after the input was staged, without pasting it again |
 
 Chat shows why it held a draft. Neither **Send anyway** nor **Send now** overrides a recognized
 permission question or pending interaction. For pictures, Chat waits for Claude Code to display a new

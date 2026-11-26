@@ -70,9 +70,17 @@ pub struct Pane {
 }
 
 impl Pane {
+    fn transcript_end(&self) -> Option<u64> {
+        let meta = std::fs::symlink_metadata(self.verified_path.as_ref()?).ok()?;
+        meta.is_file().then_some(meta.len())
+    }
+
     pub(crate) fn note_terminal_input(&mut self) {
-        let end = self.verified_path.as_ref().and_then(|p| std::fs::symlink_metadata(p).ok()).filter(|m| m.is_file());
-        self.chat.invalidate_input(&self.model.chat, end.map(|m| m.len()));
+        self.chat.invalidate_input(&self.model.chat, self.transcript_end());
+    }
+
+    fn note_composer_input(&mut self) {
+        self.chat.watermark_input(&self.model.chat, self.transcript_end());
     }
     pub fn restore_chat_layout(&mut self, chat: bool) {
         self.chat.enabled = chat;
@@ -275,11 +283,13 @@ impl AppState {
 
     pub fn session_tick(&mut self, cx: &mut Cx<'_, Msg>, output: bool) {
         if cx.window().is_minimized() == Some(true) {
+            self.chat_input_tick(cx);
             return;
         }
         let width = cx.size().0;
         let now = cx.now();
         if !self.session_visible(width) {
+            self.chat_input_tick(cx);
             return;
         }
         let Some(tab) = self.tabs.shown_mut() else { return };
@@ -296,6 +306,7 @@ impl AppState {
 
     pub fn session_ready(&mut self, cx: &mut Cx<'_, Msg>) {
         if !self.session_visible(cx.size().0) || cx.window().is_minimized() == Some(true) {
+            self.chat_input_tick(cx);
             return;
         }
         let area = self.session_view.pane_area;

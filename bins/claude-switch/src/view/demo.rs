@@ -125,7 +125,7 @@ fn seed_chat(file: &mut File, cwd: &Path) -> io::Result<()> {
     writeln!(
         file,
         "{}",
-        json!({"type":"assistant","message":{"model":"Demo Sonnet","stop_reason":"tool_use","usage":{
+        json!({"type":"assistant","message":{"model":"claude-sonnet-5-5","stop_reason":"tool_use","usage":{
             "input_tokens":843, "cache_read_input_tokens":3580
         }}})
     )

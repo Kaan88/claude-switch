@@ -12,11 +12,22 @@ use crate::tabs::Tab;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuMode {
     Editor,
+    Attach,
     Model,
     Effort,
 }
 
 impl AppState {
+    pub(super) fn chat_attach_menu(&mut self) {
+        let Some(tab) = self.tabs.shown() else { return };
+        let Some(anchor) = self.hits.iter().find_map(|(r, t)| (*t == Target::Chat(Control::Attach)).then_some(*r))
+        else {
+            return;
+        };
+        let items = vec![Item::new(0, "Choose files…"), Item::new(1, "Paste picture")];
+        self.menu = Some((MenuKind::Chat(tab.id, MenuMode::Attach), Menu::new(items, 0.0, 0.0, false).around(anchor)));
+    }
+
     pub fn chat_editor_menu(&mut self, x: f32, y: f32) {
         self.mouse = (x, y);
         self.clear_session_text_focus();
@@ -67,7 +78,7 @@ impl AppState {
                 match index {
                     0 if !chat.locked() => chat.editor_copy(true),
                     1 => chat.editor_copy(false),
-                    2 if !chat.locked() => chat.paste_clipboard(),
+                    2 if !chat.locked() => chat.paste_clipboard(false),
                     3 => chat.editor.select_all(),
                     _ => (),
                 }
@@ -75,6 +86,15 @@ impl AppState {
                     self.chat_editor_changed();
                 }
             }
+            MenuMode::Attach if !chat.locked() => {
+                if index == 0 {
+                    let cwd = self.tabs.shown().unwrap().pane.as_ref().unwrap().cwd.clone();
+                    self.attach_picker(Some(&cwd), true);
+                } else if index == 1 {
+                    chat.paste_clipboard(true);
+                }
+            }
+            MenuMode::Attach => {}
             MenuMode::Model if index as usize == commands::MODELS.len() => {
                 self.chat_run_slash(cx, "/model".into(), false);
             }
@@ -212,6 +232,7 @@ impl AppState {
         if let Some(confirm) = Self::prepare_slash(tab, cx.now(), &line, from_editor) {
             self.dialog = Some(confirm);
         }
+        self.arm_chat_tick(cx);
     }
 
     pub(super) fn prepare_slash(tab: &mut Tab, now: Instant, line: &str, from_editor: bool) -> Option<Dialog> {

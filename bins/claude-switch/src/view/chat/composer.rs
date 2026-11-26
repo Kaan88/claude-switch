@@ -16,6 +16,7 @@ pub(super) struct Draw<'a> {
 
 const PICKER_HEADER: f32 = 22.0;
 const PICKER_ROW: f32 = 25.0;
+const PILL_FONT: f32 = 11.5;
 
 pub(super) struct Suggestions {
     bounds: Rect,
@@ -53,8 +54,9 @@ impl Chat {
             .filter(|r| *r == super::Reason::Permission)
             .map(super::Reason::label)
             .or(self.error)
+            .or_else(|| self.recovery_notice())
             .or_else(|| self.reason.map(super::Reason::label))
-            .or_else(|| self.image_wait.as_ref().map(|_| "Waiting for Claude Code to confirm the picture…"))
+            .or_else(|| self.waiting())
             .or_else(|| {
                 self.queue.as_ref().map(|_| {
                     if self.last_gate == Some(Gate::Running) {
@@ -95,6 +97,36 @@ impl Draw<'_> {
         let target = Target::Chat(control);
         button(p, self.pal, r, label, self.hover == Some(target), picked);
         self.hits.push((r, target));
+    }
+
+    fn pill(&mut self, p: &mut Painter, r: Rect, label: &str, control: Control, picked: bool, enabled: bool) {
+        let target = Target::Chat(control);
+        let hover = enabled && self.hover == Some(target);
+        let accent = picked && control == Control::Send;
+        let fill = if accent {
+            self.pal.accent
+        } else if hover {
+            self.pal.hover
+        } else if picked {
+            self.pal.on
+        } else {
+            self.pal.bar
+        };
+        let ink = if accent {
+            self.pal.on_accent
+        } else if picked {
+            self.pal.accent
+        } else if enabled {
+            self.pal.text
+        } else {
+            self.pal.muted
+        };
+        p.rbox(r, r.h / 2.0, fill);
+        debug_assert!(p.measure(Face::Semibold, PILL_FONT, label) <= r.w - 8.0, "{label} exceeds {}", r.w);
+        p.text_center(Face::Semibold, PILL_FONT, r, label, ink);
+        if enabled {
+            self.hits.push((r, target));
+        }
     }
 
     fn attachments(&mut self, p: &mut Painter, chat: &Chat) {
@@ -193,10 +225,18 @@ impl Draw<'_> {
             self.hit(p, Rect::new(x, r.y + 2.0, w, r.h - 4.0), text, control, false);
             x -= 4.0;
         };
-        if chat.locked() {
+        if chat.enter_only() {
+            add("Cancel", 54.0, Control::CancelSend);
+            if chat.reason.is_none() {
+                add("Press Enter", 94.0, Control::PressEnter);
+            }
+        } else if chat.locked() {
             add("Cancel", 54.0, Control::CancelSend);
             if chat.queue.is_some() {
                 add("Send now", 76.0, Control::SendNow);
+                if chat.last_gate == Some(Gate::Running) && chat.can_stop(info) {
+                    add("Stop", 47.0, Control::Stop);
+                }
             }
         } else if chat.error == Some(submission::CHECK) && chat.last_gate == Some(Gate::Check) && chat.reason.is_none()
         {
@@ -211,33 +251,35 @@ impl Draw<'_> {
         let l = chat.layout;
         let r = l.toolbar;
         let mut x = r.x + 1.0;
-        let model = chat.cli_report.model.as_deref().or(info.model.as_deref()).unwrap_or("—");
+        let model = chat.cli_report.model.as_deref().or(info.model.as_deref()).unwrap_or("Model");
         let effort = chat.cli_report.effort.unwrap_or("—");
-        let model = format!("Model {} ▾", compact_model(model));
+        let model = model_label(p, model);
         let effort = format!("Effort {effort} ▾");
         let context = info.context.map_or_else(|| "Context —".into(), |n| format!("Context {}", tokens(n)));
         for (label, w, control) in [
-            (model.as_str(), 120.0, Control::Model),
-            (effort.as_str(), 80.0, Control::Effort),
-            (context.as_str(), 90.0, Control::Context),
-            ("Compact", 58.0, Control::Compact),
-            ("Clear", 43.0, Control::Clear),
-            ("/ …", 35.0, Control::Commands),
+            (model.as_str(), MODEL_W, Control::Model),
+            (effort.as_str(), 79.0, Control::Effort),
+            (context.as_str(), 92.0, Control::Context),
+            ("Compact", 62.0, Control::Compact),
+            ("Clear", 44.0, Control::Clear),
+            ("/ …", 32.0, Control::Commands),
         ] {
-            self.hit(
+            self.pill(
                 p,
                 Rect::new(x, r.y + 1.0, w, 24.0),
                 label,
                 control,
                 control == Control::Commands && chat.commands.open,
+                true,
             );
             x += w + 4.0;
         }
         let y = r.y + if l.stacked { 28.0 } else { 1.0 };
         let rsend = Rect::new(r.right() - 63.0, y, 61.0, 24.0);
-        let target = Target::Chat(Control::Send);
-        let armed = !chat.locked() && matches!(chat.last_gate, Some(Gate::Ready | Gate::Running));
-        let label = if chat.image_wait.is_some() {
+        let armed = !chat.locked()
+            && chat.recovery_notice().is_none()
+            && matches!(chat.last_gate, Some(Gate::Ready | Gate::Running));
+        let label = if chat.waiting().is_some() || chat.enter_only() {
             "Waiting"
         } else if chat.queue.is_some() {
             "Queued"
@@ -246,40 +288,25 @@ impl Draw<'_> {
         } else {
             "Send"
         };
-        if armed {
-            p.rbox(rsend, 6.0, self.pal.accent);
-            if self.hover == Some(target) {
-                p.rbox(rsend.inset(2.0), 4.0, self.pal.on_accent);
-            }
-            let ink = if self.hover == Some(target) { self.pal.accent } else { self.pal.on_accent };
-            p.text_center(Face::Semibold, 12.0, rsend, label, ink);
-            self.hits.push((rsend, target));
-        } else if chat.locked() {
-            button(p, self.pal, rsend, label, false, false);
-        } else {
-            self.hit(p, rsend, label, Control::Send, false);
-        }
+        self.pill(p, rsend, label, Control::Send, armed, !chat.locked());
         let mut x = rsend.x - 4.0;
         if self.wide {
-            x -= 53.0;
-            self.hit(p, Rect::new(x, y, 53.0, 24.0), "Details", Control::Panel, !chat.side_hidden);
+            x -= 58.0;
+            self.pill(p, Rect::new(x, y, 58.0, 24.0), "Details", Control::Panel, !chat.side_hidden, true);
             x -= 4.0;
         }
-        x -= 76.0;
-        self.hit(
+        x -= 82.0;
+        self.pill(
             p,
-            Rect::new(x, y, 76.0, 24.0),
+            Rect::new(x, y, 82.0, 24.0),
             if chat.drawer == Drawer::Closed { "Terminal ▴" } else { "Terminal ▾" },
             Control::Drawer,
             chat.drawer != Drawer::Closed,
+            true,
         );
         x -= 63.0;
         let attach = Rect::new(x, y, 59.0, 24.0);
-        if !chat.locked() {
-            self.hit(p, attach, "Attach…", Control::Attach, false);
-        } else {
-            button(p, self.pal, attach, "Attach…", false, false);
-        }
+        self.pill(p, attach, "Attach…", Control::Attach, false, !chat.locked());
     }
 
     fn suggestions(&mut self, p: &mut Painter, chat: &Chat, plan: Suggestions) {
@@ -344,16 +371,28 @@ fn short(s: &str, max: usize) -> String {
 }
 
 fn tokens(n: u64) -> String {
-    if n < 1000 {
-        n.to_string()
-    } else if n < 100_000 {
-        format!("{}.{:01}k", n / 1000, n % 1000 / 100)
-    } else {
-        format!("{}k", n / 1000)
+    for (unit, suffix) in [
+        (1_000_000_000_000_000_000, "E"),
+        (1_000_000_000_000_000, "P"),
+        (1_000_000_000_000, "T"),
+        (1_000_000_000, "B"),
+        (1_000_000, "M"),
+        (1_000, "k"),
+    ] {
+        if n >= unit {
+            let value = n / unit;
+            return if value < 100 {
+                format!("{value}.{}{suffix}", n % unit / (unit / 10))
+            } else {
+                format!("{value}{suffix}")
+            };
+        }
     }
+    n.to_string()
 }
 
 fn compact_model(model: &str) -> String {
+    let model = model.strip_prefix("Demo ").unwrap_or(model);
     if let Some(model) = model.strip_prefix("claude-") {
         for family in ["sonnet", "opus", "haiku", "fable"] {
             if model.split('-').any(|part| part == family) {
@@ -367,7 +406,26 @@ fn compact_model(model: &str) -> String {
             }
         }
     }
+    for family in ["Sonnet", "Opus", "Haiku", "Fable"] {
+        if let Some(rest) = model.strip_prefix(family) {
+            let version = rest.split_whitespace().next().filter(|s| {
+                s.len() <= 5 && s.as_bytes()[0].is_ascii_digit() && s.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+            });
+            return version.map_or_else(|| family.to_owned(), |v| format!("{family} {v}"));
+        }
+    }
     short(model, 12)
+}
+
+const MODEL_W: f32 = 104.0;
+
+fn model_label(p: &mut Painter, model: &str) -> String {
+    let mut name = compact_model(model);
+    let mut label = format!("{name} ▾");
+    while p.measure(Face::Semibold, PILL_FONT, &label) > MODEL_W - 10.0 && name.pop().is_some() {
+        label = format!("{name}… ▾");
+    }
+    label
 }
 
 #[cfg(test)]
@@ -383,9 +441,9 @@ mod tests {
         let app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
         let pal = app.pal();
         let mut info = ChatInfo::default();
-        info.model = Some("claude-sonnet-4-6".into());
+        info.model = Some("Demo Sonnet 5.5 (default)".into());
         info.context = Some(12_321);
-        for width in [760, 900, 999, 1100] {
+        for width in [760, 900, 987, 988, 999, 1100] {
             let area = Rect::new(0.0, 0.0, width as f32, 480.0);
             let layout = Layout::new(area, true, false, None, true, true);
             let mut chat =
@@ -406,6 +464,8 @@ mod tests {
             let mut hits = Vec::new();
             let mut bitmap = Bitmap::new(width, 480);
             let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+            assert_eq!(model_label(&mut p, info.model.as_deref().unwrap()), "Sonnet 5.5 ▾");
+            assert_eq!(model_label(&mut p, "claude-sonnet-5-5"), "Sonnet 5.5 ▾");
             p.fill(area, pal.page);
             Draw { pal, focused: true, wide: width >= 900, hover: None, hits: &mut hits, pins: &pins }.composer(
                 &mut p,
