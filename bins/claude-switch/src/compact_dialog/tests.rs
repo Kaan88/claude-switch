@@ -2,6 +2,27 @@ use super::*;
 use crate::dialogs;
 
 #[test]
+fn preview_names_the_continuation_without_editing_markdown_and_refuses_a_blank_name() {
+    let mut st = app();
+    let now = Instant::now();
+    let source = st.selected_session().unwrap().clone();
+    assert!(st.marks.rename(&source.id, &source.file, "Custom source"));
+    let mut dialog = Compact::new(&st, source, None);
+    dialog.apply(&mut st, Ok(Update::Preview("## Goal\n\nContinue the work.".into())));
+    assert_eq!(dialog.new_name.text(), "Custom source · continued");
+    dialog.key(&KeyName::Tab, Mods::default(), None);
+    dialog.text_input("My edited name 😺");
+    assert_eq!(dialog.new_name.text(), "My edited name 😺");
+    assert_eq!(dialog.preview.text, "## Goal\n\nContinue the work.");
+    dialog.new_name.select_all();
+    dialog.key(&KeyName::Backspace, Mods::default(), None);
+    assert!(dialog.click(&mut st, now, OK, 0.0), "invalid names leave the editor open");
+    assert!(dialog.message.as_ref().unwrap().1);
+    dialog.text_input("A valid name");
+    assert!(!dialog.click(&mut st, now, OK, 0.0));
+    assert!(st.tabs.list.is_empty(), "demo does not launch Claude");
+}
+#[test]
 fn saved_agent_is_preselected_and_can_be_overridden_with_plain_claude() {
     let mut st = app();
     st.config.compact.set_default_agent("main-reviewer").unwrap();

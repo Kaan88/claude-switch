@@ -79,6 +79,9 @@ Right-click a session and choose **Compact and open…**, or use the command pal
 pane’s **Open as…** menu. Pick a model from OpenCode and the account to start Claude Code as.
 After the first-use consent for that provider, review and edit the handover before starting the new
 session. The character/token estimate updates as you edit. You can also copy or export it as Markdown.
+**New session name** starts with the source’s displayed name plus ` · continued` (then
+` · continued 2`, ` · continued 3`, and so on if needed). Edit it before opening to set the
+Claude Code session name, not just the handover tab label.
 The editor's **Agent** picker starts with the **Default CLI agent** from **Settings → Handovers**.
 Leave the setting blank to start at **Default (Claude)**, which adds no `--agent` override.
 You can choose a different agent before selecting **Open in CLI**. Changing the target account
@@ -95,15 +98,16 @@ option. To remove remembered permission, use **Settings → Handovers → Forget
 
 ```powershell
 claude-switch compact --session latest --cwd . --print
-claude-switch compact --session latest --cwd . --as work --open --agent my-plugin:reviewer
+claude-switch compact --session latest --cwd . --as work --open --agent my-plugin:reviewer --name "Build review follow-up"
 ```
 
 Use a session ID instead of `latest` to target one transcript; `--model provider/model` overrides
 the remembered model, and `--focus-file` reads UTF-8 emphasis text. The CLI requires prior provider
 consent. `--print` outputs Markdown and opens nothing; add `--save` to keep a local copy.
 `--agent <name>` overrides the handover default for `--open` only. The agent must be available to
-Claude Code in the target account and project. `--open` saves the handover and starts a new session
-in a new Claude Switch window; it waits for
+Claude Code in the target account and project. `--name <title>` is also `--open` only; omit it to
+use the same numbered continuation name as the editor. `--open` saves the handover and starts a new
+session in a new Claude Switch window; it waits for
 tab-creation confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
@@ -141,7 +145,8 @@ After granting provider consent in Claude Switch, use
 Only a first word beginning with `agent:` is an override. Names use up to 128 ASCII characters:
 letters or digits start each segment; letters, digits, `-`, and `_` continue it; `:` separates
 segments. An invalid first-word name stops the command. Remaining text is literal focus; with
-no first-word prefix, the entire text is focus and the configured default is used.
+no first-word prefix, the entire text is focus and the configured agent default is used.
+The plugin leaves the new session name to Claude Switch’s numbered continuation default.
 
 ## Licence
 

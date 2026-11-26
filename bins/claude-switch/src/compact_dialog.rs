@@ -4,6 +4,7 @@ mod choices;
 mod draw;
 pub(crate) mod editor;
 mod save_reply;
+use crate::compact_open::{self, names};
 use crate::compact_runner as runner;
 use crate::dialogs::{CANCEL, Dialog, OK};
 use crate::source::Source;
@@ -13,6 +14,7 @@ pub use draw::draw_history_row;
 use editor::Editor;
 use mdshared_app::job::Job;
 use mdshared_ui::keys::{KeyName, Mods};
+use mdshared_ui::textfield::TextField;
 use mdshared_ui::{gfx::Rect, platform};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -30,6 +32,7 @@ const SAVE: u32 = 16;
 const PREV: u32 = 17;
 const NEXT: u32 = 18;
 const AGENT: u32 = 19;
+pub(crate) const NAME_FIELD: u32 = 20;
 const OPTION: u32 = 100;
 const PAGE: usize = 7;
 
@@ -72,6 +75,11 @@ pub struct Compact {
     session: Session,
     source_tab: Option<u64>,
     name: String,
+    suggested_name: String,
+    new_name: TextField,
+    name_focused: bool,
+    name_stops: Vec<f32>,
+    name_x: f32,
     program: Option<PathBuf>,
     data: Option<std::sync::Arc<compact::Handover>>,
     models: Vec<String>,
@@ -263,10 +271,18 @@ impl Compact {
         let account = account.unwrap_or(&st.current().slug);
         let account = accounts.iter().position(|(slug, _)| slug == account).unwrap_or(0);
         let name = st.title_of(&session).to_owned();
+        let suggested_name = names::suggest(&st.marks, &st.sessions, &name);
+        let mut new_name = TextField::new();
+        new_name.set_text(&suggested_name);
         let mut this = Self {
             source_tab: None,
             session,
             name,
+            suggested_name,
+            new_name,
+            name_focused: false,
+            name_stops: Vec::new(),
+            name_x: 0.0,
             accounts,
             account,
             default_agent: st.config.compact.default_agent.clone(),
@@ -441,17 +457,22 @@ impl Compact {
 
     fn open(&mut self, st: &mut AppState, now: Instant) -> Result<(), String> {
         let Some((account, _)) = self.accounts.get(self.account) else { return Err("Choose an account.".into()) };
+        let name = if self.new_name.text() == self.suggested_name {
+            names::suggest(&st.marks, &st.sessions, &self.name)
+        } else {
+            names::validate(self.new_name.text())?.to_owned()
+        };
         let Source::Real(roots) = &st.source else {
-            st.toast("Demo: no session was opened.".into(), now);
+            st.toast(format!("Demo: would open “{name}”"), now);
             return Ok(());
         };
-        crate::compact_open::validate_prompt(&self.preview.text)?;
-        let saved = crate::compact_open::keep(roots, &self.session.id, &self.preview.text, self.saved.as_deref())?;
-        let request = crate::compact_open::prepare(
+        compact_open::validate_prompt(&self.preview.text)?;
+        let saved = compact_open::keep(roots, &self.session.id, &self.preview.text, self.saved.as_deref())?;
+        let request = compact_open::prepare(
             roots,
             &st.config,
             &self.session,
-            self.name.clone(),
+            (self.name.clone(), &name),
             account,
             &self.preview.text,
             &saved,
@@ -479,6 +500,7 @@ impl Compact {
             BACK if self.choice.take().is_some() => {}
             BACK if matches!(self.phase, Phase::Consent | Phase::Preview) => {
                 self.phase = Phase::Setup;
+                self.name_focused = false;
                 self.message = None;
             }
             COPY if self.phase == Phase::Preview => {
@@ -492,7 +514,12 @@ impl Compact {
                 self.pick(Choice::Account, st);
             }
             AGENT if self.phase == Phase::Preview => self.pick(Choice::Agent, st),
+            NAME_FIELD if self.phase == Phase::Preview && self.choice.is_none() => {
+                self.name_focused = true;
+                self.new_name.press(x - self.name_x, &self.name_stops, false);
+            }
             EDITOR => {
+                self.name_focused = false;
                 let px = self.edit_area.x;
                 let py = self.edit_area.y;
                 let col = ((x - px) / self.cell_width).round().max(0.0) as usize;
@@ -539,6 +566,17 @@ impl Compact {
             }
         } else if self.phase == Phase::Preview && matches!(k, KeyName::Char('a' | 'A')) && mods.alt && !mods.ctrl {
             return Some(AGENT);
+        } else if self.phase == Phase::Preview && *k == KeyName::Tab && !mods.ctrl && !mods.alt {
+            self.name_focused = !self.name_focused;
+            if self.name_focused {
+                self.new_name.select_all();
+            }
+        } else if self.phase == Phase::Preview && self.name_focused {
+            if *k == KeyName::Enter {
+                self.name_focused = false;
+            } else {
+                self.new_name.handle_key(k, mods, text, true);
+            }
         } else if *k == KeyName::Enter && mods.ctrl && self.phase == Phase::Setup {
             return Some(OK);
         } else if self.phase == Phase::Preview || (self.phase == Phase::Setup && self.job.is_none()) {
@@ -550,7 +588,11 @@ impl Compact {
     pub fn text_input(&mut self, text: &str) {
         if self.choice.is_none() && (self.phase == Phase::Preview || (self.phase == Phase::Setup && self.job.is_none()))
         {
-            self.editor().insert(text);
+            if self.name_focused {
+                self.new_name.insert(text);
+            } else {
+                self.editor().insert(text);
+            }
         }
     }
 

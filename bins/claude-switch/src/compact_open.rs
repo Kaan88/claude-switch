@@ -1,8 +1,11 @@
 //! One new native Claude process, with a preallocated UUID for its transcript and provenance.
 use crate::{compact_runner, source::Source, state::AppState};
+use claude_switch_core::marks::Marks;
 use claude_switch_core::{App, Config, Launch, Roots, Session, accounts, compact, launch};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+
+pub(crate) mod names;
 
 pub struct NewHandover {
     pub launch: Launch,
@@ -10,6 +13,8 @@ pub struct NewHandover {
     pub account: String,
     pub from: String,
     pub parent: String,
+    name: String,
+    expected_marks: Option<Marks>,
 }
 
 impl NewHandover {
@@ -17,6 +22,19 @@ impl NewHandover {
         add_agent(&mut self.launch.args, agent)?;
         Ok(self)
     }
+
+    pub fn expecting_marks(mut self, marks: Marks) -> Self {
+        self.expected_marks = Some(marks);
+        self
+    }
+}
+
+fn add_name(args: &mut Vec<String>, name: &str) -> Result<String, String> {
+    let name = names::validate(name)?.to_owned();
+    let boundary = args.iter().position(|arg| arg == "--").ok_or("Missing first-prompt argument boundary.")?;
+    // Bind the value to the option so even an option-looking title remains data.
+    args.insert(boundary, format!("--name={name}"));
+    Ok(name)
 }
 
 fn add_agent(args: &mut Vec<String>, agent: Option<&str>) -> Result<(), String> {
@@ -95,13 +113,14 @@ pub fn prepare(
     roots: &Roots,
     config: &Config,
     session: &Session,
-    from: String,
+    (from, name): (String, &str),
     account: &str,
     text: &str,
     saved: &Path,
 ) -> Result<NewHandover, String> {
     let id = session_id()?;
-    let args = first_args(&id, text, saved)?;
+    let mut args = first_args(&id, text, saved)?;
+    let name = add_name(&mut args, name)?;
     if !session.cwd.is_dir() {
         return Err("The original session folder is not available.".into());
     }
@@ -114,7 +133,16 @@ pub fn prepare(
     let mut launch = launch::new_session(roots, config, account, App::Cli, &session.cwd).map_err(|e| e.to_string())?;
     launch.program = program;
     launch.args = args;
-    Ok(NewHandover { launch, id, account: account.into(), from, parent: session.id.clone() })
+    launch.label = name.clone();
+    Ok(NewHandover {
+        launch,
+        id,
+        account: account.into(),
+        from,
+        parent: session.id.clone(),
+        name,
+        expected_marks: None,
+    })
 }
 
 impl AppState {
@@ -124,10 +152,14 @@ impl AppState {
         if self.marks_read_only {
             return Err("Repair marks.json before starting a handover session.".into());
         }
+        if request.expected_marks.as_ref().is_some_and(|marks| !marks.unchanged(roots)) {
+            return Err("Session names changed while opening the handover. Refresh and try again.".into());
+        }
         // Persist under the exact UUID, never infer it from file creation time.
         let old = self.marks.clone();
         if !self.marks.set_handover_from(&request.id, &request.from)
             || !self.marks.set_parent(&request.id, &request.parent)
+            || !self.marks.set_handover_launch_name(&request.id, &request.name, claude_switch_core::usage::now_ms())
         {
             self.marks = old;
             return Err("Could not record the new session's provenance.".into());
@@ -141,6 +173,7 @@ impl AppState {
             // Roll back only the mark we added. The original session was never touched.
             self.marks.clear_handover_from(&request.id);
             self.marks.clear_parent(&request.id);
+            self.marks.clear_handover_launch_name(&request.id);
             self.save_marks();
         }
         result.map(drop).map_err(|_| "Could not start Claude Code in a terminal tab.".into())
@@ -177,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn fake_claude_gets_short_text_or_reads_full_saved_handover() {
+    fn fake_claude_gets_one_literal_name_and_short_text_or_reads_the_full_saved_handover() {
         let fake = fixture::fake_program();
         let root = fake.with_file_name("test home with spaces");
         let roots = Roots { home: root.clone(), appdata: root };
@@ -193,6 +226,9 @@ mod tests {
             let mut spec = launch::shell(fake.parent().unwrap());
             spec.program = fake.clone();
             spec.args = first_args("fake-id", &text, &saved).unwrap();
+            let name = r#"--not-an-option "Review & compare" C:\work\ 😺"#;
+            assert_eq!(add_name(&mut spec.args, name).unwrap(), name);
+            spec.env.insert("FAKE_CLAUDE_NAME".into(), name.into());
             add_agent(&mut spec.args, agent).unwrap();
             assert_eq!(spec.args.last().unwrap() != &text, from_file);
             spec.env_remove.push("FAKE_CLAUDE_AGENT".into());
@@ -216,6 +252,36 @@ mod tests {
             assert_eq!(std::fs::read_to_string(received).unwrap(), text);
             previous = Some(saved);
         }
+    }
+
+    #[test]
+    fn failed_spawn_rolls_back_the_pending_name_and_only_the_new_provenance() {
+        let root = std::env::temp_dir().join(format!("cs-handover-name-{}", session_id().unwrap()));
+        let roots = Roots { home: root.join("home"), appdata: root.join("appdata") };
+        let mut st = AppState::new(Source::Real(roots.clone()), None, Default::default());
+        let parent = session_id().unwrap();
+        let id = session_id().unwrap();
+        assert!(st.marks.rename(&parent, Path::new("unused"), "Source name"));
+        st.marks.save(&roots).unwrap();
+        let account = st.config.current.clone();
+        let mut launch = launch::shell(&root);
+        launch.program = root.join("not-a-cli.exe");
+        let request = NewHandover {
+            launch,
+            id: id.clone(),
+            parent: parent.clone(),
+            from: "Source name".into(),
+            name: "Source name · continued".into(),
+            account,
+            expected_marks: None,
+        };
+        assert!(st.open_handover_tab(request).unwrap_err().contains("Could not start"));
+        let marks = Marks::load(&roots).unwrap();
+        assert_eq!(marks.name(&parent), Some("Source name"));
+        assert_eq!(marks.handover_from(&id), None);
+        assert_eq!(marks.parent(&id), None);
+        assert_eq!(marks.handover_launch_names(claude_switch_core::usage::now_ms()).count(), 0);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

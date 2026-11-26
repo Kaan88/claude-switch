@@ -150,7 +150,8 @@ impl AppState {
             Some(Target::Chat(crate::view::chat::Control::Detail(_))) => Cursor::Hand,
             Some(Target::Dialog(id))
                 if id == dialogs::FIELD
-                    || id == crate::compact_dialog::EDITOR && matches!(self.dialog, Some(Dialog::Compact(_))) =>
+                    || matches!(id, crate::compact_dialog::EDITOR | crate::compact_dialog::NAME_FIELD)
+                        && matches!(self.dialog, Some(Dialog::Compact(_))) =>
             {
                 Cursor::Text
             }

@@ -47,6 +47,9 @@ fn main() {
         }
         ["reload"] => println!(" reloaded "),
         ["--session-id", "fake-id", rest @ ..] => {
+            let (name_arg, rest) = rest.split_first().unwrap();
+            let name = name_arg.strip_prefix("--name=").expect("name is one native option with its value");
+            assert_eq!(name, env::var("FAKE_CLAUDE_NAME").unwrap());
             let (agent, first) = match rest {
                 ["--", first] => (None, first),
                 ["--agent", agent, "--", first] => (Some(*agent), first),

@@ -280,7 +280,7 @@ fn newest_actual_task_snapshot_wins_and_notice_only_tail_does_not_break_the_read
     assert!(result.contains("[completed] NEW"));
     assert!(!result.contains("OLD"));
     assert!(!result.contains("TAIL"));
-    assert!(result.contains("## Goal\n\n> unknown"));
+    assert!(result.starts_with("## Goal\n\n> unknown"), "the handover starts with a neutral content heading");
 }
 
 #[test]

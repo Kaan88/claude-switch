@@ -19,18 +19,37 @@ pub(super) fn words(id: &str, account: &str, file: &str, agent: Option<&str>) ->
     Ok(format!("--compact-open-window {id} {account} {file}"))
 }
 
-fn arguments(id: &str, account: &str, file: &str, ack: &str, agent: Option<&str>) -> Result<String, String> {
+fn arguments(
+    id: &str,
+    account: &str,
+    file: &str,
+    ack: &str,
+    agent: Option<&str>,
+    name: Option<&str>,
+) -> Result<String, String> {
     let words = words(id, account, file, agent)?;
-    Ok(match agent {
+    let mut arguments = match agent {
         Some(name) => format!("{words} {ack} {name}"),
         None => format!("{words} {ack}"),
-    })
+    };
+    if let Some(name) = name {
+        use std::fmt::Write as _;
+        let _ = write!(arguments, " name={}", super::names::encode(name)?);
+    }
+    Ok(arguments)
 }
 
-pub(super) fn spawn(exe: &Path, id: &str, account: &str, file: &str, agent: Option<&str>) -> Result<(), String> {
+pub(super) fn spawn(
+    exe: &Path,
+    id: &str,
+    account: &str,
+    file: &str,
+    agent: Option<&str>,
+    name: Option<&str>,
+) -> Result<(), String> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
     let key = format!("cs-handover-{}-{}", std::process::id(), now.as_nanos());
-    let arguments = arguments(id, account, file, &key, agent)?;
+    let arguments = arguments(id, account, file, &key, agent, name)?;
     let dir = ack_dir(&key).ok_or("Invalid handover acknowledgement")?;
     std::fs::create_dir(&dir).map_err(|_| "Could not create a handover acknowledgement directory.")?;
     let result = (|| {
@@ -187,16 +206,23 @@ mod tests {
     #[test]
     fn handoff_round_trips_an_optional_validated_name_without_shell_or_path_syntax() {
         let ack = "cs-handover-12-34";
-        for agent in [None, Some("plugin:nested:review_2")] {
-            let args = arguments(ID, "work", "handover-001.md", ack, agent).unwrap();
+        for (agent, name) in [
+            (None, None),
+            (Some("plugin:nested:review_2"), None),
+            (None, Some("Dev's \"notes\" & $env:PATH 😺")),
+            (Some("plugin:review"), Some("C:\\Work\\review\\")),
+        ] {
+            let args = arguments(ID, "work", "handover-001.md", ack, agent, name).unwrap();
+            assert!(!args.contains(['"', '\\', '&', '$', '\'']));
             let mut words = args.split_ascii_whitespace();
             assert_eq!(words.next(), Some("--compact-open-window"));
-            assert_eq!(words.clone().count(), if agent.is_some() { 5 } else { 4 });
+            assert_eq!(words.clone().count(), 4 + usize::from(agent.is_some()) + usize::from(name.is_some()));
             let (request, key) = crate::compact_cli::window_args(words.map(str::to_owned)).unwrap();
             assert_eq!(request.id, ID);
             assert_eq!(request.account, "work");
             assert_eq!(request.file, "handover-001.md");
             assert_eq!(request.agent.as_deref(), agent);
+            assert_eq!(request.name.as_deref(), name);
             assert_eq!(key, ack);
         }
         for bad in ["one two", "../other", "a\\b", "a&b", "-option", "with\"quote", "line\nbreak"] {
@@ -206,6 +232,9 @@ mod tests {
         for input in [
             format!("{ID} work good.md {ack} --demo"),
             format!("{ID} work good.md {ack} review extra"),
+            format!("{ID} work good.md {ack} name=00"),
+            format!("{ID} work good.md {ack} name=zz"),
+            format!("{ID} work good.md {ack} name=ff"),
             format!("{ID} work good.md ."),
             format!("not-a-uuid work good.md {ack}"),
         ] {

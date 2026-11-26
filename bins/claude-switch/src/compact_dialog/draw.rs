@@ -2,6 +2,7 @@ use super::*;
 use crate::dialogs::Draw;
 use mdshared_ui::gfx::{Face, Painter, Wrap};
 use mdshared_ui::overlay::{DIALOG_PAD, dialog_card};
+use mdshared_ui::textfield::FieldColors;
 
 pub(super) const LINE: f32 = 18.0;
 const FONT: f32 = 12.5;
@@ -35,7 +36,8 @@ pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y:
 
 impl Compact {
     pub fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, w: f32, h: f32) {
-        let card = dialog_card(660.0_f32.min(w - 28.0), 410.0_f32.min(h - 24.0), w, h);
+        let height = if self.phase == Phase::Preview { 454.0_f32 } else { 410.0_f32 };
+        let card = dialog_card(660.0_f32.min(w - 28.0), height.min(h - 24.0), w, h);
         let footer = d.card(p, card);
         let body = Rect::new(card.x + DIALOG_PAD, card.y + 51.0, card.w - DIALOG_PAD * 2.0, footer.y - card.y - 51.0);
         d.title(
@@ -176,17 +178,27 @@ impl Compact {
             false,
             AGENT,
         );
+        let field = Rect::new(body.x + 115.0, y + 34.0, (body.w - 115.0).max(1.0), 28.0);
+        p.text(Face::Ui, FONT, body.x, field.y + 14.0, "New session name", d.pal.text, 111.0);
+        p.frame(field, 5.0, d.pal.field, if self.name_focused { d.pal.accent } else { d.pal.line });
+        let inner = field.inset(7.0);
+        self.name_x = inner.x;
+        self.name_stops = p.caret_stops(Face::Ui, FONT, &self.new_name.display());
+        let colors =
+            FieldColors { text: d.pal.text, placeholder: d.pal.muted, selection: d.pal.selection, caret: d.pal.text };
+        self.new_name.draw(p, inner, Face::Ui, FONT, &colors, "Enter a name", self.name_focused, true);
+        d.hits.push((field, Target::Dialog(NAME_FIELD)));
         let note = p.paragraph_wrapped(
             Face::Ui,
             12.0,
             body.x,
-            body.y + 81.0,
+            body.y + 115.0,
             body.w,
             "Agent choice (Alt+A) is CLI-only. There is no supported Desktop launch option.",
             d.pal.muted,
             Wrap::Words,
         );
-        let mut editor_y = 85.0 + note;
+        let mut editor_y = 119.0 + note;
         if crate::compact_open::uses_file(&self.preview.text) {
             let h = p.paragraph_wrapped(
                 Face::Ui,

@@ -111,6 +111,25 @@ impl Marks {
         self.clear_session_key(id, "handoverFrom");
     }
 
+    /// Names reserved for new handovers not yet visible in the index. Never overrides a native title.
+    pub fn handover_launch_names(&self, now_ms: u64) -> impl Iterator<Item = (&str, &str)> {
+        self.data["sessions"].as_object().into_iter().flatten().filter_map(move |(id, entry)| {
+            let reservation = &entry["handoverLaunchName"];
+            let at = reservation["at"].as_u64()?;
+            (now_ms.saturating_sub(at) < 120_000).then_some((id.as_str(), reservation["name"].as_str()?))
+        })
+    }
+
+    pub fn set_handover_launch_name(&mut self, id: &str, name: &str, now_ms: u64) -> bool {
+        crate::launch::validate_session_id(id).is_ok()
+            && self.data["sessions"][id].get("handoverLaunchName").is_none()
+            && self.set("sessions", id, "handoverLaunchName", json!({"name": name, "at": now_ms}))
+    }
+
+    pub fn clear_handover_launch_name(&mut self, id: &str) {
+        self.clear_session_key(id, "handoverLaunchName");
+    }
+
     fn clear_session_key(&mut self, id: &str, key: &str) {
         if let Some(sessions) = self.data["sessions"].as_object_mut()
             && let Some(entry) = sessions.get_mut(id).and_then(Value::as_object_mut)

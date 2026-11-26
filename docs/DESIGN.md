@@ -343,11 +343,22 @@ The preview is editable, with characters and approximate tokens (characters / 4)
 canceling does not save a handover. Only an explicit Save As or Open writes the edited text.
 Local Markdown files live in `handover/<session-id>-<time>.md` beside config; the newest 20
 are kept per session. An opened edited handover is kept as a new revision. Save As never
-overwrites an existing file. Native Claude Code receives `claude --session-id <new-uuid> -- <text>`
+overwrites an existing file. Native Claude Code receives `claude --session-id <new-uuid> --name=<title> -- <text>`
 in the original folder with the selected account's normal sanitized launch environment. The
 interactive CLI documents no stdin/file argument for a first prompt, so short text is one native
 argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file. The app uses the
 new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
+
+The new session name is independent of the OpenCode run title (“Claude Switch handover”) and
+of the Markdown, whose first heading stays `## Goal`. The suggested name is the source's
+Switch display name (local custom name, then indexed title) plus ` · continued`, then the
+lowest free suffix starting at ` 2`. Suggestions compare indexed display names and very recent
+unindexed handover launches case-insensitively, ignoring whitespace runs. The preview can edit
+the name; an untouched suggestion is recomputed from the current index before opening.
+Claude Code's documented `--name` carries the title as one native option before `--`; Switch
+uses it as the initial tab label and reads native custom-title records on scan. The two-minute
+launch reservation in `marks.json` avoids reusing names before the transcript appears; it is
+not a permanent Switch rename. A failed spawn rolls it back with the new UUID's provenance.
 
 The editor's **Agent** picker is CLI-only. **Settings → Handovers → Default CLI agent** edits
 `compact.defaultAgent` under the handover settings lock without changing provider consent or
@@ -368,13 +379,18 @@ The CLI runs headlessly for `--print` (the default) and writes the handover only
 new tab because the app has no single-instance request channel. On Windows, the new window is
 ShellExecuted through a fixed non-interactive PowerShell bootstrap so it cannot keep the caller's
 output pipes open; only the executable path and validated identifiers reach the bootstrap.
-`compact --open --agent <name>` overrides the Settings default. An explicit name is rejected
-with `--print`. The resolved optional name is passed to the new Switch window as a separate
+`compact --open --agent <name>` overrides the Settings default. The agent option is rejected
+with `--print`. The resolved agent is passed to the new Switch window as a separate
 word and revalidated there, then passed to Claude Code before `--`. The CLI, picker, and settings
 use the same rule: 1–128 ASCII characters, colon-separated segments starting with a letter or
 digit and continuing with letters, digits, hyphens or underscores. If no name is resolved, the
 launch is unchanged. The plugin's first-word `agent:<name>` uses the same rule; it passes focus
 via a newly created UTF-8 temp file, never by interpolating arguments into shell code.
+`compact --open --name <title>` overrides the continuation title, not the agent or first prompt.
+The optional title is encoded as bounded UTF-8 hex for the fixed bootstrap and revalidated by
+the new window; absent a title, it uses the same index-based suggestion as the dialog. A title
+must be nonempty, single-line text of at most 200 UTF-16 units, with no control characters.
+The plugin doesn't supply this option and its focus text is never interpreted as a title.
 `--open` waits up to 30 seconds for the new window to acknowledge creating the tab. On timeout
 the outcome is unknown: check for the tab before retrying. Tab creation is not
 confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
