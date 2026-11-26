@@ -60,7 +60,10 @@
   Claude Code's grey next-prompt suggestion appears as a chip that fills the draft.
 - The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
 - Chat: permission prompts can be answered from a card in the chat, with the tool call and the
-  terminal's own choices; the working line says "Waiting for your approval".
+  terminal's own choices; the working line says "Waiting for your approval". A card answers ahead
+  of a queued draft, which stays queued until the card's keys have gone. A menu that only looks
+  like a permission prompt is left to the terminal; words in the conversation above a menu do not
+  count for that.
 - Chat: a finished plan shows as Markdown in the conversation and is approved from a card with the
   terminal's own choices.
 - Chat: the Effort chip shows the level the session started with (environment, `--effort`,
