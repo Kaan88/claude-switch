@@ -59,7 +59,7 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
         popup(cx, p, window, &pal, menu, style, "accounts-menu");
     }
     if let Some((kind, menu)) = &mut st.menu {
-        popup(cx, p, window, &pal, menu, style, ("popup", *kind as u8));
+        popup(cx, p, window, &pal, menu, style, ("popup", *kind));
     }
     let t = if st.dialog.is_some() {
         cx.animating(window);

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use claude_switch_core::usage::{
-    Attempt, CACHE_NAME, Cache, Demand, Error, Limit, Reading, load_cache, now_ms, save_cache,
+    Attempt, Breakdown, CACHE_NAME, Cache, Demand, Error, Limit, Reading, load_cache, now_ms, save_cache,
 };
 use mdshared_app::job::Job;
 
@@ -20,8 +20,8 @@ pub struct Usage {
     attempts: HashMap<String, Attempt>,
     jobs: HashMap<String, FetchJob>,
     file: Option<PathBuf>,
-    cache_job: Option<Job<()>>,
-    cache_dirty: bool,
+    cache_job: Option<(u64, Job<std::io::Result<()>>)>,
+    cache_write: CacheWrite,
     pub popup: Popup,
     pub repaint_at: Option<Instant>,
 }
@@ -34,7 +34,43 @@ pub struct Popup {
     pub scroll: f32,
 }
 
+#[derive(Default)]
+struct CacheWrite {
+    revision: u64,
+    persisted: u64,
+    failures: u32,
+    retry: Option<Instant>,
+}
+
+impl CacheWrite {
+    fn changed(&mut self) {
+        self.revision += 1;
+        if self.failures >= 5 {
+            self.failures = 0;
+            self.retry = None;
+        }
+    }
+
+    fn ready(&self, now: Instant) -> bool {
+        self.revision != self.persisted && self.failures < 5 && self.retry.is_none_or(|at| at <= now)
+    }
+
+    fn finish(&mut self, revision: u64, success: bool, now: Instant) {
+        if success {
+            self.persisted = revision;
+            self.failures = 0;
+            self.retry = None;
+        } else {
+            self.failures += 1;
+            self.retry = (self.failures < 5).then(|| now + Duration::from_secs(5 << (self.failures - 1)));
+        }
+    }
+}
+
 impl Usage {
+    pub fn cache_retry_at(&self) -> Option<Instant> {
+        self.cache_job.is_none().then_some(self.cache_write.retry).flatten()
+    }
     pub fn new(source: &Source) -> Self {
         match source {
             Source::Real(roots) => {
@@ -43,11 +79,8 @@ impl Usage {
             }
             Source::Demo => {
                 let now = now_ms();
-                let limit = |key: &str, used, minutes: i64| Limit {
-                    key: key.into(),
-                    used,
-                    reset: Some((now / 1000) as i64 + minutes * 60),
-                };
+                let limit =
+                    |key: &str, used, minutes: i64| Limit::legacy(key, used, Some((now / 1000) as i64 + minutes * 60));
                 let reading = Reading {
                     read_at: now.saturating_sub(180_000),
                     limits: vec![
@@ -55,6 +88,10 @@ impl Usage {
                         limit("seven_day", 64.0, 4320),
                         limit("seven_day_opus", 86.0, 4320),
                         limit("seven_day_sonnet", 37.0, 4320),
+                    ],
+                    breakdown: vec![
+                        Breakdown { label: "Opus".into(), percent: 39.0 },
+                        Breakdown { label: "Sonnet".into(), percent: 25.0 },
                     ],
                 };
                 let mut work = Attempt::default();
@@ -70,6 +107,24 @@ impl Usage {
 
     pub fn reading(&self, slug: &str) -> Option<&Reading> {
         self.readings.get(slug)
+    }
+
+    pub fn seed_notification_demo(&mut self) {
+        let now = now_ms();
+        let limit = |key, used, hours: i64| Limit::legacy(key, used, Some((now / 1000) as i64 + hours * 3600));
+        for (slug, week, opus) in [("main", 96.0, 86.0), ("work", 27.0, 32.0)] {
+            let reading = Reading {
+                read_at: now,
+                limits: vec![
+                    limit("five_hour", 38.0, 2),
+                    limit("seven_day", week, 72),
+                    limit("seven_day_opus", opus, 72),
+                ],
+                breakdown: vec![],
+            };
+            self.readings.insert(slug.into(), reading);
+        }
+        self.attempts.remove("work");
     }
 
     pub fn attempt(&self, slug: &str) -> Option<&Attempt> {
@@ -126,6 +181,7 @@ impl AppState {
         let wake = self.wake_fn();
         let usage = &mut self.usage;
         let mut changed = false;
+        let mut accepted = Vec::new();
         usage.jobs.retain(|slug, job| {
             if job.running() {
                 return true;
@@ -141,26 +197,30 @@ impl AppState {
             if let Ok(reading) = result
                 && self.config.accounts.iter().any(|a| &a.slug == slug)
             {
-                usage.readings.insert(slug.clone(), reading);
-                usage.cache_dirty = true;
+                let previous = usage.readings.insert(slug.clone(), reading);
+                accepted.push((slug.clone(), previous));
+                usage.cache_write.changed();
             }
             false
         });
-        if usage.cache_job.as_ref().is_some_and(|job| !job.running()) {
-            usage.cache_job = None;
+        if let Some((rev, job)) = usage.cache_job.take_if(|(_, job)| !job.running()) {
+            usage.cache_write.finish(rev, job.take().is_some_and(|r| r.is_ok()), now);
         }
         if self.config.show_usage
-            && usage.cache_dirty
+            && usage.cache_write.ready(now)
             && usage.cache_job.is_none()
             && let Some(file) = usage.file.clone()
         {
-            usage.cache_dirty = false;
             usage.readings.retain(|slug, _| self.config.accounts.iter().any(|a| &a.slug == slug));
             let readings = usage.readings.clone();
-            usage.cache_job = Job::start(wake, move |_, _| {
-                let _ = save_cache(&file, &readings);
-            })
-            .ok();
+            let rev = usage.cache_write.revision;
+            match Job::start(wake, move |_, _| save_cache(&file, &readings)) {
+                Ok(job) => usage.cache_job = Some((rev, job)),
+                Err(_) => usage.cache_write.finish(rev, false, now),
+            }
+        }
+        for (slug, previous) in accepted {
+            self.usage_warning_reading(now, &slug, previous.as_ref());
         }
         changed
     }
@@ -176,7 +236,8 @@ impl AppState {
         }
         *popup = Popup { open: true, pinned, ..Popup::default() };
         let slug = self.current().slug.clone();
-        self.request_usage(now, Demand::Automatic, Some(&slug));
+        let alternatives = self.usage_constrained(now_ms()).is_some();
+        self.request_usage(now, Demand::Automatic, (!alternatives).then_some(slug.as_str()));
     }
 
     pub fn usage_hover(&mut self, now: Instant, target: Option<Target>) -> bool {
@@ -193,7 +254,16 @@ impl AppState {
         }
         if popup.open
             && !popup.pinned
-            && !matches!(target, Some(Target::UsageLines | Target::UsagePopup | Target::UsageRefresh | Target::Account))
+            && !matches!(
+                target,
+                Some(
+                    Target::UsageLines
+                        | Target::UsagePopup
+                        | Target::UsageRefresh
+                        | Target::UsageOpenAs
+                        | Target::Account
+                )
+            )
         {
             *popup = Popup::default();
             return true;
@@ -243,6 +313,28 @@ fn usage_allowed(enabled: bool, source: &Source) -> bool {
 mod tests {
     use super::*;
     use crate::winfile::WindowFile;
+
+    #[test]
+    fn a_failed_save_stays_dirty_retries_are_bounded_and_old_success_cannot_clear_new_data() {
+        let mut cache = CacheWrite::default();
+        let now = Instant::now();
+        cache.changed();
+        assert!(cache.ready(now));
+        cache.finish(1, false, now);
+        assert_eq!(cache.persisted, 0);
+        assert!(!cache.ready(now + Duration::from_secs(4)));
+        assert!(cache.ready(now + Duration::from_secs(5)));
+        for _ in 1..5 {
+            cache.finish(1, false, now);
+        }
+        assert!(cache.retry.is_none() && !cache.ready(now + Duration::from_secs(360)));
+        cache.changed();
+        assert!(cache.ready(now));
+        cache.finish(1, true, now);
+        assert!(cache.ready(now));
+        cache.finish(2, true, now);
+        assert!(!cache.ready(now));
+    }
 
     #[test]
     fn demo_and_disabled_modes_do_not_schedule_a_fetch() {

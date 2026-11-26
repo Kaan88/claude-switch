@@ -1,9 +1,50 @@
 use super::{Lines, contains, flag, parse, prompt_of, squeeze, str_field, texts};
 use serde_json::Value;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 
 pub fn row_activity(file: &Path) -> Option<(String, bool)> {
     Some(activity(&Lines::read(file, 0)?))
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TurnActivity {
+    pub prompt: Option<u64>,
+    pub waiting: bool,
+    pub waiting_since: Option<i64>,
+}
+
+/// Uses the list's meaningful-record classification; separate records with identical text are
+/// separate turns. A missing prompt in a bounded tail cannot establish a new turn.
+pub fn turn_activity(file: &Path) -> Option<TurnActivity> {
+    let lines = Lines::read(file, 0)?;
+    let mut turn = TurnActivity::default();
+    let mut got_state = false;
+    for line in lines.recent() {
+        if !contains(line, b"\"user\"") && !contains(line, b"\"assistant\"") {
+            continue;
+        }
+        let Some(v) = parse(line) else { continue };
+        if flag(&v, "isSidechain") || flag(&v, "isMeta") || flag(&v, "isCompactSummary") {
+            continue;
+        }
+        let kind = str_field(&v, "type");
+        let prompt = kind == Some("user") && prompt_of(&v, 500).is_some();
+        if !got_state && let Some(waiting) = waiting_of(&v, kind, prompt) {
+            got_state = true;
+            turn.waiting = waiting;
+            if waiting {
+                turn.waiting_since = str_field(&v, "timestamp").and_then(crate::usage::timestamp);
+            }
+        }
+        if prompt {
+            let mut hash = DefaultHasher::new();
+            line.hash(&mut hash);
+            turn.prompt = Some(hash.finish());
+            break;
+        }
+    }
+    Some(turn)
 }
 
 pub(super) fn activity(lines: &Lines) -> (String, bool) {
@@ -26,17 +67,21 @@ pub(super) fn activity(lines: &Lines) -> (String, bool) {
             };
         }
         if ended.is_none() {
-            ended = match kind {
-                Some("assistant") => Some(assistant_ended(&v)),
-                Some("user") if prompt.is_some() || has_block(&v, "tool_result") => Some(false),
-                _ => None,
-            };
+            ended = waiting_of(&v, kind, prompt.is_some());
         }
         if latest.is_some() && ended.is_some() {
             break;
         }
     }
     (latest.unwrap_or_default(), ended.unwrap_or_default())
+}
+
+fn waiting_of(v: &Value, kind: Option<&str>, prompt: bool) -> Option<bool> {
+    match kind {
+        Some("assistant") => Some(assistant_ended(v)),
+        Some("user") if prompt || has_block(v, "tool_result") => Some(false),
+        _ => None,
+    }
 }
 
 fn has_block(v: &Value, kind: &str) -> bool {
@@ -97,5 +142,22 @@ mod tests {
         ] {
             assert!(!check(&format!("{ended}\n{next}")), "{next}");
         }
+    }
+
+    #[test]
+    fn turn_activity_agrees_with_waiting_and_identifies_repeated_prompt_text_by_record() {
+        let dir = TempDir::new("turn-notices");
+        let file = dir.0.join("test.jsonl");
+        let one = r#"{"type":"user","uuid":"first","message":{"content":"go"}}"#;
+        let two = r#"{"type":"user","uuid":"second","message":{"content":"go"}}"#;
+        let ended = r#"{"type":"assistant","timestamp":"2026-11-26T16:00:00Z","message":{"content":"Done"}}"#;
+        put(&file, &format!("{one}\n{ended}\n"));
+        let first = turn_activity(&file).unwrap();
+        assert!(first.waiting && row_activity(&file).unwrap().1);
+        assert!(first.waiting_since.is_some());
+        put(&file, &format!("{one}\n{ended}\n{two}\n"));
+        let second = turn_activity(&file).unwrap();
+        assert!(!second.waiting && !row_activity(&file).unwrap().1);
+        assert_ne!(first.prompt, second.prompt);
     }
 }

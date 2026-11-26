@@ -48,7 +48,7 @@ impl Picker {
             st.sessions
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| st.listed(s))
+                .filter(|(_, s)| st.searchable(s, !query.trim().is_empty()))
                 .map(|(i, s)| (i, SessionFields { name: st.marks.name(&s.id), session: s, folder: &labels[i] })),
         )
         .into_iter()
@@ -59,7 +59,9 @@ impl Picker {
             } else {
                 format!("{}  ·  {}", labels[i], s.last_prompt)
             };
-            Hit { id: s.id.clone(), title: st.title_of(s).to_string(), hint }
+            let title =
+                if st.is_archived(s) { format!("{} · Archived", st.title_of(s)) } else { st.title_of(s).to_string() };
+            Hit { id: s.id.clone(), title, hint }
         })
         .collect();
         self.selected = 0;
@@ -228,7 +230,11 @@ impl Panel {
                     st.dialog = Some(Dialog::Session(self));
                     return;
                 };
-                if st.by_id.get(&hit.id).is_some_and(|&i| st.listed(&st.sessions[i])) {
+                if st
+                    .by_id
+                    .get(&hit.id)
+                    .is_some_and(|&i| st.searchable(&st.sessions[i], !self.field.text().trim().is_empty()))
+                {
                     let anchor = st.hits.iter().find(|(_, t)| *t == Target::Dialog(RESULT + i as u32)).map(|(r, _)| *r);
                     st.select(&hit.id);
                     st.show_sessions();
@@ -269,6 +275,13 @@ impl AppState {
     }
 
     pub fn ask_naming(&mut self, batch: bool) {
+        if self.config_damaged || batch && !self.batch_marks_current() {
+            self.warn(
+                "Batch naming unavailable",
+                "Session marks could not be verified. Refresh or reopen Claude Switch.".into(),
+            );
+            return;
+        }
         if self.naming_job.is_some() {
             self.warn("Suggestions are already running", "Wait for the previous request to finish or cancel.".into());
             return;
@@ -300,7 +313,7 @@ impl AppState {
         }
         let sessions = if count == 1 { "session" } else { "sessions" };
         let a = naming::worker_account(&self.config);
-        let text = if self.source.is_demo() {
+        let mut text = if self.source.is_demo() {
             format!(
                 "Demo only: show synthetic suggestions for {count} {sessions}. Nothing is sent.\n\nIn real use this sends the first and up to three recent prompts (up to 500 characters each) to Claude and uses a little of the worker account’s usage."
             )
@@ -310,25 +323,69 @@ impl AppState {
                 a.name
             )
         };
+        if batch && !self.source.is_demo() {
+            text.push_str("\n\nSessions: ");
+            let names = ids
+                .iter()
+                .filter_map(|id| self.by_id.get(id))
+                .map(|&i| self.title_of(&self.sessions[i]).chars().take(64).collect::<String>())
+                .collect::<Vec<_>>();
+            text.push_str(&names.join("; "));
+        }
+        self.confirm_scroll = 0.0;
         self.dialog = Some(Dialog::Confirm {
             title: format!("Suggest {} for {count} {sessions}?", if count == 1 { "a name" } else { "names" }),
             text,
             ok: "Suggest names".into(),
-            then: Pending::Suggest(ids),
+            then: Pending::Suggest { ids, batch },
         });
     }
 
-    pub fn start_naming(&mut self, ids: Vec<String>) {
+    fn batch_marks_current(&self) -> bool {
+        if self.marks_read_only || self.config_damaged {
+            return false;
+        }
+        match &self.source {
+            crate::source::Source::Demo => true,
+            crate::source::Source::Real(roots) => self.marks.unchanged(roots),
+        }
+    }
+
+    pub fn start_naming(&mut self, ids: Vec<String>, batch: bool) {
+        if self.config_damaged || batch && !self.batch_marks_current() {
+            self.warn(
+                "Batch naming unavailable",
+                "Session marks changed or could not be read. Nothing was sent.".into(),
+            );
+            return;
+        }
         let count = ids.len();
+        let cutoff = crate::list::now_ms().saturating_sub(7 * model::DAY);
         let sessions: Vec<_> = ids
             .into_iter()
             .filter_map(|id| {
                 let s = self.by_id.get(&id).map(|&i| &self.sessions[i])?;
+                if batch
+                    && (s.last_active_ms < cutoff
+                        || !self.listed(s)
+                        || self.hidden_session(s)
+                        || self.marks.name(&id).is_some())
+                {
+                    return None;
+                }
                 Some((id, self.title_of(s).to_string(), s.file.clone()))
             })
             .collect();
+        if sessions.len() != count || count == 0 {
+            self.warn("Session selection changed", "Open the naming dialog again. Nothing was sent.".into());
+            return;
+        }
         let account = naming::worker_account(&self.config).clone();
         let demo = self.source.is_demo();
+        let marks = match &self.source {
+            crate::source::Source::Real(roots) if batch => Some((roots.clone(), self.marks.clone())),
+            _ => None,
+        };
         match Job::start(self.wake_fn(), move |cancel, _| {
             let mut queue = VecDeque::new();
             if demo {
@@ -337,6 +394,14 @@ impl AppState {
                     queue.push_back(Suggestion { id, original, title: title.to_string() });
                 }
             } else {
+                let verify = || {
+                    if marks.as_ref().is_some_and(|(roots, marks)| !marks.unchanged(roots)) {
+                        Err("Session marks changed or could not be read. Nothing was sent.")
+                    } else {
+                        Ok(())
+                    }
+                };
+                verify()?;
                 let mut excerpts = Vec::new();
                 let mut named = Vec::new();
                 for (id, original, path) in sessions {
@@ -349,6 +414,7 @@ impl AppState {
                         named.push((id, original));
                     }
                 }
+                verify()?;
                 let titles = naming::suggest(&account, &excerpts, || cancel.cancelled()).map_err(|e| e.to_string())?;
                 for (i, (id, original)) in named.into_iter().enumerate() {
                     if let Some(title) = titles.get(&i) {
@@ -387,6 +453,15 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn batch_without_trustworthy_marks_cannot_prepare_or_start_naming() {
+        let mut st = crate::state::AppState::new(crate::source::Source::Demo, None, Default::default());
+        st.marks_read_only = true;
+        st.ask_naming(true);
+        assert!(st.dialog.is_none() && st.info.is_some());
+        st.start_naming(vec!["anything".into()], true);
+        assert!(st.naming_job.is_none());
+    }
     use super::*;
     use crate::source::Source;
     use crate::state::MenuKind;
@@ -399,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn switcher_matches_the_prompt_and_ctrl_enter_opens_the_other_account_menu() {
+    fn switcher_matches_the_prompt_and_ctrl_enter_can_override_the_folder_default() {
         let mut st = demo_state();
         let target = st.sessions[2].id.clone();
         let now = Instant::now();
@@ -409,14 +484,15 @@ mod tests {
         assert_eq!(st.selected.as_deref(), Some(target.as_str()));
         let Some((kind, menu)) = &st.menu else { panic!("Open as menu not shown") };
         assert_eq!(*kind, MenuKind::OpenAs);
-        assert!(menu.items.iter().all(|item| item.label.contains("Work")));
+        assert!(menu.items.iter().any(|item| item.label.contains("Work")));
+        assert!(menu.items.iter().any(|item| item.label.contains("Main")));
     }
 
     #[test]
     fn batch_confirms_the_cap_and_review_never_saves_before_accept() {
         let mut st = demo_state();
         st.ask_naming(true);
-        let Some(Dialog::Confirm { then: Pending::Suggest(ids), .. }) = st.dialog.take() else {
+        let Some(Dialog::Confirm { then: Pending::Suggest { ids, .. }, .. }) = st.dialog.take() else {
             panic!("batch requires explicit confirmation");
         };
         assert_eq!(ids.len(), naming::MAX_BATCH);

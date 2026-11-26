@@ -10,6 +10,12 @@ impl App for AppState {
 
     fn start(&mut self, cx: &mut Cx<'_, Msg>) {
         self.proxy = Some(Arc::new(Mutex::new(cx.proxy())));
+        if let Some(place) = &self.win_file.place {
+            winfile::apply(cx.window(), place);
+        }
+        if !self.compact.standalone_window {
+            self.load_tab_restore();
+        }
         windowlook::apply(self, cx);
         let now = cx.now();
         self.refresh(now);
@@ -17,6 +23,8 @@ impl App for AppState {
         self.resume_polling(now);
         self.start_debug(cx);
         self.start_demo_session();
+        self.start_compact();
+        self.setup_notifications(cx);
         self.timers(cx);
     }
 
@@ -31,6 +39,7 @@ impl App for AppState {
             }
             Event::PointerLeave => {
                 self.hover = None;
+                self.tabs.drag = None;
                 self.usage_hover(cx.now(), None);
                 self.session_pointer_left();
                 self.tip.hover(cx.now(), None);
@@ -46,8 +55,11 @@ impl App for AppState {
                     Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Middle && id != SESSIONS => {
                         self.ask_close_tab(id)
                     }
+                    Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Right && id != SESSIONS => {
+                        self.tab_menu(id, Rect::new(x, y, 0.0, 0.0));
+                    }
                     Some(Target::Terminal) => self.term_press(x, y, button, clicks, cx.mods()),
-                    Some(Target::Entry(e) | Target::Pin(e)) if button == Button::Right => {
+                    Some(Target::Entry(e) | Target::Pin(e) | Target::ArchivePick(e)) if button == Button::Right => {
                         self.mouse = (x, y);
                         self.focus = Focus::List;
                         self.row_menu(e, Rect::new(x, y, 0.0, 0.0));
@@ -60,7 +72,7 @@ impl App for AppState {
                     return;
                 }
             }
-            Event::Wheel { dy, .. } if self.nothing_over() && self.terminal_shown() => {
+            Event::Wheel { dy, .. } if self.nothing_over() && self.terminal_shown() && !self.usage.popup.open => {
                 let (x, y) = self.mouse;
                 if !self.session_wheel(cx.size().0, x, y, dy) && self.term_area.contains(x, y) {
                     self.term_wheel(dy, cx.mods());
@@ -94,6 +106,7 @@ impl App for AppState {
                 }
             }
             Event::Focus(false) => {
+                self.tabs.drag = None;
                 self.usage.popup = Default::default();
                 self.term_focus(false);
             }
@@ -112,12 +125,18 @@ impl App for AppState {
                     self.win_file.w = w;
                     self.win_file.h = h;
                 }
+                self.capture_window(cx);
                 self.resume_polling(cx.now());
             }
             Event::Theme { .. } | Event::Contrast(_) => {
                 self.retheme();
             }
             Event::Wake(now) => {
+                self.attention_tick(cx);
+                self.usage_warning_tick(now);
+                if self.start_conversation_search(now) {
+                    cx.request_redraw_all();
+                }
                 self.terminal_drop_due(cx, now);
                 self.session_tick(cx, false);
                 if let Some(at) = self.typed_due(now) {
@@ -132,6 +151,9 @@ impl App for AppState {
                 if self.usage.repaint_at.take_if(|at| *at <= now).is_some() {
                     cx.request_redraw_all();
                 }
+                if self.config.show_usage && self.usage.cache_retry_at().is_some_and(|at| at <= now) {
+                    self.take_usage_jobs(now);
+                }
                 if self.undo_hide.take_if(|undo| undo.until <= now).is_some() {
                     cx.request_redraw_all();
                 }
@@ -142,8 +164,10 @@ impl App for AppState {
                     }
                 }
                 if self.next_poll.is_some_and(|t| t <= now) {
-                    // An idle window that cannot be seen stops polling until it is shown again.
-                    if cx.window().is_minimized() == Some(true) {
+                    // A new or forked tab still needs its verified transcript identity while minimized.
+                    if cx.window().is_minimized() == Some(true)
+                        && !self.tabs.list.iter().any(|tab| tab.pane.is_some() && tab.term.running())
+                    {
                         self.next_poll = None;
                     } else {
                         self.poll_running();
@@ -153,25 +177,24 @@ impl App for AppState {
                 self.timers(cx);
                 return;
             }
-            Event::CloseRequested if self.ask_quit() => self.quit = true,
+            Event::CloseRequested => self.request_window_close(cx),
             _ => {}
         }
-        if self.quit {
-            if let Some(job) = self.naming_job.as_ref() {
-                job.cancel();
-                if job.running() {
-                    return;
-                }
-            }
-            self.finish_exit(cx);
+        if self.exit_if_requested(cx) {
             return;
         }
+        self.restore_tabs_if_always(cx.now());
+        self.attention_tick(cx);
+        self.usage_warning_tick(cx.now());
         windowlook::apply(self, cx);
         cx.request_redraw_all();
         self.timers(cx);
     }
 
     fn raw(&mut self, cx: &mut Cx<'_, Msg>, event: &winit::event::WindowEvent) {
+        if matches!(event, winit::event::WindowEvent::Moved(_)) {
+            self.capture_window(cx);
+        }
         if let winit::event::WindowEvent::DroppedFile(file) = event {
             self.terminal_drop(cx, file.clone());
         }
@@ -180,16 +203,33 @@ impl App for AppState {
     fn message(&mut self, cx: &mut Cx<'_, Msg>, m: Msg) {
         match m {
             Msg::Woke => {
-                let changed = self.take_jobs() | self.take_usage_jobs(cx.now());
-                if self.quit && self.naming_job.is_none() {
-                    self.finish_exit(cx);
-                } else if changed {
+                let changed = self.take_jobs()
+                    | self.take_usage_jobs(cx.now())
+                    | self.take_desktop_job(cx.now())
+                    | self.take_compact_jobs();
+                let changed = changed | self.restore_tabs_if_always(cx.now());
+                self.attention_tick(cx);
+                self.usage_warning_tick(cx.now());
+                if self.exit_if_requested(cx) {
+                    return;
+                }
+                if changed {
                     cx.request_redraw_all();
                 }
                 self.timers(cx);
             }
             Msg::Term => self.term_woke(cx),
+            Msg::Tray(event) => {
+                self.tray_event(cx, event);
+                if !self.exit_if_requested(cx) {
+                    self.timers(cx);
+                }
+            }
             Msg::SessionView => self.session_ready(cx),
+            Msg::ArchiveReportSaved(result) => {
+                self.report_saved(result);
+                cx.request_redraw_all();
+            }
             Msg::AttachPictures(id, files) => {
                 if self.paste_paths(id, &files) {
                     cx.request_redraw(self.term_area);
@@ -204,11 +244,46 @@ impl App for AppState {
 }
 
 impl AppState {
+    fn exit_if_requested(&mut self, cx: &mut Cx<'_, Msg>) -> bool {
+        if !self.quit {
+            return false;
+        }
+        if self.cancel_compact_work() {
+            return true;
+        }
+        if let Some(job) = &self.desktop_job {
+            job.cancel();
+            if job.running() {
+                return true;
+            }
+        }
+        if let Some(job) = &self.naming_job {
+            job.cancel();
+            if job.running() {
+                return true;
+            }
+        }
+        self.finish_exit(cx);
+        true
+    }
+
+    fn capture_window(&mut self, cx: &Cx<'_, Msg>) {
+        if !self.source.is_demo()
+            && let Some(place) = winfile::capture(cx.window())
+        {
+            self.win_file.place = Some(place);
+        }
+    }
+
     fn finish_exit(&mut self, cx: &mut Cx<'_, Msg>) {
         if self.marks_flush_at.is_some() {
             self.save_marks();
         }
-        self.save_window();
+        if !self.compact.standalone_window {
+            self.capture_window(cx);
+            self.save_window();
+            self.save_tab_restore();
+        }
         cx.exit();
     }
 }

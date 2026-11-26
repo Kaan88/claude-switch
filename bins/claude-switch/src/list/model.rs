@@ -12,10 +12,12 @@ pub enum Filter {
     Pinned,
     Unseen,
     Hidden,
+    Archived,
 }
 
 impl Filter {
-    pub const ALL: [Self; 6] = [Self::All, Self::Running, Self::Waiting, Self::Pinned, Self::Unseen, Self::Hidden];
+    pub const ALL: [Self; 7] =
+        [Self::All, Self::Running, Self::Waiting, Self::Pinned, Self::Unseen, Self::Hidden, Self::Archived];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -25,6 +27,7 @@ impl Filter {
             Self::Pinned => "Pinned",
             Self::Unseen => "Unseen",
             Self::Hidden => "Hidden",
+            Self::Archived => "Archived",
         }
     }
 }
@@ -47,6 +50,7 @@ impl Flags {
             Filter::Pinned => self.pinned,
             Filter::Unseen => self.unseen,
             Filter::Hidden => self.hidden,
+            Filter::Archived => false, // Local archive visibility is handled before this filter.
         }
     }
 }

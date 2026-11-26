@@ -10,7 +10,7 @@ fn state() -> AppState {
 fn the_demo_list_groups_every_unarchived_session_and_selects_the_first_pinned_row() {
     let s = state();
     let shown: usize = s.groups.iter().map(|g| g.rows.len()).sum();
-    assert_eq!(shown, s.sessions.iter().filter(|x| !x.archived && !x.worker).count());
+    assert_eq!(shown, s.sessions.iter().filter(|x| !x.archived && !x.worker && !s.is_archived(x)).count());
     assert_eq!(s.selected.as_deref(), Some(s.sessions[2].id.as_str()));
     assert_eq!(s.groups[0].name, "Pinned");
     assert!(s.groups.iter().any(|g| g.name == "Older"));
@@ -26,7 +26,7 @@ fn both_modes_promote_pins_and_filters_use_the_marked_state() {
         assert_eq!(s.groups[0].name, "Pinned");
         assert!(s.groups[0].rows.iter().all(|&i| s.marks.pinned(&s.sessions[i].id)));
         let count = s.groups.iter().map(|g| g.rows.len()).sum::<usize>();
-        assert_eq!(count, s.sessions.iter().filter(|s| !s.archived && !s.worker).count());
+        assert_eq!(count, s.sessions.iter().filter(|x| !x.archived && !x.worker && !s.is_archived(x)).count());
         s.filter = Filter::Running;
         s.rebuild_view();
         assert_eq!(s.groups.iter().map(|g| g.rows.len()).sum::<usize>(), 2);
@@ -116,7 +116,7 @@ fn thousands_of_sessions_still_yield_only_a_viewport_of_draw_entries() {
 #[test]
 fn worker_sessions_show_only_with_the_setting() {
     let mut s = state();
-    let workers = s.sessions.iter().filter(|x| x.worker && !x.archived).count();
+    let workers = s.sessions.iter().filter(|x| x.worker && !x.archived && !s.is_archived(x)).count();
     assert!(workers > 0);
     let shown = |s: &AppState| s.groups.iter().map(|g| g.rows.len()).sum::<usize>();
     let hidden = shown(&s);

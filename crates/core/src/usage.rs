@@ -57,32 +57,44 @@ impl Token {
     }
 
     /// Do not retain even a credential reflected in the name of a response field.
-    pub fn limits(&self, body: &[u8]) -> Result<Vec<Limit>, Error> {
-        decode(body, self.value())
+    pub fn reading(&self, body: &[u8], read_at: u64) -> Result<Reading, Error> {
+        decode(body, self.value(), read_at)
     }
 
     /// A diagnostic tree, not the response: only member names, types and array lengths.
-    pub fn shape(&self, body: &[u8]) -> Result<Value, Error> {
+    pub fn shape(&self, body: &[u8], labels: bool) -> Result<Value, Error> {
         let raw = serde_json::from_slice(body).map_err(|_| Error::NotUnderstood)?;
-        Ok(shape(raw, self.value()))
+        Ok(shape(raw, self.value(), labels))
     }
 }
 
-fn shape(raw: Value, bearer: &str) -> Value {
+fn shape(raw: Value, bearer: &str, labels: bool) -> Value {
     fn object<const N: usize>(fields: [(&str, Value); N]) -> Value {
         Value::Object(fields.into_iter().map(|(key, value)| (key.to_owned(), value)).collect())
     }
     match raw {
         Value::Object(raw) => {
             let members = raw.into_iter().map(|(name, value)| {
+                let expose = labels && matches!(name.as_str(), "kind" | "group" | "severity" | "key" | "display_name");
                 let name = if name.contains(bearer) { "<redacted>".into() } else { name };
-                object([("name", Value::String(name)), ("shape", shape(value, bearer))])
+                let shown = value.as_str().filter(|s| {
+                    expose
+                        && !s.contains(bearer)
+                        && s.len() <= 40
+                        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b" .-_".contains(&b))
+                });
+                let detail = if let Some(label) = shown {
+                    object([("type", "string".into()), ("value", label.into())])
+                } else {
+                    shape(value, bearer, labels)
+                };
+                object([("name", Value::String(name)), ("shape", detail)])
             });
             object([("type", "object".into()), ("members", Value::Array(members.collect()))])
         }
         Value::Array(raw) => {
             let len = raw.len();
-            let items = raw.into_iter().map(|value| shape(value, bearer)).collect();
+            let items = raw.into_iter().map(|value| shape(value, bearer, labels)).collect();
             object([("type", "array".into()), ("length", json!(len)), ("items", Value::Array(items))])
         }
         Value::Number(_) => json!({"type": "number"}),
@@ -133,65 +145,138 @@ pub fn read_token(cli_dir: &Path, now: u64) -> Result<Token, Error> {
     Ok(token)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Slot {
+    Session,
+    Week,
+    Model,
+    Other,
+}
+
+impl Slot {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Week => "week",
+            Self::Model => "model",
+            Self::Other => "other",
+        }
+    }
+
+    fn from_id(id: Option<&str>) -> Self {
+        match id {
+            Some("session") => Self::Session,
+            Some("week") => Self::Week,
+            Some("model") => Self::Model,
+            _ => Self::Other,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Limit {
-    pub key: String,
+    pub label: String,
+    pub slot: Slot,
     pub used: f64,
     /// Reset as UNIX seconds, never arbitrary response text.
     pub reset: Option<i64>,
+    pub severity: String,
 }
 
 impl Limit {
-    pub fn label(&self) -> String {
-        match self.key.as_str() {
-            "five_hour" => "Session".into(),
-            "seven_day" => "Week".into(),
-            key => {
-                if let Some(model) = key.strip_prefix("seven_day_").filter(|s| !s.is_empty()) {
-                    let name = model.replace('_', " ");
-                    let mut chars = name.chars();
-                    let first = chars.next().into_iter().flat_map(char::to_uppercase);
-                    format!("Week, {}", first.chain(chars).collect::<String>())
-                } else {
-                    key.replace('_', " ")
-                }
-            }
-        }
+    pub fn legacy(key: &str, used: f64, reset: Option<i64>) -> Self {
+        let (slot, label) = match key {
+            "five_hour" => (Slot::Session, "Session".into()),
+            "seven_day" => (Slot::Week, "Week".into()),
+            key => match key.strip_prefix("seven_day_").filter(|s| !s.is_empty()) {
+                Some(model) => (Slot::Model, format!("Week, {}", humanise(model))),
+                None => (Slot::Other, key.replace('_', " ")),
+            },
+        };
+        Self { slot, label, used, reset, severity: String::new() }
     }
 
-    pub fn model(&self) -> bool {
-        self.key.strip_prefix("seven_day_").is_some_and(|s| !s.is_empty())
-    }
-
-    fn rank(&self) -> u8 {
-        match self.key.as_str() {
-            "five_hour" => 0,
-            "seven_day" => 1,
-            _ if self.model() => 2,
-            _ => 3,
-        }
+    pub fn warning(&self) -> bool {
+        self.used >= 80.0
+            || !matches!(self.severity.trim().to_ascii_lowercase().as_str(), "" | "normal" | "ok" | "none")
     }
 }
 
-fn sort(limits: &mut [Limit]) {
-    limits.sort_by(|a, b| (a.rank(), &a.key).cmp(&(b.rank(), &b.key)));
+fn humanise(name: &str) -> String {
+    let name = name.replace('_', " ");
+    let mut chars = name.chars();
+    chars.next().into_iter().flat_map(char::to_uppercase).chain(chars).collect()
 }
 
-fn decode(body: &[u8], token: &str) -> Result<Vec<Limit>, Error> {
-    let Value::Object(object) = serde_json::from_slice(body).map_err(|_| Error::NotUnderstood)? else {
+fn report_text<'a>(value: &'a Value, bearer: &str) -> Option<&'a str> {
+    let text = value.as_str()?.trim();
+    (!text.is_empty() && text.len() <= 256 && !text.contains(bearer) && !text.chars().any(char::is_control))
+        .then_some(text)
+}
+
+fn modern_limit(item: &Value, bearer: &str) -> Option<Limit> {
+    // `is_active` is not a filter: the real answer marks only the limit that binds right now, and
+    // the others (session, week) are still limits to show.
+    let used = percent(&item["percent"])?;
+    let kind = report_text(&item["kind"], bearer).or_else(|| report_text(&item["group"], bearer)).unwrap_or("Limit");
+    let lower = kind.to_ascii_lowercase();
+    let group = report_text(&item["group"], bearer).unwrap_or("").to_ascii_lowercase();
+    let (slot, label) = if let Some(model) = report_text(&item["scope"]["model"]["display_name"], bearer) {
+        let weekly = [&lower, &group].into_iter().any(|name| name.contains("week") || name.contains("seven"));
+        let prefix = if weekly { "Week".into() } else { humanise(kind) };
+        (Slot::Model, format!("{prefix}, {model}"))
+    } else if lower.contains("five_hour") || lower.contains("session") {
+        (Slot::Session, "Session".into())
+    } else if lower.contains("seven_day") || lower.contains("week") {
+        (Slot::Week, "Week".into())
+    } else {
+        (Slot::Other, humanise(kind))
+    };
+    if label.contains(bearer) {
+        return None;
+    }
+    let reset = item["resets_at"].as_str().and_then(timestamp);
+    let severity = report_text(&item["severity"], bearer).unwrap_or("").into();
+    Some(Limit { label, slot, used, reset, severity })
+}
+
+fn decode(body: &[u8], bearer: &str, read_at: u64) -> Result<Reading, Error> {
+    let raw: Value = serde_json::from_slice(body).map_err(|_| Error::NotUnderstood)?;
+    let Some(object) = raw.as_object() else {
         return Err(Error::NotUnderstood);
     };
-    let mut limits = Vec::new();
-    for (key, member) in object {
-        let Some(used) = member.get("utilization").and_then(percent) else { continue };
-        let reset = member.get("resets_at").and_then(Value::as_str).and_then(timestamp);
-        let limit = Limit { key, used, reset };
-        if !limit.key.contains(token) && !limit.label().contains(token) {
-            limits.push(limit);
-        }
-    }
-    sort(&mut limits);
-    Ok(limits)
+    let mut limits: Vec<_> = if let Some(items) = raw["limits"].as_array().filter(|items| !items.is_empty()) {
+        items.iter().filter_map(|item| modern_limit(item, bearer)).collect()
+    } else {
+        object
+            .iter()
+            .filter_map(|(key, member)| {
+                let reset = member["resets_at"].as_str().and_then(timestamp);
+                let limit = Limit::legacy(key, percent(&member["utilization"])?, reset);
+                (!key.contains(bearer) && !limit.label.contains(bearer)).then_some(limit)
+            })
+            .collect()
+    };
+    limits.sort_by(|a, b| (a.slot, &a.label).cmp(&(b.slot, &b.label)));
+    let breakdown = breakdown(&raw["seven_day_breakdown"]["rows"], Some(bearer), "display_name", "percent_of_limit");
+    Ok(Reading { read_at, limits, breakdown })
+}
+
+fn breakdown(rows: &Value, bearer: Option<&str>, name: &str, measure: &str) -> Vec<Breakdown> {
+    let mut rows: Vec<_> = rows
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let label =
+                if let Some(bearer) = bearer { report_text(&row[name], bearer)? } else { row[name].as_str()? };
+            let percent = row[measure].as_f64().filter(|p| p.is_finite())?;
+            Some(Breakdown { label: label.into(), percent })
+        })
+        .collect();
+    rows.sort_by(|a, b| b.percent.total_cmp(&a.percent).then_with(|| a.label.cmp(&b.label)));
+    rows.truncate(6);
+    rows
 }
 
 fn percent(value: &Value) -> Option<f64> {
@@ -200,8 +285,8 @@ fn percent(value: &Value) -> Option<f64> {
     n.as_f64().or_else(|| n.to_string().parse::<f64>().ok()).map(|n| n.clamp(0.0, 100.0))
 }
 
-/// Parse the extended ISO timestamp returned by the service. Fractions are not displayed.
-fn timestamp(text: &str) -> Option<i64> {
+/// Parse an extended ISO timestamp. Fractions are not displayed.
+pub(crate) fn timestamp(text: &str) -> Option<i64> {
     let (date, time) = text.split_once(['T', 't'])?;
     let [y, m, d] = <[&str; 3]>::try_from(date.split('-').collect::<Vec<_>>()).ok()?;
     let digits =
@@ -241,6 +326,13 @@ fn timestamp(text: &str) -> Option<i64> {
 pub struct Reading {
     pub read_at: u64,
     pub limits: Vec<Limit>,
+    pub breakdown: Vec<Breakdown>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Breakdown {
+    pub label: String,
+    pub percent: f64,
 }
 
 pub const CACHE_NAME: &str = "usage.json";
@@ -255,31 +347,46 @@ pub fn load_cache(path: &Path) -> Cache {
         .into_iter()
         .filter_map(|(slug, record)| {
             let read_at = record["read_at"].as_u64()?;
-            let mut limits: Vec<_> = record["limits"]
-                .as_object()?
-                .iter()
-                .filter_map(|(key, limit)| {
-                    let used = percent(&limit["used"])?;
-                    let reset = limit["reset"].as_i64().filter(|r| (0..253_402_300_800).contains(r));
-                    Some(Limit { key: key.clone(), used, reset })
-                })
-                .collect();
-            sort(&mut limits);
-            Some((slug, Reading { read_at, limits }))
+            let reset = |limit: &Value| limit["reset"].as_i64().filter(|r| (0..253_402_300_800).contains(r));
+            let mut limits: Vec<_> = if let Some(limits) = record["limits"].as_array() {
+                limits
+                    .iter()
+                    .filter_map(|limit| {
+                        Some(Limit {
+                            label: limit["label"].as_str()?.into(),
+                            slot: Slot::from_id(limit["slot"].as_str()),
+                            used: percent(&limit["used"])?,
+                            reset: reset(limit),
+                            severity: limit["severity"].as_str().unwrap_or("").into(),
+                        })
+                    })
+                    .collect()
+            } else {
+                record["limits"]
+                    .as_object()?
+                    .iter()
+                    .filter_map(|(key, limit)| Some(Limit::legacy(key, percent(&limit["used"])?, reset(limit))))
+                    .collect()
+            };
+            limits.sort_by(|a, b| (a.slot, &a.label).cmp(&(b.slot, &b.label)));
+            let breakdown = breakdown(&record["breakdown"], None, "label", "percent");
+            Some((slug, Reading { read_at, limits, breakdown }))
         })
         .collect()
 }
 
 pub fn save_cache(path: &Path, readings: &Cache) -> std::io::Result<()> {
+    crate::util::regular_target(path).map_err(std::io::Error::other)?;
     let accounts: serde_json::Map<String, Value> = readings
         .iter()
         .map(|(slug, reading)| {
-            let limits: serde_json::Map<String, Value> = reading
+            let limits: Vec<Value> = reading
                 .limits
                 .iter()
-                .map(|limit| (limit.key.clone(), json!({"used": limit.used, "reset": limit.reset})))
+                .map(|l| json!({"label": l.label, "slot": l.slot.id(), "used": l.used, "reset": l.reset, "severity": l.severity}))
                 .collect();
-            (slug.clone(), json!({"read_at": reading.read_at, "limits": limits}))
+            let breakdown: Vec<_> = reading.breakdown.iter().map(|r| json!({"label": r.label, "percent": r.percent})).collect();
+            (slug.clone(), json!({"read_at": reading.read_at, "limits": limits, "breakdown": breakdown}))
         })
         .collect();
     // No symlink resolution of the destination; never write through an existing file or link.
@@ -296,9 +403,12 @@ pub fn save_cache(path: &Path, readings: &Cache) -> std::io::Result<()> {
         .and_then(|()| file.write_all(b"\n"))
         .and_then(|()| file.sync_all());
     drop(file);
-    written.and_then(|()| fs::rename(temp, path)).inspect_err(|_| {
-        let _ = fs::remove_file(temp);
-    })
+    written
+        .and_then(|()| crate::util::regular_target(path).map_err(std::io::Error::other))
+        .and_then(|()| fs::rename(temp, path))
+        .inspect_err(|_| {
+            let _ = fs::remove_file(temp);
+        })
 }
 
 #[derive(Clone, Copy)]

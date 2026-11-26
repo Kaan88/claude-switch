@@ -1,0 +1,5 @@
+{
+  "name": "claude-switch",
+  "version": "0.1.0",
+  "description": "Hand off the current Claude Code session to Claude Switch."
+}

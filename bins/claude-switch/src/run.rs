@@ -6,8 +6,7 @@
 //!   waited for. A launch that hands a session to the desktop app (`claude --desktop ...`) is the
 //!   exception: the CLI refuses that without a terminal, so it runs in a pseudo-terminal nobody
 //!   sees ([`needs_terminal`], [`run_unseen`]).
-//! - `Place::Terminal`: Windows Terminal when `wt.exe` is on the `PATH`
-//!   (`wt.exe -d <cwd> -- <program> <args…>`), else `cmd /c start "" /d <cwd> <program> <args…>`.
+//! - `Place::Terminal`: launch directly in a new console, never through a shell's `start`.
 //!
 //! The launch's `env` and `env_remove` are applied to the child in both cases. Arguments are
 //! passed one by one to [`Command`]; no command line is built by joining strings.
@@ -23,12 +22,14 @@ use claude_switch_core::{Launch, Place};
 /// Starts the launch and returns once the process exists. Errors are the system's.
 pub fn run(launch: &Launch) -> io::Result<()> {
     if needs_terminal(launch) {
-        return run_unseen(launch);
+        return Err(io::Error::other("Desktop handoff requires a worker"));
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
     let pathext = std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
-    let mut cmd = command(launch, &path, &pathext);
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    let mut cmd = command(launch, &path, &pathext)?;
+    if launch.place == Place::Detached {
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    }
     cmd.spawn().map(drop)
 }
 
@@ -38,22 +39,25 @@ pub fn needs_terminal(launch: &Launch) -> bool {
     launch.place == Place::Detached && launch.args.iter().any(|a| a == "--desktop")
 }
 
-/// How long [`run_unseen`] waits for a refusal before it reports the launch as started.
-const REFUSAL_WAIT: Duration = Duration::from_secs(4);
-/// How long the unseen terminal is kept for a program that does not end.
-const UNSEEN_LIMIT: Duration = Duration::from_secs(120);
+pub fn run_unseen(launch: &Launch, cancelled: impl Fn() -> bool) -> io::Result<()> {
+    run_unseen_until(launch, Duration::from_secs(30), cancelled)
+}
 
-/// Runs the launch in a pseudo-terminal that is shown nowhere. A program that ends with an error
-/// within [`REFUSAL_WAIT`] makes this an error carrying what it printed (the CLI says why it will
-/// not hand the session over); otherwise its output is thrown away until it ends.
-fn run_unseen(launch: &Launch) -> io::Result<()> {
+fn run_unseen_until(launch: &Launch, limit: Duration, cancelled: impl Fn() -> bool) -> io::Result<()> {
     let mut pty = mdshared_pty::Pty::spawn(&crate::term::command(launch), 200, 30, || {})?;
     let start = Instant::now();
     let mut printed = Vec::new();
-    while start.elapsed() < REFUSAL_WAIT {
-        printed.extend(pty.take_output());
+    let mut collect = |output: Vec<u8>| {
+        const CAP: usize = 8 * 1024;
+        let output = &output[output.len().saturating_sub(CAP)..];
+        let remove = (printed.len() + output.len()).saturating_sub(CAP);
+        printed.drain(..remove);
+        printed.extend_from_slice(output);
+    };
+    while start.elapsed() < limit && !cancelled() {
+        collect(pty.take_output());
         if let Some(exit) = pty.exit() {
-            printed.extend(pty.take_output());
+            collect(pty.take_output());
             let said = plain_text(&printed);
             return if exit.success() {
                 Ok(())
@@ -65,13 +69,11 @@ fn run_unseen(launch: &Launch) -> io::Result<()> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    std::thread::spawn(move || {
-        while pty.running() && start.elapsed() < UNSEEN_LIMIT {
-            drop(pty.take_output());
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    });
-    Ok(())
+    Err(if cancelled() {
+        io::Error::new(io::ErrorKind::Interrupted, "Desktop handoff was cancelled.")
+    } else {
+        io::Error::new(io::ErrorKind::TimedOut, "Desktop handoff timed out after 30 seconds.")
+    })
 }
 
 /// What a terminal's output says as one line: escape sequences and control characters removed,
@@ -115,59 +117,52 @@ pub fn plain_text(bytes: &[u8]) -> String {
 }
 
 /// The command [`run`] spawns, with `path` and `pathext` standing for the environment's.
-pub fn command(launch: &Launch, path: &OsString, pathext: &OsString) -> Command {
-    let program = resolve(&launch.program, path, pathext).unwrap_or_else(|| launch.program.clone());
-    let mut cmd = match launch.place {
-        Place::Detached => {
-            let mut c = Command::new(&program);
-            c.args(&launch.args);
-            no_window(&mut c);
-            if let Some(dir) = &launch.cwd {
-                c.current_dir(dir);
-            }
-            c
-        }
-        Place::Terminal => match resolve(Path::new("wt.exe"), path, pathext) {
-            Some(wt) => {
-                let mut c = Command::new(wt);
-                if let Some(dir) = &launch.cwd {
-                    c.arg("-d").arg(dir);
-                    c.current_dir(dir);
-                }
-                c.arg("--").arg(&program).args(&launch.args);
-                c
-            }
-            None => {
-                let mut c = Command::new("cmd");
-                c.args(["/c", "start", ""]);
-                if let Some(dir) = &launch.cwd {
-                    c.arg("/d").arg(dir);
-                    c.current_dir(dir);
-                }
-                c.arg(&program).args(&launch.args);
-                no_window(&mut c);
-                c
-            }
-        },
+fn command(launch: &Launch, path: &OsString, pathext: &OsString) -> io::Result<Command> {
+    let program = if launch.program.is_absolute() && launch.program.is_file() {
+        launch.program.clone()
+    } else {
+        resolve(&launch.program, path, pathext)
+            .filter(|p| p.is_absolute())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Executable not found on absolute PATH"))?
     };
-    for name in &launch.env_remove {
+    let ext = program.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "exe" | "com" => {}
+        // Rust dispatches these via its Windows batch adapter. Accept only fixed-style CLI
+        // words/UUIDs and a shim path without cmd expansion/metacharacters; cwd is not an argument.
+        "bat" | "cmd" if safe_shim(&program, &launch.args) => {}
+        _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "Unsupported executable or unsafe batch shim")),
+    }
+    let mut cmd = Command::new(&program);
+    cmd.args(&launch.args);
+    if let Some(dir) = &launch.cwd {
+        cmd.current_dir(dir);
+    }
+    window_flags(&mut cmd, launch.place);
+    for name in claude_switch_core::launch::child_removals(launch) {
         cmd.env_remove(name);
     }
     for (k, v) in &launch.env {
         cmd.env(k, v);
     }
-    cmd
+    Ok(cmd)
+}
+
+fn safe_shim(program: &Path, args: &[String]) -> bool {
+    program.to_str().is_some_and(|s| !s.chars().any(|c| c.is_control() || "%!&^()<>|\"".contains(c)))
+        && args.iter().all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)))
 }
 
 #[cfg(windows)]
-fn no_window(c: &mut Command) {
+fn window_flags(c: &mut Command, place: Place) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    c.creation_flags(CREATE_NO_WINDOW);
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    c.creation_flags(if place == Place::Terminal { CREATE_NEW_CONSOLE } else { CREATE_NO_WINDOW });
 }
 
 #[cfg(not(windows))]
-fn no_window(_c: &mut Command) {}
+fn window_flags(_c: &mut Command, _place: Place) {}
 
 /// A bare program name found on `path`, trying each of `pathext` when it has no extension (so an
 /// npm-installed `claude.cmd` is found as well as `claude.exe`). A name with a folder in it, or
@@ -180,6 +175,9 @@ pub fn resolve(program: &Path, path: &OsString, pathext: &OsString) -> Option<Pa
         pathext.to_string_lossy().split(';').filter(|e| !e.is_empty()).map(str::to_string).collect();
     let has_ext = program.extension().is_some();
     for dir in std::env::split_paths(path) {
+        if !dir.is_absolute() {
+            continue;
+        }
         if has_ext {
             let p = dir.join(program);
             if p.is_file() {
@@ -261,9 +259,41 @@ mod tests {
         l.cwd = None;
         l.program = "cmd.exe".into();
         l.args = vec!["/c".into(), "echo no such session& exit 3".into()];
-        assert_eq!(run_unseen(&l).unwrap_err().to_string(), "no such session");
+        assert_eq!(run_unseen(&l, || false).unwrap_err().to_string(), "no such session");
         l.args = vec!["/c".into(), "echo fine".into()];
-        assert!(run_unseen(&l).is_ok());
+        assert!(run_unseen(&l, || false).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_handoff_returns_an_error_for_a_deadline_instead_of_success() {
+        let mut l = launch(Place::Detached);
+        l.cwd = None;
+        l.program = "cmd.exe".into();
+        l.args = vec!["/d".into(), "/c".into(), "echo not needed".into()];
+        let error = run_unseen_until(&l, Duration::ZERO, || false).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_handoff_reports_a_cli_failure_after_the_old_four_second_cutoff() {
+        let mut l = launch(Place::Detached);
+        l.cwd = None;
+        l.program = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        l.args = [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Milliseconds 4200; [Console]::WriteLine('handoff failed'); exit 3",
+        ]
+        .map(str::to_owned)
+        .into();
+        let started = Instant::now();
+        let error = run_unseen_until(&l, Duration::from_secs(15), || false).unwrap_err();
+        assert!(started.elapsed() >= Duration::from_secs(4));
+        assert!(error.to_string().contains("handoff failed"), "{error}");
     }
 
     /// A real hand-over: `CS_DESKTOP_SESSION` is the session's id and `CS_DESKTOP_CWD` its folder.
@@ -282,52 +312,66 @@ mod tests {
             label: String::new(),
         };
         let started = Instant::now();
-        let result = run_unseen(&l);
+        let result = run_unseen(&l, || false);
         println!("{result:?} after {:?}", started.elapsed());
         assert!(result.is_ok());
     }
 
     #[test]
     fn a_detached_launch_runs_the_program_itself_in_its_folder_with_its_environment() {
-        let c = command(&launch(Place::Detached), &OsString::new(), &".EXE".into());
-        assert_eq!(c.get_program(), "claude");
+        let d = scratch("detached");
+        let path = d.join("claude.exe");
+        std::fs::write(&path, b"").unwrap();
+        let c = command(&launch(Place::Detached), &d.clone().into_os_string(), &".EXE".into()).unwrap();
+        assert_eq!(c.get_program(), path.as_os_str());
         assert_eq!(args(&c), ["--resume", "abc def"]);
         assert_eq!(c.get_current_dir(), Some(Path::new(r"C:\work\my project")));
         let e = envs(&c);
         assert!(e.contains(&("CLAUDE_CONFIG_DIR".into(), Some(r"C:\x\cli".into()))));
         assert!(e.contains(&("ANTHROPIC_API_KEY".into(), None)));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
-    fn a_terminal_launch_without_windows_terminal_goes_through_cmd_start_with_each_argument_apart() {
-        let c = command(&launch(Place::Terminal), &OsString::new(), &".EXE".into());
-        assert_eq!(c.get_program(), "cmd");
-        assert_eq!(args(&c), ["/c", "start", "", "/d", r"C:\work\my project", "claude", "--resume", "abc def"]);
+    fn a_terminal_launch_uses_the_executable_and_never_interprets_the_folder_as_a_command() {
+        let d = scratch("terminal");
+        std::fs::write(d.join("claude.exe"), b"").unwrap();
+        let mut l = launch(Place::Terminal);
+        l.cwd = Some(d.join("R&D"));
+        let c = command(&l, &d.clone().into_os_string(), &".EXE".into()).unwrap();
+        assert_eq!(c.get_program(), d.join("claude.exe").as_os_str());
+        assert_eq!(args(&c), ["--resume", "abc def"]);
+        assert_eq!(c.get_current_dir(), l.cwd.as_deref());
         assert!(envs(&c).contains(&("CLAUDE_CONFIG_DIR".into(), Some(r"C:\x\cli".into()))));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
-    fn a_terminal_launch_uses_windows_terminal_when_it_is_on_the_path() {
+    fn a_batch_shim_refuses_unrestricted_words_even_with_windows_terminal_present() {
         let d = scratch("wt");
         std::fs::write(d.join("wt.exe"), b"").unwrap();
         std::fs::write(d.join("claude.cmd"), b"").unwrap();
-        let c = command(&launch(Place::Terminal), &d.clone().into_os_string(), &".EXE;.CMD".into());
-        assert_eq!(c.get_program(), d.join("wt.exe").as_os_str());
-        let a = args(&c);
-        assert_eq!(a[..3], ["-d".to_string(), r"C:\work\my project".into(), "--".into()]);
-        assert_eq!(a[3], d.join("claude.cmd").to_string_lossy());
-        assert_eq!(a[4..], ["--resume".to_string(), "abc def".into()]);
+        let mut l = launch(Place::Terminal);
+        let path = d.clone().into_os_string();
+        assert_eq!(command(&l, &path, &".EXE;.CMD".into()).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        l.args = vec!["auth".into(), "login".into()];
+        let c = command(&l, &path, &".EXE;.CMD".into()).unwrap();
+        assert_eq!(c.get_program(), d.join("claude.cmd").as_os_str());
+        assert_eq!(args(&c), ["auth", "login"]);
         assert!(envs(&c).contains(&("ANTHROPIC_API_KEY".into(), None)));
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn a_launch_with_no_folder_names_none() {
+        let d = scratch("no-folder");
+        std::fs::write(d.join("claude.exe"), b"").unwrap();
         let mut l = launch(Place::Terminal);
         l.cwd = None;
-        let c = command(&l, &OsString::new(), &".EXE".into());
-        assert_eq!(args(&c), ["/c", "start", "", "claude", "--resume", "abc def"]);
+        let c = command(&l, &d.clone().into_os_string(), &".EXE".into()).unwrap();
+        assert_eq!(args(&c), ["--resume", "abc def"]);
         assert_eq!(c.get_current_dir(), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

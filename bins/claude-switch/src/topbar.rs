@@ -21,6 +21,7 @@ pub struct Bar {
     pub account: Rect,
     pub search: Rect,
     pub clear: Rect,
+    pub search_mode: Rect,
     pub new_session: Rect,
     pub refresh: Rect,
     pub menu: Rect,
@@ -28,6 +29,7 @@ pub struct Bar {
 
 const NEW_W: f32 = 118.0;
 const BRAND_W: f32 = 124.0;
+pub const RESET_SETTINGS: u32 = 90;
 const LOGO: &[u8] = include_bytes!("../../../assets/logo-256.png");
 
 impl Bar {
@@ -38,16 +40,19 @@ impl Bar {
         let tools_w = NEW_W + 8.0 + 32.0 + 4.0 + 32.0;
         let dot = Rect::new(BRAND_W, (TITLE_H - 10.0) / 2.0, 10.0, 10.0);
         let account_x = dot.x + 18.0;
-        let account_w = (right_free - tools_w - 24.0 - 140.0 - account_x).clamp(100.0, 200.0);
+        let mode_w = if w < 890.0 { 34.0 } else { 112.0 };
+        let mode_space = mode_w + 4.0;
+        let account_w = (right_free - tools_w - 24.0 - 102.0 - mode_space - account_x).clamp(100.0, 200.0);
         let account = Rect::new(account_x, y, account_w, DROPDOWN_H);
         let search_x = account.right() + 12.0;
-        let search_w = (right_free - tools_w - 12.0 - search_x).clamp(140.0, 420.0);
+        let search_w = (right_free - tools_w - 12.0 - search_x - mode_space).clamp(102.0, 420.0);
         let search = Rect::new(search_x, y, search_w, DROPDOWN_H);
         let clear = Rect::new(search.right() - 26.0, y + 2.0, 24.0, DROPDOWN_H - 4.0);
-        let new_session = Rect::new(search.right() + 12.0, y, NEW_W, DROPDOWN_H);
+        let search_mode = Rect::new(search.right() + 4.0, y, mode_w, DROPDOWN_H);
+        let new_session = Rect::new(search_mode.right() + 12.0, y, NEW_W, DROPDOWN_H);
         let refresh = Rect::new(new_session.right() + 8.0, y, 32.0, DROPDOWN_H);
         let menu = Rect::new(refresh.right() + 4.0, y, 32.0, DROPDOWN_H);
-        Bar { row, dot, account, search, clear, new_session, refresh, menu }
+        Bar { row, dot, account, search, clear, search_mode, new_session, refresh, menu }
     }
 
     /// The search field's text area.
@@ -118,6 +123,7 @@ pub fn draw(st: &mut AppState, p: &mut Painter, w: f32, maximized: bool, focused
     if st.key_used && active {
         draw_ring(p, &pal, bar.search, 5.0);
     }
+    crate::conversation_draw::toggle(st, p, bar.search_mode);
 
     // New session, Refresh, the menu.
     let fill = chrome::button_fill(
@@ -186,7 +192,24 @@ pub fn draw_below_title(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Ms
         }
         top += tabs::STRIP_H;
     }
-    if let Some(bar) = &st.info {
+    let recovery = st.config_damaged.then(|| {
+        mdshared_ui::infobar::InfoBar::new(
+            mdshared_ui::infobar::Severity::Warning,
+            "Settings could not be read",
+            "Usage is off. Reset settings to keep a backup and start over.",
+        )
+        .closable(false)
+        .action(RESET_SETTINGS, "Reset settings")
+    });
+    let pending = st.desktop_job.is_some().then(|| {
+        mdshared_ui::infobar::InfoBar::new(
+            mdshared_ui::infobar::Severity::Info,
+            "Desktop handoff pending",
+            "Waiting for Claude Code to finish the handoff.",
+        )
+        .closable(false)
+    });
+    for bar in [recovery.as_ref(), pending.as_ref().or(st.info.as_ref())].into_iter().flatten() {
         let r = Rect::new(8.0, top + 8.0, w - 16.0, bar.height(p, w - 16.0));
         if let Some(s) = terminal {
             p.fill(Rect::new(0.0, top, w, r.bottom() + 8.0 - top), s.background);
@@ -214,8 +237,11 @@ pub fn tip_of(t: Target) -> Option<&'static str> {
     Some(match t {
         Target::Refresh => "Read the sessions again (F5)",
         Target::MenuButton => "Accounts, settings and more",
-        Target::NewSession => "Choose a folder and account for a new CLI session (Ctrl+N)",
+        Target::NewSession => "Choose a folder, account and app for a new session (Ctrl+N)",
+        Target::ArchiveMenu => "Archive older sessions or manage the archive",
+        Target::ArchivePick(_) => "Select this archived session for unarchiving",
         Target::SearchClear => "Clear the search",
+        Target::SearchConversation => "In conversations (Ctrl+Shift+F) — toggle full-text search",
         Target::Account => "The account sessions are opened as",
         Target::SessionToggle => "Toggle session view (Ctrl+Shift+E)",
         _ => return None,
@@ -236,8 +262,8 @@ mod tests {
             let min = caption(w, WinButton::Min);
             assert!(b.menu.right() <= min.x, "width {w}");
             assert!(b.dot.x >= 14.0 && b.account.x > b.dot.right());
-            assert!(b.search.x > b.account.right() && b.search.w >= 140.0, "width {w}");
-            assert!(b.new_session.x > b.search.right());
+            assert!(b.search.x > b.account.right() && b.search.w >= 102.0, "width {w}");
+            assert!(b.search_mode.x > b.search.right() && b.new_session.x > b.search_mode.right());
             w += 20.0;
         }
     }

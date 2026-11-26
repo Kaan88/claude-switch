@@ -59,6 +59,8 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     p.text(Face::Ui, 12.0, x, y + 9.0, "Session", pal.muted, LABEL_W - 8.0);
     p.text(Face::Mono, 11.5, x + LABEL_W, y + 9.0, &s.id, pal.faint, w - LABEL_W);
     y += 36.0;
+    y = crate::conversation_draw::size(st, p, x, y, w);
+    y = crate::folder_defaults::draw_details(st, p, x, y, w, &s.cwd, s.last_app);
 
     // Open, or where it runs.
     if let Some(acct) = st.tab_account(&s.id) {
@@ -81,15 +83,16 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
         st.hits.push((r, t));
         y += 32.0 + 26.0;
     } else {
-        let name = st.current().name.clone();
+        let (slug, app) = st.folder_open(&s.cwd, s.last_app);
+        let name = st.account_name(slug);
+        let app = if app == App::Cli { "CLI" } else { "Desktop" };
         let buttons = [
-            (format!("Open in CLI as {name}"), s.last_app == App::Cli, Target::OpenCli),
-            (format!("Open in Desktop as {name}"), s.last_app == App::Desktop, Target::OpenDesktop),
+            (format!("Open in {app} as {name}"), true, Target::OpenDefault),
             ("Open as\u{2026}".to_string(), false, Target::OpenAs),
         ];
         let mut bx = x;
         for (label, primary, t) in buttons {
-            let bw = (p.measure(Face::Semibold, 13.0, &label) + 32.0).round();
+            let bw = (p.measure(Face::Semibold, 13.0, &label) + 32.0).round().min(w);
             if bx > x && bx + bw > x + w {
                 bx = x;
                 y += 40.0;
@@ -101,6 +104,8 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
         }
         y += 32.0 + 26.0;
     }
+
+    y = crate::compact_dialog::draw_history_row(st, p, &s.id, x, y, w, area);
 
     // The last messages.
     p.fill(Rect::new(x, y - 12.0, w, p.px()), pal.line);

@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use claude_switch_core::usage::{Attempt, Error, Limit, Reading, now_ms};
+use claude_switch_core::usage::{Attempt, Breakdown, Error, Limit, Reading, Slot, now_ms};
 use mdshared_app::fmt::Civil;
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::overlay::{draw_dialog_button, draw_dialog_button_disabled};
@@ -17,28 +17,30 @@ const HAIR_W: f32 = 22.0;
 pub fn hairlines(reading: Option<&Reading>) -> Vec<&Limit> {
     let Some(reading) = reading else { return Vec::new() };
     let limits = &reading.limits;
-    let key = |name| limits.iter().find(|l| l.key == name);
-    let most = limits.iter().filter(|l| l.model()).reduce(|a, b| if a.used >= b.used { a } else { b });
-    [key("five_hour"), key("seven_day"), most].into_iter().flatten().collect()
+    let slot = |slot| limits.iter().find(|l| l.slot == slot);
+    let most = limits.iter().filter(|l| l.slot == Slot::Model).reduce(|a, b| if a.used >= b.used { a } else { b });
+    [slot(Slot::Session), slot(Slot::Week), most].into_iter().flatten().collect()
 }
 
 pub fn hairline_rect(field: Rect) -> Rect {
     Rect::new(field.right() - 53.0, field.y, 30.0, field.h)
 }
 
-fn meter(p: &mut Painter, pal: &Palette, r: Rect, used: f64) {
+fn meter(p: &mut Painter, pal: &Palette, r: Rect, limit: &Limit) {
     let round = r.h / 2.0;
-    p.rbox(r, round, pal.line);
-    if used > 0.0 {
-        let fill = Rect::new(r.x, r.y, r.w * (used / 100.0) as f32, r.h);
-        p.rbox(fill, round, if used >= 80.0 { pal.warn } else { pal.muted });
+    let warning = limit.warning();
+    p.rbox(r, round, if warning { pal.warn_bg } else { pal.line });
+    if limit.used > 0.0 || warning {
+        let amount = r.w * (limit.used / 100.0) as f32;
+        let fill = Rect::new(r.x, r.y, if warning { amount.max(r.h.min(r.w)) } else { amount }, r.h);
+        p.rbox(fill, round, if warning { pal.warn } else { pal.muted });
     }
 }
 
 pub fn draw_hairlines(p: &mut Painter, pal: &Palette, slot: Rect, limits: &[&Limit]) {
     let y = slot.cy() - (limits.len() as f32 * 5.0 - 2.0) / 2.0;
     for (i, l) in limits.iter().enumerate() {
-        meter(p, pal, Rect::new(slot.cx() - HAIR_W / 2.0, y + i as f32 * 5.0, HAIR_W, 3.0), l.used);
+        meter(p, pal, Rect::new(slot.cx() - HAIR_W / 2.0, y + i as f32 * 5.0, HAIR_W, 3.0), l);
     }
 }
 
@@ -112,7 +114,7 @@ impl AccountUsage<'_> {
     }
 
     pub fn height(&self) -> f32 {
-        53.0 + self.limits().len() as f32 * (ROW + 4.0)
+        53.0 + self.limits().len() as f32 * (ROW + 4.0) + breakdown_height(breakdown(self.reading))
     }
 
     pub fn draw(&self, p: &mut Painter, pal: &Palette, r: Rect, now: u64) -> Rect {
@@ -138,11 +140,39 @@ impl AccountUsage<'_> {
         );
         for (i, limit) in self.limits().iter().enumerate() {
             let y = r.y + 51.0 + i as f32 * (ROW + 4.0);
-            let label = format!("{} · {:.0}% used · {}", limit.label(), limit.used, reset(limit, now));
+            let label = format!("{} · {:.0}% used · {}", limit.label, limit.used, reset(limit, now));
             p.text(Face::Ui, 12.0, r.x, y, &label, pal.text, r.w);
-            meter(p, pal, Rect::new(r.x, y + 9.0, r.w, 4.0), limit.used);
+            meter(p, pal, Rect::new(r.x, y + 9.0, r.w, 4.0), limit);
         }
+        draw_breakdown(
+            p,
+            pal,
+            r.x,
+            r.y + 48.0 + self.limits().len() as f32 * (ROW + 4.0),
+            r.w,
+            breakdown(self.reading),
+        );
         Rect::new(r.right() - 86.0, r.y + 6.0, 86.0, 28.0)
+    }
+}
+
+fn breakdown(reading: Option<&Reading>) -> &[Breakdown] {
+    reading.map_or(&[], |r| r.breakdown.as_slice())
+}
+
+fn breakdown_height(rows: &[Breakdown]) -> f32 {
+    if rows.is_empty() { 0.0 } else { 25.0 + rows.len() as f32 * 18.0 }
+}
+
+fn draw_breakdown(p: &mut Painter, pal: &Palette, x: f32, y: f32, w: f32, rows: &[Breakdown]) {
+    if rows.is_empty() {
+        return;
+    }
+    p.text(Face::Semibold, 12.0, x, y + 12.0, "This week by app", pal.muted, w);
+    for (i, row) in rows.iter().enumerate() {
+        let y = y + 32.0 + i as f32 * 18.0;
+        p.text(Face::Ui, 12.0, x, y, &row.label, pal.muted, w - 74.0);
+        p.text_right(Face::Ui, 12.0, x + w, y, &format!("{:.0}%", row.percent), pal.muted);
     }
 }
 
@@ -166,9 +196,13 @@ pub fn draw_popup(st: &mut AppState, p: &mut Painter, window: Rect, now: Instant
     let plan = status.and_then(|s| s.plan.as_deref()).unwrap_or("Plan unavailable");
     let can_refresh = !st.source.is_demo() && st.usage.can_refresh(slug, now);
     let clock = now_ms();
-    let content = limits.len() as f32 * ROW;
-    let view_h = content.min((window.h - field.bottom() - 108.0).max(ROW));
-    let card = Rect::new(field.x, field.bottom(), 355.0, 90.0 + view_h);
+    let switch = st.usage_switch_account(clock).map(|a| format!("Open this session as {}", a.name));
+    let extra = if switch.is_some() { 36.0 } else { 0.0 };
+    let rows = breakdown(reading);
+    let limit_height = limits.len() as f32 * ROW;
+    let content = limit_height + breakdown_height(rows);
+    let view_h = content.min((window.h - field.bottom() - 108.0 - extra).max(ROW));
+    let card = Rect::new(field.x, field.bottom(), 355.0, 90.0 + view_h + extra);
     let x = card.x + 14.0;
     let w = card.w - 28.0;
     p.frame(card, st.appearance.radius, pal.popup, pal.popup_line);
@@ -179,13 +213,22 @@ pub fn draw_popup(st: &mut AppState, p: &mut Painter, window: Rect, now: Instant
     for (i, limit) in limits.iter().enumerate() {
         let y = view.y + i as f32 * ROW + ROW / 2.0 - scroll;
         let description = format!("{:.0}% left · {}", 100.0 - limit.used, reset(limit, clock));
-        p.text(Face::Ui, 12.0, x, y, &limit.label(), pal.text, 132.0);
-        p.text(Face::Ui, 12.0, x + 138.0, y, &description, pal.muted, w - 138.0);
+        p.text(Face::Ui, 12.0, x, y, &limit.label, pal.text, 132.0);
+        p.text(
+            Face::Ui,
+            12.0,
+            x + 138.0,
+            y,
+            &description,
+            if limit.warning() { pal.warn } else { pal.muted },
+            w - 138.0,
+        );
     }
+    draw_breakdown(p, &pal, x, view.y + limit_height - scroll, w, rows);
     p.restore(old);
     let state = state(reading, st.usage.attempt(slug), status.map(|s| s.cli_logged_in), clock);
     st.usage.popup.scroll = scroll;
-    let bottom = card.bottom();
+    let bottom = card.bottom() - extra;
     p.text(Face::Ui, 12.0, x, bottom - 23.0, &state, pal.muted, w - 93.0);
     let button = Rect::new(card.right() - 98.0, bottom - 37.0, 84.0, 28.0);
     st.hits.push((card, Target::UsagePopup));
@@ -203,6 +246,19 @@ pub fn draw_popup(st: &mut AppState, p: &mut Painter, window: Rect, now: Instant
     } else {
         draw_dialog_button_disabled(p, &pal, button, "Refresh", false);
     }
+    if let Some(label) = switch {
+        let button = Rect::new(x, bottom - 2.0, w, 28.0);
+        draw_dialog_button(
+            p,
+            &pal,
+            button,
+            &label,
+            false,
+            st.hover == Some(Target::UsageOpenAs),
+            st.pressed == Some(Target::UsageOpenAs),
+        );
+        st.hits.push((button, Target::UsageOpenAs));
+    }
 }
 
 #[cfg(test)]
@@ -219,12 +275,12 @@ mod tests {
             ("extra", 99.0),
         ]
         .into_iter()
-        .map(|(key, used)| Limit { key: key.into(), used, reset: None })
+        .map(|(key, used)| Limit::legacy(key, used, None))
         .collect();
-        let reading = Reading { read_at: 0, limits };
+        let reading = Reading { read_at: 0, limits, breakdown: vec![] };
         assert_eq!(
-            hairlines(Some(&reading)).iter().map(|l| l.key.as_str()).collect::<Vec<_>>(),
-            ["five_hour", "seven_day", "seven_day_sonnet"]
+            hairlines(Some(&reading)).iter().map(|l| l.label.as_str()).collect::<Vec<_>>(),
+            ["Session", "Week", "Week, Sonnet"]
         );
         assert!(hairlines(None).is_empty());
     }
@@ -237,7 +293,7 @@ mod tests {
         assert_eq!(reset_at(None, 0, local), "reset time unavailable");
         let mut attempt = Attempt::default();
         attempt.finish(Instant::now(), Err(Error::Expired));
-        let reading = Reading { read_at: 0, limits: vec![] };
+        let reading = Reading { read_at: 0, limits: vec![], breakdown: vec![] };
         assert_eq!(
             state(Some(&reading), Some(&attempt), Some(true), 180_000),
             "Read 3 min ago · Open a session to refresh"

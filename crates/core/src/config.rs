@@ -22,8 +22,11 @@
 //!
 //! Folders are not stored: they follow from the slug and [`Roots`].
 
+mod notifications;
+pub use notifications::{Attention, Notifications, WarningWindows, load_warning_windows, save_warning_windows};
+
 use crate::accounts::COLORS;
-use crate::util::{io_refusal, read_json, str_field, write_json};
+use crate::util::{io_refusal, lock_beside, str_field, write_json};
 use crate::{Account, Config, Refusal, Roots, WorkersUse};
 use serde_json::{Map, Value, json};
 
@@ -126,12 +129,40 @@ fn read_color(v: Option<&Value>, fallback: [u8; 3]) -> [u8; 3] {
     out
 }
 
-/// Reads [`Roots::config_file`]. A missing or damaged file, or a missing key, gives the defaults:
+/// Reads [`Roots::config_file`]. A missing file, or a missing key, gives the defaults:
 /// one account (`main`, named "Main", primary, the standard folders), `current` = `main`, workers
 /// `Same`, embedded terminal on, archived and worker sessions hidden. The first account's folders always come from
 /// `roots`, whatever the file says.
 pub fn load(roots: &Roots) -> Config {
-    let file = read_json(&roots.config_file()).filter(Value::is_object).unwrap_or(Value::Null);
+    load_checked(roots).0
+}
+
+fn read_settings(path: &std::path::Path) -> Result<Value, Refusal> {
+    crate::util::regular_target(path)?;
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let value: Value = serde_json::from_slice(&bytes).map_err(|e| io_refusal("read settings", path, &e))?;
+            if !value.is_object()
+                || value.get("showUsage").is_some_and(|v| !v.is_boolean())
+                || value.get("accounts").is_some_and(|v| !v.is_array())
+            {
+                return Err(io_refusal("read settings", path, &"invalid settings object"));
+            }
+            Ok(value)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
+        Err(e) => Err(io_refusal("read settings", path, &e)),
+    }
+}
+
+/// The second result is true when an existing config could not be trusted.
+pub fn load_checked(roots: &Roots) -> (Config, bool) {
+    let loaded = read_settings(&roots.config_file());
+    let damaged = loaded.is_err();
+    (parse(roots, loaded.unwrap_or(Value::Null), damaged), damaged)
+}
+
+fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
     let entries: &[Value] = file.get("accounts").and_then(Value::as_array).map_or(&[], Vec::as_slice);
     let main_entry = entries.iter().find(|e| str_field(e, "slug") == Some("main"));
     let mut accounts = vec![Account {
@@ -191,18 +222,67 @@ pub fn load(roots: &Roots) -> Config {
         embedded_terminal,
         show_archived,
         show_workers,
-        show_usage: flag("showUsage", true),
+        show_usage: !damaged && flag("showUsage", true),
+        notifications: Notifications::read(&file["notifications"]),
         show_hidden: flag("showHidden", false),
         folders_view: flag("foldersView", false),
         terminal_scheme,
         terminal_font_size,
         window_theme,
         appearance: AppearancePrefs::read(&file["appearance"]),
+        compact: crate::compact::Preferences::read(&file["compact"]),
     }
 }
 
 /// Writes the settings (temporary file beside it, then rename), creating the folder.
 pub fn save(roots: &Roots, config: &Config) -> Result<(), Refusal> {
+    let path = roots.config_file();
+    let _lock = lock_beside(&path)?;
+    crate::util::regular_target(&path)?;
+    let current = read_settings(&path)?;
+    let mut config = config.clone();
+    // Ordinary saves from another window must never restore a forgotten provider consent.
+    config.compact = crate::compact::Preferences::read(&current["compact"]);
+    save_value(roots, &config)
+}
+
+/// Updates handover preferences under the settings lock, without changing any other setting.
+pub fn update_compact(
+    roots: &Roots,
+    update: impl FnOnce(&mut crate::compact::Preferences) -> Result<(), Refusal>,
+) -> Result<crate::compact::Preferences, Refusal> {
+    let path = roots.config_file();
+    let _lock = lock_beside(&path)?;
+    crate::util::regular_target(&path)?;
+    let mut current = read_settings(&path)?;
+    let mut compact = crate::compact::Preferences::read(&current["compact"]);
+    update(&mut compact)?;
+    current["compact"] = json!({"model": compact.model, "consents": compact.consents});
+    write_json(&path, &current)?;
+    Ok(compact)
+}
+
+/// Explicit recovery only. Keep the damaged bytes in a new, exclusively created sibling.
+pub fn reset(roots: &Roots) -> Result<Config, Refusal> {
+    let path = roots.config_file();
+    let _lock = lock_beside(&path)?;
+    crate::util::regular_target(&path)?;
+    if read_settings(&path).is_ok() {
+        return Err(Refusal::Invalid("Settings changed on disk. Restart to use the current settings.".into()));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| io_refusal("back up settings", &path, &e))?;
+    let serial = crate::usage::now_ms();
+    let backup = path.with_file_name(format!("config.broken.{}.{serial}.json", std::process::id()));
+    crate::util::write_new_atomic(&backup, &bytes)?;
+    let config = parse(roots, Value::Null, true); // Recover preferences without opting back into usage.
+    if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+        return Err(Refusal::Invalid("Settings changed while being backed up.".into()));
+    }
+    save_value(roots, &config)?;
+    Ok(config)
+}
+
+fn save_value(roots: &Roots, config: &Config) -> Result<(), Refusal> {
     let accounts: Vec<Value> =
         config.accounts.iter().map(|a| json!({"slug": a.slug, "name": a.name, "color": a.color})).collect();
     let workers = match &config.workers {
@@ -218,12 +298,14 @@ pub fn save(roots: &Roots, config: &Config) -> Result<(), Refusal> {
         "showArchived": config.show_archived,
         "showWorkers": config.show_workers,
         "showUsage": config.show_usage,
+        "notifications": config.notifications.json(),
         "showHidden": config.show_hidden,
         "foldersView": config.folders_view,
         "terminalScheme": config.terminal_scheme,
         "terminalFontSize": config.terminal_font_size,
         "windowTheme": config.window_theme,
         "appearance": config.appearance.json(),
+        "compact": {"model": config.compact.model, "consents": config.compact.consents},
     });
     write_json(&roots.config_file(), &value)
 }
@@ -261,7 +343,33 @@ pub fn write_workers(roots: &Roots, config: &Config) -> Result<(), Refusal> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::read_json;
     use crate::util::testing::{TempDir, config_with, put};
+
+    #[test]
+    fn damaged_settings_disable_usage_and_reset_preserves_exact_bytes() {
+        let t = TempDir::new("settings-recovery");
+        let roots = t.roots();
+        let path = roots.config_file();
+        assert!(load_checked(&roots).0.show_usage);
+        for damaged in ["not JSON", "null", r#"{"accounts":{}}"#, r#"{"showUsage":"false"}"#] {
+            put(&path, damaged);
+            let (cfg, broken) = load_checked(&roots);
+            assert!(broken && !cfg.show_usage);
+            assert!(save(&roots, &cfg).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), damaged);
+        }
+        let old = std::fs::read(&path).unwrap();
+        let cfg = reset(&roots).unwrap();
+        assert!(!cfg.show_usage && !load_checked(&roots).1);
+        let backups = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("config.broken."))
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(backups[0].path()).unwrap(), old);
+    }
 
     #[test]
     fn a_missing_file_gives_the_defaults() {

@@ -79,6 +79,60 @@ fn response(sock: &mut TcpStream, status: &str, extra: &str, body: &str) {
 }
 
 #[test]
+fn request_context_is_dropped_once_on_success_pre_send_failure_and_pending_read_cancellation() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    assert_ne!(std::hint::black_box(CALLBACK_FLAGS) & WINHTTP_CALLBACK_STATUS_HANDLE_CREATED, 0);
+    assert_ne!(std::hint::black_box(CALLBACK_FLAGS) & WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING, 0);
+    let track_drop = || {
+        let (tx, rx) = mpsc::channel();
+        ON_DROP.with(|cell| *cell.borrow_mut() = Some(tx));
+        rx
+    };
+    let verify = |rx: Receiver<()>| {
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Ok(()));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)), Err(mpsc::RecvTimeoutError::Disconnected));
+    };
+    let good = Fixture::new(now_ms() + 60_000);
+    let sock = listener();
+    let url = base(&sock);
+    let job = server(sock, |mut s| response(&mut s, "200 OK", "", "{}"));
+    let drops = track_drop();
+    assert!(loopback(&good.0, &url, TIMEOUT).is_ok());
+    verify(drops);
+    job.join().unwrap();
+
+    let expired = Fixture::new(0);
+    let sock = listener();
+    let drops = track_drop();
+    assert_eq!(loopback(&expired.0, &base(&sock), TIMEOUT), Err(Error::Expired));
+    verify(drops);
+
+    let sock = listener();
+    let port = sock.local_addr().unwrap().port();
+    let (hold, wait) = mpsc::channel::<()>();
+    let job = server(sock, move |mut s| {
+        s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n").unwrap();
+        let _ = wait.recv_timeout(Duration::from_secs(4));
+    });
+    let (tx, active) = mpsc::channel();
+    ON_READ.with(|cell| *cell.borrow_mut() = Some(tx));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&cancelled);
+    let stop = thread::spawn(move || {
+        active.recv_timeout(Duration::from_secs(3)).unwrap();
+        signal.store(true, Ordering::SeqCst);
+    });
+    let drops = track_drop();
+    let endpoint = Endpoint { host: "127.0.0.1", port, path: "api/oauth/usage", flags: 0 };
+    assert_eq!(request(&good.0, endpoint, TIMEOUT, || !cancelled.load(Ordering::SeqCst), reading), Err(Error::Network));
+    stop.join().unwrap();
+    verify(drops);
+    drop(hold);
+    job.join().unwrap();
+}
+
+#[test]
 fn request_headers_and_usage_are_verified_without_logging_the_token() {
     let dir = Fixture::new(now_ms() + 60_000);
     let sock = listener();
@@ -126,8 +180,10 @@ fn one_shot_stdout_contains_only_the_nested_shape_from_loopback() {
     let mut cfg = crate::demo::config();
     cfg.accounts[0].cli_dir = dir.0.clone();
     let mut out = Vec::new();
-    crate::usage_shape::probe(&cfg, Some("main"), &mut out, |dir| loopback_with(dir, &url, TIMEOUT, Token::shape))
-        .unwrap();
+    crate::usage_shape::probe(&cfg, Some("main"), &mut out, |dir| {
+        loopback_with(dir, &url, TIMEOUT, |token, body| token.shape(body, false))
+    })
+    .unwrap();
     job.join().unwrap();
     extra.set_nonblocking(true).unwrap();
     assert_eq!(extra.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
@@ -157,6 +213,34 @@ fn one_shot_stdout_contains_only_the_nested_shape_from_loopback() {
             ]
         })
     );
+}
+
+#[test]
+fn labelled_diagnostic_only_exposes_allowlisted_short_strings() {
+    let dir = Fixture::new(now_ms() + 60_000);
+    let sock = listener();
+    let url = base(&sock);
+    let job = server(sock, |mut stream| {
+        response(
+            &mut stream,
+            "200 OK",
+            "",
+            r#"{
+        "kind":"weekly","group":"plan_v1","severity":"good-ok","key":"model.x","display_name":"Model X 4.0",
+        "secret":"not printed", "rows":[{"display_name":"contains/slash","key":"synthetic-loopback-token",
+        "kind":"12345678901234567890123456789012345678901","severity":42,"group":"line\nbreak"}]
+    }"#,
+        )
+    });
+    let tree = loopback_with(&dir.0, &url, TIMEOUT, |token, body| token.shape(body, true)).unwrap();
+    job.join().unwrap();
+    let printed = tree.to_string();
+    for allowed in ["weekly", "plan_v1", "good-ok", "model.x", "Model X 4.0"] {
+        assert!(printed.contains(allowed));
+    }
+    for denied in [TOKEN, "not printed", "contains/slash", "12345678901234567890123456789012345678901", "42", "break"] {
+        assert!(!printed.contains(denied));
+    }
 }
 
 #[test]

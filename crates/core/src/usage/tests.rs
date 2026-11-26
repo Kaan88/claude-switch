@@ -31,7 +31,7 @@ fn credentials_are_read_fresh_and_never_changed_or_debugged() {
 fn tolerant_limits_remain_sorted_and_only_normalized_data_survives() {
     let token = Token { value: b"synthetic-token".to_vec(), expires_at: 100 };
     let limits = token
-        .limits(
+        .reading(
             br#"{
         "z_future":{"utilization":1e400},
         "extra_usage":{"utilization":42.5,"resets_at":"garbage","extra":"synthetic-token"},
@@ -41,11 +41,13 @@ fn tolerant_limits_remain_sorted_and_only_normalized_data_survives() {
         "seven_day_opus":{"utilization":80},
         "bad":null,"other":[],"f":{"utilization":"12"},"g":{"foo":2},"large":1e990,
         "\u0073ynthetic-token":{"utilization":53}
-    }"#,
+     }"#,
+            0,
         )
-        .unwrap();
+        .unwrap()
+        .limits;
     assert_eq!(
-        limits.iter().map(Limit::label).collect::<Vec<_>>(),
+        limits.iter().map(|l| l.label.as_str()).collect::<Vec<_>>(),
         ["Session", "Week", "Week, Opus", "Week, Sonnet", "extra usage", "z future"]
     );
     assert_eq!(limits.iter().map(|l| l.used).collect::<Vec<_>>(), [0.0, 79.9, 80.0, 23.0, 42.5, 100.0]);
@@ -55,9 +57,9 @@ fn tolerant_limits_remain_sorted_and_only_normalized_data_survives() {
     assert_eq!(timestamp("2023-02-29T00:00:00Z"), None);
     assert_eq!(timestamp("1970-01-01T00:00:00-01:30"), Some(5400));
     assert_eq!(timestamp("1970-01-01T00:00:00.++01:30"), None);
-    assert_eq!(token.limits(b"[]"), Err(Error::NotUnderstood));
-    assert_eq!(token.limits(b"no"), Err(Error::NotUnderstood));
-    assert!(token.limits(b"{}").unwrap().is_empty());
+    assert_eq!(token.reading(b"[]", 0), Err(Error::NotUnderstood));
+    assert_eq!(token.reading(b"no", 0), Err(Error::NotUnderstood));
+    assert!(token.reading(b"{}", 0).unwrap().limits.is_empty());
 }
 
 #[test]
@@ -66,17 +68,60 @@ fn cache_atomically_replaces_the_file_with_just_measurements() {
     let path = t.roots().config_file().with_file_name(CACHE_NAME);
     assert!(load_cache(&path).is_empty());
     let token = Token { value: b"synthetic-token".to_vec(), expires_at: 100 };
-    let limits = token.limits(br#"{"five_hour":{"utilization":42.5,"resets_at":"1970-01-01T00:00:34Z","other":"synthetic-token"},"synthetic-token":{"utilization":99}}"#).unwrap();
-    let readings = Cache::from([("main".into(), Reading { read_at: 7, limits })]);
+    let reading = token.reading(br#"{"five_hour":{"utilization":42.5,"resets_at":"1970-01-01T00:00:34Z","other":"synthetic-token"},"synthetic-token":{"utilization":99}}"#, 7).unwrap();
+    let readings = Cache::from([("main".into(), reading)]);
     save_cache(&path, &Cache::new()).unwrap();
+    put(&path, r#"{"main":{"read_at":7,"limits":{"five_hour":{"used":42.5,"reset":34}}}}"#);
+    assert_eq!(load_cache(&path), readings);
     save_cache(&path, &readings).unwrap();
     assert_eq!(load_cache(&path), readings);
     let bytes = fs::read(&path).unwrap();
     assert_eq!(
         serde_json::from_slice::<Value>(&bytes).unwrap(),
-        json!({"main":{"read_at":7,"limits":{"five_hour":{"used":42.5,"reset":34}}}})
+        json!({"main":{"read_at":7,"limits":[{"label":"Session","slot":"session","used":42.5,"reset":34,"severity":""}],"breakdown":[]}})
     );
     assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+}
+
+#[test]
+fn modern_limits_win_and_breakdown_and_severity_survive_the_cache() {
+    let token = Token { value: b"synthetic-token".to_vec(), expires_at: 100 };
+    let reading = token.reading(br#"{
+        "five_hour":{"utilization":99},
+        "limits":[
+            {"kind":"main_session","percent":22,"severity":"normal","scope":null},
+            {"kind":"rolling_week","percent":31,"severity":"ok","scope":null},
+            {"group":"seven_day","kind":"quota","percent":44,"severity":"close","resets_at":"1970-01-02T00:00:00Z","scope":{"model":{"display_name":"Model X"}}},
+            {"kind":"burst_limit","percent":19,"scope":{"model":{"display_name":"Model Y"}}},
+            {"kind":"other_limit","percent":88,"severity":"none","is_active":false}
+        ],
+        "seven_day_breakdown":{"rows":[
+            {"display_name":"First","percent":100,"percent_of_limit":10},
+            {"display_name":"Second","percent":5,"percent_of_limit":30},
+            {"display_name":"synthetic-token","percent_of_limit":90},
+            {"display_name":"Three","percent_of_limit":3},{"display_name":"Four","percent_of_limit":4},
+            {"display_name":"Five","percent_of_limit":5},{"display_name":"Six","percent_of_limit":6},
+            {"display_name":"Seven","percent_of_limit":1}
+        ]}
+    }"#, 12).unwrap();
+    assert_eq!(
+        reading.limits.iter().map(|l| (l.label.as_str(), l.slot, l.used, l.warning())).collect::<Vec<_>>(),
+        [
+            ("Session", Slot::Session, 22.0, false),
+            ("Week", Slot::Week, 31.0, false),
+            ("Burst limit, Model Y", Slot::Model, 19.0, false),
+            ("Week, Model X", Slot::Model, 44.0, true),
+            ("Other limit", Slot::Other, 88.0, true),
+        ]
+    );
+    assert_eq!((reading.limits[3].reset, reading.limits[3].severity.as_str()), (Some(86400), "close"));
+    assert_eq!(reading.breakdown.iter().map(|r| r.percent).collect::<Vec<_>>(), [30.0, 10.0, 6.0, 5.0, 4.0, 3.0]);
+    let dir = TempDir::new("modern-usage-cache");
+    let path = dir.roots().config_file().with_file_name(CACHE_NAME);
+    let cache = Cache::from([("main".into(), reading)]);
+    save_cache(&path, &cache).unwrap();
+    assert_eq!(load_cache(&path), cache);
+    assert!(!fs::read_to_string(&path).unwrap().contains("synthetic-token"));
 }
 
 #[test]

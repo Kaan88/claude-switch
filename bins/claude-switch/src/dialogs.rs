@@ -58,16 +58,22 @@ pub enum Pending {
     },
     /// Close a terminal tab whose program runs.
     CloseTab(u64),
+    CloseOtherTabs(u64),
+    RestoreTab,
     /// Close the window, with terminal tabs that run.
     Quit,
-    Suggest(Vec<String>),
+    Suggest {
+        ids: Vec<String>,
+        batch: bool,
+    },
+    UnarchiveAll,
 }
 
 impl Pending {
     /// Whether the confirming button is the primary one, which Enter chooses: yes for opening
     /// something, no for what ends or removes something (there the safe choice, Cancel, is).
     pub fn ok_is_primary(&self) -> bool {
-        matches!(self, Pending::Open { .. } | Pending::Copy { .. })
+        matches!(self, Pending::Open { .. } | Pending::Copy { .. } | Pending::RestoreTab)
     }
 }
 
@@ -75,6 +81,7 @@ impl Pending {
 pub enum NameFor {
     Add,
     Rename(String),
+    Tab(u64),
 }
 
 pub enum Dialog {
@@ -82,6 +89,10 @@ pub enum Dialog {
     Accounts { scroll: f32, shares: Vec<(String, Vec<ShareState>)> },
     Name { title: String, field: TextField, stops: Vec<f32>, then: NameFor, error: Option<String> },
     NewSession(Box<newsession::NewSession>),
+    FolderOpen(Box<crate::folder_defaults::Editor>),
+    Archive(Box<crate::archive::ArchiveDialog>),
+    ArchiveReport(crate::archive_report::Report),
+    Compact(Box<crate::compact_dialog::Compact>),
     Session(Box<Panel>),
     Settings(Box<Form>),
     About,
@@ -94,7 +105,7 @@ pub fn accounts(st: &mut AppState, now: Instant) -> Dialog {
     Dialog::Accounts { scroll: 0.0, shares }
 }
 
-fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
+pub(crate) fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
     let mut field = TextField::new();
     field.set_text(text);
     field.select_all();
@@ -117,7 +128,7 @@ impl Draw<'_> {
         draw_dialog_card_with(p, &self.pal, r, self.radius, Some(self.shadow))
     }
 
-    fn button(&mut self, p: &mut Painter, r: Rect, label: &str, primary: bool, id: u32) {
+    pub(crate) fn button(&mut self, p: &mut Painter, r: Rect, label: &str, primary: bool, id: u32) {
         let t = Some(Target::Dialog(id));
         draw_dialog_button(p, &self.pal, r, label, primary, self.hover == t, self.pressed == t);
         self.hits.push((r, Target::Dialog(id)));
@@ -192,14 +203,22 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
         Dialog::Confirm { title, text, ok, then } => {
             let tw = 460.0 - 2.0 * DIALOG_PAD;
             let th = p.paragraph_height_wrapped(Face::Ui, 13.0, tw, text, Wrap::Words);
-            let card = dialog_card(460.0, 70.0 + th + 20.0 + DIALOG_FOOTER, w, h);
+            let body = th.min((h - 110.0 - DIALOG_FOOTER).max(32.0));
+            let card = dialog_card(460.0, 90.0 + body + DIALOG_FOOTER, w, h);
             let footer = d.card(p, card);
             d.title(p, card, title);
-            p.paragraph_wrapped(Face::Ui, 13.0, card.x + DIALOG_PAD, card.y + 58.0, tw, text, pal.text, Wrap::Words);
+            let r = Rect::new(card.x + DIALOG_PAD, card.y + 56.0, tw, body + 4.0);
+            st.confirm_scroll = st.confirm_scroll.clamp(0.0, (th - body).max(0.0));
+            let clip = p.clip(r);
+            p.paragraph_wrapped(Face::Ui, 13.0, r.x, r.y + 2.0 - st.confirm_scroll, tw, text, pal.text, Wrap::Words);
+            p.restore(clip);
+            if th > body {
+                p.text(Face::Ui, 11.0, r.x, r.bottom() + 14.0, "Scroll to review the full list.", pal.muted, tw);
+            }
             let primary = then.ok_is_primary();
             d.footer(p, footer, &[(ok.as_str(), primary, OK), ("Cancel", !primary, CANCEL)]);
         }
-        Dialog::Name { title, field, stops, error, .. } => {
+        Dialog::Name { title, field, stops, error, then } => {
             let card = dialog_card(420.0, 120.0 + DIALOG_FOOTER, w, h);
             let footer = d.card(p, card);
             d.title(p, card, title);
@@ -208,7 +227,9 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
             let inner = fr.inset(8.0);
             let colors =
                 FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
-            field.draw(p, inner, Face::Ui, 13.0, &colors, "Account name", true, true);
+            let placeholder =
+                if matches!(then, NameFor::Tab(_)) { "Tab name (blank resets it)" } else { "Account name" };
+            field.draw(p, inner, Face::Ui, 13.0, &colors, placeholder, true, true);
             *stops = p.caret_stops(Face::Ui, 13.0, &field.display());
             d.hits.push((fr, Target::Dialog(FIELD)));
             if let Some(e) = error {
@@ -238,6 +259,10 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
             draw_accounts((&st.config, &st.statuses, &usage), &mut d, p, w, h, scroll, shares)
         }
         Dialog::NewSession(picker) => picker.draw(&mut d, p, w, h),
+        Dialog::FolderOpen(editor) => editor.draw(&mut d, p, window),
+        Dialog::Archive(archive) => archive.draw(&mut d, p, window),
+        Dialog::ArchiveReport(report) => report.draw(&mut d, p, window),
+        Dialog::Compact(dialog) => dialog.draw(&mut d, p, w, h),
         Dialog::Session(panel) => panel.draw(&mut d, p, window),
         Dialog::Settings(_) => {}
     }
@@ -376,8 +401,11 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::Open { id, account, app }) => st.open_now(now, &id, &account, app),
             (OK, Pending::Copy { id, account }) => st.copy_now(now, &id, &account),
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
+            (OK, Pending::CloseOtherTabs(tab)) => st.close_other_tabs(tab),
+            (OK | CANCEL, Pending::RestoreTab) => st.confirm_restore_tab(now, id == OK),
             (OK, Pending::Quit) => st.quit = true,
-            (OK, Pending::Suggest(ids)) => st.start_naming(ids),
+            (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
+            (OK, Pending::UnarchiveAll) => st.unarchive(now, None),
             (OK, Pending::Remove { slug }) => {
                 match st.source.remove(&mut st.config, &slug) {
                     Ok(()) => accounts_changed(st, now),
@@ -386,11 +414,13 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
                 st.dialog = Some(accounts(st, now));
             }
             (CANCEL, Pending::Remove { .. }) => st.dialog = Some(accounts(st, now)),
+            (CANCEL, Pending::Quit) => st.restore_prompt_after_cancelled_quit(now),
             (CANCEL, _) => {}
             (_, then) => st.dialog = Some(Dialog::Confirm { title, text, ok, then }),
         },
         Dialog::Name { mut field, stops, then, title, error } => match id {
             OK => submit_name(st, now, field, stops, then, title),
+            CANCEL if matches!(then, NameFor::Tab(_)) => {}
             CANCEL => st.dialog = Some(accounts(st, now)),
             FIELD => {
                 let inner_x =
@@ -420,7 +450,15 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
                 st.dialog = Some(Dialog::NewSession(picker));
             }
         }
+        Dialog::FolderOpen(editor) => editor.click(st, id),
+        Dialog::Archive(archive) => archive.click(st, id),
+        Dialog::ArchiveReport(report) => report.click(st, id),
         Dialog::Session(panel) => panel.click(st, now, id, x, false),
+        Dialog::Compact(mut compact) => {
+            if compact.click(st, now, id, x) {
+                st.dialog = Some(Dialog::Compact(compact));
+            }
+        }
         d @ Dialog::Settings(_) => st.dialog = Some(d),
     }
 }
@@ -464,6 +502,12 @@ fn submit_name(st: &mut AppState, now: Instant, field: TextField, stops: Vec<f32
     let result = match &then {
         NameFor::Add => st.source.add_account(&mut st.config, &name).map(drop),
         NameFor::Rename(slug) => st.source.rename(&mut st.config, slug, &name),
+        NameFor::Tab(id) => {
+            if let Some(tab) = st.tabs.get_mut(*id) {
+                tab.rename = (!name.is_empty()).then_some(name);
+            }
+            return;
+        }
     };
     match result {
         Ok(()) => {
@@ -500,7 +544,17 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
                 return true;
             }
         }
-        Dialog::NewSession(picker) => picker.key(k, mods, text),
+        Dialog::NewSession(picker) => picker.key(st, k, mods, text),
+        Dialog::FolderOpen(editor) => editor.key(k),
+        Dialog::Archive(archive) => archive.key(st, k),
+        Dialog::Compact(compact) => {
+            let action = compact.key(k, mods, text);
+            st.dialog = Some(dialog);
+            if let Some(action) = action {
+                click(st, now, action, 0.0);
+            }
+            return true;
+        }
         Dialog::Session(panel) => {
             let id = panel.key(st, k, mods, text);
             if let Some(id) = id
@@ -520,6 +574,9 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
         // Enter chooses the button drawn as primary.
         KeyName::Enter => match &st.dialog {
             Some(Dialog::Accounts { .. }) | Some(Dialog::About) => click(st, now, CANCEL, 0.0),
+            Some(Dialog::Archive(_) | Dialog::ArchiveReport(crate::archive_report::Report::Saved(_))) => {
+                click(st, now, CANCEL, 0.0)
+            }
             Some(Dialog::Confirm { then, .. }) if !then.ok_is_primary() => click(st, now, CANCEL, 0.0),
             _ => click(st, now, OK, 0.0),
         },
@@ -528,28 +585,5 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
     true
 }
 
-pub fn text_input(st: &mut AppState, text: &str) {
-    if let Some(Dialog::Session(mut panel)) = st.dialog.take_if(|d| matches!(d, Dialog::Session(_))) {
-        panel.text_input(st, text);
-        st.dialog = Some(Dialog::Session(panel));
-        return;
-    }
-    match &mut st.dialog {
-        Some(Dialog::Name { field, .. }) => {
-            field.insert(text);
-        }
-        Some(Dialog::NewSession(picker)) => picker.text_input(text),
-        _ => {}
-    }
-}
-
-pub fn wheel(st: &mut AppState, x: f32, y: f32, dy: f32) {
-    match &mut st.dialog {
-        Some(Dialog::Settings(form)) => {
-            form.wheel(x, y, -dy);
-        }
-        Some(Dialog::Accounts { scroll, .. }) => *scroll = (*scroll - dy).max(0.0),
-        Some(Dialog::Session(panel)) => panel.wheel(dy),
-        _ => {}
-    }
-}
+mod input;
+pub use input::{text_input, wheel};

@@ -1,0 +1,502 @@
+//! Last-run terminal tabs: identifiers only, never commands, names, or screen contents.
+
+use std::collections::{HashSet, VecDeque};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use claude_switch_core::{App, Launch, Refusal, Running, Session, sessions::folder_key};
+use mdshared_app::settings;
+use serde_json::{Value, json};
+
+use crate::dialogs::{Dialog, Pending};
+use crate::source::Source;
+use crate::state::AppState;
+use crate::tabs::{NewTab, SESSIONS, Tabs};
+use crate::term::Term;
+use crate::winfile::RestoreTabs;
+
+const TOAST_PREFIX: &str = "Tabs not reopened: ";
+
+#[path = "resume_tabs_draw.rs"]
+mod drawing;
+#[path = "resume_tabs_process.rs"]
+mod process;
+pub use drawing::draw_toasts;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Entry {
+    id: String,
+    account: String,
+    cwd: PathBuf,
+    active: bool,
+}
+
+#[derive(Default)]
+pub struct Restore {
+    pending: VecDeque<Entry>,
+    waiting: Option<Entry>,
+    failures: Vec<String>,
+    active: Option<u64>,
+    initial: Option<u64>,
+    started: bool,
+}
+
+fn valid_id(id: &str) -> bool {
+    claude_switch_core::launch::validate_session_id(id).is_ok()
+}
+
+fn decode(text: &str) -> VecDeque<Entry> {
+    let Ok(Value::Array(rows)) = serde_json::from_str(text) else { return VecDeque::new() };
+    let mut ids = HashSet::new();
+    rows.into_iter()
+        .filter_map(|row| {
+            let id = row["id"].as_str()?;
+            let account = row["account"].as_str()?;
+            let cwd = PathBuf::from(row["folder"].as_str()?);
+            let active = row["active"].as_bool()?;
+            (valid_id(id) && !account.is_empty() && cwd.is_absolute() && ids.insert(id.to_ascii_lowercase()))
+                .then(|| Entry { id: id.into(), account: account.into(), cwd, active })
+        })
+        .collect()
+}
+
+fn encode(rows: impl IntoIterator<Item = Entry>) -> String {
+    Value::Array(
+        rows.into_iter()
+            .filter_map(|row| {
+                Some(json!({"id": row.id, "account": row.account, "folder": row.cwd.to_str()?, "active": row.active}))
+            })
+            .collect(),
+    )
+    .to_string()
+}
+
+fn path(source: &Source) -> Option<PathBuf> {
+    source.window_file().map(|p| p.with_file_name("terminal-tabs.json"))
+}
+
+fn save(path: &Path, rows: impl IntoIterator<Item = Entry>) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    settings::write_atomic(path, &encode(rows))
+}
+
+fn snapshot(tabs: &Tabs) -> Vec<Entry> {
+    let entry = |t: &crate::tabs::Tab| {
+        let id = t.resume_id.as_ref().filter(|id| valid_id(id))?.clone();
+        let account = t.account.clone()?;
+        let cwd = t.cwd.clone()?;
+        Some(Entry { id, account, cwd, active: tabs.active == Some(t.id) })
+    };
+    let active = tabs.shown().and_then(entry).map(|t| t.id.to_ascii_lowercase());
+    let mut ids = HashSet::new();
+    tabs.list
+        .iter()
+        .filter_map(entry)
+        .filter(|t| {
+            let key = t.id.to_ascii_lowercase();
+            (t.active || active.as_ref() != Some(&key)) && ids.insert(key)
+        })
+        .collect()
+}
+
+/// Never use the session pane's heuristic guess to restore a transcript.
+fn live_id<'a>(
+    running: &'a [Running],
+    account: &str,
+    cwd: &Path,
+    matches_pid: impl Fn(u32) -> bool,
+) -> Option<&'a str> {
+    let cwd = folder_key(cwd);
+    let mut matches = running.iter().filter(|r| {
+        r.app == App::Cli
+            && r.account == account
+            && folder_key(&r.cwd) == cwd
+            && matches_pid(r.pid)
+            && valid_id(&r.session_id)
+    });
+    let id = &matches.next()?.session_id;
+    matches.all(|other| &other.session_id == id).then_some(id)
+}
+
+type Started = (io::Result<Option<u64>>, Result<(), Refusal>);
+
+impl AppState {
+    pub fn resume_warning(&self, session: &Session, account: &str, app: App) -> Option<(String, String)> {
+        let carry = self.source.carry_warning(&self.config, session, account);
+        let desktop = app == App::Cli && (session.desktop_account.is_some() || session.desktop_id.is_some());
+        let text = crate::actions::open_warning(carry.as_deref(), desktop)?;
+        let title = if carry.is_some() {
+            format!("Open as {}?", self.account_name(account))
+        } else {
+            "Open in the CLI?".into()
+        };
+        Some((title, text))
+    }
+
+    pub fn prepare_resume(&mut self, session: &Session, account: &str, app: App) -> Result<Launch, Refusal> {
+        self.running = self.source.running(&self.config);
+        self.index_running();
+        self.rebuild_view();
+        self.source.resume(&self.config, session, account, app, &self.running)
+    }
+
+    pub fn start_launch(
+        &mut self,
+        launch: &Launch,
+        note: Option<(&str, &str)>,
+        account: Option<&str>,
+        in_tab: bool,
+    ) -> Result<Started, Refusal> {
+        let reservation =
+            note.map(|(id, account)| self.source.reserve(&self.config, id, account)).transpose()?.flatten();
+        let started = if in_tab && !self.source.is_demo() {
+            self.open_tab(launch, note.map(|(id, _)| id), account).map(Some)
+        } else {
+            self.source.run(launch).map(|()| None)
+        };
+        let history = reservation.map(|r| r.finish(started.is_ok())).transpose().map(drop);
+        Ok((started, history))
+    }
+
+    pub fn identify_tabs(&mut self) {
+        let mut processes = None;
+        for tab in &mut self.tabs.list {
+            if tab.resume_id.is_some() || !tab.term.running() {
+                continue;
+            }
+            if let (Some(pty), Some(account), Some(cwd)) = (&tab.term.pty, &tab.account, &tab.cwd)
+                && let Some(id) = {
+                    let processes = processes.get_or_insert_with(process::Processes::current);
+                    live_id(&self.running, account, cwd, |pid| pid == pty.pid() || processes.wraps(pty.pid(), pid))
+                }
+            {
+                if let Some(pane) = &tab.pane {
+                    pane.verify_identity(id);
+                }
+                tab.resume_id = Some(id.into());
+                tab.session = Some(id.into());
+            }
+        }
+    }
+
+    pub fn load_tab_restore(&mut self) {
+        if self.win_file.restore_tabs == RestoreTabs::Never {
+            return;
+        }
+        if self.source.is_demo() {
+            self.restore.pending = self
+                .source
+                .scan(&self.config)
+                .sessions
+                .into_iter()
+                .filter(|s| s.desktop_id.is_none())
+                .take(3)
+                .enumerate()
+                .map(|(i, s)| Entry { id: s.id, account: "main".into(), cwd: s.cwd, active: i == 1 })
+                .collect();
+        } else if let Some(file) = path(&self.source)
+            && let Ok(Some(text)) = settings::read(&file)
+        {
+            self.restore.pending = decode(&text);
+        }
+    }
+
+    pub fn save_tab_restore(&mut self) {
+        let Some(file) = path(&self.source) else { return };
+        if self.win_file.restore_tabs == RestoreTabs::Never {
+            let _ = save(&file, []);
+            return;
+        }
+        if self.tabs.list.iter().any(|tab| tab.resume_id.is_none() && tab.cwd.is_some()) {
+            self.running = self.source.running(&self.config);
+            self.identify_tabs();
+        }
+        let rows = snapshot(&self.tabs);
+        if !rows.is_empty() || self.restore.pending.is_empty() && self.restore.waiting.is_none() {
+            let _ = save(&file, rows);
+        }
+    }
+
+    pub fn dismiss_tab_restore(&mut self) {
+        self.restore = Restore::default();
+        if let Some(file) = path(&self.source)
+            && let Err(e) = save(&file, [])
+        {
+            self.error("Could not clear the saved tabs", e.to_string());
+        }
+    }
+
+    pub fn restore_tabs_if_always(&mut self, now: Instant) -> bool {
+        if self.scanned
+            && !self.quit
+            && self.nothing_over()
+            && !self.picture_overlay()
+            && !self.restore.started
+            && !self.restore.pending.is_empty()
+            && self.win_file.restore_tabs == RestoreTabs::Always
+        {
+            self.begin_tab_restore(now);
+            return true;
+        }
+        false
+    }
+
+    pub fn begin_tab_restore(&mut self, now: Instant) {
+        if !self.scanned || self.restore.started || self.restore.pending.is_empty() {
+            return;
+        }
+        self.restore.initial = self.tabs.active;
+        self.restore.started = true;
+        self.next_restore_tab(now);
+    }
+
+    fn next_restore_tab(&mut self, now: Instant) {
+        while let Some(entry) = self.restore.pending.pop_front() {
+            match self.check_restore(&entry) {
+                Ok(session) => {
+                    if let Some((title, text)) = self.resume_warning(&session, &entry.account, App::Cli) {
+                        if let Some(r) =
+                            self.source.running(&self.config).into_iter().find(|r| r.session_id == entry.id)
+                        {
+                            self.restore_failed(&entry, &Refusal::AlreadyRunning(r).to_string());
+                            continue;
+                        }
+                        self.restore.waiting = Some(entry);
+                        self.dialog =
+                            Some(Dialog::Confirm { title, text, ok: "Continue".into(), then: Pending::RestoreTab });
+                        return;
+                    }
+                    self.try_restore(&entry, &session);
+                }
+                Err(reason) => self.restore_failed(&entry, &reason),
+            }
+        }
+        let active = self.restore.active.or(self.restore.initial).unwrap_or(SESSIONS);
+        self.show_tab(active);
+        let failures = std::mem::take(&mut self.restore.failures);
+        self.restore = Restore::default();
+        if !failures.is_empty() {
+            self.toast(format!("{TOAST_PREFIX}{}", failures.join("; ")), now);
+        }
+    }
+
+    pub fn confirm_restore_tab(&mut self, now: Instant, proceed: bool) {
+        if let Some(entry) = self.restore.waiting.take() {
+            if proceed {
+                match self.check_restore(&entry) {
+                    Ok(session) => self.try_restore(&entry, &session),
+                    Err(reason) => self.restore_failed(&entry, &reason),
+                }
+            } else {
+                self.restore_failed(&entry, "cancelled");
+            }
+        }
+        self.next_restore_tab(now);
+    }
+
+    pub fn restore_prompt_after_cancelled_quit(&mut self, now: Instant) {
+        if let Some(entry) = self.restore.waiting.take() {
+            self.restore.pending.push_front(entry);
+            self.next_restore_tab(now);
+        }
+    }
+
+    fn check_restore(&self, entry: &Entry) -> Result<Session, String> {
+        let session = self
+            .by_id
+            .get(&entry.id)
+            .and_then(|&i| self.sessions.get(i))
+            .filter(|s| self.source.is_demo() || s.file.is_file())
+            .ok_or("session is gone")?;
+        if self.tab_of_session(&entry.id).is_some() {
+            return Err("already open in a tab".into());
+        }
+        // The saved folder is descriptive. Resume uses the indexed folder and its usual fallback.
+        Ok(session.clone())
+    }
+
+    fn try_restore(&mut self, item: &Entry, session: &Session) {
+        let result = self
+            .prepare_resume(session, &item.account, App::Cli)
+            .and_then(|launch| self.start_launch(&launch, Some((&item.id, &item.account)), Some(&item.account), true));
+        let id = match result {
+            Ok((Ok(id), history)) => {
+                if let Err(error) = history {
+                    self.error("Could not finish the launch record", error.to_string());
+                }
+                id.or_else(|| self.source.is_demo().then(|| self.fake_restored_tab(item, session)))
+            }
+            Ok((Err(e), _)) => {
+                self.restore_failed(item, &e.to_string());
+                None
+            }
+            Err(e) => {
+                self.restore_failed(item, &e.to_string());
+                None
+            }
+        };
+        if item.active && id.is_some() {
+            self.restore.active = id;
+        }
+    }
+
+    fn fake_restored_tab(&mut self, item: &Entry, session: &Session) -> u64 {
+        let mut term = Term::empty(self.grid);
+        term.feed(b"Restored demo session (no program started)\r\n");
+        let id = self.tabs.open(
+            NewTab {
+                label: self.title_of(session).into(),
+                color: self.account_color(&item.account),
+                session: Some(item.id.clone()),
+                account: Some(item.account.clone()),
+            },
+            term,
+        );
+        self.tabs.get_mut(id).unwrap().cwd = Some(item.cwd.clone());
+        id
+    }
+
+    fn restore_failed(&mut self, item: &Entry, reason: &str) {
+        let name = self
+            .by_id
+            .get(&item.id)
+            .and_then(|&i| self.sessions.get(i))
+            .map(|s| self.title_of(s))
+            .filter(|name| !name.trim().is_empty());
+        let text = name.map_or_else(
+            || {
+                let folder = claude_switch_core::sessions::folder_name(&item.cwd);
+                format!("{folder} · {} ({reason})", item.id)
+            },
+            |name| format!("{name} ({reason})"),
+        );
+        self.restore.failures.push(text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: &str = "11111111-0000-0000-0000-000000000000";
+    const B: &str = "22222222-0000-0000-0000-000000000000";
+
+    #[test]
+    fn records_round_trip_and_untrusted_or_duplicate_rows_are_skipped() {
+        let entry =
+            Entry { id: A.into(), account: "main".into(), cwd: std::env::temp_dir().join("folder"), active: true };
+        let invalid = Entry { id: "--bogus".into(), ..entry.clone() };
+        let text = encode([entry.clone(), invalid, entry.clone()]);
+        assert_eq!(decode(&text), VecDeque::from([entry]));
+        assert!(decode("oops").is_empty());
+    }
+
+    #[test]
+    fn snapshot_ignores_shells_and_unverified_guesses_and_preserves_order() {
+        let mut tabs = Tabs::default();
+        let mut open = |label: &str, id: Option<&str>| {
+            tabs.open(
+                NewTab {
+                    label: label.into(),
+                    color: [0; 3],
+                    session: id.map(str::to_owned),
+                    account: Some("main".into()),
+                },
+                Term::empty((8, 4)),
+            )
+        };
+        let a = open("secret - not stored", Some(A));
+        let shell = open("shell", None);
+        let b = open("b", Some(B));
+        let unknown = open("unknown", None);
+        tabs.get_mut(unknown).unwrap().session = Some("33333333-0000-0000-0000-000000000000".into());
+        for id in [a, b, unknown] {
+            tabs.get_mut(id).unwrap().cwd = Some(r"C:\fake".into());
+        }
+        tabs.list.swap(0, 2);
+        tabs.activate(a);
+        let rows = snapshot(&tabs);
+        assert_eq!(rows.iter().map(|t| (t.id.as_str(), t.active)).collect::<Vec<_>>(), [(B, false), (A, true)]);
+        assert!(!encode(rows).contains("secret"));
+        tabs.activate(shell);
+        assert!(snapshot(&tabs).iter().all(|t| !t.active));
+    }
+
+    #[test]
+    fn the_active_incarnation_wins_if_the_same_session_has_two_tabs() {
+        let mut tabs = Tabs::default();
+        for account in ["main", "work"] {
+            let tab = tabs.open(
+                NewTab { label: "tab".into(), color: [0; 3], session: Some(A.into()), account: Some(account.into()) },
+                Term::empty((8, 4)),
+            );
+            tabs.get_mut(tab).unwrap().cwd = Some(std::env::temp_dir());
+        }
+        let rows = snapshot(&tabs);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].active);
+        assert_eq!(rows[0].account, "work");
+    }
+
+    #[test]
+    fn always_restores_available_demo_tabs_in_order_and_skips_running_and_missing_sessions() {
+        let prefs = crate::winfile::WindowFile { restore_tabs: RestoreTabs::Always, ..Default::default() };
+        let mut app = AppState::new(Source::Demo, Some(false), prefs);
+        let now = Instant::now();
+        app.load_tab_restore();
+        assert!(!app.restore_tabs_if_always(now));
+        let scan = app.source.scan(&app.config);
+        let mut missing = app.restore.pending[0].clone();
+        missing.id = A.into();
+        app.restore.pending.push_back(missing);
+        let expected: Vec<_> = app.restore.pending.iter().skip(1).take(2).map(|r| r.id.clone()).collect();
+        app.apply_scan(scan);
+        assert!(app.restore_tabs_if_always(now));
+        assert!(!app.restore_tabs_if_always(now));
+        assert!(app.restore.pending.is_empty() && app.dialog.is_none());
+        assert_eq!(app.tabs.list.iter().map(|t| t.session.clone().unwrap()).collect::<Vec<_>>(), expected);
+        assert_eq!(app.tabs.active, Some(app.tabs.list[0].id));
+    }
+
+    #[test]
+    fn ask_waits_for_a_choice_and_warning_cancel_continues_the_batch() {
+        let mut app = AppState::new(Source::Demo, Some(false), Default::default());
+        let now = Instant::now();
+        app.load_tab_restore();
+        app.restore.pending[1].account = "work".into();
+        let remaining = app.restore.pending[2].id.clone();
+        app.apply_scan(app.source.scan(&app.config));
+        assert!(!app.restore_tabs_if_always(now));
+        assert!(app.tabs.is_empty());
+        app.begin_tab_restore(now);
+        assert!(matches!(app.dialog, Some(Dialog::Confirm { then: Pending::RestoreTab, .. })));
+        assert!(app.tabs.is_empty());
+        crate::dialogs::click(&mut app, now, crate::dialogs::CANCEL, 0.0);
+        assert_eq!(app.tabs.list.len(), 1);
+        assert_eq!(app.tabs.list[0].session.as_deref(), Some(remaining.as_str()));
+        app.dismiss_tab_restore();
+        app.win_file.restore_tabs = RestoreTabs::Never;
+        app.load_tab_restore();
+        assert!(app.restore.pending.is_empty());
+    }
+
+    #[test]
+    fn live_identity_requires_matching_process_folder_and_account_and_rejects_ambiguity() {
+        let cwd = PathBuf::from(r"C:\test");
+        let running = |id: &str, pid| Running {
+            session_id: id.into(),
+            pid,
+            app: App::Cli,
+            account: "main".into(),
+            cwd: cwd.clone(),
+        };
+        let records = [running(A, 10), running(B, 11)];
+        assert_eq!(live_id(&records, "main", &cwd, |pid| pid == 10), Some(A));
+        assert_eq!(live_id(&records, "elsewhere", &cwd, |_| true), None);
+        assert_eq!(live_id(&records, "main", Path::new(r"C:\other"), |_| true), None);
+        assert_eq!(live_id(&records, "main", &cwd, |_| true), None);
+    }
+}

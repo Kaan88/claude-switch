@@ -19,11 +19,15 @@ pub const FIRST_SIZE: (u16, u16) = (100, 30);
 /// environment, in that order; the environment's removals first, so that a variable that is both
 /// removed and set ends up set.
 pub fn command(launch: &Launch) -> Command {
+    command_with_removals(launch, claude_switch_core::launch::child_removals(launch))
+}
+
+fn command_with_removals(launch: &Launch, removals: impl IntoIterator<Item = std::ffi::OsString>) -> Command {
     let mut c = Command::new(&launch.program).args(&launch.args);
     if let Some(dir) = &launch.cwd {
         c = c.cwd(dir);
     }
-    for name in &launch.env_remove {
+    for name in removals {
         c = c.env_remove(name);
     }
     for (k, v) in &launch.env {
@@ -246,9 +250,9 @@ mod tests {
             .env_remove("ANTHROPIC_API_KEY")
             .env_remove("CLAUDECODE")
             .env("CLAUDE_CONFIG_DIR", r"C:\a\cli");
-        assert_eq!(command(&l), want);
+        assert_eq!(command_with_removals(&l, l.env_remove.iter().map(std::ffi::OsString::from)), want);
         let bare = Launch { cwd: None, env: BTreeMap::new(), env_remove: Vec::new(), args: Vec::new(), ..l };
-        assert_eq!(command(&bare), Command::new("claude"));
+        assert_eq!(command_with_removals(&bare, []), Command::new("claude"));
     }
 
     #[test]

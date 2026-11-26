@@ -52,11 +52,14 @@ impl AppState {
     fn timers(&self, cx: &mut Cx<'_, Msg>) {
         for at in [
             self.next_poll,
+            self.conversation_search.due.filter(|_| self.scanned),
             self.tip.deadline(),
             self.toasts.deadline(),
             self.undo_hide.as_ref().map(|u| u.until),
             self.marks_flush_at,
+            self.usage_warnings.next,
             self.usage.popup.due,
+            self.usage.cache_retry_at().filter(|_| self.config.show_usage),
         ]
         .into_iter()
         .flatten()
@@ -75,11 +78,11 @@ impl AppState {
         let now = cx.now();
         match t {
             Target::Caption(WinButton::Close) => {
-                if self.ask_quit() {
-                    self.quit = true;
-                }
+                self.request_window_close(cx);
             }
             Target::TabClose(id) => self.ask_close_tab(id),
+            Target::RestoreTabs => self.begin_tab_restore(now),
+            Target::DismissTabs => self.dismiss_tab_restore(),
             Target::SessionToggle => self.toggle_session_view(),
             Target::Caption(WinButton::Max) => cx.toggle_maximize(),
             Target::Caption(WinButton::Min) => cx.minimize(),
@@ -87,6 +90,7 @@ impl AppState {
                 self.search.clear();
                 self.after_search();
             }
+            Target::SearchConversation => self.toggle_conversation_search(now),
             Target::NewSession => self.command(now, actions::NEW_SESSION, None),
             Target::Refresh => self.command(now, actions::REFRESH, None),
             Target::UsageLines => self.open_usage(now, true),
@@ -94,15 +98,27 @@ impl AppState {
                 let slug = self.current().slug.clone();
                 self.request_usage(now, Demand::Refresh, Some(&slug));
             }
+            Target::UsageOpenAs => self.usage_open_as(claude_switch_core::usage::now_ms()),
             Target::MenuButton => {
                 if let Some(r) = self.rect_of(t) {
                     self.main_menu(r);
                 }
             }
-            Target::OpenCli => self.command(now, actions::OPEN_CLI, None),
-            Target::OpenDesktop => self.command(now, actions::OPEN_DESKTOP, None),
+            Target::OpenDefault => self.command(now, actions::OPEN_LAST, None),
+            Target::FolderOpen => self.edit_folder_open(),
+            Target::ArchiveMenu => {
+                if let Some(r) = self.rect_of(t) {
+                    self.archive_menu(r);
+                }
+            }
+            Target::ArchivePick(entry) => {
+                if let Some(i) = self.session_at(entry) {
+                    self.toggle_archive_pick(i);
+                }
+            }
             Target::OpenAs => self.command(now, actions::OPEN_AS, self.rect_of(t)),
             Target::OpenCopy => self.command(now, actions::OPEN_COPY, None),
+            Target::Handovers => self.ask_compact(true),
             Target::ListMode(folders) if self.config.folders_view != folders => {
                 self.config.folders_view = folders;
                 self.save_config();
@@ -111,6 +127,9 @@ impl AppState {
                 self.reveal_selected();
             }
             Target::ListFilter(filter) => {
+                if filter != self.filter {
+                    self.archive_picks.clear();
+                }
                 self.filter = filter;
                 self.rebuild_view();
                 self.sections.scroll = 0.0;
@@ -127,12 +146,16 @@ impl AppState {
             }
             Target::UndoHide => self.undo_hidden(now),
             Target::InfoClose => self.info = None,
+            Target::Info(topbar::RESET_SETTINGS) => self.reset_settings(now),
             Target::Dialog(id) => dialogs::click(self, now, id, x),
             _ => {}
         }
     }
 
     fn after_search(&mut self) {
+        if self.conversation_search.on {
+            self.restart_conversation_search(std::time::Instant::now());
+        }
         self.rebuild_view();
         let visible = self.selected.clone().and_then(|id| self.entry_of(&id)).is_some();
         if !visible {
@@ -173,6 +196,7 @@ impl AppState {
                 MenuKind::Main => self.rect_of(Target::MenuButton),
                 MenuKind::OpenAs => self.rect_of(Target::OpenAs),
                 MenuKind::Row => Some(Rect::new(self.mouse.0, self.mouse.1, 0.0, 0.0)),
+                MenuKind::Tab(tab) => return self.tab_menu_chosen(cx.now(), tab, id),
             };
             self.command(cx.now(), id, anchor);
         }
@@ -189,6 +213,13 @@ impl AppState {
         };
         let (mods, text) = (k.mods, k.text.as_deref());
         let bar = Bar::layout(cx.size().0);
+        if self.palette.is_some()
+            && let Some(id) = crate::tabcontrols::number(&name, mods, false).and_then(|n| self.tabs.numbered(n))
+        {
+            self.palette = None;
+            self.show_tab(id);
+            return;
+        }
         if let Some(p) = &mut self.palette {
             let o = p.key(&name, mods, text);
             self.palette_outcome(cx, o);
@@ -216,6 +247,7 @@ impl AppState {
         if self.usage.popup.open {
             match name {
                 KeyName::Escape | KeyName::Tab => self.usage.popup = Default::default(),
+                KeyName::Enter if mods.shift => self.activate(cx, Target::UsageOpenAs, 0.0),
                 KeyName::Enter | KeyName::Space => self.activate(cx, Target::UsageRefresh, 0.0),
                 _ => {}
             }
@@ -225,6 +257,12 @@ impl AppState {
             return;
         }
         // The shortcuts that stay with the window in every tab, then a terminal's own keys.
+        if let Some(number) = crate::tabcontrols::number(&name, mods, self.terminal_shown()) {
+            if let Some(id) = self.tabs.numbered(number) {
+                self.show_tab(id);
+            }
+            return;
+        }
         if let Some(id) = termkeys::shortcut(&name, mods)
             && (id != actions::SESSION_VIEW || self.tabs.shown().is_some_and(|t| t.pane.is_some()))
         {
@@ -234,6 +272,16 @@ impl AppState {
         if self.terminal_shown() {
             self.term_key(now, &k);
             Self::cursor_moved(cx);
+            return;
+        }
+        if matches!(name, KeyName::Char('f' | 'F')) && mods.ctrl && mods.shift && !mods.alt {
+            self.key_used = true;
+            self.toggle_conversation_search(now);
+            return;
+        }
+        if name == KeyName::Escape && self.conversation_search.on && !self.search.is_empty() {
+            self.search.clear();
+            self.after_search();
             return;
         }
         if let Some(id) = self.keymap.lookup(&name, mods) {
@@ -273,7 +321,16 @@ impl AppState {
                 }
             }
             Focus::List => {
-                if name == KeyName::Delete && !mods.ctrl && !mods.alt && !mods.shift {
+                if name == KeyName::Space
+                    && self
+                        .selected
+                        .as_ref()
+                        .and_then(|id| self.by_id.get(id))
+                        .copied()
+                        .is_some_and(|i| self.toggle_archive_pick(i))
+                {
+                    self.key_used = true;
+                } else if name == KeyName::Delete && !mods.ctrl && !mods.alt && !mods.shift {
                     self.hide_from_keyboard(now);
                 } else if list::key(self, &name) {
                     self.key_used = true;
@@ -325,7 +382,7 @@ impl AppState {
             }
             return;
         }
-        if matches!(hover, Some(Target::UsageLines | Target::UsageRefresh | Target::UsagePopup)) {
+        if matches!(hover, Some(Target::UsageLines | Target::UsageRefresh | Target::UsageOpenAs | Target::UsagePopup)) {
             self.pressed = hover;
             return;
         }
@@ -336,6 +393,7 @@ impl AppState {
         match hover {
             Some(Target::Tab(id)) => {
                 self.show_tab(id);
+                self.begin_tab_drag(id, x, y);
                 return;
             }
             Some(Target::Terminal) => {
@@ -369,6 +427,12 @@ impl AppState {
             }
             Some(Target::Entry(e)) => {
                 self.focus = Focus::List;
+                if cx.mods().ctrl
+                    && let Some(i) = self.session_at(e)
+                    && self.toggle_archive_pick(i)
+                {
+                    return;
+                }
                 let row = self.session_at(e).is_some();
                 list::click(self, e);
                 if clicks == 2 && row {
@@ -381,7 +445,13 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
-        if matches!(self.pressed, Some(Target::UsageLines | Target::UsageRefresh | Target::UsagePopup)) {
+        if self.tabs.drag.take().is_some() {
+            return;
+        }
+        if matches!(
+            self.pressed,
+            Some(Target::UsageLines | Target::UsageRefresh | Target::UsageOpenAs | Target::UsagePopup)
+        ) {
             if let Some(t) = self.pressed.take().filter(|t| self.hit(x, y) == Some(*t)) {
                 self.activate(cx, t, x);
             }
@@ -430,6 +500,9 @@ impl AppState {
     /// The pointer moved. True when something shows a change.
     fn moved(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> bool {
         self.mouse = (x, y);
+        if self.tabs.drag.is_some() {
+            return self.move_tab_drag(x, y);
+        }
         let terminal_drag = self.tabs.shown().is_some_and(|tab| tab.term.selecting || tab.term.reported.is_some());
         if !terminal_drag
             && !self.usage.popup.open

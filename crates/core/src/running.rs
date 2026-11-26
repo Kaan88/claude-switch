@@ -1,6 +1,5 @@
 //! Which sessions are open right now.
 
-use crate::sessions::first_visit;
 use crate::util::{read_json, str_field};
 use crate::{Account, App, Config, Roots, Running};
 use serde_json::Value;
@@ -33,16 +32,28 @@ fn desktop_owner<'a>(accounts: &'a [Account], host_id: &str) -> Option<&'a Accou
 /// The CLI folders to look in, each with the slug it stands for: every configured account's, then
 /// every `<accounts folder>/<name>/cli` on disk (a removed account's sessions may still run), with the
 /// folder's name as the slug.
-fn cli_dirs(roots: &Roots, config: &Config) -> Vec<(PathBuf, String)> {
+fn cli_dirs(roots: &Roots, config: &Config, complete: &mut bool) -> Vec<(PathBuf, String)> {
     let mut out: Vec<(PathBuf, String)> = config.accounts.iter().map(|a| (a.cli_dir.clone(), a.slug.clone())).collect();
-    if let Ok(entries) = std::fs::read_dir(roots.accounts_dir()) {
-        let mut found: Vec<(PathBuf, String)> = entries
-            .flatten()
-            .map(|e| (e.path().join("cli"), e.file_name().to_string_lossy().into_owned()))
-            .filter(|(cli, _)| cli.is_dir())
-            .collect();
-        found.sort();
-        out.extend(found);
+    match std::fs::read_dir(roots.accounts_dir()) {
+        Ok(entries) => {
+            let mut found = Vec::new();
+            for entry in entries {
+                match entry {
+                    Ok(e) => match e.file_type() {
+                        Ok(t) if t.is_dir() || t.is_symlink() => {
+                            found.push((e.path().join("cli"), e.file_name().to_string_lossy().into_owned()))
+                        }
+                        Ok(_) => {}
+                        Err(_) => *complete = false,
+                    },
+                    Err(_) => *complete = false,
+                }
+            }
+            found.sort();
+            out.extend(found);
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => *complete = false,
     }
     out
 }
@@ -71,22 +82,51 @@ fn read_entry(path: &Path, pid: u32, mut wait: impl FnMut()) -> Option<Value> {
 /// (`entrypoint` `claude-desktop`) the account is the one whose desktop data folder holds the record
 /// named by `hostSessionId`, else the account of the CLI folder. Never fails.
 pub fn scan(roots: &Roots, config: &Config) -> Vec<Running> {
+    scan_checked(roots, config).0
+}
+
+pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
     let mut out: Vec<Running> = Vec::new();
+    let mut complete = true;
     let mut seen = HashSet::new();
-    for (cli_dir, slug) in cli_dirs(roots, config) {
+    for (cli_dir, slug) in cli_dirs(roots, config, &mut complete) {
         let dir = cli_dir.join("sessions");
-        if !first_visit(&mut seen, &dir) {
+        let canonical = match std::fs::canonicalize(&dir) {
+            Ok(path) => path,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound || std::fs::symlink_metadata(&dir).is_ok() {
+                    complete = false;
+                }
+                continue;
+            }
+        };
+        if !seen.insert(canonical) {
             continue;
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => {
+                complete = false;
+                continue;
+            }
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                complete = false;
+                continue;
+            };
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
             let stem_pid = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<u32>().ok());
             let Some(stem_pid) = stem_pid else { continue };
-            let Some(v) = read_entry(&path, stem_pid, || std::thread::sleep(RETRY_PAUSE)) else { continue };
+            let Some(v) = read_entry(&path, stem_pid, || std::thread::sleep(RETRY_PAUSE)) else {
+                if pid_alive(stem_pid) {
+                    complete = false;
+                }
+                continue;
+            };
             let pid = v.get("pid").and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()).unwrap_or(stem_pid);
             let Some(session_id) = str_field(&v, "sessionId") else { continue };
             if out.iter().any(|r| r.pid == pid && r.session_id == session_id) || !pid_alive(pid) {
@@ -107,7 +147,7 @@ pub fn scan(roots: &Roots, config: &Config) -> Vec<Running> {
         }
     }
     out.sort_by(|a, b| a.account.cmp(&b.account).then(a.pid.cmp(&b.pid)));
-    out
+    (out, complete)
 }
 
 /// Whether a process with this id exists now.
@@ -158,7 +198,7 @@ pub fn pid_alive(pid: u32) -> bool {
 
 /// The running entry for a session id, if it is open anywhere.
 pub fn find<'a>(running: &'a [Running], session_id: &str) -> Option<&'a Running> {
-    running.iter().find(|r| r.session_id == session_id)
+    running.iter().find(|r| r.session_id.eq_ignore_ascii_case(session_id))
 }
 
 #[cfg(test)]

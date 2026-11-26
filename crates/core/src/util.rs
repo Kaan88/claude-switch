@@ -7,6 +7,25 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub(crate) fn lock_beside(path: &Path) -> Result<std::fs::File, Refusal> {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".lock");
+    let lock = PathBuf::from(name);
+    if let Some(dir) = lock.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
+    }
+    regular_target(&lock)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock)
+        .map_err(|e| io_refusal("open the lock", &lock, &e))?;
+    file.try_lock().map_err(|e| io_refusal("lock", &lock, &e))?;
+    Ok(file)
+}
+
 /// The JSON in a file, `None` when it is missing or does not parse.
 pub(crate) fn read_json(path: &Path) -> Option<Value> {
     let bytes = std::fs::read(path).ok()?;
@@ -24,41 +43,113 @@ pub(crate) fn io_refusal(what: &str, path: &Path, err: &dyn std::fmt::Display) -
 }
 
 /// A name beside `path` that no other call, of this process or another running one, uses.
-fn temp_beside(path: &Path) -> PathBuf {
+pub(crate) fn temp_beside(path: &Path) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     PathBuf::from(tmp)
 }
 
-/// Writes `bytes` to a temporary file beside `path`, flushes it to disk and renames it over `path`,
-/// creating the folder. When `path` is a symlink to a file that exists, that file is replaced and the
-/// link stays.
+pub(crate) fn publish_new(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
+    }
+    write_new_atomic(path, bytes)
+}
+
+/// Refuse any existing non-file or reparse-point entry, including dangling links.
+pub(crate) fn regular_target(path: &Path) -> Result<(), Refusal> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(io_refusal("inspect", path, &e)),
+    };
+    if !metadata.is_file() || reparse(&metadata) {
+        return Err(io_refusal("replace", path, &"not a regular file"));
+    }
+    Ok(())
+}
+
+fn reparse(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    metadata.file_type().is_symlink()
+}
+
+/// Never resolves the destination; rename replaces the entry, not a link target.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
-    let linked = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
-    let resolved = linked.then(|| std::fs::canonicalize(path).ok()).flatten();
-    let path = resolved.as_deref().unwrap_or(path);
+    regular_target(path)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| io_refusal("create the folder", dir, &e))?;
     }
     let tmp = temp_beside(path);
-    let written = std::fs::File::create(&tmp).and_then(|mut file| {
-        file.write_all(bytes)?;
-        file.sync_all()
-    });
+    write_through_temp(path, &tmp, bytes)
+}
+
+fn write_through_temp(path: &Path, tmp: &Path, bytes: &[u8]) -> Result<(), Refusal> {
+    let mut file = std::fs::File::create_new(tmp).map_err(|e| io_refusal("create temporary file", tmp, &e))?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
     written
-        .map_err(|e| io_refusal("write", &tmp, &e))
-        .and_then(|()| std::fs::rename(&tmp, path).map_err(|e| io_refusal("replace", path, &e)))
+        .map_err(|e| io_refusal("write", tmp, &e))
+        .and_then(|()| regular_target(path))
+        .and_then(|()| std::fs::rename(tmp, path).map_err(|e| io_refusal("replace", path, &e)))
         .inspect_err(|_| {
-            let _ = std::fs::remove_file(&tmp);
+            let _ = std::fs::remove_file(tmp);
         })
+}
+
+/// Same-directory staging, but atomically publish only if the user-chosen destination is absent.
+pub(crate) fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
+    let dir = path.parent().ok_or_else(|| io_refusal("save", path, &"missing parent folder"))?;
+    let name = path.file_name().ok_or_else(|| io_refusal("save", path, &"missing file name"))?;
+    let dir = std::fs::canonicalize(dir).map_err(|e| io_refusal("read the destination folder", dir, &e))?;
+    let path = dir.join(name);
+    let tmp = temp_beside(&path);
+    let mut file = std::fs::File::create_new(&tmp).map_err(|e| io_refusal("create", &tmp, &e))?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    let result = written.map_err(|e| io_refusal("write", &tmp, &e)).and_then(|()| {
+        publish_without_replacing(&tmp, &path)
+            .map_err(|e| io_refusal("save a new file (choose an unused name)", &path, &e))
+    });
+    let _ = std::fs::remove_file(&tmp);
+    result
+}
+
+#[cfg(windows)]
+fn publish_without_replacing(staged: &Path, path: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileW;
+
+    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let (staged, target) = (wide(staged), wide(path));
+    // SAFETY: both buffers are live NUL-terminated UTF-16 paths; MoveFileW fails if the
+    // destination already exists. Both names resolve within the same canonicalized directory.
+    if unsafe { MoveFileW(staged.as_ptr(), target.as_ptr()) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn publish_without_replacing(staged: &Path, path: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(staged, path)
 }
 
 /// Writes a JSON value, pretty-printed, with [`write_atomic`].
 pub(crate) fn write_json(path: &Path, value: &Value) -> Result<(), Refusal> {
+    write_atomic(path, &json_bytes(path, value)?)
+}
+
+pub(crate) fn json_bytes(path: &Path, value: &Value) -> Result<Vec<u8>, Refusal> {
     let mut text = serde_json::to_string_pretty(value).map_err(|e| io_refusal("encode", path, &e))?;
     text.push('\n');
-    write_atomic(path, text.as_bytes())
+    Ok(text.into_bytes())
 }
 
 /// White space runs as one space, trimmed, cut to `max` characters.
@@ -125,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn a_write_to_a_symlink_goes_to_the_file_it_points_at() {
+    fn a_write_refuses_a_symlink_and_leaves_its_target_alone() {
         let t = TempDir::new("utl-link");
         let real = t.0.join("real").join("a.json");
         put(&real, "old");
@@ -139,10 +230,19 @@ mod tests {
             eprintln!("skipped: no file symlink can be made here ({e})");
             return;
         }
-        write_atomic(&link, b"new").unwrap();
+        assert!(write_atomic(&link, b"new").is_err());
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert_eq!(std::fs::read_to_string(&real).unwrap(), "new");
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "old");
         assert_eq!(names(&t.0.join("real")), ["a.json"]);
+    }
+
+    #[test]
+    fn a_preexisting_temporary_name_is_not_opened_or_removed() {
+        let t = TempDir::new("occupied-temp");
+        let tmp = t.0.join("tmp");
+        put(&tmp, "keep");
+        assert!(write_through_temp(&t.0.join("data"), &tmp, b"new").is_err());
+        assert_eq!(std::fs::read(&tmp).unwrap(), b"keep");
     }
 }
 

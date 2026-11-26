@@ -30,13 +30,13 @@ pub(crate) fn probe(
     out.write_all(b"\n").and_then(|()| out.flush()).map_err(|_| Failure::Output)
 }
 
-pub fn run(demo: bool, account: Option<&str>) -> i32 {
+pub fn run(demo: bool, account: Option<&str>, labels: bool) -> i32 {
     crate::usage_fetch::attach_diagnostic_console();
     let error = if demo {
         "unavailable in demo mode"
     } else if let Some(roots) = Roots::from_env() {
         let config = claude_switch_core::config::load(&roots);
-        match probe(&config, account, io::stdout().lock(), crate::usage_fetch::fetch_shape) {
+        match probe(&config, account, io::stdout().lock(), |dir| crate::usage_fetch::fetch_shape(dir, labels)) {
             Ok(()) => return 0,
             Err(Failure::Disabled) => "Show usage is off",
             Err(Failure::Account) => "unknown account slug",

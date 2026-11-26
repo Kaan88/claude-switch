@@ -21,16 +21,16 @@ pub fn fetch(dir: &Path, enabled: impl Fn() -> bool) -> Result<Reading, Error> {
 
 #[cfg(windows)]
 fn reading(token: &Token, body: &[u8]) -> Result<Reading, Error> {
-    Ok(Reading { read_at: now_ms(), limits: token.limits(body)? })
+    token.reading(body, now_ms())
 }
 
 #[cfg(windows)]
-pub fn fetch_shape(dir: &Path) -> Result<serde_json::Value, Error> {
-    win::production(dir, || true, Token::shape)
+pub fn fetch_shape(dir: &Path, labels: bool) -> Result<serde_json::Value, Error> {
+    win::production(dir, || true, |token, body| token.shape(body, labels))
 }
 
 #[cfg(not(windows))]
-pub fn fetch_shape(_dir: &Path) -> Result<serde_json::Value, Error> {
+pub fn fetch_shape(_dir: &Path, _labels: bool) -> Result<serde_json::Value, Error> {
     Err(Error::Network)
 }
 
@@ -76,6 +76,14 @@ mod win {
     const TIMEOUT: Duration = Duration::from_secs(10);
     const CHUNK: usize = 8192;
     const MAX_BODY: usize = 1024 * 1024;
+    // SDK macro, not emitted by windows-sys. WinHttpCloseHandle requires the full mask.
+    const WINHTTP_CALLBACK_FLAG_HANDLES: u32 =
+        WINHTTP_CALLBACK_STATUS_HANDLE_CREATED | WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING;
+    const CALLBACK_FLAGS: u32 = WINHTTP_CALLBACK_FLAG_SENDREQUEST_COMPLETE
+        | WINHTTP_CALLBACK_FLAG_HEADERS_AVAILABLE
+        | WINHTTP_CALLBACK_FLAG_READ_COMPLETE
+        | WINHTTP_CALLBACK_FLAG_REQUEST_ERROR
+        | WINHTTP_CALLBACK_FLAG_HANDLES;
 
     pub(super) fn local_time(secs: i64) -> Option<Civil> {
         let utc = Civil::from_unix(secs, 0);
@@ -129,6 +137,23 @@ mod win {
     struct Context {
         tx: Sender<Event>,
         buffer: UnsafeCell<[u8; CHUNK]>,
+        #[cfg(test)]
+        dropped: Option<Sender<()>>,
+    }
+
+    #[cfg(test)]
+    thread_local! {
+        static ON_DROP: std::cell::RefCell<Option<Sender<()>>> = const { std::cell::RefCell::new(None) };
+        static ON_READ: std::cell::RefCell<Option<Sender<()>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(test)]
+    impl Drop for Context {
+        fn drop(&mut self) {
+            if let Some(tx) = &self.dropped {
+                let _ = tx.send(());
+            }
+        }
     }
 
     unsafe extern "system" fn status(_: *mut c_void, context: usize, status: u32, info: *mut c_void, len: u32) {
@@ -171,15 +196,15 @@ mod win {
     impl Call {
         fn install(handle: &Handle, deadline: Instant) -> Result<Self, Error> {
             let (tx, rx) = mpsc::channel();
-            let context = Box::new(Context { tx, buffer: UnsafeCell::new([0; CHUNK]) });
+            let context = Box::new(Context {
+                tx,
+                buffer: UnsafeCell::new([0; CHUNK]),
+                #[cfg(test)]
+                dropped: ON_DROP.with(|cell| cell.borrow_mut().take()),
+            });
             let buffer = context.buffer.get().cast();
             let ptr = Box::into_raw(context);
             let id = ptr as usize;
-            let flags = WINHTTP_CALLBACK_FLAG_SENDREQUEST_COMPLETE
-                | WINHTTP_CALLBACK_FLAG_HEADERS_AVAILABLE
-                | WINHTTP_CALLBACK_FLAG_READ_COMPLETE
-                | WINHTTP_CALLBACK_FLAG_REQUEST_ERROR
-                | WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING;
             // SAFETY: SetOption copies the usize value; the request is idle and has no callback yet.
             let set = unsafe {
                 WinHttpSetOption(
@@ -195,7 +220,7 @@ mod win {
                 return Err(Error::Network);
             }
             // SAFETY: the callback uses the documented system ABI and the context outlives the request.
-            let previous = unsafe { WinHttpSetStatusCallback(handle.0, Some(status), flags, 0) };
+            let previous = unsafe { WinHttpSetStatusCallback(handle.0, Some(status), CALLBACK_FLAGS, 0) };
             if previous.is_some_and(|f| f as usize == usize::MAX) {
                 // SAFETY: registration failed, so WinHTTP cannot dereference this context.
                 drop(unsafe { Box::from_raw(ptr) });
@@ -349,6 +374,12 @@ mod win {
             if unsafe { WinHttpReadData(request.0, call.buffer, CHUNK as u32, null_mut()) } == 0 {
                 return Err(Error::Network);
             }
+            #[cfg(test)]
+            ON_READ.with(|cell| {
+                if let Some(tx) = cell.borrow_mut().take() {
+                    let _ = tx.send(());
+                }
+            });
             let Event::Chunk(chunk) = call.next(&enabled)? else { return Err(Error::Network) };
             if chunk.is_empty() {
                 break;

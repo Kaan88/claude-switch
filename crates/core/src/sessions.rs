@@ -7,8 +7,10 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+mod archive_excerpts;
 mod prompts;
-pub use prompts::{naming_prompts, row_activity};
+pub use archive_excerpts::archive_excerpts;
+pub use prompts::{TurnActivity, naming_prompts, row_activity, turn_activity};
 
 /// How much of a transcript is read at its start and at its end.
 const CHUNK: u64 = 256 * 1024;
@@ -124,6 +126,10 @@ fn texts(v: &Value) -> Vec<&str> {
 
 /// The prompt a user line holds, when it is one a person typed.
 fn prompt_of(v: &Value, max: usize) -> Option<String> {
+    Some(squeeze(&prompt_text(v)?, max)).filter(|t| !t.is_empty())
+}
+
+fn prompt_text(v: &Value) -> Option<String> {
     if str_field(v, "type") != Some("user")
         || flag(v, "isSidechain")
         || flag(v, "isMeta")
@@ -135,7 +141,7 @@ fn prompt_of(v: &Value, max: usize) -> Option<String> {
     if parts.iter().any(|s| s.trim_start().starts_with('<')) {
         return None;
     }
-    Some(squeeze(&parts.join(" "), max)).filter(|t| !t.is_empty())
+    Some(parts.join(" ")).filter(|t| !t.trim().is_empty())
 }
 
 fn read_inner(file: &Path) -> Option<(Session, TitleFrom)> {

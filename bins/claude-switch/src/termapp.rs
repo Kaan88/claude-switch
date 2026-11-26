@@ -80,6 +80,7 @@ impl AppState {
         let pane = self.pane_for_launch(l, session, account);
         let id = self.open_command(&term::command(l), l.label.clone(), session, account)?;
         if let Some(tab) = self.tabs.get_mut(id) {
+            tab.cwd = pane.as_ref().and(l.cwd.clone());
             tab.pane = pane;
         }
         Ok(id)
@@ -203,10 +204,14 @@ impl AppState {
     pub fn pump_terms(&mut self) -> Woken {
         let mut w = Woken::default();
         let shown = self.tabs.active;
+        let focused = self.window_focused && !self.notifications.hidden;
         let (area, metrics) = (self.term_area, self.metrics);
         for tab in &mut self.tabs.list {
             let had_selection = tab.term.selection.is_some();
             let r = tab.term.pump();
+            if tab.pane.is_some() {
+                tab.attention.terminal(&mut tab.term.screen, r.output, focused && shown == Some(tab.id));
+            }
             w.strip |= r.ended;
             if let Some(title) = r.title {
                 w.strip |= title != tab.program_title;
@@ -499,6 +504,7 @@ impl AppState {
     /// A terminal's program wrote or ended: feeds them all and redraws what changed.
     pub fn term_woke(&mut self, cx: &mut Cx<'_, Msg>) {
         let w = self.pump_terms();
+        self.attention_tick(cx);
         if w.output {
             self.session_tick(cx, true);
         }
@@ -524,10 +530,13 @@ impl AppState {
     /// `--shell`, `--type` and `--sessions-tab` (see `main.rs`): a tab opened at the start.
     pub fn start_debug(&mut self, cx: &mut Cx<'_, Msg>) {
         if let Some(program) = self.debug_shell.take() {
-            let command = mdshared_pty::Command::new(&program);
             let account = self.current().slug.clone();
-            if let Err(e) = self.open_command(&command, program.clone(), None, Some(&account)) {
-                self.error("Could not start it", format!("{program}: {e}"));
+            let mut launch = claude_switch_core::launch::shell(&self.source.home());
+            launch.program = program.clone().into();
+            launch.label = program.clone();
+            match self.open_tab(&launch, None, Some(&account)) {
+                Ok(tab) => self.debug_tab = Some(tab),
+                Err(e) => self.error("Could not start it", format!("{program}: {e}")),
             }
             if self.debug_list {
                 self.show_sessions();
@@ -543,28 +552,39 @@ impl AppState {
         cx.anim().forget(CURSOR);
     }
 
-    /// The text of the `--type` flag, sent to the first tab at its time.
+    /// The text of the `--type` flag, sent only to the tab opened by `--shell`.
     pub fn typed_due(&mut self, now: Instant) -> Option<Instant> {
         while let Some((at, _)) = self.debug_type.first() {
             if *at > now {
                 return Some(*at);
             }
             let (_, bytes) = self.debug_type.remove(0);
-            if let Some(tab) = self.tabs.list.first() {
+            if let Some(tab) = self.debug_input_tab().and_then(|id| self.tabs.list.iter().find(|tab| tab.id == id)) {
                 tab.term.write(&bytes);
             }
         }
         None
     }
 
+    fn debug_input_tab(&self) -> Option<u64> {
+        self.debug_tab.filter(|id| self.tabs.list.iter().any(|tab| tab.id == *id))
+    }
+
     /// The tab a session is open in, as the safeguard sees it.
     pub fn tab_of_session(&self, session: &str) -> Option<u64> {
-        self.tabs.by_session(session).map(|t| t.id)
+        self.tabs
+            .by_session(session, |t| t.term.running() || self.source.is_demo() && t.term.ended.is_none())
+            .map(|t| t.id)
     }
 
     /// The account of the tab a session is open in.
     pub fn tab_account(&self, session: &str) -> Option<String> {
-        self.tabs.by_session(session).map(|t| t.account.clone().unwrap_or_else(|| self.current().slug.clone()))
+        let tab = self.tab_of_session(session)?;
+        self.tabs
+            .list
+            .iter()
+            .find(|t| t.id == tab)
+            .map(|t| t.account.clone().unwrap_or_else(|| self.current().slug.clone()))
     }
 
     /// Shows the list again (from the top bar's controls that work on it).
@@ -574,23 +594,4 @@ impl AppState {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ended_tabs_still_handle_local_scrollback() {
-        let mut app = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
-        let mut term = Term::empty((10, 3));
-        term.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
-        term.ended = Some(mdshared_pty::Exit { code: Some(0), signal: None });
-        app.tabs.open(NewTab { label: "ended".into(), color: [0; 3], account: None, session: None }, term);
-        let key = KeyPress {
-            name: Some(KeyName::PageUp),
-            mods: Mods { shift: true, ..Mods::default() },
-            text: None,
-            repeat: false,
-        };
-        app.term_key(Instant::now(), &key);
-        assert!(app.tabs.shown().unwrap().term.scroll > 0);
-    }
-}
+mod tests;

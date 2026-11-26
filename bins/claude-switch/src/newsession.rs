@@ -1,16 +1,17 @@
-//! The folder and account picker for a new CLI session.
+//! The folder, account and app picker for a new session.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use claude_switch_core::App;
-use claude_switch_core::sessions::Group;
+use claude_switch_core::sessions::{Group, folder_key};
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::overlay::{DIALOG_FOOTER, DIALOG_PAD, dialog_card};
 use mdshared_ui::textfield::{FieldColors, TextField};
 
 use super::{CANCEL, Dialog, Draw, FIELD, OK};
+use crate::folder_defaults::{CLI, DESKTOP, draw_app};
 use crate::state::{AppState, Target};
 
 const RECENT_LIMIT: usize = 4;
@@ -24,7 +25,9 @@ pub struct NewSession {
     recent: Vec<PathBuf>,
     accounts: Vec<(String, String)>,
     account: usize,
-    account_focused: bool,
+    app: App,
+    folder_key: Option<String>,
+    focus: u8, // folder, account, app
     error: Option<&'static str>,
 }
 
@@ -53,26 +56,40 @@ fn folder_from_text(text: &str, is_dir: impl FnOnce(&Path) -> bool) -> Result<Pa
 impl NewSession {
     fn new(st: &AppState) -> Self {
         let accounts: Vec<_> = st.config.accounts.iter().map(|a| (a.slug.clone(), a.name.clone())).collect();
-        let account = accounts.iter().position(|(slug, _)| *slug == st.current().slug).unwrap_or(0);
         let mut field = TextField::new();
         let selected = st.selected_session().map(|s| &s.cwd).filter(|p| !p.as_os_str().is_empty());
         field.set_text(&selected.cloned().unwrap_or_else(|| st.source.home()).to_string_lossy());
         field.select_all();
-        Self {
+        let mut picker = Self {
             field,
             stops: Vec::new(),
             recent: recent_folders(&st.all_groups),
             accounts,
-            account,
-            account_focused: false,
+            account: 0,
+            app: App::Cli,
+            folder_key: None,
+            focus: 0,
             error: None,
+        };
+        picker.sync_defaults(st);
+        picker
+    }
+
+    fn sync_defaults(&mut self, st: &AppState) {
+        let cwd = Path::new(self.field.text().trim());
+        let key = folder_key(cwd);
+        if self.folder_key.as_ref() != Some(&key) {
+            let (slug, app) = st.folder_open(cwd, App::Cli);
+            self.account = self.accounts.iter().position(|(a, _)| a == slug).unwrap_or(0);
+            self.app = app;
+            self.folder_key = Some(key);
         }
     }
 
     pub(super) fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, w: f32, h: f32) {
         let pal = d.pal;
         let recent_height = if self.recent.is_empty() { 0.0 } else { 28.0 + self.recent.len() as f32 * 32.0 };
-        let card = dialog_card(500.0, 174.0 + recent_height + DIALOG_FOOTER, w, h);
+        let card = dialog_card(500.0, 216.0 + recent_height + DIALOG_FOOTER, w, h);
         let footer = d.card(p, card);
         d.title(p, card, "New session");
         let x = card.x + DIALOG_PAD;
@@ -80,9 +97,9 @@ impl NewSession {
 
         let fr = Rect::new(x, card.y + 64.0, width, 32.0);
         p.text(Face::Ui, 12.0, x, fr.y - 9.0, "Folder", pal.muted, width);
-        p.frame(fr, 5.0, pal.field, if self.account_focused { pal.line } else { pal.accent });
+        p.frame(fr, 5.0, pal.field, if self.focus == 0 { pal.accent } else { pal.line });
         let colors = FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
-        self.field.draw(p, fr.inset(8.0), Face::Ui, 13.0, &colors, "Folder path", !self.account_focused, true);
+        self.field.draw(p, fr.inset(8.0), Face::Ui, 13.0, &colors, "Folder path", self.focus == 0, true);
         self.stops = p.caret_stops(Face::Ui, 13.0, &self.field.display());
         d.hits.push((fr, Target::Dialog(FIELD)));
         if let Some(error) = self.error {
@@ -102,7 +119,7 @@ impl NewSession {
 
         p.text(Face::Ui, 12.0, x, y + 16.0, "Account", pal.muted, 67.0);
         let r = Rect::new(x + 70.0, y, width - 70.0, 32.0);
-        p.frame(r, 5.0, pal.field, if self.account_focused { pal.accent } else { pal.line });
+        p.frame(r, 5.0, pal.field, if self.focus == 1 { pal.accent } else { pal.line });
         if let Some((_, name)) = self.accounts.get(self.account) {
             let inset = if self.accounts.len() > 1 { 44.0 } else { 8.0 };
             p.text(Face::Ui, 13.0, r.x + inset, r.cy(), name, pal.text, r.w - 2.0 * inset);
@@ -110,6 +127,12 @@ impl NewSession {
         if self.accounts.len() > 1 {
             d.button(p, Rect::new(r.x + 2.0, y + 2.0, 34.0, 28.0), "‹", false, PREVIOUS);
             d.button(p, Rect::new(r.right() - 36.0, y + 2.0, 34.0, 28.0), "›", false, NEXT);
+        }
+        p.text(Face::Ui, 12.0, x, y + 58.0, "App", pal.muted, 67.0);
+        let r = Rect::new(x + 70.0, y + 42.0, width - 70.0, 32.0);
+        draw_app(d, p, r, self.app);
+        if self.focus == 2 {
+            mdshared_ui::focus::draw_ring(p, &pal, r, 5.0);
         }
         d.footer(p, footer, &[("Start", true, OK), ("Cancel", false, CANCEL)]);
     }
@@ -122,6 +145,7 @@ impl NewSession {
     }
 
     pub(super) fn click(&mut self, st: &mut AppState, now: Instant, id: u32, x: f32) -> bool {
+        self.sync_defaults(st);
         match id {
             CANCEL => return false,
             OK => {
@@ -134,31 +158,36 @@ impl NewSession {
                 }) {
                     Ok(cwd) => {
                         if let Some((slug, _)) = self.accounts.get(self.account) {
-                            st.new_session_now(now, App::Cli, slug, &cwd);
+                            st.new_session_now(now, self.app, slug, &cwd);
                         }
                         return false;
                     }
                     Err(error) => {
                         self.error = Some(error);
-                        self.account_focused = false;
+                        self.focus = 0;
                     }
                 }
             }
             FIELD => {
-                self.account_focused = false;
+                self.focus = 0;
                 let inner_x =
                     x - st.hits.iter().find(|(_, t)| *t == Target::Dialog(FIELD)).map_or(0.0, |(r, _)| r.x + 8.0);
                 self.field.press(inner_x, &self.stops, false);
             }
             PREVIOUS | NEXT => {
-                self.account_focused = true;
+                self.focus = 1;
                 self.step_account(id == NEXT);
+            }
+            CLI | DESKTOP => {
+                self.focus = 2;
+                self.app = if id == CLI { App::Cli } else { App::Desktop };
             }
             id if id >= RECENT => {
                 if let Some(folder) = self.recent.get((id - RECENT) as usize) {
                     self.field.set_text(&folder.to_string_lossy());
                     self.error = None;
-                    self.account_focused = false;
+                    self.focus = 0;
+                    self.sync_defaults(st);
                 }
             }
             _ => {}
@@ -167,21 +196,25 @@ impl NewSession {
     }
 
     /// Enter and Escape go through the common dialog routes to Start and Cancel.
-    pub(super) fn key(&mut self, key: &KeyName, mods: Mods, text: Option<&str>) {
+    pub(super) fn key(&mut self, st: &AppState, key: &KeyName, mods: Mods, text: Option<&str>) {
         match key {
-            KeyName::Tab if self.accounts.len() > 1 => self.account_focused = !self.account_focused,
-            KeyName::Left | KeyName::Up if self.account_focused => self.step_account(false),
-            KeyName::Right | KeyName::Down if self.account_focused => self.step_account(true),
-            _ if !self.account_focused && self.field.handle_key(key, mods, text, true) == Some(true) => {
+            KeyName::Tab => self.focus = (self.focus + if mods.shift { 2 } else { 1 }) % 3,
+            KeyName::Left | KeyName::Up if self.focus == 1 => self.step_account(false),
+            KeyName::Right | KeyName::Down if self.focus == 1 => self.step_account(true),
+            KeyName::Left | KeyName::Up if self.focus == 2 => self.app = App::Cli,
+            KeyName::Right | KeyName::Down if self.focus == 2 => self.app = App::Desktop,
+            _ if self.focus == 0 && self.field.handle_key(key, mods, text, true) == Some(true) => {
                 self.error = None;
+                self.sync_defaults(st);
             }
             _ => {}
         }
     }
 
-    pub(super) fn text_input(&mut self, text: &str) {
-        if !self.account_focused && self.field.insert(text) {
+    pub(super) fn text_input(&mut self, st: &AppState, text: &str) {
+        if self.focus == 0 && self.field.insert(text) {
             self.error = None;
+            self.sync_defaults(st);
         }
     }
 }
@@ -237,6 +270,22 @@ mod tests {
             }
         }
         assert_eq!(recent.as_slice(), &expected[..RECENT_LIMIT]);
+    }
+
+    #[test]
+    fn choosing_a_folder_loads_its_default_and_successful_start_remembers_an_override() {
+        let mut st = demo_state();
+        let now = Instant::now();
+        let cwd = st.all_groups[1].cwd.clone();
+        st.remember_folder_open(&cwd, "work", App::Desktop);
+        st.ask_new_session();
+        dialogs::click(&mut st, now, RECENT + 1, 0.0);
+        assert_eq!(picker(&st).accounts[picker(&st).account].0, "work");
+        assert_eq!(picker(&st).app, App::Desktop);
+        dialogs::click(&mut st, now, CLI, 0.0);
+        dialogs::click(&mut st, now, OK, 0.0);
+        assert_eq!(st.folder_open(&cwd, App::Desktop), ("work", App::Cli));
+        assert_eq!(st.config.current, "main");
     }
 
     #[test]

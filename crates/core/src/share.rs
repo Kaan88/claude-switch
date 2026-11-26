@@ -4,14 +4,10 @@
 //! name. While the two files still hold the same bytes [`apply`] links them again; a diverged file is
 //! the owner's to settle.
 
-use crate::util::{io_refusal, read_json, write_atomic, write_json};
+use crate::util::{io_refusal, publish_new, read_json};
 use crate::{Account, Refusal, Roots};
 use serde_json::Value;
-use std::io::Read;
 use std::path::Path;
-
-/// The largest file whose copy is compared with the first account's, to be linked again.
-const COMPARE_MAX: u64 = 4 * 1024 * 1024;
 
 /// The names shared by link, in order: `projects`, `skills`, `agents`, `plugins`, `mcp-servers`
 /// (folders), `settings.json`, `CLAUDE.md`, `keybindings.json` (files).
@@ -151,39 +147,9 @@ fn make_junction(link: &Path, _target: &Path) -> Result<(), Refusal> {
     Err(io_refusal("link", link, &"links are not supported here"))
 }
 
-/// The bytes of `target` when it is a real file (not a link) holding exactly what `source` holds, and
-/// neither is larger than [`COMPARE_MAX`].
-fn identical_copy(source: &Path, target: &Path) -> Option<Vec<u8>> {
-    let (src, dst) = (std::fs::metadata(source).ok()?, std::fs::symlink_metadata(target).ok()?);
-    if !src.is_file() || !dst.is_file() || src.len() != dst.len() || src.len() > COMPARE_MAX {
-        return None;
-    }
-    let read = |path: &Path| -> Option<Vec<u8>> {
-        let mut bytes = Vec::new();
-        // One byte over the limit shows a file that grew since its size was asked.
-        std::fs::File::open(path).ok()?.take(COMPARE_MAX + 1).read_to_end(&mut bytes).ok()?;
-        (bytes.len() as u64 <= COMPARE_MAX).then_some(bytes)
-    };
-    let (a, b) = (read(source)?, read(target)?);
-    (a == b).then_some(b)
-}
-
-/// Removes the copy at `target`, whose content is `bytes`, and makes the link with `link`. When that
-/// fails, the copy is written back.
-fn replace_with_link(target: &Path, bytes: &[u8], link: impl FnOnce() -> std::io::Result<()>) -> Result<(), Refusal> {
-    std::fs::remove_file(target).map_err(|e| io_refusal("replace", target, &e))?;
-    if let Err(e) = link() {
-        write_atomic(target, bytes)?;
-        return Err(io_refusal("link", target, &e));
-    }
-    Ok(())
-}
-
 /// Makes every `Missing` link (directory junctions for folders; hard links for files, and an empty
-/// real folder in the way is removed first) and returns the states afterwards. A file in `Conflict`
-/// that holds byte for byte what the first account's holds (at most 4 MiB) is replaced by a hard link
-/// again. Every other `Conflict`, a folder or a file whose content differs, is left exactly as it is:
-/// a diverged file is the owner's to settle. Does nothing for the first account. An error making one
+/// real folder in the way is removed first) and returns the states afterwards. An existing copy
+/// is left alone: Claude does not participate in our locks. An error making one
 /// link does not stop the others; the first such error is returned after all were tried.
 pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusal> {
     if account.primary {
@@ -201,11 +167,6 @@ pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusa
     for row in status(roots, account) {
         let source = primary.join(row.name);
         let target = account.cli_dir.join(row.name);
-        if row.state == LinkState::Conflict
-            && let Some(bytes) = identical_copy(&source, &target)
-        {
-            note(replace_with_link(&target, &bytes, || std::fs::hard_link(&source, &target)));
-        }
         if row.state != LinkState::Missing {
             continue;
         }
@@ -233,11 +194,8 @@ pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusa
     }
 }
 
-/// Copies the `mcpServers` key of the first account's `.claude.json` into the account's own
-/// `.claude.json`, changing no other key and creating the file as `{"mcpServers": …}` when missing.
-/// Returns whether the file changed. Does nothing (`Ok(false)`) for the first account or when the
-/// first account's file has no such key. A target that is not a JSON object is left alone
-/// ([`Refusal::Io`]).
+/// Seeds `mcpServers` before the secondary profile has its own `.claude.json`. Never replaces
+/// an existing file: Claude might change it while we work and does not honor our locks.
 pub fn sync_mcp(roots: &Roots, account: &Account) -> Result<bool, Refusal> {
     if account.primary {
         return Ok(false);
@@ -248,20 +206,13 @@ pub fn sync_mcp(roots: &Roots, account: &Account) -> Result<bool, Refusal> {
         return Ok(false);
     };
     let path = crate::accounts::claude_json(roots, account);
-    let mut object = match std::fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-            Ok(Value::Object(map)) => map,
-            Ok(_) => return Err(io_refusal("update", &path, &"it is not a JSON object")),
-            Err(e) => return Err(io_refusal("update", &path, &e)),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
-        Err(e) => return Err(io_refusal("read", &path, &e)),
-    };
-    if object.get("mcpServers") == Some(&servers) {
-        return Ok(false);
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(io_refusal("inspect", &path, &e)),
     }
-    object.insert("mcpServers".into(), servers);
-    write_json(&path, &Value::Object(object))?;
+    let text = format!("{}\n", serde_json::json!({"mcpServers": servers}));
+    publish_new(&path, text.as_bytes())?;
     Ok(true)
 }
 
@@ -332,18 +283,17 @@ mod tests {
     }
 
     #[test]
-    fn a_saved_over_file_with_the_same_content_is_linked_again_and_a_diverged_one_is_left() {
+    fn existing_settings_copies_are_never_replaced_even_when_identical() {
         let t = TempDir::new("sh-relink");
         let roots = t.roots();
         let p = roots.primary_cli_dir();
         put(&p.join("settings.json"), "{\"a\":1}");
         put(&p.join("CLAUDE.md"), "notes one");
-        let big = "k".repeat(COMPARE_MAX as usize + 1);
+        let big = "k".repeat(1024);
         put(&p.join("keybindings.json"), &big);
         put(&p.join("skills").join("s.md"), "skill");
         let work = further(&roots, "work", "Work");
-        // Copies of the account's own: the same bytes, other bytes of the same size, too large to
-        // compare, and a folder with the same content.
+        // Copies of the account's own: identical and diverged files, and a nonempty directory.
         put(&work.cli_dir.join("settings.json"), "{\"a\":1}");
         put(&work.cli_dir.join("CLAUDE.md"), "notes two");
         put(&work.cli_dir.join("keybindings.json"), &big);
@@ -351,25 +301,22 @@ mod tests {
         let state = |rows: &[ShareState], name: &str| rows.iter().find(|r| r.name == name).unwrap().state;
         assert_eq!(state(&status(&roots, &work), "settings.json"), LinkState::Conflict);
         let after = apply(&roots, &work).unwrap();
-        assert_eq!(state(&after, "settings.json"), LinkState::Linked);
+        assert_eq!(state(&after, "settings.json"), LinkState::Conflict);
         assert_eq!(state(&after, "CLAUDE.md"), LinkState::Conflict);
         assert_eq!(state(&after, "keybindings.json"), LinkState::Conflict);
         assert_eq!(state(&after, "skills"), LinkState::Conflict);
         assert_eq!(std::fs::read_to_string(work.cli_dir.join("CLAUDE.md")).unwrap(), "notes two");
         assert_eq!(std::fs::read_to_string(p.join("CLAUDE.md")).unwrap(), "notes one");
         std::fs::write(work.cli_dir.join("settings.json"), "{\"a\":2}").unwrap();
-        assert_eq!(std::fs::read_to_string(p.join("settings.json")).unwrap(), "{\"a\":2}");
+        assert_eq!(std::fs::read_to_string(p.join("settings.json")).unwrap(), "{\"a\":1}");
     }
 
     #[test]
-    fn a_copy_is_put_back_when_it_cannot_be_linked() {
+    fn provisioning_does_not_overwrite_a_file_created_since_the_absence_check() {
         let t = TempDir::new("sh-putback");
         let target = t.0.join("settings.json");
         put(&target, "mine");
-        let refused = replace_with_link(&target, b"mine", || {
-            assert!(!target.exists());
-            Err(std::io::Error::other("no links here"))
-        });
+        let refused = publish_new(&target, b"new");
         assert!(matches!(refused, Err(Refusal::Io(_))));
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "mine");
     }
@@ -409,16 +356,16 @@ mod tests {
             &work.cli_dir.join(".claude.json"),
             r#"{"oauthAccount":{"accountUuid":"u"},"mcpServers":{"old":{}},"projects":{"C:/x":{"n":1}}}"#,
         );
-        assert_eq!(sync_mcp(&roots, &work), Ok(true));
+        assert_eq!(sync_mcp(&roots, &work), Ok(false));
         let v = read_json(&work.cli_dir.join(".claude.json")).unwrap();
         assert_eq!(
             v,
-            serde_json::json!({"oauthAccount":{"accountUuid":"u"},"mcpServers":{"a":{"command":"run-a"}},
+            serde_json::json!({"oauthAccount":{"accountUuid":"u"},"mcpServers":{"old":{}},
                                "projects":{"C:/x":{"n":1}}})
         );
         assert_eq!(sync_mcp(&roots, &work), Ok(false), "already the same");
         put(&work.cli_dir.join(".claude.json"), "[]");
-        assert!(matches!(sync_mcp(&roots, &work), Err(Refusal::Io(_))));
+        assert_eq!(sync_mcp(&roots, &work), Ok(false));
         assert_eq!(std::fs::read_to_string(work.cli_dir.join(".claude.json")).unwrap(), "[]");
         // A first account's file without the key changes nothing.
         put(&roots.home.join(".claude.json"), r#"{"numStartups":3}"#);

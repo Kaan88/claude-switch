@@ -2,7 +2,7 @@
 
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::host::Cx;
-use mdshared_ui::overlay::{Bubble, TOAST_H};
+use mdshared_ui::overlay::Bubble;
 use mdshared_ui::splitter::{self, Axis};
 
 use crate::state::{AppState, Focus, Msg, Target};
@@ -29,6 +29,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
     cx.frost(p, Bar::layout(w).row);
     cx.set_maximize_button(Some(max));
     let top = topbar::draw_below_title(st, cx, p, w);
+    let top = st.draw_tab_restore(p, top, w);
     st.main_top = top;
 
     let area = Rect::new(0.0, top, w, (h - top).max(0.0));
@@ -48,12 +49,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
         st.hits.push((rects.1, Target::Splitter));
     }
 
-    for shown in st.toasts.frame(cx.anim(), "toasts", |_| TOAST_H, 8.0) {
-        let mut b = Bubble::toast(p, shown.item, window);
-        b.rect.y -= shown.lift;
-        b.draw_presence(p, &pal, shown.t);
-        cx.animating(b.presence_bounds().inset(-8.0));
-    }
+    crate::resume_tabs::draw_toasts(st, cx, p, window);
     list::draw_undo(st, p, window);
     if let Some(over) = st.tip.shown() {
         Bubble::tip(p, &over.text, over.anchor, w, h).draw(p, &pal);

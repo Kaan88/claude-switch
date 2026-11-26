@@ -26,14 +26,15 @@ impl AppState {
     }
 
     pub fn listed(&self, s: &Session) -> bool {
-        (self.config.show_archived || !s.archived)
+        !self.is_archived(s)
+            && (self.config.show_archived || !s.archived)
             && (self.config.show_workers || !s.worker)
             && (self.config.show_hidden || !self.hidden_session(s))
     }
 
     pub fn row_flags(&self, s: &Session) -> Flags {
         let running =
-            self.running_ids.contains(&s.id) || self.tabs.by_session(&s.id).is_some_and(|tab| tab.term.running());
+            self.running_ids.contains(&s.id) || self.tabs.by_session(&s.id, |tab| tab.term.running()).is_some();
         Flags {
             running,
             waiting: running && s.turn_ended,
@@ -45,6 +46,7 @@ impl AppState {
 
     pub fn index_running(&mut self) {
         self.running_ids = self.running.iter().map(|r| r.session_id.clone()).collect();
+        self.identify_tabs();
     }
 
     pub fn apply_activity(&mut self, activity: ActivityScan) -> bool {
@@ -52,6 +54,9 @@ impl AppState {
         self.running = activity.running;
         if changed {
             self.index_running();
+            if self.tabs.list.iter().filter_map(|tab| tab.resume_id.as_ref()).any(|id| !self.by_id.contains_key(id)) {
+                self.refresh(Instant::now());
+            }
         }
         let mut updated = false;
         let mut selected_updated = false;
@@ -95,33 +100,35 @@ impl AppState {
     fn rebuild_view_at(&mut self, now: u64, offset: i32) {
         let calendar = Calendar::at(now, offset);
         self.recent_local_day = Some((model::local_day(now, offset), offset));
+        self.archive_count = self.sessions.iter().filter(|s| self.is_archived(s)).count();
+        self.archive_picks.retain(|id| self.by_id.contains_key(id) && self.marks.archived_at(id).is_some());
+        if self.filter == Filter::Archived && self.archive_count == 0 {
+            self.filter = Filter::All;
+        }
+        if self.conversation_search.on && (self.filter != Filter::Archived || !self.search.text().trim().is_empty()) {
+            self.project_conversation_search();
+            return;
+        }
         let query = self.search.text().trim();
+        let archive_view = self.filter == Filter::Archived;
         let mut pinned = Vec::new();
         let mut buckets: [Vec<usize>; 5] = Default::default();
         let mut groups = Vec::new();
         for g in &self.all_groups {
             let mut rows = Vec::new();
             let key = folder_key(&g.cwd);
-            let folder_hidden = self.marks.folder_hidden(&key);
             for &i in &g.sessions {
                 let s = &self.sessions[i];
-                let hidden = folder_hidden || self.marks.hidden(&s.id);
-                if (!self.config.show_archived && s.archived)
-                    || (!self.config.show_workers && s.worker)
-                    || (!self.config.show_hidden && hidden)
+                if !self.list_session_visible(s, !query.is_empty())
                     || (!query.is_empty()
                         && model::score(query, self.marks.name(&s.id), s, &g.name).is_none()
                         && s.branch.as_ref().is_none_or(|b| mdshared_app::fuzzy::score(query, b).is_none()))
                 {
                     continue;
                 }
-                let flags = if self.filter == Filter::All { Flags::default() } else { self.row_flags(s) };
-                if !flags.matches(self.filter) {
-                    continue;
-                }
                 if self.marks.pinned(&s.id) {
                     pinned.push(i);
-                } else if self.config.folders_view {
+                } else if archive_view || self.config.folders_view {
                     rows.push(i);
                 } else {
                     buckets[calendar.bucket(s.last_active_ms)].push(i);
@@ -154,7 +161,7 @@ impl AppState {
         self.sections.scroll = self.sections.clamp_scroll(scroll);
     }
 
-    pub fn save_marks(&mut self) {
+    pub fn save_marks(&mut self) -> bool {
         self.marks_flush_at = None;
         if let Source::Real(roots) = &self.source {
             if self.marks_read_only {
@@ -162,10 +169,13 @@ impl AppState {
                     "Could not save session marks",
                     "marks.json is read-only in this window. Restart after repairing it.".into(),
                 );
+                return false;
             } else if let Err(e) = self.marks.save(roots) {
                 self.error("Could not save session marks", e.to_string());
+                return false;
             }
         }
+        true
     }
 
     pub fn prune_marks(&mut self) {
@@ -208,6 +218,9 @@ impl AppState {
 
     pub fn toggle_pin(&mut self, i: usize) {
         let Some(s) = self.sessions.get(i) else { return };
+        if self.is_archived(s) {
+            return;
+        }
         if self.marks.pin(&s.id, &s.file, !self.marks.pinned(&s.id)) {
             self.save_marks();
             self.rebuild_view();
@@ -251,6 +264,7 @@ impl AppState {
                 if self.filter == Filter::Unseen {
                     self.selected = None;
                     self.preview = None;
+                    self.session_size.cancel();
                 } else {
                     self.select_first();
                 }

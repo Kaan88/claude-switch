@@ -3,7 +3,7 @@
 pub mod attach;
 mod discovery;
 mod links;
-mod model;
+pub(crate) mod model;
 mod pictures;
 mod preview;
 mod text;
@@ -58,10 +58,19 @@ impl Window {
 
 pub struct Pane {
     model: model::Model,
+    pub(crate) transcript_source: model::Source,
     ui: ui::Ui,
     cwd: PathBuf,
     next: Option<Instant>,
     _demo: Option<crate::demo::Transcript>,
+}
+
+impl Pane {
+    pub(crate) fn verify_identity(&self, id: &str) {
+        if let model::Source::Discover { verified, .. } = &self.transcript_source {
+            let _ = verified.set(id.to_owned());
+        }
+    }
 }
 
 impl AppState {
@@ -132,6 +141,11 @@ impl AppState {
     }
 
     pub fn pane_for_launch(&self, launch: &Launch, session: Option<&str>, account: Option<&str>) -> Option<Pane> {
+        if launch.args.first().is_some_and(|arg| arg == "--session-id") {
+            let (id, account) = (session?, account?);
+            let path = crate::compact_open::transcript_path(&self.config, launch, account, id)?;
+            return Some(self.new_session_pane(model::Source::File(path), launch.cwd.clone()?));
+        }
         if !session_launch(launch) {
             return None;
         }
@@ -140,21 +154,26 @@ impl AppState {
             model::Source::File(self.sessions.get(*self.by_id.get(id)?)?.file.clone())
         } else {
             let account = claude_switch_core::account(&self.config, account?).ok()?;
-            model::Source::Discover { config: account.cli_dir.clone(), cwd: cwd.clone(), started: SystemTime::now() }
+            model::Source::Discover {
+                config: account.cli_dir.clone(),
+                cwd: cwd.clone(),
+                started: SystemTime::now(),
+                verified: Default::default(),
+            }
         };
         Some(self.new_session_pane(source, cwd))
     }
 
     fn new_session_pane(&self, source: model::Source, cwd: PathBuf) -> Pane {
         let proxy = self.proxy.clone();
-        let model = model::Model::new(source, move || {
+        let model = model::Model::new(source.clone(), move || {
             if let Some(proxy) = &proxy
                 && let Ok(proxy) = proxy.lock()
             {
                 proxy.send(Msg::SessionView);
             }
         });
-        Pane { model, ui: ui::Ui::default(), cwd, next: None, _demo: None }
+        Pane { model, transcript_source: source, ui: ui::Ui::default(), cwd, next: None, _demo: None }
     }
 
     pub fn layout_session_view(&mut self, cx: &mut Cx<'_, Msg>, area: Rect) -> Rect {
@@ -343,6 +362,10 @@ impl AppState {
                 true
             })
     }
+}
+
+pub fn handover_transcript(config: &std::path::Path, cwd: &std::path::Path, id: &str) -> PathBuf {
+    model::project(config, cwd).join(format!("{id}.jsonl"))
 }
 
 fn session_launch(launch: &Launch) -> bool {

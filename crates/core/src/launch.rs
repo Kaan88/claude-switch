@@ -2,12 +2,17 @@
 //! anything: every function returns a [`Launch`] for the window to run.
 
 use crate::sessions::folder_name;
-use crate::util::{read_json, write_json};
+use crate::util::read_json;
+#[cfg(test)]
+use crate::util::write_json;
+mod history;
+pub use history::{Reservation, reserve, with_archive_check};
 #[cfg(test)]
 mod tests;
 use crate::{Account, App, Config, Launch, Place, Refusal, Roots, Running, Session, account as find_account};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// The variable that gives the CLI another config folder.
@@ -30,6 +35,21 @@ const SESSION_VARS: [&str; 13] = [
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_EXECPATH",
 ];
+
+/// Shared by every child launcher. Apply removals before the app's explicit settings.
+pub fn child_removals(launch: &Launch) -> impl Iterator<Item = OsString> + '_ {
+    launch
+        .env_remove
+        .iter()
+        .map(OsString::from)
+        .chain(std::env::vars_os().map(|(name, _)| name).filter(|name| scrub_name(name)))
+}
+
+fn scrub_name(name: &OsStr) -> bool {
+    let name = name.as_encoded_bytes();
+    let starts = |prefix: &[u8]| name.get(..prefix.len()).is_some_and(|start| start.eq_ignore_ascii_case(prefix));
+    starts(b"ANTHROPIC_") || starts(b"CLAUDE_") || name.eq_ignore_ascii_case(b"CLAUDECODE")
+}
 
 /// How long after a launch the same session is not opened again: it may not be in `running` yet.
 const JUST_LAUNCHED_MS: u64 = 20_000;
@@ -109,7 +129,7 @@ fn account_env(account: &Account) -> (BTreeMap<String, String>, Vec<String>) {
     }
 }
 
-/// Brings a further account's links and MCP list up to date; failures do not stop a launch.
+/// Provisions missing links and seeds MCP for a new profile; failures do not stop a launch.
 fn refresh_shared(roots: &Roots, account: &Account) {
     if !account.primary {
         let _ = crate::share::apply(roots, account);
@@ -137,7 +157,7 @@ pub(crate) fn cli_launch(account: &Account, args: &[&str], cwd: PathBuf, place: 
 /// login. CLI: `claude --resume <id>` in the session's folder (the home folder when that is
 /// gone), [`crate::Place::Terminal`]. Desktop: `claude --desktop --resume <id>`,
 /// [`crate::Place::Detached`]. Either way `CLAUDE_CONFIG_DIR` is set for a further account and
-/// removed for the first; a further account's shared links and MCP list are brought up to date first
+/// removed for the first; missing shared links and initial MCP settings are provisioned first
 /// ([`crate::share::apply`], [`crate::share::sync_mcp`]; their failure does not stop the launch).
 pub fn resume(
     roots: &Roots,
@@ -147,6 +167,7 @@ pub fn resume(
     app: App,
     running: &[Running],
 ) -> Result<Launch, Refusal> {
+    validate_session_id(&session.id)?;
     if let Some(r) = crate::running::find(running, &session.id) {
         return Err(Refusal::AlreadyRunning(r.clone()));
     }
@@ -184,6 +205,7 @@ pub fn resume(
 /// not refuse a running session, nor note a start of the original's id; it refuses
 /// [`Refusal::NotLoggedIn`] when the account's CLI has no login.
 pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str) -> Result<Launch, Refusal> {
+    validate_session_id(&session.id)?;
     let account = find_account(config, account)?;
     if !crate::accounts::status(roots, account).cli_logged_in {
         return Err(Refusal::NotLoggedIn(account.name.clone()));
@@ -192,6 +214,16 @@ pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str) ->
     let cwd = if session.cwd.is_dir() { session.cwd.clone() } else { roots.home.clone() };
     let label = format!("{} · {} · Copy", account.name, folder_name(&session.cwd));
     Ok(cli_launch(account, &["--resume", &session.id, "--fork-session"], cwd, Place::Terminal, label))
+}
+
+pub fn validate_session_id(id: &str) -> Result<(), Refusal> {
+    let valid = id.len() == 36
+        && id.bytes().enumerate().all(
+            |(i, b)| {
+                if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() }
+            },
+        );
+    if valid { Ok(()) } else { Err(Refusal::Invalid("The transcript does not have a UUID session ID.".into())) }
 }
 
 /// A new session as `account` in `cwd`: `claude` in a terminal, or the desktop app for
@@ -278,17 +310,17 @@ fn now_ms() -> u64 {
 
 /// Whether `history.json` says the session was launched within the last [`JUST_LAUNCHED_MS`].
 fn launched_a_moment_ago(roots: &Roots, session_id: &str) -> bool {
-    read_json(&history_file(roots))
-        .and_then(|v| v.get(session_id)?.get("at")?.as_u64())
-        // Either way round, so that a clock set back a little still counts and one set far back does
-        // not lock the session.
-        .is_some_and(|at| now_ms().abs_diff(at) < JUST_LAUNCHED_MS)
+    read_json(&history_file(roots)).is_some_and(|v| {
+        v.as_object().is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|(id, entry)| id.eq_ignore_ascii_case(session_id) && history::recent(entry).unwrap_or(false))
+        })
+    })
 }
 
-/// Records that `session_id` is being opened as `account`, now: what [`note_launch`] records. The
-/// window calls it before it starts the process, so that [`resume`] refuses a second start while the
-/// first is not yet in `running`. Failure is silent.
-pub fn note_starting(roots: &Roots, session_id: &str, account: &str) {
+#[cfg(test)]
+fn note_starting(roots: &Roots, session_id: &str, account: &str) {
     let path = history_file(roots);
     let mut map = match read_json(&path) {
         Some(Value::Object(m)) => m,
@@ -298,10 +330,8 @@ pub fn note_starting(roots: &Roots, session_id: &str, account: &str) {
     let _ = write_json(&path, &Value::Object(map));
 }
 
-/// Records that `session_id` was last opened as `account` and when (in
-/// `<appdata>/claude-switch/history.json`), so that a later carry to another account can be warned
-/// about. The window calls it after a launch started. Failure is silent.
-pub fn note_launch(roots: &Roots, session_id: &str, account: &str) {
+#[cfg(test)]
+fn note_launch(roots: &Roots, session_id: &str, account: &str) {
     note_starting(roots, session_id, account);
 }
 
@@ -312,7 +342,11 @@ pub fn last_account(roots: &Roots, config: &Config, session: &Session) -> String
     // An entry is `{"account": …, "at": …}`; an older one is the account's slug alone.
     let noted = read_json(&history_file(roots))
         .and_then(|v| {
-            let entry = v.get(&session.id)?;
+            let entries = v.as_object()?;
+            let entry = entries.get(&session.id).or_else(|| {
+                entries.iter().find_map(|(id, entry)| id.eq_ignore_ascii_case(&session.id).then_some(entry))
+            })?;
+            let entry = history::previous(entry);
             entry.as_str().or_else(|| entry.get("account")?.as_str()).map(str::to_string)
         })
         .filter(|s| known(s));

@@ -25,6 +25,12 @@ const SET_TERM_FOREGROUND: u32 = 16;
 const SET_TERM_ACCENT: u32 = 17;
 const SET_HIDDEN: u32 = 18;
 const SET_USAGE: u32 = 19;
+const SET_ATTENTION: u32 = 71;
+const SET_USAGE_WARNINGS: u32 = 72;
+const SET_TRAY: u32 = 73;
+const SET_CLOSE_TO_TRAY: u32 = 74;
+const SET_RESTORE_TABS: u32 = 87;
+const FORGET_HANDOVER_CONSENTS: u32 = 90;
 
 pub fn settings(st: &AppState) -> Dialog {
     let mut options = vec!["Same account as the session".to_string(), "The other account".to_string()];
@@ -78,6 +84,13 @@ pub fn settings(st: &AppState) -> Dialog {
         .unit("px"),
         Row::toggle(SET_CURSOR_BLINK, "Blink terminal cursor", a.cursor_blink)
             .help("Follows the program and system when enabled."),
+        Row::choice(
+            SET_RESTORE_TABS,
+            "Reopen terminal tabs on startup",
+            &crate::winfile::RestoreTabs::LABELS,
+            st.win_file.restore_tabs.index(),
+        )
+        .help("Only Claude session tabs are remembered. Always still honors resume warnings."),
         Row::header("Custom colours"),
         colour(SET_TERM_BACKGROUND, "Terminal background", &a.terminal_background, auto.background)
             .help("Select Custom in Terminal colours."),
@@ -90,15 +103,32 @@ pub fn settings(st: &AppState) -> Dialog {
         Row::header("Accounts"),
         Row::toggle(SET_USAGE, "Show usage", st.config.show_usage)
             .help("Read each account’s login token to ask Anthropic for subscription usage."),
+        Row::toggle(SET_USAGE_WARNINGS, "Warn at 80% and 95% usage", st.config.notifications.usage_warnings),
         Row::header("Sessions"),
         Row::toggle(SET_EMBEDDED, "Open CLI sessions in a tab of this window", st.config.embedded_terminal)
-            .help("Off: they open in Windows Terminal, or a console window without it."),
+            .help("Off: they open in a separate console window."),
         Row::toggle(SET_ARCHIVED, "Show archived sessions", st.config.show_archived),
         Row::toggle(SET_WORKERS_SHOWN, "Show sessions started by tools", st.config.show_workers)
             .help("Sessions that tools and subagents started through the SDK, not you."),
         Row::toggle(SET_HIDDEN, "Show hidden", st.config.show_hidden)
             .help("Include hidden sessions and folders and enable the Hidden filter."),
+        Row::choice(
+            SET_ATTENTION,
+            "Background session alerts",
+            &claude_switch_core::config::Attention::OPTIONS.map(|(_, _, label)| label),
+            st.config.notifications.attention.index(),
+        )
+        .help("Windows notifications require the tray icon; otherwise the taskbar flashes."),
+        Row::header("Handovers"),
+        Row::action(FORGET_HANDOVER_CONSENTS, "OpenCode provider consents", "Forget consents"),
     ];
+    let mut rows = rows;
+    rows.extend([
+        Row::header("Notification area"),
+        Row::toggle(SET_TRAY, "Show tray icon", st.config.notifications.tray_icon),
+        Row::toggle(SET_CLOSE_TO_TRAY, "Close to tray", st.config.notifications.close_to_tray)
+            .help("Requires the tray icon. Use Quit from its menu to exit."),
+    ]);
     let mut form = Form::new("Settings", rows);
     for id in [SET_ACCENT_COLOUR, SET_TERM_BACKGROUND, SET_TERM_FOREGROUND, SET_TERM_ACCENT] {
         form.show_as_colour(id);
@@ -110,7 +140,21 @@ pub fn settings(st: &AppState) -> Dialog {
 pub fn settings_outcome(st: &mut AppState, o: Outcome) {
     match o {
         Outcome::Closed => st.dialog = None,
+        Outcome::Changed { id: SET_RESTORE_TABS, value: Value::Choice(i) } => {
+            if let Some(&mode) = crate::winfile::RestoreTabs::ALL.get(i) {
+                st.win_file.restore_tabs = mode;
+                if mode == crate::winfile::RestoreTabs::Never {
+                    st.dismiss_tab_restore();
+                }
+                st.save_window();
+            }
+        }
+        Outcome::Action(FORGET_HANDOVER_CONSENTS) => st.forget_handover_consents(),
         Outcome::Changed { id, value } => {
+            if st.config_damaged {
+                st.dialog = None;
+                return;
+            }
             match (id, value) {
                 (SET_WORKERS, Value::Choice(i)) => {
                     st.config.workers = match i {
@@ -133,6 +177,12 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
                         st.usage.disable();
                     }
                 }
+                (SET_ATTENTION, Value::Choice(i)) if i < claude_switch_core::config::Attention::OPTIONS.len() => {
+                    st.config.notifications.attention = claude_switch_core::config::Attention::OPTIONS[i].0;
+                }
+                (SET_USAGE_WARNINGS, Value::Bool(b)) => st.config.notifications.usage_warnings = b,
+                (SET_TRAY, Value::Bool(b)) => st.config.notifications.tray_icon = b,
+                (SET_CLOSE_TO_TRAY, Value::Bool(b)) => st.config.notifications.close_to_tray = b,
                 (SET_ARCHIVED, Value::Bool(b)) => {
                     st.config.show_archived = b;
                     st.rebuild_view();

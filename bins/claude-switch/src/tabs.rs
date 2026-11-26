@@ -4,6 +4,7 @@
 //! while there is no terminal tab.
 
 use std::borrow::Cow;
+use std::path::PathBuf;
 
 use mdshared_ui::anim::{Animator, Id, document};
 use mdshared_ui::chrome::{self, TITLE_H, TabState};
@@ -28,12 +29,18 @@ pub struct Tab {
     pub label: String,
     /// The title the program set (OSC 0 or 2); empty when it set none.
     pub program_title: String,
+    pub rename: Option<String>,
     pub color: [u8; 3],
     /// The session it resumes, and the account it runs as.
     pub session: Option<String>,
     pub account: Option<String>,
+    /// Launch folder for a Claude session; shell and sign-in tabs leave it unset.
+    pub cwd: Option<PathBuf>,
+    /// A resume argument or a live record matched to this tab's process, not a pane guess.
+    pub resume_id: Option<String>,
     pub term: Term,
     pub pane: Option<crate::view::Pane>,
+    pub attention: crate::attention::TabAttention,
 }
 
 impl Tab {
@@ -61,6 +68,7 @@ pub struct Tabs {
     /// The tab shown: `None` is the Sessions tab.
     pub active: Option<u64>,
     next: u64,
+    pub drag: Option<crate::tabcontrols::Drag>,
 }
 
 impl Tabs {
@@ -73,7 +81,20 @@ impl Tabs {
         self.next += 1;
         let id = self.next;
         let NewTab { label, color, session, account } = new;
-        self.list.push(Tab { id, label, program_title: String::new(), color, session, account, term, pane: None });
+        self.list.push(Tab {
+            id,
+            label,
+            program_title: String::new(),
+            rename: None,
+            color,
+            resume_id: session.clone(),
+            session,
+            account,
+            cwd: None,
+            term,
+            pane: None,
+            attention: Default::default(),
+        });
         self.active = Some(id);
         id
     }
@@ -133,9 +154,12 @@ impl Tabs {
         self.active = if to == 0 { None } else { Some(self.list[to - 1].id) };
     }
 
-    /// The tab that holds a session.
-    pub fn by_session(&self, session: &str) -> Option<&Tab> {
-        self.list.iter().find(|t| t.session.as_deref() == Some(session))
+    pub fn numbered(&self, number: usize) -> Option<u64> {
+        if number == 1 { Some(SESSIONS) } else { self.list.get(number.checked_sub(2)?).map(|tab| tab.id) }
+    }
+
+    pub fn by_session(&self, session: &str, eligible: impl Fn(&Tab) -> bool) -> Option<&Tab> {
+        self.list.iter().find(|t| t.session.as_deref() == Some(session) && eligible(t))
     }
 
     /// How many tabs have a program that still runs.
@@ -192,7 +216,7 @@ pub fn draw(
     let mut labels: Vec<_> = vec![(SESSIONS, Cow::Borrowed("Sessions"), None, false)];
     labels.extend(tabs.list.iter().map(|t| {
         let ended = t.term.ended.is_some();
-        let title = match t.session.as_deref().and_then(|id| marks.name(id)) {
+        let title = match t.rename.as_deref().or_else(|| t.session.as_deref().and_then(|id| marks.name(id))) {
             Some(name) if ended => format!("{name}{ENDED_SUFFIX}").into(),
             Some(name) => Cow::Borrowed(name),
             None => t.title(),
@@ -213,7 +237,7 @@ pub fn draw(
         let s = TabState {
             active: *id == active,
             hovered: hovered(*id),
-            dragging: false,
+            dragging: tabs.drag.is_some_and(|drag| drag.id == *id && drag.started),
             missing: false,
             next_quiet: next_quiet && *id != active && !hovered(*id),
             close_hovered: *id != SESSIONS && look.hover == Some(Target::TabClose(*id)),
@@ -254,6 +278,10 @@ pub fn draw(
         if mark > 0.0 && tw >= 30.0 {
             let color = if s.active { pal.accent } else { mdshared_ui::tokens::legible(pal.accent, under, 3.0) };
             p.rbox_a(Rect::new(x + 12.0, TITLE_H - 5.0, 16.0, 2.0), 1.0, color, mark);
+        }
+        if tw >= 28.0 && tabs.get(*id).is_some_and(|t| t.attention.marked) {
+            let warn = mdshared_ui::tokens::legible(pal.warn, under, 3.0);
+            p.rbox(Rect::new(x + 8.0, 7.0, 7.0, 7.0), 3.5, warn);
         }
         let tab = Rect::new(drawn.tab.x, drawn.tab.y + top, drawn.tab.w, drawn.tab.h);
         hits.push((tab, Target::Tab(*id)));
@@ -341,11 +369,11 @@ mod tests {
     #[test]
     fn a_session_is_found_by_its_tab_until_the_tab_closes() {
         let (mut t, [a, _, c]) = three();
-        assert_eq!(t.by_session("s-c").map(|x| x.id), Some(c));
-        assert_eq!(t.by_session("s-a").map(|x| x.id), Some(a));
-        assert!(t.by_session("other").is_none());
+        assert_eq!(t.by_session("s-c", |_| true).map(|x| x.id), Some(c));
+        assert_eq!(t.by_session("s-a", |_| true).map(|x| x.id), Some(a));
+        assert!(t.by_session("other", |_| true).is_none());
         t.close(c);
-        assert!(t.by_session("s-c").is_none());
+        assert!(t.by_session("s-c", |_| true).is_none());
         assert_eq!(t.running(), 0, "terminals without a program do not run");
     }
 

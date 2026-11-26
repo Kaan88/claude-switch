@@ -68,15 +68,16 @@ The first account is the one that exists: CLI folder `%USERPROFILE%\.claude`, de
 
 A further account **shares** with the first, so nothing has to be kept in step by hand:
 
-- linked into its CLI folder (directory junctions; a hard link or copy-on-launch for single files):
+- linked into its CLI folder (directory junctions or hard links):
   `projects` (transcripts and memory), `skills`, `agents`, `plugins`, `mcp-servers`, `settings.json`,
   `CLAUDE.md`, `keybindings.json`;
-- copied on every launch from the first account's `.claude.json` into its own: the `mcpServers` key only;
+- the first account's `mcpServers` seeds a missing secondary `.claude.json`; existing Claude-owned
+  files are never overwritten, since Claude doesn't participate in the app's locks;
 - never shared: `.credentials.json`, `oauthAccount`, `sessions`.
 
 A hard-linked file stops being a link when a program saves it by writing a temporary file and renaming
-it. Before every launch the links are looked at again: a copy with the same content is linked again; a
-copy that differs is the owner's to settle and is never overwritten (it shows as a conflict).
+it. Before every launch missing links are provisioned. Existing copies, even identical ones, are left
+as conflicts rather than risking loss of a concurrent edit.
 
 Found on this computer and allowed for: the desktop records' folder also holds JSON files that are not
 session records (only files with a `cliSessionId` count); `sessions/` also holds `<pid>.<hash>.key`
@@ -93,26 +94,47 @@ tokens are never sent; the window keeps any previous figures and says “Open a 
 WinHTTP sends the token as a bearer header only to `https://api.anthropic.com/api/oauth/usage`,
 with normal Windows TLS certificate validation, no proxy, no redirects, and a 10-second request
 deadline. There is no URL override outside tests. The token lives only for the request; it is not
-part of app state, error details, logs, UI, clipboard or storage. Responses are reduced to numeric
-utilizations and reset instants; errors carry only a kind, never response bodies or headers.
+part of app state, error details, logs, UI, clipboard or storage. Responses are reduced to the
+fields described below; errors carry only a kind, never response bodies or headers.
 
 Opening the window, account selector or Accounts page can request a reading if it is at least five
 minutes old. The selected-account usage popup can do the same for that account. The manual Refresh
 button allows a successful reading to be updated after 30 seconds. After a failure both paths wait
 at least five minutes, or 30 minutes for HTTP 429. Failure cooldowns are in memory, not shared across
-processes or saved on exit. There are no periodic requests. Turning the setting
+processes or saved on exit. Only [background usage warnings](#background-notices-and-notification-area)
+can request a periodic refresh. Turning the setting
 off cancels pending work and prevents new credential reads; a request already sent cannot be unsent.
 Demo uses synthetic figures and does not read or write the usage cache, open credentials or use the network.
 
 For local debugging, `--usage-shape [account]` makes one request without a window or cache access.
 Use the account slug, or omit it for the selected account. It still requires **Show usage** and is
 unavailable in demo mode. Stdout contains only member names, JSON types and array lengths; a member
-name containing the bearer is redacted, and values and headers are never printed.
+name containing the bearer is redacted. Headers are never printed.
+With `--labels`, the diagnostic may also print short simple strings for `kind`, `group`, `severity`,
+`key` and `display_name` (up to 40 ASCII letters, digits, spaces, dots, dashes or underscores),
+never a string containing the bearer. Without `--labels` no values are printed.
 
-`%APPDATA%\claude-switch\usage.json` holds only limit names, percentages, normalized reset times and the
-reading time by account. It is replaced via a separate temporary file and rename. The plan name
+The app prefers active entries in a nonempty `limits` array and uses the older named limits otherwise.
+Both 80% usage and non-normal severity trigger the warning colour. “This week by app” shows up
+to six rows, largest first, using `percent_of_limit`. This is a guess about the undocumented field:
+we interpret it as a share of the weekly allowance, not a share of the usage so far.
+
+`%APPDATA%\claude-switch\usage.json` keeps limit labels, slots, percentages, normalized reset times,
+severity, the displayed breakdown and the reading time by account. It is replaced via a separate
+temporary file and rename. Old readings still load. A failed write leaves the snapshot unsaved and
+retries after 5, 10, 20 and 40 seconds; a new reading can start another attempt after that.
+The plan name
 comes from the existing account status (`oauthAccount.planDisplayName`); there is no renewal date.
 The Anthropic endpoint is undocumented and can change or disappear.
+
+A missing settings file is a first run. An existing damaged settings file turns usage off and blocks
+ordinary settings writes. **Reset settings** backs up the exact old bytes beside the replacement and
+keeps usage off until explicitly enabled. If the file cannot be backed up, reset refuses to replace it.
+To restore a backup, close Switch, keep a copy of the replacement, and put the chosen
+`config.broken.<pid>.<timestamp>.json` back at the original `config.json` path.
+App-owned JSON saves refuse reparse-point destinations and create temporary files exclusively. Marks
+compare and replace under a cross-process lock; batch naming refuses unreadable or changed marks and
+rechecks the confirmed session selection before reading excerpts.
 
 ## The safeguard
 
@@ -130,23 +152,32 @@ is refused. Opening a copy leaves the original alone and is safe without a Deskt
 it in the CLI asks first: do not continue it in Desktop while it is open here. If changing accounts
 also triggers the cold-cache warning, both warnings appear in one Continue/Cancel dialog, never two.
 
-A session that was just started is not in the running list for a few seconds. Every start is therefore
-written to `<appdata>/claude-switch/history.json` (session id, account, time) before the program is
-started, and a second start of the same session within 20 seconds is refused. The same file says which
-account a session last ran as, for the cold-cache warning.
+A cross-process lock covers the final running scan, a durable reservation in
+`<appdata>/claude-switch/history.json`, and the start. Resume refuses an incomplete scan, invalid
+history, or a failed reservation write. An unsuccessful start restores the previous account entry;
+a successful start blocks a second resume for 20 seconds while the running record catches up.
+A reservation left by an interrupted process blocks for 60 seconds.
 
-A launch never passes on the identity of the session the app itself was started from: the login and
-session variables of Claude Code (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `CLAUDECODE`, …) are
-removed from the environment of everything it starts.
+Child CLI programs (including naming and debug shells) and Desktop use one environment rule:
+remove `ANTHROPIC_*`, `CLAUDE_*`, and `CLAUDECODE`, case-insensitively. This includes API/OAuth
+tokens, provider flags, base URLs, session/account IDs and the parent's `CLAUDE_CONFIG_DIR`.
+The only Claude variable Switch sets back is `CLAUDE_CONFIG_DIR` for a secondary CLI account;
+primary and direct Desktop launches do not receive it. `--shell` and `--type` are debug-build
+switches; delayed input belongs only to the tab that switch opened.
 
-Not settled (needs a second signed-in account to try): which copy of the desktop app receives
-`claude --desktop --resume` when two are running.
+Desktop resume runs out of sight on a worker. The window shows pending until the CLI returns,
+then its diagnostic on failure or a timeout after 30 seconds. Success only reports that the session
+was handed to the desktop app. A profile may exist outside the current account list, so Switch
+does not claim to know which profile received it.
 
 ## What a launch is
 
 One value, `Launch`, says program, arguments, folder and environment. The window decides where it runs:
 an embedded terminal tab (`mdshared-pty` + `mdshared-term`), an external terminal window, or a detached
 process (the desktop app). Reading the account status does not launch Claude.
+Resume and fork require UUID transcript IDs. External terminals run an absolute executable directly
+in a new console with the working directory passed separately. Batch shims accept only restricted
+words and paths; there is no `cmd /c start` or Windows Terminal delegation.
 
 **New session.** The toolbar button asks for a folder and account first. It starts with the selected
 session's folder (or home when none is selected) and the current account. The four most recent
@@ -186,7 +217,7 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   a redraw only when the selected cells change. Copying is by key only, not on release.
 
 **The safeguard, for tabs.** A session open in a tab counts as running at once, before any
-`sessions/<pid>.json` says so: opening it again shows its tab ("Already open in a tab"), and the list
+`sessions/<pid>.json` says so: opening it again shows its running tab ("Already open in a tab"), and the list
 shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
 running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
 
@@ -202,18 +233,19 @@ right pane. Both the explicit visibility choice and the splitter width are store
 without an explicit choice the pane opens from 1100 logical pixels up. Shell and sign-in tabs never
 have a pane.
 
-Resumed tabs use the transcript file already found by the session scan. New and forked tabs look for
-the newest JSONL **created** in the launch folder's encoded project directory after launch, under
-that tab's account config folder. This needs a transcript to have been written, and can't disambiguate
-concurrent starts in the same project (including accounts sharing `projects`). It doesn't track a
-later working-directory change. The reader rejects an explicit mismatched working folder found in
-the candidate's first 64 KiB; otherwise it relies on the project directory and creation time. The
-pane updates the tab's session ID once discovered.
+Resumed tabs use the transcript file already found by the session scan. New and forked tabs attach
+only after the terminal PID, account and working directory identify one session ID. The pane says
+when identity is unverified or ambiguous rather than selecting the newest file in a shared project.
+The verified ID must name a transcript created after launch in the launch folder's encoded directory.
+For batch shims, the live CLI PID must belong to the terminal's process tree; otherwise the pane
+stays unattached.
 
 Conversation, Agents and Tasks are separate views of the incremental transcript reader. Conversation
 opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
 following. Earlier history is loaded on request. Consecutive tools collapse together; an agent row
-opens its own transcript. The reported agent state comes from the transcript sidecar, so a missing
+opens its own transcript. A cursor checkpoint detects a replacement or truncate-and-regrow near the
+read position. Transcript lines over 48 MiB are skipped, picture reads respect the same containing-line
+limit, and sidecar metadata over 1 MiB is ignored. The reported agent state comes from the sidecar, so a missing
 completion flag is shown as unknown rather than guessed.
 
 Conversation renders each assistant answer with mdview-preview's headless Markdown renderer.
@@ -228,6 +260,50 @@ every poll. Image bytes are decoded with `mdshared-text`'s existing PNG/JPEG dec
 inline previews and an enlarged overlay. Opening a picture in the system viewer explicitly exports
 a copy to the application's temp folder. No transcript is edited. The demo supplies a synthetic
 session, writes only to temp, and appends a few updates without starting Claude Code.
+
+## Handover
+
+**Compact and open** reads a full sequential snapshot through the existing JSONL decoder with no
+subagent files. A local reducer collects prompts and timestamps, the latest known task list,
+Write/Edit paths, the last 15 shell calls, and six recent turns. A prompt is capped at 4,000 Unicode
+characters with a marker. User image blocks become `[picture]`. Only assistant text and one-line
+tool summaries cross the OpenCode request boundary; the optional focus is data for emphasis only.
+Raw prompts, transcription metadata, and the full task list are assembled locally. System/meta
+records, embedded reminders, sidechains, tool results, image bytes, and thinking are not sent.
+
+The input budget is 60,000 characters per part at turn boundaries, with an oversized turn kept
+whole. Multiple parts get one additional merge request. Model replies supply only six Markdown
+fields; the application renders the headings and all local evidence independently. Invalid or
+missing summary fields say `unknown`. A transcript record over the reader's 48 MiB safety limit
+fails the handover rather than silently dropping a possible user turn.
+
+Native OpenCode V2 is discovered on `PATH`. `opencode models` is cached in memory, with manual
+refresh. Each request uses an empty temp working folder, disables project and Claude Code config
+discovery, and defines a text-only agent in a process-local OpenCode configuration override. The app uses
+`opencode run --standalone --archived --agent cs-handover-text-only --model <provider/model>
+--title "Claude Switch handover" --format json --log-level none`, with UTF-8 input on stdin. The agent
+has a one-step budget and denies tools; additional policies deny tools, MCP, skills, plugins and web
+search. The CLI has no no-persistence flag; the run is archived, not deleted. OpenCode's installed
+configuration and provider retention policies still apply. The worker kills and reaps its active
+process on Cancel or after 120 seconds per request. Provider consent and the selected model are in
+`config.json`. A CLI invocation without prior provider consent refuses before reading the transcript.
+
+The preview is editable, with characters and approximate tokens (characters / 4).
+Local Markdown files live in `handover/<session-id>-<time>.md` beside config; the newest 20
+are kept per session. An opened edited handover is kept as a new revision. Save As never
+overwrites an existing file. Native Claude Code receives `claude --session-id <new-uuid> -- <text>`
+in the original folder with the selected account's normal sanitized launch environment. The
+interactive CLI documents no stdin/file argument for a first prompt, so text is one native
+argument (no shell), limited to 15,000 UTF-16 units to allow for Windows quoting. The app uses the
+new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
+
+The CLI runs headlessly for `--print` (the default); explicit `--open` starts a new window with the
+new tab because the app has no single-instance request channel. On Windows, the new window is
+ShellExecuted through a fixed non-interactive PowerShell bootstrap so it cannot keep the caller's
+output pipes open; only the executable path and validated handover identifiers reach the bootstrap.
+Exit codes are 0 for success,
+1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no
+handover request and launches no Claude process.
 
 ## Pictures into the CLI
 
@@ -297,3 +373,112 @@ folders are never indexed, even with tool sessions shown. You can cancel a run; 
 must be accepted or edited before it is stored locally.
 This is the additional process the core can start. For naming, the worker-account setting
 uses the app's current account for Same, the next account for Other, or the configured account.
+
+## Inside conversations
+
+**In conversations** (Ctrl+Shift+F in Sessions) is separate from title/folder search. After a
+220 ms typing pause, the worker scans the indexed transcripts newest first. It searches case-insensitive
+literal terms in any order on one decoded text line, excluding metadata, sidechains, thinking, tool
+outputs and pictures. It streams up to three highlighted excerpts per session and reports the remaining
+count when that file finishes. The list still honors visibility and status filters. Escape, clearing
+the field, or switching modes cancels the scan; there is no persistent index. The scanner reads in
+64 KiB chunks, checks the top-level type before JSON parsing, and uses the transcript reader's
+48 MiB record cap. Incomplete and oversized records are skipped.
+
+**Conversation size** reads only the selected session on a worker. It counts user prompt records,
+tool calls (unique by tool ID when present), picture blocks including tool-result pictures, and
+subagent transcript files. The latest assistant record's `message.usage` supplies **Context now**:
+input plus cache-read and cache-creation input. **Output so far** sums the latest reported output
+for each assistant message ID. Missing fields are optional; absent context uses visible conversation
+characters / 4, and messages missing output contribute their visible assistant characters / 4.
+An estimate is marked **about**. Results are cached in memory by path, file size and modification
+time, also invalidated when the subagent directory's modification time changes. Demo uses synthetic
+JSONL without touching the listed paths.
+`--demo --demo-search "width splitter"` opens the Sessions tab with an example search.
+
+## Window placement and reopening terminal tabs
+
+This supersedes the earlier notes that tabs cannot be moved or restored.
+
+The window saves the normal placement and maximized bit in `window.ini` via the toolkit’s
+Windows placement capture. Restore keeps a rectangle when any one connected work area shows
+at least 100 × 100 physical pixels of it. Otherwise it centers the normal rectangle in the
+primary work area, shrinking it to fit if needed, then reapplies the maximized bit.
+
+On a confirmed exit, `terminal-tabs.json` is atomically replaced with session UUIDs, account
+slugs, launch folders and active flags, in strip order. Shell and sign-in tabs never enter the
+snapshot; neither local tab labels nor terminal contents are saved. For a new or forked tab,
+identity must match the PTY’s live CLI process (or its immediate npm shim child), account and
+folder. Ambiguous or unavailable identities are not guessed. Ask is the default; Always
+starts the batch after the first scan, Never clears the snapshot. The pending offer survives
+an exit with no replacement tabs. Restoration uses the normal resume warning, process scan
+and launch reservation, always targets embedded tabs, ignores a stale saved folder in favor of
+the indexed one, and reports skipped entries together.
+
+The Sessions tab is fixed. Terminal tabs reorder when dragged past a neighbor’s midpoint.
+Right-click actions target the tab under the pointer, not the selected session row. The
+account-copy path uses the same fork and cache warning as the Sessions list, and compaction
+opens the handover dialog. Tab renames last until close. Close others keeps the clicked tab
+and asks once if any of the others still run. Ctrl+Tab and Ctrl+Shift+Tab keep cycling as
+before; Ctrl+1–9 selects a tab only in Sessions or after opening the command palette with
+Ctrl+Shift+K, because the terminal encoder can turn Ctrl+digits into meaningful input bytes.
+The process-free demo includes a synthetic restore offer; `--demo-offscreen` also exercises
+recovery of a maximized window from a disconnected monitor.
+
+## Folder launch defaults and local archive
+
+`marks.json` stores `folders[folder_key].openDefault` (account slug and app) and
+`sessions[id].archivedMs` (timestamp). An explicit change or a successful launch through the
+Sessions list updates the folder default; cancelled and refused launches do not. The default
+Open action uses the session’s last app when there is no folder preference; New session uses
+CLI in that case. A removed account falls back to the selected account without changing the
+preferred app. Defaults do not change the global account selection.
+
+Archive is independent of Hide and of the Desktop app’s archive flag. An age threshold counts
+back whole weeks from now, excluding the boundary itself and unknown ages. The preview shows
+the eligible IDs and their indexed transcript bytes. Commit considers only those IDs, rechecks
+pins, live sessions, embedded tabs, recent launch reservations and transcript modification
+times, then saves the marks as one update. An incomplete running scan refuses the operation.
+Archived rows are omitted from ordinary views but found in searches; the Archived chip
+appears only while there are archived sessions in the index. Unarchiving preserves Hide marks.
+No archive operation relocates, deletes, or edits a transcript.
+
+The Markdown report covers all currently indexed archived sessions. It uses bounded
+transcript heads/tails for the first dated conversation record and first/last prompt excerpts,
+the latest local handover filename if present, and the local stats reader for turns and
+context/output tokens (`~` denotes an estimate). Unknown dates or statistics are shown as
+`—`. Rendering is pure; Save As warns about conversation text, writes a new file without
+replacing an existing destination, and offers to open it explicitly. No AI or network is used.
+
+## Background notices and notification area
+
+An embedded Claude tab can ask for attention when it is not the focused window's selected
+tab. The watcher reads the same bounded transcript tail and uses the Sessions list's Waiting
+classifier, even if the Session view is closed. A distinct real user record re-arms the notice;
+terminal bells and a recognized interactive permission prompt share the same per-turn deduplication.
+Old completion records do not notify on resume. The mark clears when seen or when a new turn starts.
+The permission prompt check recognizes English Claude CLI text; a changed or unrecognized prompt
+without a bell is not detected. A very long turn whose user record has fallen outside the bounded
+tail cannot reliably be distinguished from the previous turn.
+
+The unpackaged Windows build uses `Shell_NotifyIcon` balloons rather than registered Windows
+toast activation. There is no installer or Start menu identity requirement. **Toast and mark**
+requests a balloon when the optional tray icon is present and flashes the taskbar once; without
+the icon it only marks and flashes. **Mark only** does not flash or request a balloon. Windows
+can suppress balloons. Clicking one opens its associated tab if still available. Explorer
+restart re-registers the icon. Close to tray hides the window only if the icon successfully
+registered; its Quit command uses the usual running-program confirmation.
+
+When usage warnings are on, running embedded Claude sessions can request their accounts'
+readings through the existing five-minute automatic throttle and cooldowns, even when hidden.
+Successful readings can trigger one 80% and one 95% notice per account and session, week, or
+model reset window. With no tray icon, a background warning flashes the taskbar and is shown
+in the window when it regains focus. `usage-notices.json` remembers the thresholds across
+restarts; it stores only account slugs, limit labels/types, resets and notified thresholds.
+Without a reset timestamp the app cannot distinguish subsequent windows for that limit.
+The usage pop-up can offer an account with a recent, comparable reading below the warning
+threshold. This opens the handover dialog for the visible tab and preselects the account;
+it neither closes the running tab nor sends the transcript at the click.
+
+`--demo --demo-notifications` uses two synthetic tabs and usage readings without a CLI launch or
+a request. The tray tooltip has a 127 UTF-16 unit Windows limit, so long lists may be truncated.

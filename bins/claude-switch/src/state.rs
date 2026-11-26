@@ -38,6 +38,8 @@ pub enum Msg {
     Term,
     SessionView,
     AttachPictures(u64, Vec<std::path::PathBuf>),
+    ArchiveReportSaved(crate::archive_report::ReportResult),
+    Tray(crate::tray::Event),
 }
 
 /// The height of a folder heading and of a session row in the list.
@@ -65,8 +67,10 @@ pub enum Target {
     UsageLines,
     UsagePopup,
     UsageRefresh,
+    UsageOpenAs,
     Search,
     SearchClear,
+    SearchConversation,
     NewSession,
     Refresh,
     MenuButton,
@@ -75,13 +79,16 @@ pub enum Target {
     Pin(usize),
     ListMode(bool),
     ListFilter(Filter),
+    ArchiveMenu,
+    ArchivePick(usize),
     UndoHide,
     ListBlank,
     Splitter,
-    OpenCli,
-    OpenDesktop,
+    OpenDefault,
+    FolderOpen,
     OpenAs,
     OpenCopy,
+    Handovers,
     Info(u32),
     InfoClose,
     /// A control of the open dialog, by the dialog's own number.
@@ -92,14 +99,17 @@ pub enum Target {
     /// The terminal of the tab shown.
     Terminal,
     SessionToggle,
+    RestoreTabs,
+    DismissTabs,
 }
 
 /// Which popup menu is open.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuKind {
     Main,
     OpenAs,
     Row,
+    Tab(u64),
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.
@@ -114,6 +124,9 @@ pub struct ViewGroup {
 pub struct AppState {
     pub source: Source,
     pub config: Config,
+    pub config_damaged: bool,
+    pub desktop_job: Option<mdshared_app::job::Job<Result<String, String>>>,
+    pub desktop_folder_open: Option<(std::path::PathBuf, String, claude_switch_core::App)>,
     pub tokens: Tokens,
     pub high_contrast: bool,
     pub appearance: Appearance,
@@ -125,6 +138,8 @@ pub struct AppState {
     pub running: Vec<Running>,
     pub statuses: HashMap<String, AccountStatus>,
     pub usage: crate::usage::Usage,
+    pub usage_warnings: crate::usage_warnings::Warnings,
+    pub notifications: crate::attention::Notifications,
     /// The core's groups of all sessions, newest first.
     pub all_groups: Vec<claude_switch_core::sessions::Group>,
     pub groups: Vec<ViewGroup>,
@@ -135,11 +150,15 @@ pub struct AppState {
     pub marks_read_only: bool,
     pub marks_flush_at: Option<Instant>,
     pub undo_hide: Option<crate::session_marks::UndoHide>,
+    pub archive_picks: HashSet<String>,
+    pub archive_count: usize,
     pub naming_job: Option<Job<crate::session_panel::NameResults>>,
     pub sections: Sections,
     pub collapsed: HashSet<String>,
     pub selected: Option<String>,
     pub search: TextField,
+    pub conversation_search: crate::conversation_search::Search,
+    pub session_size: crate::session_size::Size,
     pub search_stops: Vec<f32>,
     pub focus: Focus,
     /// The keyboard moved the focus last: the focus ring shows.
@@ -158,9 +177,12 @@ pub struct AppState {
     pub toasts: Stack<String>,
     pub info: Option<InfoBar>,
     pub dialog: Option<Dialog>,
+    pub confirm_scroll: f32,
+    pub compact: crate::compact_dialog::Cache,
     pub menu: Option<(MenuKind, Menu<u32>)>,
     pub context_folder: Option<String>,
     pub palette: Option<Palette>,
+    pub palette_sessions: HashMap<u32, String>,
     pub keymap: Keymap,
     pub tip: Tooltip<Target>,
     pub hits: Vec<(Rect, Target)>,
@@ -175,6 +197,7 @@ pub struct AppState {
     pub list_scroll_track: Option<Rect>,
     /// The terminal tabs, and what the last frame laid out for them.
     pub tabs: Tabs,
+    pub restore: crate::resume_tabs::Restore,
     pub session_view: crate::view::Window,
     pub cell_font: CellFont,
     pub metrics: Option<Metrics>,
@@ -187,13 +210,15 @@ pub struct AppState {
     /// `--shell` and `--type`: a program to open in a tab at start, and text for it at times.
     pub debug_shell: Option<String>,
     pub debug_type: Vec<(Instant, Vec<u8>)>,
+    pub debug_tab: Option<u64>,
     pub debug_list: bool,
 }
 
 impl AppState {
     pub fn new(source: Source, forced_dark: Option<bool>, win_file: WindowFile) -> AppState {
-        let config = source.load_config();
+        let (config, config_damaged) = source.load_config();
         let usage = crate::usage::Usage::new(&source);
+        let usage_warnings = crate::usage_warnings::Warnings::new(&source);
         let marks = match &source {
             Source::Real(roots) => claude_switch_core::marks::Marks::load(roots),
             Source::Demo => Ok(Default::default()),
@@ -208,6 +233,9 @@ impl AppState {
         let mut s = AppState {
             source,
             config,
+            config_damaged,
+            desktop_job: None,
+            desktop_folder_open: None,
             tokens,
             high_contrast,
             appearance,
@@ -218,6 +246,8 @@ impl AppState {
             running: Vec::new(),
             statuses: HashMap::new(),
             usage,
+            usage_warnings,
+            notifications: Default::default(),
             all_groups: Vec::new(),
             groups: Vec::new(),
             row_locations: HashMap::new(),
@@ -227,11 +257,15 @@ impl AppState {
             marks_read_only: marks_error.is_some(),
             marks_flush_at: None,
             undo_hide: None,
+            archive_picks: HashSet::new(),
+            archive_count: 0,
             naming_job: None,
             sections: Sections::new(400.0, ROW_H),
             collapsed: HashSet::new(),
             selected: None,
             search: TextField::new(),
+            conversation_search: Default::default(),
+            session_size: Default::default(),
             search_stops: Vec::new(),
             focus: Focus::List,
             key_used: false,
@@ -249,9 +283,12 @@ impl AppState {
             toasts: Stack::new(),
             info: None,
             dialog: None,
+            confirm_scroll: 0.0,
+            compact: Default::default(),
             menu: None,
             context_folder: None,
             palette: None,
+            palette_sessions: HashMap::new(),
             keymap: Keymap::new(crate::actions::COMMANDS),
             tip: Tooltip::new(),
             hits: Vec::new(),
@@ -266,6 +303,7 @@ impl AppState {
             main_top: 0.0,
             list_scroll_track: None,
             tabs: Tabs::default(),
+            restore: Default::default(),
             cell_font: CellFont::new(),
             metrics: None,
             term_area: Rect::default(),
@@ -274,6 +312,7 @@ impl AppState {
             quit: false,
             debug_shell: None,
             debug_type: Vec::new(),
+            debug_tab: None,
             debug_list: false,
         };
         if let Some(error) = marks_error {
@@ -388,10 +427,20 @@ impl AppState {
             self.preview_job = None;
             changed = true;
         }
-        self.take_naming_job() | changed
+        changed |= self.take_conversation_search();
+        let selected = self.selected_session().map(|s| s.file.clone());
+        self.take_naming_job() | self.session_size.take(selected.as_deref()) | changed
     }
 
     pub fn apply_scan(&mut self, scan: Scan) {
+        let search_changed = self.conversation_search.on
+            && (scan.sessions.len() != self.sessions.len()
+                || scan.sessions.iter().any(|s| {
+                    self.by_id.get(&s.id).is_none_or(|&i| {
+                        let old = &self.sessions[i];
+                        (s.bytes, s.transcript_ms, &s.file) != (old.bytes, old.transcript_ms, &old.file)
+                    })
+                }));
         self.sessions = scan.sessions;
         self.running = scan.running;
         self.index_running();
@@ -404,11 +453,18 @@ impl AppState {
         self.prune_marks();
         self.scanned = true;
         self.rebuild_accounts();
+        if search_changed {
+            self.restart_conversation_search(Instant::now());
+        }
         self.rebuild_view();
         let keep = self.selected.clone();
         self.last_account = None;
         match keep {
-            Some(id) if self.by_id.contains_key(&id) => {
+            Some(id)
+                if self.by_id.contains_key(&id)
+                    && !search_changed
+                    && (self.marks.archived_at(&id).is_none() || self.entry_of(&id).is_some()) =>
+            {
                 self.see_shown();
                 self.load_details(&id, true);
             }
@@ -444,6 +500,7 @@ impl AppState {
             None => {
                 self.selected = None;
                 self.preview = None;
+                self.session_size.cancel();
             }
         }
     }
@@ -461,6 +518,9 @@ impl AppState {
     pub(crate) fn load_details(&mut self, id: &str, again: bool) {
         let Some(&i) = self.by_id.get(id) else { return };
         let session = self.sessions[i].clone();
+        self.load_handover_history(id);
+        let wake = self.wake_fn();
+        self.session_size.start(&session, self.source.is_demo(), wake);
         self.last_account = Some((id.to_string(), self.source.last_account(&self.config, &session)));
         if !again && self.preview.as_ref().is_some_and(|(p, _)| p == id) {
             return;
@@ -508,13 +568,9 @@ impl AppState {
         (self.tokens, self.appearance, self.term_colours) =
             appearance(&self.config, self.forced_dark, self.high_contrast);
     }
-
-    pub fn save_config(&mut self) {
-        if let Err(e) = self.source.save_config(&self.config) {
-            self.error("The settings were not saved", e.to_string());
-        }
-    }
 }
+
+mod recovery;
 
 fn appearance(config: &Config, forced_dark: Option<bool>, high_contrast: bool) -> (Tokens, Appearance, (Scheme, Rgb)) {
     use mdshared_ui::platform;

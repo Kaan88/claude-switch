@@ -52,6 +52,9 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
     st.sections.view = area.h;
     st.sections.scroll = st.sections.clamp_scroll(st.sections.scroll);
     st.hits.push((area, Target::ListBlank));
+    if st.groups.is_empty() && st.conversation_search.on {
+        return;
+    }
     if st.groups.is_empty() {
         let text = if !st.scanned {
             "Reading the sessions\u{2026}"
@@ -97,8 +100,31 @@ fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
     let pal = *st.pal();
     p.fill(Rect::new(r.x, r.y, r.w, 70.0), pal.bar);
     let seg = Rect::new(r.x + 12.0, r.y + 8.0, 151.0, 28.0);
-    p.frame(seg, 7.0, pal.field, pal.line);
-    for (i, label) in ["Recent", "Folders"].into_iter().enumerate() {
+    let menu = Rect::new(r.right() - 111.0, seg.y, 99.0, seg.h);
+    let target = Target::ArchiveMenu;
+    let label = if st.filter == Filter::Archived && !st.archive_picks.is_empty() {
+        format!("Archive · {} ▾", st.archive_picks.len())
+    } else {
+        "Archive ▾".into()
+    };
+    mdshared_ui::overlay::draw_dialog_button(
+        p,
+        &pal,
+        menu,
+        &label,
+        false,
+        st.hover == Some(target),
+        st.pressed == Some(target),
+    );
+    st.hits.push((menu, target));
+    let searching = st.conversation_search.on;
+    if searching {
+        let count = st.groups.first().map_or(0, |g| g.rows.len());
+        crate::conversation_draw::search_status(st, p, Rect::new(r.x, r.y, r.w - 104.0, r.h), count);
+    } else {
+        p.frame(seg, 7.0, pal.field, pal.line);
+    }
+    for (i, label) in ["Recent", "Folders"].into_iter().enumerate().filter(|_| !searching) {
         let folders = i == 1;
         let target = Target::ListMode(folders);
         let selected = st.config.folders_view == folders;
@@ -109,7 +135,14 @@ fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
         p.text_center(Face::Semibold, 12.0, pill, label, if selected { pal.text } else { pal.muted });
         st.hits.push((pill, target));
     }
-    let visible = if st.config.show_hidden { &Filter::ALL[..] } else { &Filter::ALL[..5] };
+    let visible: Vec<_> = Filter::ALL
+        .into_iter()
+        .filter(|f| match f {
+            Filter::Hidden => st.config.show_hidden,
+            Filter::Archived => st.archive_count != 0,
+            _ => true,
+        })
+        .collect();
     let gap = 4.0;
     let widths: Vec<_> = visible.iter().map(|f| p.measure(Face::Semibold, 11.5, f.label()) + 14.0).collect();
     let total = widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32;
@@ -221,11 +254,13 @@ fn row(
         mdshared_ui::focus::draw_ring(p, &pal, rr, 5.0);
     }
     let flags = st.row_flags(s);
+    let archived = st.is_archived(s);
     let x = rr.x + 24.0;
     let right = rr.right() - 10.0;
     let line1 = rr.y + 13.0;
     let line2 = rr.y + 31.0;
-    let line3 = rr.y + 48.0;
+    let snippets = st.conversation_search.hits(&s.id);
+    let line3 = if snippets.is_some() { rr.bottom() - 10.0 } else { rr.y + 48.0 };
     if flags.running || flags.unseen {
         let c = st
             .tab_account(&s.id)
@@ -237,11 +272,18 @@ fn row(
     let when = ago_at(clock.0, s.last_active_ms, clock.1);
     let time_right = star.x - 5.0;
     let ww = p.text_right(Face::Ui, 11.5, time_right, line1, &when, pal.muted);
-    let title_c = if s.archived { pal.muted } else { pal.text };
+    let title_c = if s.archived || archived { pal.muted } else { pal.text };
     p.text(Face::Semibold, 13.0, x, line1, st.title_of(s), title_c, (time_right - ww - 10.0 - x).max(0.0));
     let prompt = if s.last_prompt.is_empty() { "No prompt in the transcript tail" } else { &s.last_prompt };
-    p.text(Face::Ui, 12.0, x, line2, prompt, pal.muted, right - x);
+    if let Some(hits) = snippets {
+        crate::conversation_draw::snippets(st, p, Rect::new(x, line2, right - x, 0.0), hits, selected);
+    } else {
+        p.text(Face::Ui, 12.0, x, line2, prompt, pal.muted, right - x);
+    }
     let mut states = Vec::new();
+    if archived {
+        states.push("Archived");
+    }
     if flags.waiting {
         states.push("Waiting for you");
     } else if flags.running {
@@ -257,17 +299,26 @@ fn row(
     let status = states.join("  ·  ");
     let status_w =
         if status.is_empty() { 0.0 } else { p.text_right(Face::Semibold, 11.0, right, line3, &status, fg) + 12.0 };
-    p.text(
-        Face::Ui,
-        11.0,
-        x,
-        line3,
-        &crate::session_marks::folder_label(s),
-        pal.muted,
-        (right - status_w - x).max(0.0),
+    let folder = st.marks.handover_from(&s.id).map_or_else(
+        || crate::session_marks::folder_label(s),
+        |name| format!("From {name}  ·  {}", crate::session_marks::folder_label(s)),
     );
+    p.text(Face::Ui, 11.0, x, line3, &folder, pal.muted, (right - status_w - x).max(0.0));
     st.hits.push((r, Target::Entry(i)));
-    if hovered || flags.pinned {
+    if archived && st.filter == Filter::Archived {
+        let target = Target::ArchivePick(i);
+        let checked = st.archive_picks.contains(&s.id);
+        p.frame(
+            star.inset(3.0),
+            4.0,
+            if checked || st.hover == Some(target) { pal.on } else { pal.pane },
+            if checked { fg } else { pal.muted },
+        );
+        if checked {
+            p.text_center(Face::Semibold, 12.0, star, "✓", fg);
+        }
+        st.hits.push((star, target));
+    } else if !archived && (hovered || flags.pinned) {
         if st.hover == Some(Target::Pin(i)) {
             p.rbox(star, 5.0, pal.hover);
         }

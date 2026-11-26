@@ -1,9 +1,10 @@
 use super::*;
 use crate::util::testing::{TempDir, config_with, log_in, put};
+const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
 
 fn session(cwd: &Path) -> Session {
     Session {
-        id: "abc-123".into(),
+        id: ID.into(),
         title: "T".into(),
         last_prompt: String::new(),
         turn_ended: false,
@@ -41,7 +42,7 @@ fn a_copy_forks_the_session_also_while_it_runs_but_needs_a_login() {
     note_launch(&roots, &s.id, "main");
     let l = fork(&roots, &config, &s, "main").unwrap();
     assert_eq!(l.program, PathBuf::from("claude"));
-    assert_eq!(l.args, ["--resume", "abc-123", "--fork-session"]);
+    assert_eq!(l.args, ["--resume", ID, "--fork-session"]);
     assert_eq!(l.cwd.as_deref(), Some(folder.as_path()));
     assert_eq!(l.place, Place::Terminal);
     assert_eq!(l.label, "Main · kweb-mail · Copy");
@@ -51,7 +52,7 @@ fn a_copy_forks_the_session_also_while_it_runs_but_needs_a_login() {
     assert_eq!(w.label, "Work · kweb-mail · Copy");
     // The copy is not noted as a start of the original.
     let history = std::fs::read_to_string(roots.appdata.join("claude-switch").join("history.json")).unwrap();
-    assert_eq!(history.matches("abc-123").count(), 1);
+    assert_eq!(history.matches(ID).count(), 1);
     std::fs::remove_file(config.accounts[1].cli_dir.join(".credentials.json")).unwrap();
     assert_eq!(fork(&roots, &config, &s, "work"), Err(Refusal::NotLoggedIn("Work".into())));
     assert!(matches!(fork(&roots, &config, &s, "nobody"), Err(Refusal::NoSuchAccount(_))));
@@ -93,7 +94,7 @@ fn the_first_account_removes_the_config_variable_and_a_further_one_sets_it() {
     let s = session(&folder);
     let main = resume(&roots, &config, &s, "main", App::Cli, &[]).unwrap();
     assert_eq!(main.program, PathBuf::from("claude"));
-    assert_eq!(main.args, ["--resume", "abc-123"]);
+    assert_eq!(main.args, ["--resume", ID]);
     assert_eq!(main.cwd.as_deref(), Some(folder.as_path()));
     assert!(main.env.is_empty());
     assert_eq!(main.env_remove[0], "CLAUDE_CONFIG_DIR");
@@ -101,7 +102,7 @@ fn the_first_account_removes_the_config_variable_and_a_further_one_sets_it() {
     assert_eq!(main.place, Place::Terminal);
     assert_eq!(main.label, "Main · kweb-mail · Resume");
     let work = resume(&roots, &config, &s, "work", App::Desktop, &[]).unwrap();
-    assert_eq!(work.args, ["--desktop", "--resume", "abc-123"]);
+    assert_eq!(work.args, ["--desktop", "--resume", ID]);
     assert_eq!(work.place, Place::Detached);
     assert_eq!(work.env.get("CLAUDE_CONFIG_DIR"), Some(&config.accounts[1].cli_dir.to_string_lossy().into_owned()));
     assert_eq!(work.env_remove, SESSION_VARS);
@@ -144,13 +145,24 @@ fn no_launch_passes_on_a_sessions_identity_or_login() {
 }
 
 #[test]
+fn provider_prefix_rules_are_case_insensitive_and_forward_compatible() {
+    for name in ["Anthropic_Base_URL", "anthropic_FUTURE", "cLaUdE_code_use_BEDROCK", "CLAUDE_CONFIG_DIR", "claudecode"]
+    {
+        assert!(scrub_name(OsStr::new(name)), "{name}");
+    }
+    for name in ["PATH", "X_CLAUDE_CONFIG_DIR", "ANTHROPICS", "CLAUDECODES"] {
+        assert!(!scrub_name(OsStr::new(name)), "{name}");
+    }
+}
+
+#[test]
 fn a_session_opened_a_moment_ago_is_refused() {
     let t = TempDir::new("lau-moment");
     let (roots, config) = setup(&t);
     let s = session(&t.0);
     let again = |account: &str, app: App| resume(&roots, &config, &s, account, app, &[]);
     let noted_at = |at: u64| {
-        write_json(&history_file(&roots), &json!({"abc-123": {"account": "main", "at": at}})).unwrap();
+        write_json(&history_file(&roots), &json!({(ID): {"account": "main", "at": at}})).unwrap();
     };
     let refusal = Err(Refusal::Invalid("This session was opened a moment ago. Give it a few seconds to start.".into()));
     noted_at(now_ms() - 5_000);
@@ -173,11 +185,21 @@ fn the_old_history_format_is_still_read() {
     let t = TempDir::new("lau-old-history");
     let (roots, config) = setup(&t);
     let s = session(&t.0);
-    put(&history_file(&roots), r#"{"abc-123":"work","other":"main"}"#);
+    put(&history_file(&roots), &json!({(ID): "work", "other": "main"}).to_string());
     assert_eq!(last_account(&roots, &config, &s), "work");
     assert!(resume(&roots, &config, &s, "work", App::Cli, &[]).is_ok());
     note_starting(&roots, "new-one", "main");
     assert_eq!(last_account(&roots, &config, &s), "work", "older entries stay as they were");
+}
+
+#[test]
+fn non_uuid_transcript_stems_never_reach_resume_or_fork() {
+    let t = TempDir::new("lau-stem");
+    let (roots, config) = setup(&t);
+    let mut s = session(&t.0);
+    s.id = "not-a-uuid".into();
+    assert!(matches!(resume(&roots, &config, &s, "main", App::Cli, &[]), Err(Refusal::Invalid(_))));
+    assert!(matches!(fork(&roots, &config, &s, "main"), Err(Refusal::Invalid(_))));
 }
 
 #[test]
@@ -201,7 +223,7 @@ fn resuming_as_a_further_account_brings_its_links_and_mcp_up_to_date() {
     let work = &config.accounts[1];
     assert!(work.cli_dir.join("skills").is_dir());
     let v = read_json(&work.cli_dir.join(".claude.json")).unwrap();
-    assert_eq!(v["mcpServers"]["m"]["command"], "x");
+    assert!(v.get("mcpServers").is_none(), "existing Claude-owned settings are not rewritten");
     assert!(v.get("oauthAccount").is_some(), "the account's own login stays");
 }
 

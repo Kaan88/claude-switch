@@ -39,10 +39,10 @@ impl Source {
         matches!(self, Source::Demo)
     }
 
-    pub fn load_config(&self) -> Config {
+    pub fn load_config(&self) -> (Config, bool) {
         match self {
-            Source::Real(roots) => config::load(roots),
-            Source::Demo => demo::config(),
+            Source::Real(roots) => config::load_checked(roots),
+            Source::Demo => (demo::config(), false),
         }
     }
 
@@ -160,9 +160,15 @@ impl Source {
         }
     }
 
-    pub fn note_launch(&self, session_id: &str, account: &str) {
-        if let Source::Real(roots) = self {
-            launch::note_launch(roots, session_id, account);
+    pub fn reserve(
+        &self,
+        config: &Config,
+        session_id: &str,
+        account: &str,
+    ) -> Result<Option<launch::Reservation>, Refusal> {
+        match self {
+            Source::Real(roots) => launch::reserve(roots, config, session_id, account).map(Some),
+            Source::Demo => Ok(None),
         }
     }
 

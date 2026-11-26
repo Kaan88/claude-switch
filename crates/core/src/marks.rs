@@ -1,6 +1,6 @@
 //! App-owned metadata. A damaged file is never replaced with empty defaults.
 
-use crate::util::{io_refusal, write_json};
+use crate::util::{io_refusal, json_bytes, lock_beside, write_atomic};
 use crate::{Refusal, Roots};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -20,17 +20,7 @@ impl Default for Marks {
 }
 
 fn read(path: &Path) -> Result<Option<Vec<u8>>, Refusal> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if !meta.file_type().is_file() => {
-            return Err(Refusal::Io(format!(
-                "{} is not a regular file; session marks were not opened.",
-                path.display()
-            )));
-        }
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(io_refusal("inspect", path, &e)),
-    }
+    crate::util::regular_target(path)?;
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -43,6 +33,10 @@ fn path(roots: &Roots) -> std::path::PathBuf {
 }
 
 impl Marks {
+    pub fn unchanged(&self, roots: &Roots) -> bool {
+        read(&path(roots)).is_ok_and(|bytes| bytes == self.original)
+    }
+
     pub fn load(roots: &Roots) -> Result<Self, Refusal> {
         let path = path(roots);
         let Some(bytes) = read(&path)? else { return Ok(Self::default()) };
@@ -55,16 +49,37 @@ impl Marks {
 
     pub fn save(&mut self, roots: &Roots) -> Result<(), Refusal> {
         let path = path(roots);
+        let _lock = lock_beside(&path)?;
         if read(&path)? != self.original {
             return Err(Refusal::Io(format!("{} changed on disk. Restart before saving marks.", path.display())));
         }
-        write_json(&path, &self.data)?;
-        self.original = read(&path)?;
+        let written = json_bytes(&path, &self.data)?;
+        write_atomic(&path, &written)?;
+        self.original = Some(written);
         Ok(())
     }
 
     pub fn name(&self, id: &str) -> Option<&str> {
         self.data["sessions"][id]["name"].as_str().filter(|name| !name.is_empty())
+    }
+
+    pub fn handover_from(&self, id: &str) -> Option<&str> {
+        self.data["sessions"][id]["handoverFrom"].as_str()
+    }
+
+    pub fn set_handover_from(&mut self, id: &str, name: &str) -> bool {
+        self.set("sessions", id, "handoverFrom", json!(name))
+    }
+
+    pub fn clear_handover_from(&mut self, id: &str) {
+        if let Some(sessions) = self.data["sessions"].as_object_mut()
+            && let Some(entry) = sessions.get_mut(id).and_then(Value::as_object_mut)
+        {
+            entry.remove("handoverFrom");
+            if entry.is_empty() {
+                sessions.remove(id);
+            }
+        }
     }
 
     pub fn pinned(&self, id: &str) -> bool {
@@ -77,6 +92,41 @@ impl Marks {
 
     pub fn folder_hidden(&self, key: &str) -> bool {
         self.data["folders"][key]["hidden"] == true
+    }
+
+    pub fn archived_at(&self, id: &str) -> Option<u64> {
+        self.data["sessions"][id]["archivedMs"].as_u64()
+    }
+
+    pub fn archive(&mut self, id: &str, file: &Path, at: Option<u64>) -> bool {
+        if at.is_some() && (self.pinned(id) || self.archived_at(id).is_some()) {
+            return false;
+        }
+        self.session(id, file, "archivedMs", json!(at))
+    }
+
+    pub fn clear_archive(&mut self) -> usize {
+        let Some(entries) = self.data["sessions"].as_object_mut() else { return 0 };
+        entries
+            .values_mut()
+            .filter_map(Value::as_object_mut)
+            .map(|entry| {
+                if entry.get("archivedMs").is_some_and(Value::is_u64) {
+                    entry.remove("archivedMs");
+                    1
+                } else {
+                    0
+                }
+            })
+            .sum()
+    }
+
+    pub fn folder_default(&self, key: &str) -> Option<(&str, crate::App)> {
+        crate::folder_defaults::decode(&self.data["folders"][key]["openDefault"])
+    }
+
+    pub fn set_folder_default(&mut self, key: &str, value: Option<(&str, crate::App)>) -> bool {
+        !key.is_empty() && self.set("folders", key, "openDefault", crate::folder_defaults::encode(value))
     }
 
     pub fn unseen(&self, id: &str, modified: u64) -> bool {
@@ -163,6 +213,18 @@ impl Marks {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn marks_compare_and_replace_refuses_when_another_handle_holds_the_lock() {
+        let t = crate::util::testing::TempDir::new("marks-locked");
+        let roots = t.roots();
+        let lock = lock_beside(&path(&roots)).unwrap();
+        let mut marks = Marks::default();
+        assert!(marks.save(&roots).is_err());
+        assert!(!path(&roots).exists());
+        drop(lock);
+        marks.save(&roots).unwrap();
+        assert_eq!(marks.original.as_deref(), Some(std::fs::read(path(&roots)).unwrap().as_slice()));
+    }
     use super::*;
     use crate::util::testing::{TempDir, put};
 

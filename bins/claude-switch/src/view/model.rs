@@ -14,35 +14,41 @@ use mdshared_ui::thumbs::MemoryCache;
 
 const CHUNK: usize = 256 * 1024;
 
+#[derive(Clone)]
 pub enum Source {
     File(PathBuf),
-    Discover { config: PathBuf, cwd: PathBuf, started: SystemTime },
+    Discover { config: PathBuf, cwd: PathBuf, started: SystemTime, verified: Arc<std::sync::OnceLock<String>> },
 }
 
-fn project(config: &Path, cwd: &Path) -> PathBuf {
+impl Source {
+    pub fn find_file(&self) -> Option<PathBuf> {
+        match self {
+            Self::File(path) => Some(path.clone()),
+            Self::Discover { config, cwd, started, verified } => {
+                discover(&project(config, cwd), cwd, *started, verified.get()?).ok().flatten()
+            }
+        }
+    }
+}
+
+pub(super) fn project(config: &Path, cwd: &Path) -> PathBuf {
     let cwd = cwd.to_string_lossy();
     let encoded: String =
         cwd.trim_start_matches(r"\\?\").chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     config.join("projects").join(encoded)
 }
 
-fn discover(dir: &Path, cwd: &Path, started: SystemTime) -> io::Result<Option<PathBuf>> {
-    let entries = match fs::read_dir(dir) {
+fn discover(dir: &Path, cwd: &Path, started: SystemTime, verified: &str) -> io::Result<Option<PathBuf>> {
+    if claude_switch_core::launch::validate_session_id(verified).is_err() {
+        return Ok(None);
+    }
+    let path = dir.join(format!("{verified}.jsonl"));
+    let meta = match fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        other => other?,
+        Err(e) => return Err(e),
     };
-    Ok(entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path.extension()? != "jsonl" || !entry.file_type().ok()?.is_file() {
-                return None;
-            }
-            let created = entry.metadata().ok()?.created().ok()?;
-            (created >= started && super::discovery::cwd_matches(&path, cwd)).then_some((created, path))
-        })
-        .max()
-        .map(|(_, path)| path))
+    Ok((meta.is_file() && meta.created()? >= started && super::discovery::cwd_matches(&path, cwd)).then_some(path))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -318,8 +324,11 @@ impl Worker {
             }
             let path = match &self.source {
                 Source::File(path) => path.clone(),
-                Source::Discover { config, cwd, started } => {
-                    let Some(path) = discover(&project(config, cwd), cwd, *started)? else { return Ok(None) };
+                Source::Discover { config, cwd, started, verified } => {
+                    let id = verified.get().ok_or_else(|| {
+                        io::Error::other("Transcript not attached: session identity is unverified or ambiguous.")
+                    })?;
+                    let Some(path) = discover(&project(config, cwd), cwd, *started, id)? else { return Ok(None) };
                     path
                 }
             };
@@ -469,17 +478,20 @@ mod tests {
         let cwd = Path::new(r"C:\Work\rail yard");
         let dir = project(&config, cwd);
         assert_eq!(dir, config.join("projects").join("C--Work-rail-yard"));
-        assert_eq!(discover(&dir, cwd, UNIX_EPOCH).unwrap(), None);
+        let id = "01234567-89ab-cdef-0123-456789abcdef";
+        assert_eq!(discover(&dir, cwd, UNIX_EPOCH, id).unwrap(), None);
         fs::create_dir_all(dir.join("subagents")).unwrap();
         fs::write(dir.join("subagents/scout.jsonl"), b"{}\n").unwrap();
         fs::write(dir.join("note.txt"), b"").unwrap();
-        let file = dir.join("session.jsonl");
+        let file = dir.join(format!("{id}.jsonl"));
         fs::write(&file, b"{}\n").unwrap();
+        fs::write(dir.join("fedcba98-7654-3210-fedc-ba9876543210.jsonl"), b"{}\n").unwrap();
         let created = fs::metadata(&file).unwrap().created().unwrap();
-        assert_eq!(discover(&dir, cwd, created).unwrap().as_ref(), Some(&file));
-        assert_eq!(discover(&dir, cwd, created + Duration::from_secs(1)).unwrap(), None);
+        assert_eq!(discover(&dir, cwd, created, id).unwrap().as_ref(), Some(&file));
+        assert_eq!(discover(&dir, cwd, created + Duration::from_secs(1), id).unwrap(), None);
+        assert_eq!(discover(&dir, cwd, UNIX_EPOCH, "11234567-89ab-cdef-0123-456789abcdef").unwrap(), None);
         fs::write(&file, b"{\"cwd\":\"C:/Work/rail.yard\"}\n").unwrap();
-        assert_eq!(discover(&dir, cwd, UNIX_EPOCH).unwrap(), None);
+        assert_eq!(discover(&dir, cwd, UNIX_EPOCH, id).unwrap(), None);
         fs::remove_dir_all(config).unwrap();
     }
 }

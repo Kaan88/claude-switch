@@ -14,14 +14,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub mod accounts;
+pub mod archive;
 pub mod clock;
+pub mod compact;
 pub mod config;
+pub mod folder_defaults;
+pub mod fulltext;
 pub mod launch;
 pub mod marks;
 pub mod naming;
 pub mod running;
 pub mod sessions;
 pub mod share;
+pub mod stats;
 pub mod transcript;
 pub mod usage;
 mod util;
@@ -263,6 +268,7 @@ pub struct Config {
     pub show_workers: bool,
     /// Read and display subscription usage.
     pub show_usage: bool,
+    pub notifications: config::Notifications,
     /// Show hidden sessions and folders.
     pub show_hidden: bool,
     /// Use the folder-grouped view instead of Recent.
@@ -275,6 +281,8 @@ pub struct Config {
     pub window_theme: String,
     /// Optional visual preferences beyond the theme and font size.
     pub appearance: config::AppearancePrefs,
+    /// Handover model and per-provider permission to send session data.
+    pub compact: compact::Preferences,
 }
 
 /// Convenience for callers: the account with this slug.

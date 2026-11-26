@@ -69,12 +69,14 @@ pub fn config() -> Config {
         show_archived: false,
         show_workers: false,
         show_usage: true,
+        notifications: Default::default(),
         show_hidden: false,
         folders_view: false,
         terminal_scheme: "auto".into(),
         terminal_font_size: claude_switch_core::config::TERMINAL_FONT_DEFAULT,
         window_theme: "system".into(),
         appearance: Default::default(),
+        compact: Default::default(),
     }
 }
 
@@ -83,7 +85,7 @@ fn sessions() -> Vec<Session> {
     let mut out = Vec::new();
     for i in 0..360u64 {
         let (cwd, branch) = FOLDERS[(i as usize * 5 + i as usize / 3) % FOLDERS.len()];
-        let age_min = i * i * 60_480 / (359 * 359) + i.min(20) * 3;
+        let age_min = i * i * 60_480 / (359 * 359) + i.min(20) * 3 + i.saturating_sub(280) * 1_000;
         let at = now.saturating_sub(age_min * 60_000);
         let title = TITLES[i as usize % TITLES.len()];
         let desktop = i % 4 == 1;
@@ -160,6 +162,12 @@ pub fn scan(c: &Config) -> Scan {
 
 pub fn seed_marks(marks: &mut claude_switch_core::marks::Marks, sessions: &[Session]) {
     for (i, s) in sessions.iter().enumerate() {
+        if i == 2 {
+            marks.set_folder_default(&claude_switch_core::sessions::folder_key(&s.cwd), Some(("work", App::Cli)));
+        }
+        if matches!(i, 80 | 156 | 292) {
+            marks.archive(&s.id, &s.file, Some(now_ms()));
+        }
         if matches!(i, 2 | 5 | 18) {
             marks.pin(&s.id, &s.file, true);
         }

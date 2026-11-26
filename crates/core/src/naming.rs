@@ -156,13 +156,13 @@ fn run(
     cmd.current_dir(&dir.0)
         .args(prefix)
         .args(&l.args)
-        .envs(&l.env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    for key in l.env_remove {
+    for key in launch::child_removals(&l) {
         cmd.env_remove(key);
     }
+    cmd.envs(&l.env);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

@@ -10,6 +10,9 @@ use mdshared_ui::gfx::Rect;
 use mdshared_ui::menu::{Item, Menu};
 use mdshared_ui::palette::{Entry, Palette};
 
+use crate::archive::{
+    ARCHIVE_FOLDER, ARCHIVE_OLD, ARCHIVE_ROW, REPORT, UNARCHIVE_ALL, UNARCHIVE_ROW, UNARCHIVE_SELECTED,
+};
 use crate::dialogs::{self, Dialog, Pending};
 use crate::state::{AppState, Focus, MenuKind};
 
@@ -54,12 +57,13 @@ const SESSION_BASE: u32 = 100_000;
 const OPEN_AS_BASE: u32 = 1_000;
 
 pub const COMMANDS: &[Command] = &[
-    Command::new(NEW_SESSION, "session.new", "New session in a terminal").keys("Ctrl+N"),
+    Command::new(NEW_SESSION, "session.new", "New session…").keys("Ctrl+N"),
     Command::new(NEW_DESKTOP, "session.new_desktop", "New session in the desktop app"),
     Command::new(OPEN_CLI, "session.open_cli", "Open in CLI"),
     Command::new(OPEN_DESKTOP, "session.open_desktop", "Open in Desktop"),
-    Command::new(OPEN_AS, "session.open_as", "Open as another account…"),
+    Command::new(OPEN_AS, "session.open_as", "Open as…"),
     Command::new(OPEN_COPY, "session.open_copy", "Open a copy in CLI"),
+    Command::new(crate::compact_dialog::COMMAND, "session.compact", crate::compact_dialog::LABEL),
     Command::new(NEW_SHELL, "tab.new_shell", "New shell tab").keys("Ctrl+Shift+T"),
     Command::new(NEXT_TAB, "tab.next", "Next tab").keys("Ctrl+Tab"),
     Command::new(PREV_TAB, "tab.previous", "Previous tab").keys("Ctrl+Shift+Tab"),
@@ -75,6 +79,7 @@ pub const COMMANDS: &[Command] = &[
     Command::new(ACCOUNTS, "app.accounts", "Accounts…"),
     Command::new(SETTINGS, "app.settings", "Settings…"),
     Command::new(ABOUT, "app.about", "About"),
+    Command::new(ARCHIVE_OLD, "session.archive_old", "Archive older sessions…"),
 ];
 
 impl AppState {
@@ -82,7 +87,16 @@ impl AppState {
     pub fn command(&mut self, now: Instant, id: u32, anchor: Option<Rect>) {
         match id {
             NEW_SESSION => self.ask_new_session(),
-            NEW_DESKTOP => self.new_session_now(now, App::Desktop, &self.current().slug.clone(), &self.start_folder()),
+            crate::compact_dialog::COMMAND => self.ask_compact(false),
+            NEW_DESKTOP => {
+                let folder = self.start_folder();
+                let account = self.folder_open(&folder, App::Desktop).0.to_owned();
+                self.new_session_now(now, App::Desktop, &account, &folder);
+            }
+            ARCHIVE_OLD | ARCHIVE_ROW | ARCHIVE_FOLDER | UNARCHIVE_ROW | UNARCHIVE_SELECTED | UNARCHIVE_ALL
+            | REPORT => {
+                self.archive_action(now, id);
+            }
             REFRESH => self.refresh(now),
             ACCOUNTS => self.dialog = Some(dialogs::accounts(self, now)),
             SETTINGS => self.dialog = Some(dialogs::settings(self)),
@@ -128,8 +142,9 @@ impl AppState {
             }
             OPEN_LAST => {
                 if let Some(s) = self.selected_session() {
-                    let (id, app) = (s.id.clone(), s.last_app);
-                    let account = self.current().slug.clone();
+                    let id = s.id.clone();
+                    let (account, app) = self.folder_open(&s.cwd, s.last_app);
+                    let account = account.to_owned();
                     self.open(now, &id, account, app);
                 }
             }
@@ -154,8 +169,7 @@ impl AppState {
                 }
             }
             x if x >= SESSION_BASE => {
-                if let Some(s) = self.sessions.get((x - SESSION_BASE) as usize) {
-                    let id = s.id.clone();
+                if let Some(id) = self.palette_session(x).map(str::to_owned) {
                     self.select(&id);
                     self.reveal_selected();
                     self.command(now, OPEN_LAST, None);
@@ -173,14 +187,10 @@ impl AppState {
         }
     }
 
-    /// The items of "Open as…": every other account, in each app.
+    /// The items of "Open as…": every account, in each app, independent of the folder default.
     fn open_as_items(&self) -> Vec<Item<u32>> {
-        let current = &self.config.current;
         let mut items = Vec::new();
         for (k, a) in self.config.accounts.iter().enumerate() {
-            if &a.slug == current {
-                continue;
-            }
             let id = OPEN_AS_BASE + k as u32 * 2;
             items.push(Item::new(id, format!("Open in CLI as {}", a.name)));
             items.push(Item::new(id + 1, format!("Open in Desktop as {}", a.name)));
@@ -188,6 +198,7 @@ impl AppState {
         if items.is_empty() {
             items.push(Item::new(0, "There is no other account").enabled(false));
         }
+        items.push(Item::new(crate::compact_dialog::COMMAND, crate::compact_dialog::LABEL).sep());
         items
     }
 
@@ -203,14 +214,8 @@ impl AppState {
             self.warn("Already open", text);
             return;
         }
-        let carry = self.source.carry_warning(&self.config, &session, &account);
-        let desktop = app == App::Cli && (session.desktop_account.is_some() || session.desktop_id.is_some());
-        match open_warning(carry.as_deref(), desktop) {
-            Some(text) => {
-                let title = match carry {
-                    Some(_) => format!("Open as {}?", self.account_name(&account)),
-                    None => "Open in the CLI?".to_string(),
-                };
+        match self.resume_warning(&session, &account, app) {
+            Some((title, text)) => {
                 let then = Pending::Open { id: id.to_string(), account, app };
                 self.dialog = Some(Dialog::Confirm { title, text, ok: "Continue".into(), then });
             }
@@ -221,9 +226,12 @@ impl AppState {
     /// Opens a copy of a session (a fork, a new session) in the CLI as the current account: safe
     /// while the original runs anywhere. The carry warning applies to it too.
     pub fn open_copy(&mut self, now: Instant, id: &str) {
+        self.open_copy_as(now, id, self.current().slug.clone());
+    }
+
+    pub fn open_copy_as(&mut self, now: Instant, id: &str, account: String) {
         let Some(&i) = self.by_id.get(id) else { return };
         let session = self.sessions[i].clone();
-        let account = self.current().slug.clone();
         match self.source.carry_warning(&self.config, &session, &account) {
             Some(text) => {
                 let title = format!("Open a copy as {}?", self.account_name(&account));
@@ -242,7 +250,9 @@ impl AppState {
             Ok(l) => {
                 let name = self.account_name(account);
                 let done = format!("Opened a copy of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
-                self.start(now, &l, None, Some(account), done);
+                if self.start_with_result(now, &l, None, Some(account), done, Some((&session.cwd, App::Cli))) {
+                    self.remember_folder_open(&session.cwd, account, App::Cli);
+                }
             }
         }
     }
@@ -254,20 +264,15 @@ impl AppState {
         if self.focus_tab_of(now, id) {
             return;
         }
-        self.running = self.source.running(&self.config);
-        self.index_running();
-        self.rebuild_view();
-        match self.source.resume(&self.config, &session, account, app, &self.running) {
+        match self.prepare_resume(&session, account, app) {
             Err(r @ Refusal::AlreadyRunning(_)) => self.warn("Already open", r.to_string()),
             Err(r) => self.error("Not opened", r.to_string()),
             Ok(l) => {
-                let where_ = if app == App::Cli { "a terminal" } else { "the desktop app" };
-                let done = format!(
-                    "Opened \u{201c}{}\u{201d} in {where_} as {}",
-                    self.title_of(&session),
-                    self.account_name(account)
-                );
-                self.start(now, &l, Some((id, account)), Some(account), done);
+                let done = resume_status(app, self.title_of(&session), &self.account_name(account));
+                if self.start_with_result(now, &l, Some((id, account)), Some(account), done, Some((&session.cwd, app)))
+                {
+                    self.remember_folder_open(&session.cwd, account, app);
+                }
             }
         }
     }
@@ -285,22 +290,103 @@ impl AppState {
     /// tab of the window when the setting says so (the demo starts nothing either way).
     /// `account` gives the tab its colour.
     pub fn start(&mut self, now: Instant, l: &Launch, note: Option<(&str, &str)>, account: Option<&str>, done: String) {
-        // Noted before the start, not after: the session is not in the running list for a few
-        // seconds, and the note is what refuses a second start in that time.
-        if let Some((id, account)) = note {
-            self.source.note_launch(id, account);
+        self.start_with_result(now, l, note, account, done, None);
+    }
+
+    fn start_with_result(
+        &mut self,
+        now: Instant,
+        l: &Launch,
+        note: Option<(&str, &str)>,
+        account: Option<&str>,
+        done: String,
+        folder: Option<(&Path, App)>,
+    ) -> bool {
+        if !self.source.is_demo() && crate::run::needs_terminal(l) {
+            if self.desktop_job.is_some() {
+                self.warn("Desktop handoff pending", "Wait for the current handoff to finish.".into());
+                return false;
+            }
+            match note.map(|(id, account)| self.source.reserve(&self.config, id, account)).transpose() {
+                Ok(reservation) => {
+                    self.start_desktop_handoff(l.clone(), reservation.flatten(), done);
+                    self.desktop_folder_open = self
+                        .desktop_job
+                        .as_ref()
+                        .and(folder.zip(account))
+                        .map(|((cwd, app), slug)| (cwd.to_owned(), slug.to_owned(), app));
+                }
+                Err(error) => self.error("Not opened", error.to_string()),
+            }
+            return false; // Pending is not success; do not persist a folder preference yet.
         }
-        let in_tab = self.config.embedded_terminal && l.place == Place::Terminal && !self.source.is_demo();
-        let started =
-            if in_tab { self.open_tab(l, note.map(|(id, _)| id), account).map(drop) } else { self.source.run(l) };
+        let in_tab = self.config.embedded_terminal && l.place == Place::Terminal;
+        let (started, history) = match self.start_launch(l, note, account, in_tab) {
+            Ok(outcome) => outcome,
+            Err(r) => {
+                self.error("Not opened", r.to_string());
+                return false;
+            }
+        };
+        let success = started.is_ok();
         match started {
-            Ok(()) => {
+            Ok(_) => {
                 let done = if self.source.is_demo() { format!("{done} (demo: nothing started)") } else { done };
                 self.toast(done, now);
                 self.info = None;
             }
             Err(e) => self.error("Could not start it", format!("{}: {e}", l.program.display())),
         }
+        if let Err(error) = history {
+            self.error("Could not finish the launch record", error.to_string());
+        }
+        success
+    }
+
+    fn start_desktop_handoff(
+        &mut self,
+        launch: Launch,
+        reservation: Option<claude_switch_core::launch::Reservation>,
+        done: String,
+    ) {
+        use std::sync::{Arc, Mutex};
+        let reservation = Arc::new(Mutex::new(reservation));
+        let worker = Arc::clone(&reservation);
+        match mdshared_app::job::Job::start(self.wake_fn(), move |cancel, _| {
+            let result = crate::run::run_unseen(&launch, || cancel.cancelled()).map(|()| done);
+            let history = worker.lock().unwrap().take().map(|r| r.finish(result.is_ok())).transpose();
+            match (result, history) {
+                (Ok(done), Ok(_)) => Ok(done),
+                (Err(error), Ok(_)) => Err(error.to_string()),
+                (Ok(done), Err(history)) => Err(format!("{done}; could not update launch history: {history}")),
+                (Err(error), Err(history)) => Err(format!("{error}; could not roll back launch history: {history}")),
+            }
+        }) {
+            Ok(job) => self.desktop_job = Some(job),
+            Err(error) => {
+                let rollback = reservation.lock().unwrap().take().and_then(|r| r.finish(false).err());
+                let message = rollback.map_or_else(|| error.to_string(), |r| format!("{error}; {r}"));
+                self.error("Could not start desktop handoff", message);
+            }
+        }
+    }
+
+    pub fn take_desktop_job(&mut self, now: Instant) -> bool {
+        if !self.desktop_job.as_ref().is_some_and(|job| !job.running()) {
+            return false;
+        }
+        let folder = self.desktop_folder_open.take();
+        match self.desktop_job.take().and_then(|job| job.take()) {
+            Some(Ok(done)) => {
+                self.toast(done, now);
+                if let Some((cwd, account, app)) = folder {
+                    self.remember_folder_open(&cwd, &account, app);
+                }
+            }
+            Some(Err(error)) => self.error("Desktop handoff", error),
+            None => self.error("Desktop handoff", "The handoff worker stopped.".into()),
+        }
+        true
     }
 
     /// A plain shell in a tab, in the selected session's folder or the home folder.
@@ -328,8 +414,11 @@ impl AppState {
         match self.source.new_session(&self.config, account, app, cwd) {
             Ok(l) => {
                 let folder = cwd.file_name().map_or_else(|| cwd.display().to_string(), |n| n.to_string_lossy().into());
-                let done = format!("Started a new session in {folder} as {}", self.account_name(account));
-                self.start(now, &l, None, Some(account), done);
+                let where_ = crate::folder_defaults::app_label(app);
+                let done = format!("Started a new session in {folder} as {} in {where_}", self.account_name(account));
+                if self.start_with_result(now, &l, None, Some(account), done, Some((cwd, app))) {
+                    self.remember_folder_open(cwd, account, app);
+                }
             }
             Err(r) => self.error("Not started", r.to_string()),
         }
@@ -350,7 +439,11 @@ impl AppState {
     }
 
     pub fn open_palette(&mut self) {
+        let mut session_entries = std::collections::HashMap::new();
         let mut entries: Vec<Entry> = self.keymap.entries().map(|e| e.group(0)).collect();
+        if self.archive_count != 0 {
+            entries.push(Entry::new(REPORT, "Archive summary report…").group(0));
+        }
         if self.terminal_shown() {
             entries.push(Entry::new(PASTE, "Paste").group(0));
         }
@@ -365,8 +458,9 @@ impl AppState {
                 continue;
             }
             let folder = s.cwd.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
-            entries
-                .push(Entry::new(SESSION_BASE + i as u32, format!("Open {}", self.title_of(s))).hint(folder).group(2));
+            let entry = SESSION_BASE + i as u32;
+            session_entries.insert(entry, s.id.clone());
+            entries.push(Entry::new(entry, format!("Open {}", self.title_of(s))).hint(folder).group(2));
         }
         let mut p = Palette::new();
         p.set_groups(vec![(0, "Commands".into()), (1, "Accounts".into()), (2, "Sessions".into())]);
@@ -374,6 +468,13 @@ impl AppState {
         p.set_placeholder("Type a command or a session");
         p.open("");
         self.palette = Some(p);
+        self.palette_sessions = session_entries;
+    }
+
+    fn palette_session(&self, entry: u32) -> Option<&str> {
+        let id = self.palette_sessions.get(&entry)?;
+        let s = self.sessions.get(*self.by_id.get(id)?)?;
+        (s.id == *id && self.listed(s)).then_some(id.as_str())
     }
 
     pub fn row_menu(&mut self, entry: usize, anchor: Rect) {
@@ -381,10 +482,12 @@ impl AppState {
             if let Some(key) = self.groups[g].key.strip_prefix("folder:") {
                 let label = if self.marks.folder_hidden(key) { "Unhide folder" } else { "Hide folder" };
                 self.context_folder = Some(key.to_string());
-                self.menu = Some((
-                    MenuKind::Row,
-                    Menu::new(vec![Item::new(HIDE_FOLDER, label)], 0.0, 0.0, false).around(anchor),
-                ));
+                let mut items = vec![
+                    Item::new(HIDE_FOLDER, label),
+                    Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!key.is_empty()),
+                ];
+                self.archive_view_items(&mut items);
+                self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor)));
             }
             return;
         }
@@ -400,20 +503,28 @@ impl AppState {
         } else {
             "Hide folder"
         };
-        let items = vec![
+        let mut items = vec![
             Item::new(OPEN_CLI, "Open in CLI"),
             Item::new(OPEN_DESKTOP, "Open in Desktop"),
             Item::new(OPEN_AS, "Open as…"),
             Item::new(OPEN_COPY, "Open a copy"),
+            Item::new(crate::compact_dialog::COMMAND, crate::compact_dialog::LABEL),
             Item::new(RENAME, "Rename").hint("F2").sep(),
             Item::new(SUGGEST, "Suggest name"),
-            Item::new(PIN, pin).hint("Ctrl+D"),
+            Item::new(PIN, pin).hint("Ctrl+D").enabled(!self.is_archived(s)),
             Item::new(HIDE, hide).hint("Delete"),
             Item::new(HIDE_FOLDER, folder).enabled(!s.cwd.as_os_str().is_empty()),
+            if self.is_archived(s) {
+                Item::new(UNARCHIVE_ROW, "Unarchive session")
+            } else {
+                Item::new(ARCHIVE_ROW, "Archive session…").enabled(self.can_archive(s))
+            },
+            Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(COPY_ID, "Copy session id").sep(),
             Item::new(COPY_PATH, "Copy folder path").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(REVEAL, "Reveal transcript in Explorer"),
         ];
+        self.archive_view_items(&mut items);
         self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(228.0)));
     }
 
@@ -443,6 +554,13 @@ impl AppState {
     }
 }
 
+fn resume_status(app: App, title: &str, account: &str) -> String {
+    match app {
+        App::Cli => format!("Opened “{title}” in a terminal as {account}"),
+        App::Desktop => format!("“{title}” handed to the desktop app"),
+    }
+}
+
 /// The text of the confirmation before a session is opened: the carry warning, the desktop
 /// warning, or both in one; `None` when neither applies.
 pub fn open_warning(carry: Option<&str>, desktop_lists_it: bool) -> Option<String> {
@@ -455,70 +573,4 @@ pub fn open_warning(carry: Option<&str>, desktop_lists_it: bool) -> Option<Strin
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn one_confirmation_holds_whichever_warnings_apply() {
-        assert_eq!(open_warning(None, false), None);
-        assert_eq!(open_warning(Some("Cold cache."), false).as_deref(), Some("Cold cache."));
-        assert_eq!(open_warning(None, true).as_deref(), Some(DESKTOP_WARNING));
-        let both = open_warning(Some("Cold cache."), true).unwrap();
-        assert!(both.starts_with("Cold cache.") && both.ends_with(DESKTOP_WARNING));
-    }
-
-    #[test]
-    fn a_desktop_session_opened_in_the_cli_asks_first_and_a_cli_one_does_not() {
-        let mut s = crate::state::AppState::new(
-            crate::source::Source::Demo,
-            Some(false),
-            crate::winfile::WindowFile::default(),
-        );
-        s.apply_scan(crate::demo::scan(&s.config));
-        let running: Vec<String> = s.running.iter().map(|r| r.session_id.clone()).collect();
-        let free = |want: App| {
-            s.sessions
-                .iter()
-                .find(|x| {
-                    x.last_app == want && x.desktop_id.is_none() == (want == App::Cli) && !running.contains(&x.id)
-                })
-                .filter(|x| crate::demo::last_account(x) == "main")
-                .map(|x| x.id.clone())
-        };
-        let (desk, cli) = (free(App::Desktop).unwrap(), free(App::Cli).unwrap());
-        s.open(Instant::now(), &desk, "main".into(), App::Cli);
-        match &s.dialog {
-            Some(Dialog::Confirm { text, then: Pending::Open { .. }, .. }) => assert_eq!(text, DESKTOP_WARNING),
-            _ => panic!("no desktop warning"),
-        }
-        s.dialog = None;
-        s.open(Instant::now(), &cli, "main".into(), App::Cli);
-        assert!(s.dialog.is_none());
-
-        s.open(Instant::now(), &desk, "work".into(), App::Cli);
-        match &s.dialog {
-            Some(Dialog::Confirm { text, then: Pending::Open { id, account, app: App::Cli }, .. }) => {
-                assert_eq!((id, account.as_str()), (&desk, "work"));
-                assert!(text.contains("full price") && text.ends_with(DESKTOP_WARNING));
-            }
-            _ => panic!("expected one confirmation containing both warnings"),
-        }
-        crate::dialogs::click(&mut s, Instant::now(), crate::dialogs::OK, 0.0);
-        assert!(s.dialog.is_none(), "Continue does not open a second confirmation");
-
-        s.open(Instant::now(), &desk, "main".into(), App::Desktop);
-        assert!(s.dialog.is_none(), "the Desktop warning only applies when opening in the CLI");
-        let i = s.by_id[&desk];
-        s.sessions[i].desktop_id = None;
-        s.sessions[i].desktop_account = None;
-        s.open(Instant::now(), &desk, "main".into(), App::Cli);
-        assert!(s.dialog.is_none(), "a Desktop entrypoint without a Desktop record is not a listing");
-
-        // A copy of a running session is not refused.
-        s.open_copy(Instant::now(), &running[0]);
-        assert!(s.info.is_none());
-        // Enter chooses the primary button: Cancel for closing, Continue for opening.
-        assert!(!Pending::Quit.ok_is_primary() && !Pending::CloseTab(1).ok_is_primary());
-        assert!(Pending::Copy { id: cli.clone(), account: "main".into() }.ok_is_primary());
-    }
-}
+mod tests;

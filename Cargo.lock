@@ -433,6 +433,7 @@ name = "claude-switch"
 version = "0.1.0"
 dependencies = [
  "claude-switch-core",
+ "getrandom 0.3.4",
  "mdshared-app 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=d1cca336a81f1c0f3aa4acabc89fb7d3d8f4ca44)",
  "mdshared-pty",
  "mdshared-term",
