@@ -289,3 +289,27 @@ fn a_command_that_may_start_a_turn_counts_as_a_new_chats_first_send() {
         assert_eq!(f.send("hello", now), expected, "{line}");
     }
 }
+
+#[test]
+fn a_confirmed_command_rechecks_the_session_right_before_writing() {
+    let mut f = Fixture::new("confirm-recheck", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.tab().session = Some(A.to_owned());
+    let now = Instant::now();
+    f.chat().last_output = Some(now - QUIET);
+    f.app.tabs.active = Some(f.tab);
+
+    // The session records now name another session (a /clear typed meanwhile), while the tab's
+    // last poll still says A: the command is refused.
+    f.tab().resume_id = Some(B.to_owned());
+    f.app.chat_confirm_slash(now, f.tab, Some(A.to_owned()), "/rename Parser work", false);
+    assert!(f.chat().writes.is_empty());
+    assert!(f.chat().error.is_some_and(|e| e.contains("session changed")));
+
+    f.tab().resume_id = Some(A.to_owned());
+    f.chat().error = None;
+    f.app.chat_confirm_slash(now, f.tab, Some(A.to_owned()), "/rename Parser work", false);
+    assert!(!f.chat().writes.is_empty(), "{:?}", f.chat().error);
+}
