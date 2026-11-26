@@ -47,7 +47,9 @@ impl App for AppState {
             }
             Event::Press { x, y, button: Button::Left, clicks } => self.press(cx, x, y, clicks),
             Event::Release { x, y, button: Button::Left } => self.release(cx, x, y),
+            Event::Press { x, y, button: Button::Right, .. } if self.field_menu(x, y, cx.now()) => {}
             Event::Press { x, y, button, clicks } => {
+                self.field_mouse.cancel();
                 if !self.nothing_over() || self.picture_overlay() {
                     return;
                 }
@@ -117,6 +119,7 @@ impl App for AppState {
                 }
             }
             Event::Focus(false) => {
+                self.field_mouse.cancel();
                 self.tabs.drag = None;
                 self.chat_end_drag(None);
                 self.usage.popup = Default::default();
@@ -157,7 +160,7 @@ impl App for AppState {
                 if let Some(at) = self.typed_due(now) {
                     cx.wake_at(at);
                 }
-                if self.tip.tick(now) | self.toasts.tick(now) {
+                if self.tip.tick(now) | self.toasts.tick(now) | self.field_tick(now) {
                     cx.request_redraw_all();
                 }
                 if self.usage_hover_due(now) {

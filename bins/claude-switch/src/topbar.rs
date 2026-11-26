@@ -115,7 +115,7 @@ pub fn draw(st: &mut AppState, p: &mut Painter, w: f32, maximized: bool, focused
     let inner = bar.search_inner();
     let placeholder = if bar.search.w < 165.0 { "Search" } else { "Search sessions" };
     st.search.draw(p, inner, Face::Ui, 13.0, &colors, placeholder, active && focused, caret_on);
-    st.search_stops = p.caret_stops(Face::Ui, 13.0, &st.search.display());
+    st.search_hit = crate::fieldmouse::hit(p, inner, 13.0);
     st.hits.push((bar.search, Target::Search));
     if !st.search.is_empty() {
         icon_button(st, p, bar.clear, glyph::CLOSE, Target::SearchClear);

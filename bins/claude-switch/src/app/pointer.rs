@@ -74,6 +74,9 @@ impl AppState {
 
     pub(super) fn moved(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> bool {
         self.mouse = (x, y);
+        if let Some(changed) = self.field_drag(x, y, cx.now()) {
+            return changed | self.refresh_pointer(cx);
+        }
         let moved = self.move_in_layer(cx, x, y);
         let usage = self.usage_hover(cx.now(), self.hover_target(self.pointer_layer()));
         moved | usage | self.refresh_pointer(cx)
@@ -134,6 +137,9 @@ impl AppState {
         if layer == Layer::Palette && self.palette.as_ref().is_some_and(|p| p.field_rect().contains(x, y)) {
             return Cursor::Text;
         }
+        if self.field_mouse.held().is_some() || self.over_field(x, y) {
+            return Cursor::Text;
+        }
         if (layer == Layer::Picture
             || layer == Layer::Base && !matches!(hover, Some(Target::Chat(_))) && y >= self.main_top)
             && let Some(cursor) = self.session_pointer_cursor(x, y)
@@ -145,16 +151,12 @@ impl AppState {
         match hover {
             Some(Target::Splitter) => Cursor::ResizeEw,
             Some(Target::Terminal) if !program_mouse => Cursor::Text,
-            Some(Target::Chat(crate::view::chat::Control::Editor) | Target::Search) => Cursor::Text,
+            Some(Target::Chat(crate::view::chat::Control::Editor)) => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Grip)) => Cursor::ResizeNs,
             Some(Target::Chat(crate::view::chat::Control::Detail(_) | crate::view::chat::Control::Shells)) => {
                 Cursor::Hand
             }
-            Some(Target::Dialog(id))
-                if id == dialogs::FIELD
-                    || matches!(id, crate::compact_dialog::EDITOR | crate::compact_dialog::NAME_FIELD)
-                        && matches!(self.dialog, Some(Dialog::Compact(_))) =>
-            {
+            Some(Target::Dialog(crate::compact_dialog::EDITOR)) if matches!(self.dialog, Some(Dialog::Compact(_))) => {
                 Cursor::Text
             }
             _ => Cursor::Default,

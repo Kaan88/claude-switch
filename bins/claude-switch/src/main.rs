@@ -28,6 +28,7 @@ mod demo;
 mod demo_terminal;
 mod details;
 mod dialogs;
+mod fieldmouse;
 mod folder_defaults;
 mod list;
 mod opencode_workers;

@@ -116,6 +116,8 @@ pub enum MenuKind {
     Row,
     Tab(u64),
     Chat(u64, crate::view::chat::MenuMode),
+    /// Cut, Copy, Paste, Select all on a text field.
+    Field(crate::fieldmouse::FieldId),
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.
@@ -168,7 +170,9 @@ pub struct AppState {
     pub search: TextField,
     pub conversation_search: crate::conversation_search::Search,
     pub session_size: crate::session_size::Size,
-    pub search_stops: Vec<f32>,
+    pub search_hit: Option<mdshared_ui::textfield::FieldHit>,
+    /// Mouse selection in whichever single-line field the pointer pressed.
+    pub field_mouse: crate::fieldmouse::FieldMouse,
     pub focus: Focus,
     /// The keyboard moved the focus last: the focus ring shows.
     pub key_used: bool,
@@ -280,7 +284,8 @@ impl AppState {
             search: TextField::new(),
             conversation_search: Default::default(),
             session_size: Default::default(),
-            search_stops: Vec::new(),
+            search_hit: None,
+            field_mouse: Default::default(),
             focus: Focus::List,
             key_used: false,
             accounts_dd: Dropdown::new(Vec::<(String, String)>::new(), 0),

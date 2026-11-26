@@ -14,7 +14,7 @@ pub use draw::draw_history_row;
 use editor::Editor;
 use mdshared_app::job::Job;
 use mdshared_ui::keys::{KeyName, Mods};
-use mdshared_ui::textfield::TextField;
+use mdshared_ui::textfield::{FieldHit, TextField};
 use mdshared_ui::{gfx::Rect, platform};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -78,8 +78,7 @@ pub struct Compact {
     suggested_name: String,
     new_name: TextField,
     name_focused: bool,
-    name_stops: Vec<f32>,
-    name_x: f32,
+    name_hit: Option<FieldHit>,
     program: Option<PathBuf>,
     data: Option<std::sync::Arc<compact::Handover>>,
     models: Vec<String>,
@@ -281,8 +280,7 @@ impl Compact {
             suggested_name,
             new_name,
             name_focused: false,
-            name_stops: Vec::new(),
-            name_x: 0.0,
+            name_hit: None,
             accounts,
             account,
             default_agent: st.config.compact.default_agent.clone(),
@@ -482,6 +480,21 @@ impl Compact {
         st.open_handover_tab(request)
     }
 
+    /// The new session name takes the mouse only where a click would focus it.
+    pub(crate) fn name_editable(&self) -> bool {
+        self.phase == Phase::Preview && self.choice.is_none()
+    }
+
+    pub(crate) fn name_parts(&mut self) -> (&mut TextField, Option<FieldHit>) {
+        (&mut self.new_name, self.name_hit)
+    }
+
+    pub(crate) fn focus_name(&mut self) {
+        if self.name_editable() {
+            self.name_focused = true;
+        }
+    }
+
     pub fn click(&mut self, st: &mut AppState, now: Instant, id: u32, x: f32) -> bool {
         match id {
             CANCEL => {
@@ -516,7 +529,6 @@ impl Compact {
             AGENT if self.phase == Phase::Preview => self.pick(Choice::Agent, st),
             NAME_FIELD if self.phase == Phase::Preview && self.choice.is_none() => {
                 self.name_focused = true;
-                self.new_name.press(x - self.name_x, &self.name_stops, false);
             }
             EDITOR => {
                 self.name_focused = false;
