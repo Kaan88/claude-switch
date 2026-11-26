@@ -150,3 +150,10 @@ and in the README, not committed, and not copied to the installed clone
    Update to 1 (owner, same day): after restarting the app the third account shows as signed in.
    So the credentials were fine and the reader accepts them: the fault is that the usage state from
    before the sign-in is kept, and is not read again when the sign-in tab ends (or on Refresh).
+6. **The Chat view's scrollbar cannot be clicked or dragged** (owner, 2026-11-26): the conversation
+   scrolls by wheel only.
+7. **The Chat view's "/model" button only opens the terminal drawer; nothing happens there** (owner,
+   2026-11-26). It should type the command into the terminal so the CLI shows its model menu. To find
+   out: whether the send is now refused by one of the review rounds' vetoes (unverified pane identity,
+   no fresh completed turn, bracketed paste state) and fails silently, where a typed "/" from the
+   composer goes through the same path. A refusal must at least say why.
