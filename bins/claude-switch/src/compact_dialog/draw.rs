@@ -143,6 +143,18 @@ impl Compact {
     }
 
     fn draw_preview(&mut self, d: &mut Draw<'_>, p: &mut Painter, body: Rect, footer: Rect) {
+        if let Some(choice) = self.choice {
+            let title = match choice {
+                Choice::Agent if self.job.is_some() => "Reading CLI agents…",
+                Choice::Agent if self.agents.is_empty() => "No custom CLI agents found",
+                Choice::Agent => "Choose an agent for the CLI session",
+                _ => "Choose an account",
+            };
+            p.text(Face::Ui, FONT, body.x, body.y + 34.0, title, d.pal.text, body.w);
+            self.draw_options(d, p, body, body.y + 50.0);
+            d.footer(p, footer, &[("‹ Back", false, BACK)]);
+            return;
+        }
         let (chars, tokens) = compact::size(&self.preview.text);
         let account = self.accounts.get(self.account).map_or("no account", |a| a.1.as_str());
         p.text(
@@ -150,17 +162,37 @@ impl Compact {
             FONT,
             body.x,
             body.y + 33.0,
-            &format!("{chars} characters  ·  about {tokens} tokens  ·  Open as {account}"),
+            &format!("{chars} characters  ·  about {tokens} tokens"),
             d.pal.text,
             body.w,
         );
-        let mut editor_y = 48.0;
+        let half = (body.w - 12.0) / 2.0;
+        let y = body.y + 47.0;
+        d.button(p, Rect::new(body.x, y, half, 28.0), &format!("Open as: {account}   ▾"), false, ACCOUNT);
+        d.button(
+            p,
+            Rect::new(body.x + half + 12.0, y, half, 28.0),
+            &format!("Agent: {}   ▾", self.agent_label()),
+            false,
+            AGENT,
+        );
+        let note = p.paragraph_wrapped(
+            Face::Ui,
+            12.0,
+            body.x,
+            body.y + 81.0,
+            body.w,
+            "Agent choice (Alt+A) is CLI-only. There is no supported Desktop launch option.",
+            d.pal.muted,
+            Wrap::Words,
+        );
+        let mut editor_y = 85.0 + note;
         if crate::compact_open::uses_file(&self.preview.text) {
             let h = p.paragraph_wrapped(
                 Face::Ui,
                 12.0,
                 body.x,
-                body.y + 44.0,
+                body.y + editor_y,
                 body.w,
                 "Too long to pass directly: the new session will read it from the file",
                 d.pal.muted,
@@ -168,12 +200,12 @@ impl Compact {
             );
             editor_y += h + 4.0;
         }
-        self.draw_editor(d, p, Rect::new(body.x, body.y + editor_y, body.w, body.h - 34.0 - editor_y), true);
+        self.draw_editor(d, p, Rect::new(body.x, body.y + editor_y, body.w, (body.h - 34.0 - editor_y).max(0.0)), true);
         d.footer(
             p,
             footer,
             &[
-                ("Open new session", true, OK),
+                ("Open in CLI", true, OK),
                 ("Cancel", false, CANCEL),
                 ("Back", false, BACK),
                 ("Save as…", false, SAVE),
@@ -193,12 +225,27 @@ impl Compact {
 
     fn draw_options(&self, d: &mut Draw<'_>, p: &mut Painter, body: Rect, mut y: f32) {
         for i in self.scroll..(self.scroll + PAGE).min(self.count()) {
+            let row = Rect::new(body.x, y, body.w, 27.0);
+            if self.choice == Some(Choice::Agent) {
+                let info = i.checked_sub(1).and_then(|i| self.agents.get(i));
+                let (name, description) =
+                    info.map_or((agents::DEFAULT, "No agent override"), |a| (a.name.as_str(), a.description.as_str()));
+                d.button(p, row, "", self.agent_focus == i, OPTION + i as u32);
+                let color = if self.agent_focus == i { d.pal.on_accent } else { d.pal.text };
+                let mark = if self.agent == i { "✓  " } else { "" };
+                // Give the name its own line so descriptions never push it out of view.
+                p.text(Face::Semibold, 11.5, row.x + 9.0, row.y + 7.0, &format!("{mark}{name}"), color, row.w - 18.0);
+                p.text(Face::Ui, 10.5, row.x + 9.0, row.y + 20.0, description, color, row.w - 18.0);
+                y += 29.0;
+                continue;
+            }
             let (label, selected) = match self.choice {
                 Some(Choice::Model) => (self.models[i].as_str(), self.model == i),
                 Some(Choice::Account) => (self.accounts[i].1.as_str(), self.account == i),
+                Some(Choice::Agent) => unreachable!(),
                 None => (self.history[i].file_name().and_then(|n| n.to_str()).unwrap_or("Handover"), false),
             };
-            d.button(p, Rect::new(body.x, y, body.w, 27.0), label, selected, OPTION + i as u32);
+            d.button(p, row, label, selected, OPTION + i as u32);
             y += 29.0;
         }
         if self.scroll > 0 {

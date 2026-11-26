@@ -175,6 +175,19 @@ pub fn validate_session_id(id: &str) -> Result<(), Refusal> {
     if valid { Ok(()) } else { Err(Refusal::Invalid("The transcript does not have a UUID session ID.".into())) }
 }
 
+/// Explicit agent for a new Claude Code CLI session. Each namespace segment is a name, never a flag.
+pub fn session_agent_args(name: &str) -> Result<[&str; 2], Refusal> {
+    let valid = name.len() <= 128
+        && name.split(':').all(|part| {
+            part.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+                && part.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        });
+    if !valid {
+        return Err(Refusal::Invalid("The selected CLI agent does not have a supported name.".into()));
+    }
+    Ok(["--agent", name])
+}
+
 /// A new session as `account` in `cwd`: `claude` in a terminal, or the desktop app for
 /// [`App::Desktop`] (the same as [`open_desktop`]; the folder is chosen there).
 pub fn new_session(roots: &Roots, config: &Config, account: &str, app: App, cwd: &Path) -> Result<Launch, Refusal> {

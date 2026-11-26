@@ -39,11 +39,10 @@ impl App for AppState {
                 return;
             }
             Event::PointerLeave => {
-                self.hover = None;
                 self.tabs.drag = None;
                 self.usage_hover(cx.now(), None);
                 self.session_pointer_left();
-                self.tip.hover(cx.now(), None);
+                self.refresh_pointer(cx);
                 cx.request_redraw_all();
             }
             Event::Press { x, y, button: Button::Left, clicks } => self.press(cx, x, y, clicks),
@@ -259,6 +258,11 @@ impl App for AppState {
 
     fn draw(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, _damage: Rect) {
         crate::app_draw::draw(self, cx, p);
+        // The frame just rebuilt the hit map. A tab or overlay can move under a stationary pointer.
+        if self.refresh_pointer(cx) {
+            cx.request_redraw_all();
+        }
+        self.timers(cx);
     }
 }
 

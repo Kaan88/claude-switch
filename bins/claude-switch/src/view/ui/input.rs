@@ -82,10 +82,13 @@ impl Ui {
         false
     }
 
-    pub fn moved(&mut self, x: f32, y: f32) -> (Option<Cursor>, bool) {
+    pub fn clear_pointer_hover(&mut self) {
+        self.hot = None;
+    }
+
+    pub fn moved(&mut self, x: f32, y: f32) -> bool {
         let hot = self.hit(x, y);
-        let mut changed = self.hot != hot;
-        self.hot = hot.clone();
+        let mut changed = std::mem::replace(&mut self.hot, hot) != self.hot;
         if self.dragging {
             if self.start.as_ref().is_some_and(|(sx, sy, _)| (x - sx).abs() + (y - sy).abs() > 4.0) {
                 self.start = None;
@@ -106,10 +109,13 @@ impl Ui {
                     self.pressed = None;
                 }
             }
-            return (Some(Cursor::Text), changed);
         }
+        changed
+    }
+
+    pub fn pointer_cursor(&self, x: f32, y: f32) -> Option<Cursor> {
         let text = self.text_at(x, y);
-        let cursor = if hot.is_some() || text.as_ref().is_some_and(|(_, _, link)| link.is_some()) {
+        if self.hit(x, y).is_some() || text.as_ref().is_some_and(|(_, _, link)| link.is_some()) {
             Some(Cursor::Hand)
         } else if text.is_some() {
             Some(Cursor::Text)
@@ -117,8 +123,7 @@ impl Ui {
             Some(Cursor::Default)
         } else {
             None
-        };
-        (cursor, changed)
+        }
     }
 
     pub fn release(&mut self, x: f32, y: f32, mods: Mods, m: &mut Model, cwd: &Path) -> bool {

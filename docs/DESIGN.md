@@ -238,6 +238,10 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   the mouse, and is arrow keys on the alternate screen of one that did not. Drag selects (double click a
   word, triple click a line, Alt a block); with mouse reporting on, Shift+drag selects. The drag requests
   a redraw only when the selected cells change. Copying is by key only, not on release.
+  The window chooses the mouse pointer from the current frame's hit map, including when a tab or
+  overlay changes under a stationary pointer. Leaving the client resets the app pointer to the
+  arrow; the host still supplies native resize cursors at window edges. Only the front layer
+  receives hover while a menu, dialog or command palette is open.
 
 **The safeguard, for tabs.** A session open in a tab counts as running at once, before any
 `sessions/<pid>.json` says so: opening it again shows its running tab ("Already open in a tab"), and the list
@@ -324,6 +328,16 @@ in the original folder with the selected account's normal sanitized launch envir
 interactive CLI documents no stdin/file argument for a first prompt, so short text is one native
 argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file. The app uses the
 new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
+
+The editor's **Agent** picker is CLI-only. **Default (Claude)** is first and adds no CLI
+override; a selected custom agent adds `--agent <name>` before the first-prompt separator.
+Changing the target account resets the choice. Discovery runs read-only from that account's
+`agents/` and the launch project's `.claude/agents/`; project definitions take precedence.
+The reader keeps bounded frontmatter names and descriptions, not agent prompts. It also offers
+agents in standard `agents/` directories of unambiguous, explicitly enabled version-2 plugin
+cache installs. It does not guess at managed policy, custom manifest paths or registry formats.
+Discovery does not start Claude. The documented Desktop launch path takes neither an agent
+flag nor a first prompt, so the handover editor continues to open new sessions in the CLI.
 
 The CLI runs headlessly for `--print` (the default) and writes the handover only to stdout unless
 `--save` is supplied. Explicit `--open` keeps the handover and starts a new window with the
@@ -484,6 +498,8 @@ times, then saves the marks as one update. An incomplete running scan refuses th
 Archived rows are omitted from ordinary views but found in searches; the Archived chip
 appears only while there are archived sessions in the index. Unarchiving preserves Hide marks.
 No archive operation relocates, deletes, or edits a transcript.
+The session menu explains why a pinned or running row cannot be archived. Folder archive
+remains available because its preview can include other eligible rows.
 
 The Markdown report covers all currently indexed archived sessions. It uses bounded
 transcript heads/tails for the first dated conversation record and first/last prompt excerpts,

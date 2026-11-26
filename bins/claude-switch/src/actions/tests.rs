@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn archive_row_explains_each_block_and_does_not_block_unarchiving() {
+    for (pinned, running, hint) in
+        [(false, false, ""), (true, false, "Pinned"), (false, true, "Running"), (true, true, "Pinned and running")]
+    {
+        let flags = crate::list::model::Flags { pinned, running, ..Default::default() };
+        let item = archive_row_item(false, flags);
+        assert_eq!(item.enabled, hint.is_empty());
+        assert_eq!(item.hint, hint);
+        let archived = archive_row_item(true, flags);
+        assert_eq!(archived.id, UNARCHIVE_ROW);
+        assert!(archived.enabled);
+    }
+}
+
+#[test]
 fn terminal_palette_uses_the_visible_verified_tab_not_the_identically_named_selected_session() {
     let mut app = AppState::new(crate::source::Source::Demo, None, Default::default());
     app.apply_scan(crate::demo::scan(&app.config));

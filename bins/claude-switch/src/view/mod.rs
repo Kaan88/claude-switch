@@ -21,7 +21,7 @@ use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::splitter::{self, Axis, Hold, Splitter};
 use mdshared_ui::theme::Palette;
 
-use crate::state::{AppState, Msg};
+use crate::state::{AppState, Msg, Target};
 use crate::winfile::WindowFile;
 
 const AXIS: Axis = Axis::Horizontal;
@@ -36,7 +36,6 @@ pub struct Window {
     pub splitter: Splitter,
     area: Rect,
     pane_area: Rect,
-    split_hover: bool,
     text_focus: bool,
     pub drops: attach::DropBatch,
     pub demo_permission: bool,
@@ -52,7 +51,6 @@ impl Window {
             splitter,
             area: Rect::default(),
             pane_area: Rect::default(),
-            split_hover: false,
             text_focus: false,
             drops: Default::default(),
             demo_permission: false,
@@ -261,7 +259,6 @@ impl AppState {
     pub fn layout_session_view(&mut self, cx: &mut Cx<'_, Msg>, area: Rect) -> Rect {
         self.session_view.area = area;
         if self.chat_active() {
-            self.session_view.split_hover = false;
             self.session_tick(cx, false);
             return self.layout_chat(area);
         }
@@ -272,7 +269,6 @@ impl AppState {
             terminal
         } else {
             self.session_view.pane_area = Rect::default();
-            self.session_view.split_hover = false;
             area
         }
     }
@@ -317,8 +313,8 @@ impl AppState {
 
     pub fn draw_session_view(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect, pal: &Palette) {
         let rects = self.session_view.splitter.rects(area, AXIS);
-        let mouse = self.mouse;
-        let hot = self.nothing_over() && !self.picture_overlay() && self.session_view.split_hover;
+        let mouse = self.background_pointer();
+        let hot = self.session_view.splitter.hit(area, AXIS, mouse.0, mouse.1);
         let motion = cx.anim().animates();
         if let Some(pane) = self.shown_pane(area.w) {
             pane.ui.draw(p, pal, rects.2, &mut pane.model, mouse, cx.now(), motion);
@@ -326,12 +322,14 @@ impl AppState {
                 cx.animating(rects.2);
             }
             splitter::draw(p, pal, rects, AXIS, hot);
+            self.hits.push((rects.1, Target::Splitter));
         }
     }
 
     pub fn draw_session_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect) {
+        let mouse = self.picture_pointer();
         if let Some(pane) = self.shown_pane(window.w) {
-            pane.ui.draw_overlay(p, pal, window, &pane.model);
+            pane.ui.draw_overlay(p, pal, window, &pane.model, mouse);
         }
     }
 
@@ -398,47 +396,34 @@ impl AppState {
         self.shown_pane(cx.size().0).is_some_and(|pane| pane.ui.release(x, y, cx.mods(), &mut pane.model, &pane.cwd))
     }
 
-    pub fn session_move(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> Option<bool> {
-        if !self.nothing_over() {
-            return None;
-        }
+    pub fn session_move(&mut self, x: f32, y: f32) -> Option<bool> {
         let area = self.session_view.area;
-        if self.session_view.splitter.dragging() {
-            cx.set_cursor(Cursor::ResizeEw);
+        if !self.picture_overlay() && self.session_view.splitter.dragging() {
             return Some(self.session_view.splitter.drag(area, AXIS, x, y));
         }
-        let hot = !self.chat_active()
-            && self.session_visible(area.w)
-            && !self.picture_overlay()
-            && self.session_view.splitter.hit(area, AXIS, x, y);
-        let split_changed = std::mem::replace(&mut self.session_view.split_hover, hot) != hot;
-        if hot {
-            cx.set_cursor(Cursor::ResizeEw);
-            return Some(split_changed);
-        }
         if let Some(pane) = self.shown_pane(area.w) {
-            let (cursor, changed) = pane.ui.moved(x, y);
-            if let Some(cursor) = cursor {
-                cx.set_cursor(cursor);
-                return Some(changed || split_changed);
-            }
-            if changed {
-                return Some(true);
-            }
-        }
-        if split_changed {
-            cx.request_redraw_all();
+            let changed = pane.ui.moved(x, y);
+            return (changed || pane.ui.pointer_cursor(x, y).is_some()).then_some(changed);
         }
         None
     }
 
+    pub fn session_pointer_cursor(&self, x: f32, y: f32) -> Option<Cursor> {
+        let area = self.session_view.area;
+        if !self.session_visible(area.w) {
+            return None;
+        }
+        if !self.chat_active() && !self.picture_overlay() && self.session_view.splitter.hit(area, AXIS, x, y) {
+            return Some(Cursor::ResizeEw);
+        }
+        self.tabs.shown()?.pane.as_ref()?.ui.pointer_cursor(x, y)
+    }
+
     pub fn session_pointer_left(&mut self) {
-        self.session_view.split_hover = false;
         self.mouse = (-1.0, -1.0);
         let width = self.session_view.area.w;
         if let Some(pane) = self.shown_pane(width) {
-            // Re-evaluate hover on re-entry rather than leaving a hot button behind.
-            pane.ui.moved(-1.0, -1.0);
+            pane.ui.clear_pointer_hover();
         }
     }
 

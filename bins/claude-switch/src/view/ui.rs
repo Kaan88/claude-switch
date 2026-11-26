@@ -392,8 +392,9 @@ impl Ui {
         self.hits.push((r, act));
     }
 
-    pub fn draw_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect, m: &Model) {
+    pub fn draw_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect, m: &Model, mouse: (f32, f32)) {
         let Some(overlay) = &mut self.overlay else { return };
+        self.mouse = mouse;
         self.hits.clear();
         p.fill_a(window, pal.title, 0.75);
         let bounds =

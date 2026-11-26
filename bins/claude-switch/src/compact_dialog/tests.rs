@@ -1,6 +1,29 @@
 use super::*;
 use crate::dialogs;
 
+#[test]
+fn preview_offers_default_first_and_changing_account_clears_the_explicit_agent() {
+    let mut st = app();
+    let now = Instant::now();
+    let Some(Dialog::Compact(mut dialog)) = st.dialog.take() else { panic!("expected handover dialog") };
+    dialog.apply(&mut st, Ok(Update::Preview("An editable handover".into())));
+    assert_eq!(dialog.agent_label(), "Default (Claude)");
+    assert_eq!(dialog.agent_name(), None);
+    dialog.click(&mut st, now, AGENT, 0.0);
+    assert_eq!(dialog.count(), 2);
+    assert_eq!(dialog.key(&KeyName::Enter, Mods::default(), None), Some(OPTION));
+    dialog.key(&KeyName::Down, Mods::default(), None);
+    let chosen = dialog.key(&KeyName::Enter, Mods::default(), None).unwrap();
+    dialog.click(&mut st, now, chosen, 0.0);
+    assert_eq!(dialog.agent_name(), Some("main-reviewer"));
+    dialog.click(&mut st, now, ACCOUNT, 0.0);
+    dialog.click(&mut st, now, OPTION + 1, 0.0);
+    assert_eq!(dialog.agent_name(), None);
+    dialog.click(&mut st, now, AGENT, 0.0);
+    assert_eq!(dialog.agents[0].name, "work-reviewer");
+    assert_eq!(dialog.preview.text, "An editable handover");
+}
+
 fn app() -> AppState {
     let mut st = AppState::new(Source::Demo, Some(false), Default::default());
     st.apply_scan(crate::demo::scan(&st.config));
