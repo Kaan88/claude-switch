@@ -346,7 +346,7 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     animation switch; ideally the toolkit's existing page animation.
 30. **Settings › Handover › Default agent is a plain text box** (owner, 2026-11-26): make it a picker
     over the same agent list the handover dialog already shows ("Default (Claude)" first, then the
-    account's, project's and plugins' agents), per account where the lists differ.
+    account's, project's and plugins' agents), per account where the lists differ. Same work as item 37.
 31. **The colour picker does not apply the chosen colour** (owner, 2026-11-26; same in another app,
     so probably the toolkit's picker): the selected colour's code is shown but not applied when
     clicking outside, and there is no confirm button. Expected: a clear Apply/OK and Cancel, Enter
@@ -416,7 +416,7 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     that tab), the live record names the new ID for the same process: follow it automatically and
     attach the new transcript (linked to the old one), and keep the refusal only for a change Switch
     cannot explain. Related to item 24.
-24. **The default agent in Settings › Handover accepts any name** (owner, 2026-11-26). The owner set
+37. **The default agent in Settings › Handover accepts any name** (owner, 2026-11-26). The owner set
     it to `deepseek-flash` meaning the model that writes the handover; the new chat then failed with
     `--agent 'deepseek-flash' not found. Available agents: claude, claude-code-guide, Explore, …`.
     Two settings read alike: the agent the new Claude Code chat starts as, and the OpenCode model
@@ -433,7 +433,7 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     item 14: move the pin from 137121c to 7fd559f and wire the search box, name dialogs, new session
     and settings fields to it. Waiting for the owner's go.
 
-25. **Answer Claude's questions in the Chat view** (owner, 2026-11-26, screenshot: an AskUserQuestion
+38. **Answer Claude's questions in the Chat view** (owner, 2026-11-26, screenshot: an AskUserQuestion
     menu "Who builds" with four options, "Type something" and "Chat about this", shown only in the
     terminal drawer). This is mock-up C, now wanted for questions. Today the drawer sometimes opens
     for a question and sometimes not, the conversation shows "Working… (3m 11s)" while Claude is
@@ -447,7 +447,7 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     otherwise (DESIGN.md: no generated permission answers). Also in the screenshot: the conversation
     above was empty in a fresh handover session (check that the Chat view attaches to the new
     transcript).
-26. **A tab rename is a label only** (owner, 2026-11-26: renamed the toolkit session's tab to "toolkit"; search
+39. **A tab rename is a label only** (owner, 2026-11-26: renamed the toolkit session's tab to "toolkit"; search
     does not find it and other sessions cannot reach it by that name). "Rename tab…" (`tabcontrols.rs`, dialog in
     `dialogs.rs:549`) sets `Tab::rename` in memory only: it is not in `terminal-tabs.json` (lost on restart), not in
     the session marks (so the list and search do not know it), and Claude Code's live name for the session stays the
@@ -457,3 +457,10 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     sent only through the Chat view's usual gate at an idle prompt (never into a running turn or a menu), so the
     transcript is still never edited by the app. Check first whether `/rename` updates the live name other sessions
     see (not verified); a plain terminal tab keeps a label-only rename.
+40. **`/switch-handover:switch-compact` opened a new window when it finished** (owner, 2026-11-26). The skill runs
+    `claude-switch compact --session <id> --open`; the new chat came up in a window of its own instead of a tab of the
+    running Claude Switch. Wanted: when Claude Switch is running, the new chat opens as a tab in that window (the same
+    account and, if the source session runs in one of its tabs, beside it), as the app's own handover does
+    (`compact_open.rs` `open_handover_tab`); a new window only when Switch is not running, and then the Switch window,
+    not a bare console. Find what `--open` launches today (`compact_cli.rs`, `compact_runner.rs`, `run.rs`
+    `CREATE_NEW_CONSOLE`) and how a second process can hand the request to the running one.
