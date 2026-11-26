@@ -83,18 +83,21 @@ mod tests {
     #[test]
     fn log_snapshot_is_literal_and_tail_reads_only_the_end_of_the_named_file() {
         let demo = crate::demo::Transcript::new().unwrap();
-        let path = demo.cwd().join("shell.output");
+        let tasks = demo.cwd().join("claude").join(crate::view::model::project_slug(demo.cwd())).join("tasks");
+        std::fs::create_dir_all(&tasks).unwrap();
+        let path = tasks.join("shell.output");
         let mut text = format!("{}\n", "old opening".repeat(2_000));
         for i in 0..12 {
             text.push_str(&format!("line {i} <b>literal</b>\n"));
         }
         std::fs::write(&path, &text).unwrap();
-        let file = NamedFile::shell_output(path.to_str().unwrap(), demo.cwd()).unwrap();
+        let logs = crate::view::links::ShellLogs::new(demo.cwd(), demo.cwd());
+        let file = logs.named("shell", path.to_str().unwrap(), None).unwrap();
         let lines = tail(&file).unwrap();
         assert_eq!(lines.len(), 8);
         assert_eq!(lines[0], "line 4 <b>literal</b>");
         assert_eq!(lines[7], "line 11 <b>literal</b>");
         assert!(matches!(read(&file).unwrap(), Document::Text(s) if s == text));
-        assert!(NamedFile::shell_output("../unrelated.output", demo.cwd()).is_none());
+        assert!(logs.named("shell", "../unrelated.output", None).is_none());
     }
 }

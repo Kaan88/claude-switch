@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use claude_switch_core::transcript::{Item, ItemId, ItemKind, ResultDetails, ToolState, timestamp_ms};
 
-use super::links::{Files, NamedFile};
+use super::links::{self, Files, NamedFile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WebKind {
@@ -114,26 +114,12 @@ pub(super) fn latest(items: &BTreeMap<ItemId, Vec<Output>>) -> Vec<Output> {
     sorted.into_iter().filter(|o| seen.insert(o.key())).cloned().collect()
 }
 
-pub(super) fn https(s: &str) -> Option<(&str, &str)> {
-    let authority = s.get(..8).filter(|p| p.eq_ignore_ascii_case("https://"))?;
-    let rest = s.strip_prefix(authority)?;
-    if s.len() > 4096 || s.chars().any(|c| c.is_whitespace() || c.is_control() || "\\<>\"`".contains(c)) {
-        return None;
-    }
-    let (host, path) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
-    if host.is_empty()
-        || host.starts_with('.')
-        || host.ends_with('.')
-        || !host.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':'))
-    {
-        return None;
-    }
-    Some((host, path))
-}
-
 fn urls(raw: &str, time: &str) -> Vec<Output> {
     let raw = &raw[..raw.floor_char_boundary(raw.len().min(128 * 1024))];
-    if !raw.as_bytes().windows(8).any(|s| s.eq_ignore_ascii_case(b"https://")) {
+    if ![b"https://".as_slice(), b"http://"]
+        .into_iter()
+        .any(|scheme| raw.as_bytes().windows(scheme.len()).any(|s| s.eq_ignore_ascii_case(scheme)))
+    {
         return Vec::new();
     }
     let doc = mdview_core::parse(raw);
@@ -143,24 +129,15 @@ fn urls(raw: &str, time: &str) -> Vec<Output> {
         let label = doc.text.get(span.start as usize..span.end as usize).unwrap_or("");
         Some((doc.str(link.dest).to_owned(), short(label, 100)))
     });
-    let plain = raw.lines().flat_map(|line| {
-        // Links can occur directly after a Markdown parenthesis or JSON punctuation.
-        // The renderer supplies explicit link destinations before this fallback.
-        line.split([' ', '\t', '\r', '<', '>', '"', '\'', '`', '[', ']', '{', '}']).filter_map(|word| {
-            let start = word.find(|c| c != '(')?;
-            let word = word[start..].trim_end_matches([',', '.', ';', '!']);
-            let excess = word.matches(')').count().saturating_sub(word.matches('(').count());
-            let trailing = word.bytes().rev().take_while(|&b| b == b')').count();
-            let word = &word[..word.len() - excess.min(trailing)];
-            https(word).map(|_| (word.to_owned(), String::new()))
-        })
-    });
+    let plain =
+        links::detect(raw).into_iter().filter(|(_, word)| links::url(word)).map(|(_, word)| (word, String::new()));
     let mut seen = BTreeSet::new();
     explicit
         .chain(plain)
         .filter_map(|(url, label)| {
-            let (host, path) = https(&url)?;
-            let base = path.split(['?', '#']).next().unwrap_or("");
+            let web = links::web_url(&url)?;
+            let base = web.suffix.split(['?', '#']).next().unwrap_or("");
+            let host = web.host;
             let segments = base.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>();
             let kind = if host.eq_ignore_ascii_case("claude.ai") && segments.first() == Some(&"artifacts") {
                 WebKind::Artifact
@@ -173,10 +150,13 @@ fn urls(raw: &str, time: &str) -> Vec<Output> {
             } else {
                 WebKind::Link
             };
-            let title =
-                if !label.is_empty() && https(&label).is_none() { label } else { short(&format!("{host}{base}"), 100) };
+            let title = if !label.is_empty() && !links::url(&label) {
+                label
+            } else {
+                short(&format!("{}{base}", web.authority), 100)
+            };
             // Case-fold the scheme and host, preserving case-sensitive path/query/fragment.
-            let normalized = format!("https://{}{}", host.to_ascii_lowercase(), path);
+            let normalized = format!("{}{}{}", web.scheme, web.authority.to_ascii_lowercase(), web.suffix);
             seen.insert(normalized.clone()).then(|| Output {
                 title,
                 time: time.into(),
@@ -206,16 +186,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artifact_pull_request_and_https_links_are_classified_and_deduplicated() {
+    fn artifact_pull_request_and_http_or_https_links_are_classified_and_deduplicated() {
         let text = "[Preview](https://claude.ai/artifacts/abc) https://CLAUDE.ai/artifacts/abc\n\
-            https://github.com/org/repo/pull/42 https://example.test/p?q=1#x http://no.test/x \
-            https://claude.ai.evil.test/artifacts/abc https://user@evil.test/";
+            https://github.com/org/repo/pull/42 https://example.test/p?q=1#x HTTP://EXAMPLE.test/p?q=1#x \
+            https://claude.ai.evil.test/artifacts/abc https://user@evil.test/ http://a:b@evil.test/";
         let links = urls(text, "11:22:33");
-        assert_eq!(links.iter().map(Output::kind).collect::<Vec<_>>(), ["Artifact", "Pull request", "Link", "Link"]);
+        assert_eq!(
+            links.iter().map(Output::kind).collect::<Vec<_>>(),
+            ["Artifact", "Pull request", "Link", "Link", "Link"]
+        );
         assert_eq!(links[0].title, "Preview");
         assert_eq!(links[0].time, "11:22:33");
         assert!(matches!(&links[2].to, Destination::Web(url, _) if url.ends_with("?q=1#x")));
-        assert!(https(r"https://host.test\bad").is_none());
+        assert!(matches!(&links[3].to, Destination::Web(url, _) if url == "http://example.test/p?q=1#x"));
     }
 
     #[test]

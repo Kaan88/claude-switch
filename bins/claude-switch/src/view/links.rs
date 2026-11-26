@@ -8,44 +8,45 @@ use std::path::{Component, Path, PathBuf};
 use claude_switch_core::grouping::open_local_file;
 use mdshared_ui::platform;
 
+mod shell_logs;
+pub(super) use shell_logs::ShellLogs;
+
 pub type Files = BTreeMap<String, NamedFile>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NamedFile(PathBuf);
+pub struct NamedFile {
+    path: PathBuf,
+    view_only: bool,
+}
 
 pub const MAX_MARKDOWN: u64 = 1024 * 1024;
 
 impl NamedFile {
     pub fn path(&self) -> &Path {
-        &self.0
+        &self.path
     }
 
     pub fn markdown(&self) -> bool {
-        is_markdown(&self.0)
+        is_markdown(&self.path)
     }
 
     pub fn picture(&self) -> bool {
-        self.0.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+        self.path.extension().and_then(|s| s.to_str()).is_some_and(|s| {
             ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff"].iter().any(|ext| s.eq_ignore_ascii_case(ext))
         })
     }
 
-    pub(super) fn shell_output(raw: &str, cwd: &Path) -> Option<Self> {
-        // This extra authority is only for a background Bash result's exact output path.
-        let path = transcript_path(raw, cwd)?;
-        let ext = path.extension()?.to_str()?;
-        ["output", "log", "txt"].iter().any(|e| e.eq_ignore_ascii_case(ext)).then_some(Self(path))
-    }
-
     pub fn supports_default_app(&self) -> bool {
-        self.0
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|extension| DOCUMENT_TYPES.iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)))
+        !self.view_only
+            && self
+                .path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|extension| DOCUMENT_TYPES.iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)))
     }
 
     pub fn available(&self) -> bool {
-        open_local_file(&self.0, false).is_some()
+        open_local_file(&self.path, false).is_some()
     }
 
     pub fn read_markdown(&self) -> std::io::Result<String> {
@@ -53,7 +54,7 @@ impl NamedFile {
         if !self.markdown() {
             return Err(ErrorKind::InvalidInput.into());
         }
-        let file = open_local_file(&self.0, true)
+        let file = open_local_file(&self.path, true)
             .ok_or_else(|| Error::other("The named file is no longer available as a local file."))?;
         let mut bytes = Vec::new();
         file.take(MAX_MARKDOWN + 1).read_to_end(&mut bytes)?;
@@ -67,8 +68,13 @@ impl NamedFile {
     }
 
     pub fn open(&self, reveal: bool) -> bool {
-        let Some(_checked) = open_local_file(&self.0, false) else { return false };
-        if reveal { crate::run::reveal(&self.0).is_ok() } else { platform::open_file(&self.0, DOCUMENT_TYPES) }
+        let Some(path) = self.external_path() else { return false };
+        let Some(_checked) = open_local_file(path, false) else { return false };
+        if reveal { crate::run::reveal(path).is_ok() } else { platform::open_file(path, DOCUMENT_TYPES) }
+    }
+
+    fn external_path(&self) -> Option<&Path> {
+        (!self.view_only).then_some(self.path())
     }
 }
 
@@ -97,7 +103,7 @@ pub fn resolve(s: &str, cwd: &Path, touched: &BTreeSet<PathBuf>) -> Option<Named
         return None;
     }
     open_local_file(&normalized, false)?;
-    Some(NamedFile(normalized))
+    Some(NamedFile { path: normalized, view_only: false })
 }
 
 pub(super) fn inside(path: &Path, cwd: &Path) -> bool {
@@ -131,10 +137,49 @@ fn absolute(path: &Path) -> Option<PathBuf> {
 }
 
 pub fn url(s: &str) -> bool {
-    !s.chars().any(char::is_control)
-        && ["https://", "http://"]
-            .iter()
-            .any(|p| s.get(..p.len()).is_some_and(|start| start.eq_ignore_ascii_case(p)) && s.len() > p.len())
+    web_url(s).is_some()
+}
+
+pub(super) struct WebUrl<'a> {
+    pub scheme: &'static str,
+    pub authority: &'a str,
+    pub host: &'a str,
+    pub suffix: &'a str,
+}
+
+/// Both discovery and activation use this check. Do not let the browser reinterpret
+/// credential-bearing, backslash-delimited, or percent-encoded authorities.
+pub(super) fn web_url(s: &str) -> Option<WebUrl<'_>> {
+    let (scheme, rest) = ["https://", "http://"].into_iter().find_map(|scheme| {
+        let (prefix, rest) = s.split_at_checked(scheme.len())?;
+        prefix.eq_ignore_ascii_case(scheme).then_some((scheme, rest))
+    })?;
+    if s.len() > 4096 || s.chars().any(|c| c.is_whitespace() || c.is_control() || "\\<>\"`".contains(c)) {
+        return None;
+    }
+    let (authority, suffix) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+    let (host, port) = if let Some(ip) = authority.strip_prefix('[') {
+        let (ip, extra) = ip.split_once(']')?;
+        ip.parse::<std::net::Ipv6Addr>().ok()?;
+        (ip, if extra.is_empty() { None } else { Some(extra.strip_prefix(':')?) })
+    } else {
+        let (host, port) = authority.split_once(':').map_or((authority, None), |(h, p)| (h, Some(p)));
+        if host.len() > 253
+            || !host.split('.').all(|label| {
+                (1..=63).contains(&label.len())
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            })
+        {
+            return None;
+        }
+        (host, port)
+    };
+    if port.is_some_and(|p| !p.bytes().all(|b| b.is_ascii_digit()) || p.parse::<u16>().is_err()) {
+        return None;
+    }
+    Some(WebUrl { scheme, authority, host, suffix })
 }
 
 fn local(s: &str) -> bool {
@@ -183,12 +228,17 @@ pub fn detect(text: &str) -> Vec<(Range<usize>, String)> {
             at += end + 1;
             continue;
         }
-        if first.is_whitespace() || matches!(first, '(' | '[' | '<' | '"' | '\'' | '`') {
+        if first.is_whitespace() || matches!(first, '(' | '[' | '{' | '<' | '"' | '\'' | '`') {
             at += first.len_utf8();
             continue;
         }
         let end = tail.find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '`')).unwrap_or(tail.len());
-        let mut word = tail[..end].trim_end_matches([',', '.', ';', '!', ']', '\'', ':']);
+        let mut word = tail[..end].trim_end_matches([',', '.', ';', '!', '}', '\'', ':']);
+        if let Some(trimmed) = word.strip_suffix(']')
+            && !web_url(word).is_some_and(|web| web.suffix.is_empty() && web.authority.starts_with('['))
+        {
+            word = trimmed;
+        }
         if word.ends_with(')') {
             let excess = word.matches(')').count().saturating_sub(word.matches('(').count());
             let suffix = word.bytes().rev().take_while(|&b| b == b')').count();
@@ -212,6 +262,31 @@ pub fn existing(text: &str, files: &Files) -> Vec<(Range<usize>, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_links_allow_both_schemes_with_only_valid_hosts_and_no_userinfo() {
+        for ok in ["http://localhost:8080/", "HTTPS://example.test/a?user=x@y", "https://[::1]:443/"] {
+            assert!(url(ok), "{ok}");
+        }
+        for bad in [
+            "http://user:pass@example.test/",
+            "https://user@example.test/",
+            "http://%75ser%40example.test/",
+            "https://example.test\\other.test",
+            "http:///example.test",
+            "http://:80",
+            "https://example..test",
+            "http://example.test:bad",
+            "https://example.test:65536",
+            "http://host:80:90",
+            "https://[::1]@host/",
+            "ftp://example.test/",
+        ] {
+            assert!(!url(bad), "{bad}");
+            assert!(existing(bad, &Files::new()).is_empty(), "highlighted {bad}");
+        }
+        assert!(!url("https://example.test/a b"));
+    }
 
     #[test]
     fn finds_url_and_local_files_with_source_byte_ranges() {

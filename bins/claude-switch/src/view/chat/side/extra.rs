@@ -31,8 +31,7 @@ impl Details {
             return None;
         }
         match part {
-            // Full is resolved from that exact shell against the pane's CWD on activation.
-            Part::Full => Some(Action::ShellFull(shell.tool)),
+            Part::Full if model.shell_log(shell).is_some() => Some(Action::ShellFull(shell.tool)),
             Part::Follow if shell.status == ShellStatus::Running => Some(Action::ShellFollow(shell.tool)),
             Part::Stop if shell.status == ShellStatus::Running => Some(Action::ShellStop(shell.tool)),
             _ => None,
@@ -69,7 +68,7 @@ impl Details {
             }
             let top = out.height - 17.0;
             let mut actions = Vec::new();
-            if NamedFile::shell_output(&shell.output, f.cwd).is_some() {
+            if f.model.shell_log(shell).is_some() {
                 actions.push(("Full output", Part::Full));
             }
             if running {
@@ -97,9 +96,7 @@ impl Details {
 }
 
 pub(super) fn open_full(pane: &mut Pane, id: ItemId) -> bool {
-    let Some(file) =
-        pane.model.shells.iter().find(|s| s.tool == id).and_then(|s| NamedFile::shell_output(&s.output, &pane.cwd))
-    else {
+    let Some(file) = pane.model.shells.iter().find(|s| s.tool == id).and_then(|s| pane.model.shell_log(s)) else {
         return false;
     };
     pane.ui.open_output(Destination::File(file), &mut pane.model);

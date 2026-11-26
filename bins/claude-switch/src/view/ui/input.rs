@@ -302,7 +302,7 @@ impl Ui {
             self.show(Page::Conversation);
         }
         match output {
-            Destination::Web(url, _) if super::super::outputs::https(&url).is_some() => {
+            Destination::Web(url, _) if links::url(&url) => {
                 platform::open_url(&url);
             }
             Destination::File(file) => self.open_markdown(file, m),

@@ -1,6 +1,6 @@
 //! The only composer PTY writes. A clipboard send has a separate, fail-closed second step.
 mod report;
-mod screen;
+pub(in crate::view) mod screen;
 mod stages;
 
 use std::time::{Duration, Instant};

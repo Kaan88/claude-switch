@@ -93,8 +93,10 @@ fn seed_details(file: &mut File, cwd: &Path) -> io::Result<()> {
         ("old-preview", "b2old", "npm run build:old-preview", "Stopped at a checkpoint"),
     ];
     // Each record is separate, exactly like the tool-use/result pairing of a real turn.
+    let tasks = cwd.join("claude").join(crate::view::model::project_slug(cwd)).join("tasks");
+    fs::create_dir_all(&tasks)?;
     for (i, (tool_id, shell_id, command, last)) in runs.into_iter().enumerate() {
-        let log = cwd.join(format!("{shell_id}.output"));
+        let log = tasks.join(format!("{shell_id}.output"));
         fs::write(
             &log,
             format!(
@@ -177,7 +179,7 @@ fn seed_details(file: &mut File, cwd: &Path) -> io::Result<()> {
         json!(
             "The [North ridge preview](https://claude.ai/artifacts/demo-north-ridge) and the \
          [review pull request](https://github.com/example/field-guide/pull/42) are ready. \
-         See also the [build notes](https://example.test/field-guide/build)."
+             See also the [build notes](http://example.test/field-guide/build)."
         ),
     )
 }

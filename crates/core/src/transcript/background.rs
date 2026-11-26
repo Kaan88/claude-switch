@@ -74,7 +74,9 @@ pub(super) fn bounded_text(content: &Value) -> String {
         if !["Command running in background", "Stopped task ", "<retrieval_status>", "<task_id>"]
             .iter()
             .any(|prefix| start.starts_with(prefix))
-            && !raw.as_bytes().windows(8).any(|window| window.eq_ignore_ascii_case(b"https://"))
+            && ![b"https://".as_slice(), b"http://"]
+                .into_iter()
+                .any(|scheme| raw.as_bytes().windows(scheme.len()).any(|window| window.eq_ignore_ascii_case(scheme)))
             && !raw.lines().any(|line| saved_path(line).is_some())
         {
             continue;
@@ -272,6 +274,12 @@ mod tests {
     use crate::util::testing::{TempDir, put};
     use serde_json::json;
     use std::io::Write;
+
+    #[test]
+    fn retains_plain_http_tool_results_for_the_outputs_projection() {
+        let text = "Report at HTTP://example.test/report";
+        assert_eq!(bounded_text(&json!([{"type":"text","text":text}])), text);
+    }
 
     #[test]
     fn pairs_exact_background_bash_results_and_tracks_later_lifecycle_records() {

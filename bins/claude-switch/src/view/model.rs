@@ -14,7 +14,7 @@ use claude_switch_core::transcript::{Changes, Item, ItemId, ItemKind, Picture, R
 use mdshared_text::image::Image;
 use mdshared_ui::thumbs::MemoryCache;
 
-use super::links::{self, Files, NamedFile};
+use super::links::{self, Files, NamedFile, ShellLogs};
 use super::{
     documents::{self, Document},
     outputs::{self, Output},
@@ -26,6 +26,7 @@ const CHUNK: usize = 256 * 1024;
 #[derive(Clone)]
 pub enum Source {
     File(PathBuf),
+    Demo(PathBuf),
     Discover { config: PathBuf, cwd: PathBuf, started: SystemTime, verified: Arc<std::sync::OnceLock<String>> },
 }
 
@@ -35,12 +36,12 @@ impl Source {
             Self::Discover { config, cwd, started, .. } => {
                 discover(&project(config, cwd), cwd, *started, id).ok().flatten()
             }
-            Self::File(_) => None,
+            Self::File(_) | Self::Demo(_) => None,
         }
     }
     pub fn find_file(&self) -> Option<PathBuf> {
         match self {
-            Self::File(path) => Some(path.clone()),
+            Self::File(path) | Self::Demo(path) => Some(path.clone()),
             Self::Discover { config, cwd, started, verified } => {
                 discover(&project(config, cwd), cwd, *started, verified.get()?).ok().flatten()
             }
@@ -49,10 +50,12 @@ impl Source {
 }
 
 pub(super) fn project(config: &Path, cwd: &Path) -> PathBuf {
+    config.join("projects").join(project_slug(cwd))
+}
+
+pub(crate) fn project_slug(cwd: &Path) -> String {
     let cwd = cwd.to_string_lossy();
-    let encoded: String =
-        cwd.trim_start_matches(r"\\?\").chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-    config.join("projects").join(encoded)
+    cwd.trim_start_matches(r"\\?\").chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
 }
 
 fn discover(dir: &Path, cwd: &Path, started: SystemTime, verified: &str) -> io::Result<Option<PathBuf>> {
@@ -176,6 +179,7 @@ pub struct Model {
     pub(super) outputs: BTreeMap<ItemId, Vec<Output>>,
     pub(super) output_list: Vec<Output>,
     pub(super) shells: Vec<BackgroundShell>,
+    shell_logs: ShellLogs,
     pub(super) shell_tails: BTreeMap<ItemId, Option<Vec<String>>>,
     tail_requested: BTreeSet<ItemId>,
     markdown_ticket: u64,
@@ -191,6 +195,9 @@ pub struct Model {
 
 impl Model {
     pub fn new(source: Source, cwd: PathBuf, wake: impl Fn() + Send + 'static) -> Self {
+        let temp = if matches!(source, Source::Demo(_)) { cwd.clone() } else { std::env::temp_dir() };
+        let shell_logs = ShellLogs::new(&temp, &cwd);
+        let worker_logs = shell_logs.clone();
         let (tx, commands) = mpsc::channel();
         let (events, rx) = mpsc::channel();
         let polling = Arc::new(AtomicBool::new(false));
@@ -206,6 +213,7 @@ impl Model {
                 chat: Default::default(),
                 refs: Default::default(),
                 shells: Default::default(),
+                shell_logs: worker_logs,
             };
             let mut error = None;
             for command in commands {
@@ -249,6 +257,7 @@ impl Model {
             outputs: Default::default(),
             output_list: Vec::new(),
             shells: Vec::new(),
+            shell_logs,
             shell_tails: Default::default(),
             tail_requested: Default::default(),
             markdown_ticket: 0,
@@ -412,6 +421,10 @@ impl Model {
         self.shells.iter().take_while(|s| s.status == ShellStatus::Running).count()
     }
 
+    pub(super) fn shell_log(&self, shell: &BackgroundShell) -> Option<NamedFile> {
+        self.shell_logs.named(&shell.id, &shell.output, self.session_id())
+    }
+
     pub(super) fn request_shell_tail(&mut self, id: ItemId) {
         if self.tail_requested.insert(id) && self.tx.send(Command::ShellTail(self.generation, id)).is_err() {
             self.tail_requested.remove(&id);
@@ -434,6 +447,7 @@ struct Worker {
     chat: claude_switch_core::transcript::ChatInfo,
     refs: file_refs::FileRefs,
     shells: Vec<BackgroundShell>,
+    shell_logs: ShellLogs,
 }
 
 fn refs(item: &Item) -> &[Picture] {
@@ -465,7 +479,7 @@ impl Worker {
                 return Ok(None);
             }
             let path = match &self.source {
-                Source::File(path) => path.clone(),
+                Source::File(path) | Source::Demo(path) => path.clone(),
                 Source::Discover { config, cwd, started, verified } => {
                     let id = verified.get().ok_or_else(|| {
                         io::Error::other("Transcript not attached: session identity is unverified or ambiguous.")
@@ -540,7 +554,7 @@ impl Worker {
                     .shells
                     .iter()
                     .find(|shell| shell.tool == id && shell.status == ShellStatus::Running)
-                    .and_then(|shell| NamedFile::shell_output(&shell.output, &self.cwd))
+                    .and_then(|shell| self.shell_logs.named(&shell.id, &shell.output, self.session.as_deref()))
                     .and_then(|file| documents::tail(&file).ok());
                 return Ok(Some(Event::ShellTail(g, id, lines)));
             }

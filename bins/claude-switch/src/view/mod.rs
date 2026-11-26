@@ -96,14 +96,14 @@ impl Pane {
 
     pub(crate) fn pinned_id(&self) -> Option<&str> {
         match &self.transcript_source {
-            model::Source::File(path) => path.file_stem()?.to_str(),
+            model::Source::File(path) | model::Source::Demo(path) => path.file_stem()?.to_str(),
             model::Source::Discover { verified, .. } => verified.get().map(String::as_str),
         }
     }
 
     fn identity_path(&self, id: &str) -> Option<PathBuf> {
         match &self.transcript_source {
-            model::Source::File(path) => Some(path.clone()),
+            model::Source::File(path) | model::Source::Demo(path) => Some(path.clone()),
             model::Source::Discover { verified, .. } => {
                 let path = self.transcript_source.candidate_path(verified.get().map_or(id, String::as_str))?;
                 verified.get_or_init(|| id.to_owned());
@@ -215,7 +215,7 @@ impl AppState {
             },
             terminal,
         );
-        let mut pane = self.new_session_pane(model::Source::File(demo.path().to_owned()), demo.cwd().to_owned());
+        let mut pane = self.new_session_pane(model::Source::Demo(demo.path().to_owned()), demo.cwd().to_owned());
         pane._demo = Some(demo);
         pane.verified_path = pane.transcript_source.find_file();
         pane.chat = chat::Chat::demo();

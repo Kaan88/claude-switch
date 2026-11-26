@@ -2,6 +2,7 @@
 use claude_switch_core::transcript::{ChatPhase, ItemId, ShellStatus};
 use mdshared_term::{Screen, input};
 
+use super::chat::submission::screen::clean_prompt;
 use crate::dialogs::{Dialog, Pending};
 use crate::state::AppState;
 
@@ -19,30 +20,12 @@ fn footer(line: &str) -> bool {
 
 fn manager_key(screen: &Screen) -> Option<Vec<u8>> {
     let modes = screen.modes();
-    if modes.alt_screen || !modes.bracketed_paste || crate::attention::screen_permission_prompt(screen) {
+    if !modes.bracketed_paste || !clean_prompt(screen) {
         return None;
     }
     let cursor = screen.cursor();
-    let line = screen.line(cursor.row)?;
-    if line.wrapped() || cursor.row > 0 && screen.line(cursor.row - 1).is_some_and(|l| l.wrapped()) {
-        return None;
-    }
-    // Only a plainly empty CLI prompt. Unknown, edited, bordered or wrapped prompts get
-    // the manual instructions rather than an injected key.
-    let row = screen.row_text(cursor.row);
-    let prompt = row.find('❯')?;
-    if row.trim() != "❯" || !(prompt + 1..=prompt + 2).contains(&cursor.col) {
-        return None;
-    }
-    let below = ((cursor.row + 1)..(cursor.row + 6).min(screen.rows())).map(|i| screen.row_text(i)).collect::<Vec<_>>();
-    let menu_visible = below.iter().any(|line| {
-        let text = line.trim().to_ascii_lowercase();
-        text.contains("enter to select")
-            || text.contains("enter to confirm")
-            || text.starts_with("esc to cancel")
-            || text.starts_with("esc to close")
-    });
-    (!menu_visible && below.iter().any(|line| footer(line)))
+    ((cursor.row + 1)..(cursor.row + 6).min(screen.rows()))
+        .any(|i| footer(&screen.row_text(i)))
         .then(|| input::encode_key(input::Key::Down, input::Mods::default(), &modes))
         .filter(|key| !key.is_empty())
 }
@@ -127,5 +110,21 @@ mod tests {
         let mut alt = screen("", hint);
         alt.feed(b"\x1b[?1049h");
         assert_eq!(manager_key(&alt), None);
+    }
+
+    #[test]
+    fn manager_accepts_boxed_and_faint_placeholder_prompts_but_not_real_text() {
+        let hint = "3 shells still running · ↓ to manage";
+        let mut boxed = Screen::new(100, 12, 20);
+        boxed.feed(format!("\x1b[?2004h╭────────╮\r\n│ ❯      │\r\n╰────────╯\r\n{hint}\x1b[2;5H").as_bytes());
+        assert_eq!(manager_key(&boxed), Some(b"\x1b[B".to_vec()));
+        boxed.feed("draft".as_bytes());
+        assert_eq!(manager_key(&boxed), None);
+
+        let mut faint = Screen::new(100, 12, 20);
+        faint.feed(format!("\x1b[?2004h❯ \x1b[2mTry “fix the tests”\x1b[0m\r\n{hint}\x1b[1;3H").as_bytes());
+        assert_eq!(manager_key(&faint), Some(b"\x1b[B".to_vec()));
+        faint.feed(b"\x1b[7;2mReal text\x1b[0m");
+        assert_eq!(manager_key(&faint), None);
     }
 }
