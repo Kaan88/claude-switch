@@ -24,6 +24,17 @@ impl NamedFile {
         is_markdown(&self.0)
     }
 
+    pub fn supports_default_app(&self) -> bool {
+        self.0
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|extension| DOCUMENT_TYPES.iter().any(|allowed| extension.eq_ignore_ascii_case(allowed)))
+    }
+
+    pub fn available(&self) -> bool {
+        open_local_file(&self.0, false).is_some()
+    }
+
     pub fn read_markdown(&self) -> std::io::Result<String> {
         use std::io::{Error, ErrorKind};
         if !self.markdown() {
@@ -68,6 +79,13 @@ pub fn markdown_destination(s: &str) -> Option<String> {
 }
 
 pub fn resolve(s: &str, cwd: &Path) -> Option<NamedFile> {
+    let normalized = transcript_path(s, cwd)?;
+    open_local_file(&normalized, false)?;
+    Some(NamedFile(normalized))
+}
+
+/// Lexical identity only. A caller must never treat this as evidence that a file can be opened.
+pub fn transcript_path(s: &str, cwd: &Path) -> Option<PathBuf> {
     if !local(s) || s.len() > 4096 {
         return None;
     }
@@ -101,8 +119,7 @@ pub fn resolve(s: &str, cwd: &Path) -> Option<NamedFile> {
             normalized.push(component.as_os_str());
         }
     }
-    open_local_file(&normalized, false)?;
-    Some(NamedFile(normalized))
+    Some(normalized)
 }
 
 pub fn url(s: &str) -> bool {

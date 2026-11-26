@@ -2,6 +2,7 @@
 mod input;
 mod layout;
 mod paint;
+mod side;
 
 pub use input::Control;
 pub use input::layout_shortcut;
@@ -124,8 +125,7 @@ pub struct Chat {
     suppressed: Option<Reason>,
     side_hidden: bool,
     side: Side,
-    side_scroll: usize,
-    side_max: usize,
+    details: side::Details,
     editor: Editor,
     editor_drag: bool,
     chips: Vec<Chip>,

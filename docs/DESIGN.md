@@ -581,8 +581,14 @@ writes the resulting text in bracketed paste followed by one app-generated Enter
 terminal paste refuses multiline clipboard text when bracketed paste is off. Recall uses
 loaded main-transcript prompts. Expanded tool rows show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
-additions, and shell output uses only its first text lines. Changed files lists successful
-Edit/Write tool paths seen in loaded history, not a filesystem or Git diff. Context now uses
+additions, and shell output uses only its first text lines. In Chat's Details panel, Task and Agent
+rows expand to show full task text or reported agent details. **Changed files** lists successful
+Edit/Write tool paths in the displayed conversation's loaded history, not a filesystem or Git diff.
+The disclosure arrow expands a file's edits newest first, even if the file is unavailable. An edit
+jumps to its exact tool row and expands its group and detail, pausing follow. Clicking the file name
+separately opens the embedded Markdown viewer or asks the system for the default app for a supported
+document or media type. It uses only an existing, verified transcript-named file and rechecks at
+activation. Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer reuses the app's multiline editor with toolkit text and drawing.
 Demo shows the waiting state, and its composer writes only to the synthetic terminal screen.

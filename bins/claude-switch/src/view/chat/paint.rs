@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::host::Cx;
 use mdshared_ui::theme::Palette;
@@ -42,6 +40,8 @@ impl AppState {
     }
 
     pub fn draw_chat(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect, pal: &Palette) {
+        let Some(tab_id) = self.tabs.active else { return };
+        let details_active = self.nothing_over() && !self.picture_overlay() && !self.usage.popup.open;
         let account = self.tabs.shown().and_then(|t| t.account.as_deref()).map(|slug| self.account_name(slug));
         let hover = self.hover;
         let focused = cx.focused() && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
@@ -135,6 +135,7 @@ impl AppState {
             button(p, pal, r, label, hover == Some(target), selected);
             self.hits.push((r, target));
         };
+        let mut detail_hits = Vec::new();
         if l.side.w > 0.0 {
             let clip = p.clip(l.side);
             p.fill(l.side, pal.pane);
@@ -151,7 +152,18 @@ impl AppState {
                     chat.side == side,
                 );
             }
-            chat.draw_side(p, pal, &pane.model);
+            detail_hits = chat.details.draw(
+                p,
+                pal,
+                super::side::Frame {
+                    tab: tab_id,
+                    area: l.side,
+                    side: chat.side,
+                    model: &pane.model,
+                    cwd: &pane.cwd,
+                    hover: hover.filter(|_| details_active),
+                },
+            );
             p.restore(clip);
         }
         if l.grip.h > 0.0 {
@@ -185,6 +197,9 @@ impl AppState {
             p.fill(row, pal.page);
             p.text(Face::Ui, 11.5, row.x, row.cy(), Reason::Tool.label(), pal.muted, (row.w - 122.0).max(0.0));
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
+        }
+        if details_active {
+            self.hits.extend(detail_hits);
         }
     }
 }
@@ -230,74 +245,6 @@ impl Chat {
             }
         }
         p.restore(c);
-    }
-
-    fn draw_side(&mut self, p: &mut Painter, pal: &Palette, model: &super::super::model::Model) {
-        use claude_switch_core::transcript::TaskStatus;
-        let r = self.layout.side;
-        let heading = match self.side {
-            Side::Tasks => "Tasks",
-            Side::Agents => "Agents",
-            Side::Files => "Changed files · from tool results",
-        };
-        p.text(Face::Semibold, 12.0, r.x + 12.0, r.y + 53.0, heading, pal.muted, r.w - 24.0);
-        let rows: Vec<_> = match self.side {
-            Side::Tasks => model
-                .tasks
-                .iter()
-                .map(|task| {
-                    let mark = match task.status {
-                        TaskStatus::Completed => "✓",
-                        TaskStatus::InProgress => "◉",
-                        TaskStatus::Pending => "○",
-                    };
-                    (format!("{mark}  {}", task.content), task.status == TaskStatus::InProgress)
-                })
-                .collect(),
-            Side::Agents => model
-                .agents
-                .iter()
-                .map(|a| {
-                    (
-                        format!(
-                            "{}  {}",
-                            match a.finished {
-                                Some(true) => "✓",
-                                Some(false) => "◉",
-                                None => "?",
-                            },
-                            a.description.as_deref().unwrap_or(&a.id)
-                        ),
-                        a.finished == Some(false),
-                    )
-                })
-                .collect(),
-            Side::Files => model
-                .changed_files
-                .iter()
-                .map(|path| {
-                    let name = Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or(path);
-                    (format!("▹  {name}"), false)
-                })
-                .collect(),
-        };
-        let visible = ((r.h - 66.0) / 26.0) as usize;
-        self.side_max = rows.len().saturating_sub(visible);
-        self.side_scroll = self.side_scroll.min(self.side_max);
-        if rows.is_empty() {
-            p.text(Face::Ui, 12.0, r.x + 12.0, r.y + 80.0, "Nothing to show yet", pal.muted, r.w - 24.0);
-        }
-        for (i, (label, active)) in rows.iter().skip(self.side_scroll).take(visible).enumerate() {
-            p.text(
-                Face::Ui,
-                12.0,
-                r.x + 12.0,
-                r.y + 79.0 + i as f32 * 26.0,
-                label,
-                if *active { pal.accent } else { pal.text },
-                r.w - 24.0,
-            );
-        }
     }
 }
 

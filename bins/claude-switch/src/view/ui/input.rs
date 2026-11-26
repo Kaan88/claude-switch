@@ -224,7 +224,10 @@ impl Ui {
                 self.follow.scrolled(0.0, self.max.max(2.0));
                 m.earlier();
             }
-            Action::Latest => self.follow.latest(),
+            Action::Latest => {
+                self.tool_jump = None;
+                self.follow.latest();
+            }
             Action::Group(id) => {
                 if !self.expanded.remove(&id) {
                     self.expanded.insert(id);
@@ -237,11 +240,7 @@ impl Ui {
                 }
                 self.cache = None;
             }
-            Action::Agent(id) => {
-                self.agent_origin = Some(self.page);
-                m.select_agent(Some(&id));
-                self.show(Page::Conversation);
-            }
+            Action::Agent(id) => self.open_agent(&id, m),
             Action::Back => {
                 m.select_agent(None);
                 let page = self.agent_origin.take().unwrap_or(Page::Agents);
@@ -268,13 +267,14 @@ impl Ui {
         true
     }
 
-    fn open_markdown(&mut self, file: NamedFile, m: &mut Model) {
+    pub(in crate::view) fn open_markdown(&mut self, file: NamedFile, m: &mut Model) {
         self.selection = None;
+        self.focused = true;
         m.request_markdown(file.clone());
         self.markdown = Some(markdown::Markdown::new(file));
     }
 
-    fn close_markdown(&mut self) {
+    pub(super) fn close_markdown(&mut self) {
         self.markdown = None;
         self.scroll_drag = None;
     }
@@ -283,10 +283,19 @@ impl Ui {
         self.close_markdown();
         self.page = page;
         self.selection = None;
+        self.tool_jump = None;
         self.rows.clear();
         self.cache = None;
         self.offset = 0.0;
         self.follow.latest();
+    }
+
+    pub(in crate::view) fn open_agent(&mut self, id: &str, model: &Model) {
+        if model.agent.as_deref() != Some(id) {
+            self.agent_origin = Some(self.page);
+            model.select_agent(Some(id));
+            self.show(Page::Conversation);
+        }
     }
 
     pub fn wheel(&mut self, x: f32, y: f32, dy: f32) {
@@ -445,5 +454,47 @@ mod tests {
             assert!(ui.key(&KeyName::Escape, Mods::default()));
             assert!(ui.markdown.is_none());
         }
+    }
+
+    #[test]
+    fn jumping_to_an_edit_expands_its_group_and_scrolls_to_the_exact_tool() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut m = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        m.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(m.collect());
+        let id = m
+            .items
+            .iter()
+            .find_map(|(&id, item)| match &item.kind {
+                claude_switch_core::transcript::ItemKind::Tool { id: tool, .. } if tool == "demo-index" => Some(id),
+                _ => None,
+            })
+            .unwrap();
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(700, 240);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        let area = Rect::new(0.0, 0.0, 700.0, 240.0);
+        let pal = &mdshared_ui::theme::DARK;
+        let now = Instant::now();
+        let mut ui = Ui::default();
+        ui.set_chat(true);
+        ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
+        assert!(ui.rows.iter().any(|row| row.style == Style::Group && row.title == "4 tool calls"));
+        assert!(!ui.rows.iter().any(|row| row.id == Id::Tool(id)));
+        assert!(ui.jump_to_tool(&m, id));
+        ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
+        let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
+        assert!(row.open);
+        assert_eq!(ui.tool_jump, Some((id, false)));
+        assert!(!ui.follow.active());
+        assert!(ui.hits.iter().any(|(_, a)| *a == Action::Tool(id)));
+        let offset = ui.offset;
+        assert!(!ui.jump_to_tool(&m, ItemId { offset: 0, block: 1000 }));
+        assert_eq!(ui.offset, offset);
     }
 }

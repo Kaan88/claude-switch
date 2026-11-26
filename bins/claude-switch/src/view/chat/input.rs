@@ -23,6 +23,7 @@ pub enum Control {
     Grip,
     Panel,
     Side(Side),
+    Detail(super::side::Hit),
     Editor,
     Attach,
     Send,
@@ -229,8 +230,7 @@ impl AppState {
         if chat.layout.editor.contains(x, y) {
             chat.editor.wheel(dy);
         } else if chat.layout.side.w > 0.0 && chat.layout.side.contains(x, y) {
-            chat.side_scroll =
-                if dy > 0.0 { chat.side_scroll.saturating_sub(1) } else { (chat.side_scroll + 1).min(chat.side_max) };
+            chat.details.wheel(dy);
         } else {
             return false;
         }
@@ -258,7 +258,12 @@ impl AppState {
             Control::Panel => chat.side_hidden = !chat.side_hidden,
             Control::Side(side) => {
                 chat.side = side;
-                chat.side_scroll = 0;
+                chat.details.reset_scroll();
+            }
+            Control::Detail(hit) => {
+                if super::side::activate(pane, tab.id, hit) {
+                    self.session_view.text_focus = true;
+                }
             }
             Control::Remove(i) if i < chat.chips.len() => {
                 chat.chips.remove(i);

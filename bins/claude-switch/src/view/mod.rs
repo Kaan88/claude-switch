@@ -430,7 +430,9 @@ impl AppState {
                 return Some(changed || split_changed);
             }
             if changed {
-                return Some(true);
+                // Clear transcript hover without claiming the pointer outside it:
+                // Chat's Details rows still need the window's hover/cursor pass.
+                cx.request_redraw_all();
             }
         }
         if split_changed {

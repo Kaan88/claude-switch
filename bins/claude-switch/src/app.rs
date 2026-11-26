@@ -613,6 +613,7 @@ impl AppState {
             Some(Target::Terminal) if !program_mouse => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Editor)) => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Grip)) => Cursor::ResizeNs,
+            Some(Target::Chat(crate::view::chat::Control::Detail(_))) => Cursor::Hand,
             Some(Target::Search) if self.dialog.is_none() => Cursor::Text,
             Some(Target::Dialog(dialogs::FIELD)) => Cursor::Text,
             _ => Cursor::Default,

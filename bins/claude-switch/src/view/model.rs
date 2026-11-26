@@ -99,6 +99,9 @@ impl Follow {
     pub fn latest(&mut self) {
         self.0 = true;
     }
+    pub fn pause(&mut self) {
+        self.0 = false;
+    }
     pub fn active(&self) -> bool {
         self.0
     }
@@ -137,7 +140,6 @@ struct Update {
     session: Option<String>,
     generation: u64,
     chat: claude_switch_core::transcript::ChatInfo,
-    changed_files: Option<Vec<String>>,
     files: Vec<(ItemId, Files)>,
 }
 
@@ -159,7 +161,6 @@ pub struct Model {
     pub revision: u64,
     pub generation: u64,
     pub chat: claude_switch_core::transcript::ChatInfo,
-    pub changed_files: Vec<String>,
     pub files: BTreeMap<ItemId, Files>,
     markdown_ticket: u64,
     markdown: Option<io::Result<String>>,
@@ -226,7 +227,6 @@ impl Model {
             revision: 0,
             generation: 0,
             chat: Default::default(),
-            changed_files: Vec::new(),
             files: Default::default(),
             markdown_ticket: 0,
             markdown: None,
@@ -288,9 +288,6 @@ impl Model {
                     self.agent = u.agent;
                     self.session = u.session;
                     self.chat = u.chat;
-                    if let Some(files) = u.changed_files {
-                        self.changed_files = files;
-                    }
                     self.revision += 1;
                 }
                 Event::Picture(g, key, result) if g == self.generation => {
@@ -495,27 +492,6 @@ impl Worker {
         };
         let metadata_changed = self.chat != u.chat;
         self.chat.clone_from(&u.chat);
-        use claude_switch_core::transcript::{ToolCard, ToolState};
-        if lists.reset
-            || lists.added.union(&lists.updated).any(|&id| {
-                root.item(id)
-                    .is_some_and(|item| matches!(item.kind, ItemKind::Tool { card: Some(ToolCard::Edit { .. }), .. }))
-            })
-        {
-            let mut seen = HashSet::new();
-            u.changed_files =
-                Some(
-                    root.items()
-                        .rev()
-                        .filter_map(|(_, item)| match &item.kind {
-                            ItemKind::Tool {
-                                state: ToolState::Ok, card: Some(ToolCard::Edit { path, .. }), ..
-                            } if seen.insert(path.to_ascii_lowercase()) => Some(path.clone()),
-                            _ => None,
-                        })
-                        .collect(),
-                );
-        }
         if lists.reset || lists.tasks_changed {
             u.tasks = Some(root.tasks().to_vec());
         }
@@ -535,8 +511,7 @@ impl Worker {
             || !u.items.is_empty()
             || !u.files.is_empty()
             || u.tasks.is_some()
-            || u.agents.is_some()
-            || u.changed_files.is_some())
+            || u.agents.is_some())
         .then(|| Event::Update(Box::new(u))))
     }
 }

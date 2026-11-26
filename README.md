@@ -226,6 +226,10 @@ page through either view. Click an existing Markdown path in a reply, or a Markd
 under the turn, to preview the file without leaving the conversation. **Open in editor** uses
 the system’s default app; **×** returns to the conversation.
 
+In Chat’s **Details** panel, click a task or agent to expand it. Under **Files**, click a name
+to open an existing supported file, or click its arrow to see the recorded edits. Clicking an
+edit jumps to that tool call in the conversation.
+
 | Shortcut in a session tab | Action |
 | --- | --- |
 | Ctrl+Shift+K, then F6 (or choose **Switch Chat / Terminal**) | Switch layouts without sending a key to the CLI |

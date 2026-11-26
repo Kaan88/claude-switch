@@ -45,7 +45,7 @@ impl Transcript {
         let mut file = File::create(&demo.path)?;
         seed(&demo, &mut file)?;
         if chat {
-            seed_chat(&mut file)?;
+            seed_chat(&mut file, &demo.cwd)?;
             return Ok(demo);
         }
         let (stop, signal) = mpsc::channel();
@@ -77,23 +77,31 @@ impl Transcript {
     }
 }
 
-fn seed_chat(file: &mut File) -> io::Result<()> {
+fn seed_chat(file: &mut File, cwd: &Path) -> io::Result<()> {
+    fs::write(cwd.join("ridge-caption.txt"), "Face west at dusk.\nLook for two ridgelines.\n")?;
+    fs::write(cwd.join("plate-index.json"), "{\"night\":\"Moon\"}\n")?;
     record(file, 34, "user", json!("Shorten the north ridge caption."))?;
     record(file, 35, "assistant", json!("I’ll keep the direction and the two silhouettes."))?;
     record(
         file,
         36,
         "assistant",
-        json!([tool(
-            "demo-edit",
-            "Edit",
-            json!({
-                "file_path":"field-notes.md", "old_string":"Look west at dusk.",
-                "new_string":"Face west at dusk.\nLook for two ridgelines."
-            })
-        )]),
+        json!([
+            tool(
+                "demo-edit",
+                "Edit",
+                json!({
+                    "file_path":"field-notes.md", "old_string":"Look west at dusk.",
+                    "new_string":"Face west at dusk.\nLook for two ridgelines."
+                })
+            ),
+            tool("demo-text", "Write", json!({"file_path":"ridge-caption.txt","content":"Face west at dusk."})),
+            tool("demo-index", "Write", json!({"file_path":"plate-index.json","content":"{\"night\":\"Moon\"}"})),
+            tool("demo-read", "Read", json!({"file_path":"field-notes.md"}))
+        ]),
     )?;
-    record(file, 37, "user", json!([result("demo-edit", json!("Updated."))]))?;
+    let results = ["demo-edit", "demo-text", "demo-index", "demo-read"].map(|id| result(id, json!("Done.")));
+    record(file, 37, "user", json!(results))?;
     record(
         file,
         38,

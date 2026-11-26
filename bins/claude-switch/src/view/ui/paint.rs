@@ -50,7 +50,13 @@ impl Ui {
                     };
                     let hot = frame_hit(header, action);
                     let ground = if pal.dark { pal.field } else { pal.pane };
-                    p.frame(frame, 5.0, if hot && !row.open { pal.hover } else { ground }, pal.line);
+                    let jumped = self.tool_jump.is_some_and(|(id, _)| row.id == Id::Tool(id));
+                    p.frame(
+                        frame,
+                        5.0,
+                        if hot && !row.open { pal.hover } else { ground },
+                        if jumped { pal.accent } else { pal.line },
+                    );
                     if row.open {
                         if hot {
                             p.rbox(header.inset(p.px()), 4.0, pal.hover);

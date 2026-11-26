@@ -16,7 +16,7 @@ use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::theme::Palette;
 
 use super::links::NamedFile;
-use super::model::{Follow, Model};
+use super::model::{Follow, Group, Model};
 use rows::{HEAD, Id, PIC, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface};
 
@@ -61,6 +61,7 @@ pub struct Ui {
     rows: Vec<Row>,
     expanded: BTreeSet<ItemId>,
     tool_expanded: BTreeSet<ItemId>,
+    tool_jump: Option<(ItemId, bool)>,
     chat: bool,
     cache: Option<(u64, f32, f32, Palette)>,
     generation: Option<u64>,
@@ -118,6 +119,7 @@ impl Ui {
         if self.generation.replace(m.generation).is_some_and(|g| g != m.generation) {
             self.expanded.clear();
             self.tool_expanded.clear();
+            self.tool_jump = None;
             self.selection = None;
             self.overlay = None;
             self.markdown = None;
@@ -278,11 +280,40 @@ impl Ui {
             }
         }
         self.max = (self.rows.last().map_or(0.0, |r| r.top + r.h + 4.0) - self.body.h).max(0.0);
+        if let Some((id, pending)) = &mut self.tool_jump
+            && *pending
+            && self.body.h > 0.0
+            && let Some(row) = self.rows.iter().find(|r| r.id == Id::Tool(*id))
+        {
+            self.offset = (row.top - 12.0).max(0.0);
+            *pending = false;
+        }
         self.offset = if self.page == Page::Conversation && self.follow.active() {
             self.max
         } else {
             self.offset.clamp(0.0, self.max)
         };
+    }
+
+    pub(super) fn jump_to_tool(&mut self, model: &Model, id: ItemId) -> bool {
+        let Some(first) = model.groups.iter().find_map(|group| match group {
+            Group::Tools(ids) if ids.binary_search(&id).is_ok() => ids.first(),
+            _ => None,
+        }) else {
+            return false;
+        };
+        if self.page != Page::Conversation {
+            self.show(Page::Conversation);
+        } else {
+            self.close_markdown();
+        }
+        self.expanded.insert(*first);
+        self.tool_expanded.insert(id);
+        self.tool_jump = Some((id, true));
+        self.cache = None;
+        self.selection = None;
+        self.follow.pause();
+        true
     }
 
     fn button(&mut self, p: &mut Painter, pal: &Palette, r: Rect, label: &str, act: Action, selected: bool) {
