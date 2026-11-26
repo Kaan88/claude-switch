@@ -66,6 +66,27 @@
   Escape restores the old one. Before, the chosen colour was not applied.
 - Unknown command-line options are refused with a short usage text instead of being ignored (an
   ignored typo started the real app); `--help` lists every option, hidden ones marked.
+- Appearance: more palettes. Dark: Neutral, Near black, Warm, Blue-grey, High contrast; light:
+  Paper, Warm, Cool, High contrast; chosen from swatches in Settings › Appearance, each with
+  matching terminal colours, and Claude's accent on every one.
+- Markdown viewer: drag the divider to make it wider (remembered), choose a reading width
+  (Narrow, Medium, Wide, Full) in its toolbar, and see the file's full path. A bare file name
+  such as `CHANGELOG.md` now opens the file of that name Claude wrote elsewhere in the session,
+  with the session folder's file offered beside it.
+- Settings: switching category pages cross-fades quickly (140 ms); instant with Reduce motion or
+  Windows' reduced-motion setting.
+- Details panel: background MCP tasks appear in the Shells tab with their status, running time
+  and result (the last step is not saved by Claude Code, so it is not shown). Every row's name now
+  opens its work: a task its plan update, an agent its transcript, a shell its output.
+- Chat: the working line no longer jumps sideways as its spinner animates or its counters tick.
+- Chat: pictures, including screenshots and other tool-result pictures, show as captioned thumbnails
+  (click to enlarge) instead of a "Picture" bar; a picture that cannot be shown says why. Other
+  outputs say what they are with an icon and a kind (PDF, document, link, pull request with its
+  repository and number, …), in the conversation and in Details › Outputs.
+- Details panel: the Tasks tab follows Claude Code's TaskCreate/TaskUpdate tasks, not only TodoWrite.
+- Chat: Claude's readable thinking shows as a collapsed "Thought"; hook errors and hook messages,
+  Stop hook feedback, CLAUDE.md files loaded on demand, session recaps and Claude Code's warnings
+  show as small rows that expand.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 - Handover: `/switch-handover:switch-compact` and `claude-switch compact --open` open the new chat as

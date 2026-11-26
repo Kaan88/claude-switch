@@ -313,16 +313,20 @@ Markdown**; each code block has its own **Copy** button. Click an existing Markd
 under the turn, to preview the file without leaving the conversation. **Open in editor** uses
 the system’s default app; **×** returns to the conversation.
 
-In Chat’s **Details** panel, click a task or agent to expand it. Under **Files**, click a name
-to open an existing supported file, or click its arrow to see the recorded edits. Clicking an
+In Chat’s **Details** panel, click a row’s arrow to expand it and its name to open its work: a
+task jumps to the latest plan update, an agent opens its transcript, a shell its full output. Under
+**Files**, click a name to open an existing supported file, or click its arrow to see the recorded edits. Clicking an
 edit jumps to that tool call in the conversation.
 
 **Shells** shows background Bash runs and their reported outcomes. Click the **N shells running**
 chip or a tool row’s **background** badge to get there. Expand a running shell for its latest
 eight lines; toggle **Following** to freeze the tail or choose **Full output** for a text snapshot.
 **Stop…** asks before opening the CLI’s own shell manager. Switch never stops a shell itself.
+Background MCP tasks are listed below the shells with their status and running time; click one
+for its result. Their last step is not shown: Claude Code does not save it.
 **Outputs** collects HTTP(S) links, artifacts, pull requests, and saved files and pictures. The
-conversation also shows output cards. Links open in the default browser; local previews open in
+conversation also shows output cards, each with an icon and its kind (PDF, document, link,
+pull request and so on); pictures show as thumbnails you can click to enlarge. Links open in the default browser; local previews open in
 the viewer.
 
 **Session view** has the same pages as tabs: **Conversation**, **Tasks**, **Agents**, **Shells**,

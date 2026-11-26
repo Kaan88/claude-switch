@@ -309,16 +309,48 @@ and over a message Copy message (its text as shown) and Copy as Markdown (its so
 top-level code block of an answer has a **Copy** button for its code alone. The toolkit's
 `richtext` manages no selection, so this is the app's (`view/ui/select.rs`) over the renderer's
 selection rectangles and block boxes.
+Notices are rows like a tool row (their kind and the first line) that expand to the whole text,
+at most 8 KiB. Claude Code's docs call the transcript format internal; the shapes below were
+confirmed read-only against real transcripts (tests use synthetic records). Anything else stays
+hidden rather than shown wrongly:
+
+| Shown as | Record |
+| --- | --- |
+| Thought | an assistant `thinking` block `{thinking, signature}` with text; about half have none (omitted thinking) and are not shown; thoughts sit inside a tool group without counting as calls |
+| Hook error | `system` `stop_hook_summary` with `hookErrors` (strings); an `attachment` `hook_non_blocking_error` (`hookName`, `stderr`) except for Stop hooks, whose summary already lists it |
+| Hook | an `attachment` `hook_system_message` (`hookName`, `content`), the hook's `systemMessage` |
+| Stop hook feedback | Claude Code's own user record starting "Stop hook feedback:"; a summary with `preventedContinuation` |
+| Memory | an `attachment` `nested_memory`: "Loaded" and its `displayPath` |
+| Recap | `system` `away_summary` with `content` |
+| Notice | `system` `informational` at `level: "warning"` (such as the Stop-hook block cap) |
+| Prompt blocked by a hook | not seen yet; a text with "Original prompt:", as the docs quote |
+
+Not shown: informational records below warning (usage-limit and goal notices), `turn_duration`,
+`compact_boundary` (the compact summary keeps its card), `local_command` (item 47), `api_error`
+retries, `permission_retry`, `bridge_status`, and the other attachments: context sent to Claude
+(`hook_additional_context`, `instructions`, `prompt_snapshot`, `deferred_tools_*`, reminders),
+`hook_success`, and `file` / `compact_file_reference` (files read into the context, most of them
+again after a compaction; an @-mentioned file is already in the prompt's text). "Saved N memories"
+lines are not records of their own and are not shown. Attachment records are parsed only for the
+three kinds shown. Compaction and API errors keep their cards.
 
 The embedded Markdown viewer renders assistant answers and named Markdown files. Conversation row
 heights are cached and only visible slices are rasterized. Bare or inline-code Markdown paths and
 explicit Markdown link destinations are actionable when the reader worker finds a regular file.
 Relative and absolute file paths stay inside the session’s working folder, except for exact paths
-named by a successful Write/Edit in the currently loaded transcript. Parent hops (`..`), device
+named by a successful Write/Edit in the currently loaded transcript. A bare file name (no folder)
+that is also the name of such a written file outside the folder means the newest of those writes;
+the session folder's file of that name, when there is one, is offered beside it in the viewer
+("Also in <folder>"). This grants nothing new: only already written paths are candidates. Parent hops (`..`), device
 and network paths, redirects (including junctions), and nonexistent files are not actionable. Bash command text
 and output do not infer file links. Successful Write/Edit paths to existing Markdown files get one
 button per file at the end of the loaded turn. Click a path or button to preview up to 1 MiB of
-UTF-8 Markdown on the right in wide Chat or in place of the reading body when narrow. The preview
+UTF-8 Markdown on the right in wide Chat or in place of the reading body when narrow. A divider
+between the conversation and the docked viewer drags its width (at least 300 px, the conversation
+at least 320 px); the viewer's toolbar cycles a reading width (Narrow 560, Medium 720, Wide 900
+px or Full, a centred column, after mdview's page widths). Both are one setting for the window,
+shared by every tab and kept in `window.ini` (`markdown_split`, `markdown_reading`). The viewer
+shows the file name and, under it, its full path. The preview
 does not follow links in the document; images and optional math/diagram engine jobs are disabled
 in both renderer surfaces. **Open in editor** rechecks the named file and asks the OS to open it
 with its default association. Ctrl+click on an inline file link instead reveals it. HTTP(S) links
@@ -327,7 +359,13 @@ in answers still open in the browser; transcript attachments still use the pictu
 Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
 picture work run off the window thread; worker results wake the window rather than making it redraw
 every poll. Image bytes are decoded with `mdshared-text`'s existing PNG/JPEG decoder and cached for
-inline previews and an enlarged overlay. Opening a picture in the system viewer explicitly exports
+inline previews and an enlarged overlay. Pictures (pasted ones, those in an expanded tool row, and
+tool-result pictures under the answer, where they were a "Picture" chip before) are thumbnails in a
+fixed 240 × 180 slot so a late decode never moves the conversation; the picture keeps its aspect,
+is never enlarged past its own pixels, and is captioned (the file it read, or the tool and its
+number). A picture that cannot be shown keeps the slot and says why: too large, no longer in the
+transcript, not a supported format, or not decodable. A click opens the enlarged overlay.
+Opening a picture in the system viewer explicitly exports
 a copy to the application's temp folder. No transcript is edited. The demo supplies a synthetic
 session, writes only to temp, and appends a few updates without starting Claude Code.
 
@@ -571,13 +609,20 @@ bracketed paste only when requested by the program. They do not send Enter.
 ## Appearance
 
 The Appearance page controls the window. The window theme is System, Light or Dark;
-`--theme light|dark` overrides that preference.
-Windows high contrast takes priority. The toolkit's appearance model supplies the accent (clay by
-default, or system or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
+`--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
+(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as a row of swatches beside
+its choice; a click on a swatch chooses it. Dark: Neutral (the toolkit's dark), Near black, Warm,
+Blue-grey and High contrast (the toolkit's); light: Paper, Warm, Cool (the toolkit's light, warm and
+cool) and High contrast. Every palette has its own terminal colours, which Automatic terminal colours
+follow; the table of palettes and their terminal colours is `termtheme/palettes.rs`, the one place
+to change them. An unknown saved id (from a newer version) is kept and shown as the first palette.
+Windows high contrast takes priority over all of them. The toolkit's appearance model supplies the
+accent (Claude's clay by default on every palette, held to 7:1 on the high-contrast ones, or system
+or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
 Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
 compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
 
-Automatic terminal colours use Dark (`#101010`) or Light according to the effective window theme.
+Automatic terminal colours use the chosen palette's terminal colours (Neutral is `#101010`).
 Match window uses the window bar background. Custom uses the background, text and accent picked on
 the Terminal page; the renderer adjusts pairs below 7:1. An applied colour takes effect at once, and 9–24 logical px font-size
 changes resize all open screens and pseudo-terminals. Cursor shape and background opacity are
@@ -600,6 +645,9 @@ The category list at left selects one page at right: Appearance, Terminal, Sessi
 Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
 closing Settings. Each window remembers the last page while it runs; category selection is not saved.
+A category switch cross-fades the old page into the new one in 140 ms (the toolkit's
+`PageTransition`; the old page is drawn once more in the first frame and blended away). The app's
+Reduce motion, Windows' reduced-motion setting and high contrast make it instant.
 
 Controls still apply live. An ordinary config save, under the settings lock, re-reads the file and
 applies only the fields this window edited against its loaded baseline, inside groups such as
@@ -944,7 +992,10 @@ ends recall without restoring the old draft.
 While the slash picker is open, it keeps the arrow keys. Expanded tool rows show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
 additions, and shell output uses only its first text lines. In Chat's Details panel, Task and Agent
-rows expand to show full task text or reported agent details. **Changed files** lists successful
+rows expand to show full task text or reported agent details. The task list comes from TodoWrite
+or the desktop plan tool, or from native TaskCreate/TaskUpdate calls whose results confirmed them
+(the same reducer as the handover's; a failed call changes nothing); whichever changed last is
+shown, and history paged in later is replayed in transcript order. **Changed files** lists successful
 Edit/Write tool paths in the displayed conversation's loaded history, not a filesystem or Git diff.
 The disclosure arrow expands a file's edits newest first, even if the file is unavailable. An edit
 jumps to its exact tool row and expands its group and detail, pausing follow. Clicking the file name
@@ -952,7 +1003,10 @@ separately opens the embedded Markdown viewer or asks the system for the default
 document or media type. It uses only an existing, verified transcript-named file and rechecks at
 activation. When a turn is active, both conversation layouts show the CLI’s working line from
 visible screen rows, not scrollback. A missing or unreadable timer falls back to time measured
-since the app observed the turn. Stop uses the same fresh-turn safety checks as the composer and
+since the app observed the turn. The spinner glyph is drawn centred in a slot as wide as the
+widest glyph, the text after it starts at a fixed x, and each digit takes the widest digit's
+width, so neither the animation nor a ticking counter moves the line. Stop uses the same
+fresh-turn safety checks as the composer and
 is inactive when those checks fail.
 
 **Shells** uses only background `Bash` inputs whose successful paired result names a task ID and
@@ -969,6 +1023,21 @@ and can send a single Down key only at a verified, unblocked, empty CLI prompt w
 “↓ to manage” footer. Otherwise it explains the manual path; it never selects a menu entry or
 stops a process.
 
+**MCP tasks** follow the shells in the same tab. An MCP tool call that Claude Code moved to the
+background is known only from what the transcript holds: the call's result naming the task
+("MCP tool "server/tool" started server-side task JOB. It was moved to the background as task
+ID"), a `<task-notification>` record when it ends (`taskKind: mcp-task`, its status, a summary and
+the result) and a TaskStop result with `task_type: "mcp_task"`. A row shows the task id, status and
+running time (from the call to the end record). The last step the server reports is kept by the
+CLI in memory only, so it is said to be unavailable rather than guessed; Claude Code writes no
+output file for these tasks. A task's name opens its result (at most 64 KiB, as the notification
+held it) in the viewer, or jumps to its call while it runs; Switch does not stop MCP tasks (the
+CLI's `/tasks` does). Nothing is fetched or asked of a tool.
+
+Every Details row opens its work from its name, the arrow still expanding it: a task jumps to the
+newest plan update, an agent opens its sidechain transcript (not the one being shown), a shell
+with a log opens its full output, a file opens as above and an output opens as below.
+
 **Outputs** lists the newest occurrence of each HTTP(S) destination or verified saved path, with
 tool-result pictures identified by their transcript references. It sorts by reported timestamps
 when available. It reads assistant prose and bounded tool-result text for links, with no fetching;
@@ -976,7 +1045,12 @@ opening requires a click and uses the default browser. Outputs and conversation 
 same host checks and reject userinfo. Saved files use the same path authorization
 as conversation links; a tool result mentioning an arbitrary filename does not grant access. The
 shared viewer handles bounded Markdown, UTF-8 text and supported images. Cards are deduplicated per
-turn and prefer the answer over a tool result that repeated the same link. Both Chat and Session
+turn and prefer the answer over a tool result that repeated the same link. Every chip and Outputs
+row says what it is with an icon and a plain kind: PDF, document, spreadsheet, presentation,
+Markdown, text file, audio, video, archive or file by extension; link, artifact or pull request
+for web destinations, with the host or `owner/repo #N`, and the folder for a file. Sizes, page
+counts and document previews are not read. The transcript reader knows no attachment blocks other
+than pictures, so nothing else is shown as an attachment. Both Chat and Session
 view share the Shells and Outputs Details rendering.
 
 Context now uses

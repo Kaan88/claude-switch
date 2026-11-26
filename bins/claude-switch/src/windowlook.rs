@@ -8,15 +8,18 @@ use mdshared_ui::gfx::{Painter, Rect, Rgb, rgb};
 use mdshared_ui::host::Cx;
 use mdshared_ui::menu::{Look, Menu};
 use mdshared_ui::theme::Palette;
-use mdshared_ui::tokens::accented;
+use mdshared_ui::tokens::{ACCENT_CONTRAST, accented, legible};
 
 use crate::dialogs;
 use crate::state::{AppState, Msg};
 
+/// `base` (one of `termtheme::palettes`) with Claude's clay as its own accent, then the accent
+/// the appearance asks for put in: clay stays available on every palette.
 pub fn palette(base: &Palette, look: &Appearance, system: Option<Rgb>) -> Palette {
     // The lighter clay target does not clear 4.5:1 on the light title and selected surfaces.
     let clay = rgb(if base.dark { 0xd97757 } else { 0x923d23 });
-    look.palette(&accented(base, clay), system, None)
+    let ratio = if crate::termtheme::palettes::of(base).high_contrast { 7.0 } else { ACCENT_CONTRAST };
+    look.palette(&accented(base, legible(clay, base.page, ratio)), system, None)
 }
 
 pub fn apply(st: &AppState, cx: &mut Cx<'_, Msg>) {
@@ -110,6 +113,23 @@ mod tests {
             for t in [0.0, 0.1, 0.2] {
                 assert!(contrast(mix(pal.accent, pal.popup, t), pal.on_accent) >= 4.5);
             }
+        }
+    }
+
+    #[test]
+    fn clay_reads_on_every_palette_surface_and_high_contrast_holds_seven_to_one() {
+        use crate::termtheme::palettes::{DARK_THEMES, LIGHT_THEMES};
+        for t in DARK_THEMES.iter().chain(LIGHT_THEMES) {
+            let pal = palette(&t.palette, &Appearance::DEFAULT, None);
+            let ratio = if t.high_contrast { 7.0 } else { 4.5 };
+            assert!(contrast(pal.accent, pal.page) >= ratio, "{}", t.id);
+            for surface in [pal.title, pal.bar, pal.pane, pal.field, pal.popup] {
+                assert!(contrast(pal.accent, surface) >= 3.0, "{} {surface:?}", t.id);
+            }
+            assert!(contrast(pal.accent, pal.on_accent) >= 4.5, "{}", t.id);
+            assert!(contrast(pal.text, pal.selection) >= 3.0, "{}", t.id);
+            // The same hue on every palette: red leads.
+            assert!(pal.accent[0] > pal.accent[1] && pal.accent[1] > pal.accent[2] / 2, "{} {:?}", t.id, pal.accent);
         }
     }
 

@@ -13,8 +13,10 @@ pub(crate) const MAX_LINE: usize = 48 * 1024 * 1024;
 const MAX_SIDECAR: u64 = 1024 * 1024;
 mod background;
 mod chat;
-pub use background::{BackgroundShell, ResultDetails, ShellStatus};
+pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellStatus};
 mod decode;
+mod native_tasks;
+mod notices;
 pub use chat::{ChatInfo, Phase as ChatPhase, Question, QuestionOption, ToolCard};
 mod tail;
 use decode::*;
@@ -51,6 +53,20 @@ pub enum ToolState {
 pub enum NoticeKind {
     Compaction,
     ApiError,
+    /// Claude's readable thinking.
+    Thought,
+    HookError,
+    /// A message a hook asked Claude Code to show (`systemMessage`).
+    HookMessage,
+    /// A hook refused the prompt.
+    PromptBlocked,
+    /// A Stop or SubagentStop hook kept Claude working.
+    StopHook,
+    Memory,
+    /// The session recap shown on returning to the terminal.
+    Recap,
+    /// Another banner Claude Code marked as a warning.
+    Info,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +178,11 @@ impl Reader {
 
     pub fn background_shells(&self) -> Vec<BackgroundShell> {
         self.view.background.shells()
+    }
+
+    /// The session's background MCP tasks, as far as the transcript records them.
+    pub fn mcp_tasks(&self) -> Vec<McpTask> {
+        self.view.background.mcp_tasks()
     }
 
     pub fn result_details(&self, id: ItemId) -> Option<&ResultDetails> {
@@ -370,6 +391,10 @@ struct View {
     plans: BTreeMap<ItemId, Plan>,
     tasks: Vec<Task>,
     plans_dirty: bool,
+    /// Native TaskCreate/TaskUpdate calls by their row, and every tool result's outcome by tool
+    /// use id, replayed in transcript order (history can be paged in after newer records).
+    native_calls: BTreeMap<ItemId, (String, native_tasks::Call)>,
+    native_results: HashMap<String, (ItemId, native_tasks::Outcome)>,
     chat: ChatInfo,
     background: background::Background,
 }
@@ -384,6 +409,10 @@ struct ToolResult {
 
 impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
+        // Most attachments are large context records; parse only the kinds that are shown.
+        if decode::line_kind(line) == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
+            return;
+        }
         let Some((kind, value)) = message_line_with_meta(line) else { return };
         if flag(&value, "isSidechain") && !self.is_agent {
             return;
@@ -412,6 +441,11 @@ impl View {
             self.chat.compaction(offset, None);
         }
         if flag(&value, "isMeta") {
+            if kind == LineKind::User
+                && let Some((kind, text)) = notices::meta(&value)
+            {
+                self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
+            }
             return;
         }
         let content = &value["message"]["content"];
@@ -470,6 +504,16 @@ impl View {
                         _ => (),
                     }
                 }
+                for outcome in native_tasks::outcomes(content, &value["toolUseResult"]) {
+                    let known = self.tools.get(&outcome.tool).and_then(|at| self.items.get(at));
+                    let task =
+                        |item: &Item| matches!(&item.kind, ItemKind::Tool { name, .. } if name.starts_with("Task"));
+                    if known.is_some_and(|item| !task(item)) {
+                        continue;
+                    }
+                    self.plans_dirty |= known.is_some();
+                    self.native_results.insert(outcome.tool.clone(), (id(0), outcome));
+                }
                 if !texts.is_empty() || !pictures.is_empty() {
                     let synthetic = flag(&value, "isMeta");
                     if !synthetic {
@@ -511,7 +555,9 @@ impl View {
                     self.add(id(0), timestamp, ItemKind::Assistant { markdown: markdown.into() }, changes);
                 }
                 for (i, block) in blocks(content).enumerate() {
-                    if block["type"] == "text" {
+                    if let Some(text) = notices::thought(block) {
+                        self.add(id(i), timestamp, ItemKind::Notice { kind: NoticeKind::Thought, text }, changes);
+                    } else if block["type"] == "text" {
                         if let Some(text) = block["text"].as_str().filter(|s| !s.is_empty()) {
                             self.add(id(i), timestamp, ItemKind::Assistant { markdown: text.into() }, changes);
                         }
@@ -535,10 +581,23 @@ impl View {
                             self.plans.insert(id(i), plan);
                             self.plans_dirty = true;
                         }
+                        if let Some(call) = native_tasks::Call::parse(name, input) {
+                            self.native_calls.insert(id(i), (tool.into(), call));
+                            self.plans_dirty = true;
+                        }
                     }
                 }
             }
-            LineKind::System => (),
+            LineKind::System => {
+                if let Some((kind, text)) = notices::system(&value) {
+                    self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
+                }
+            }
+            LineKind::Attachment => {
+                if let Some((kind, text)) = notices::attachment(&value["attachment"]) {
+                    self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
+                }
+            }
         }
     }
 
@@ -616,10 +675,48 @@ impl View {
         for action in actions.into_iter().rev() {
             action.apply(&mut tasks);
         }
+        // Native tasks replace the plan's list when they changed after its last update, as in a
+        // handover.
+        if let Some((native, at)) = self.native_tasks()
+            && self.plans.keys().next_back().is_none_or(|plan| *plan < at)
+        {
+            tasks = native;
+        }
         if self.tasks != tasks {
             self.tasks = tasks;
             changes.tasks_changed = true;
         }
+    }
+}
+
+impl View {
+    /// The native task list and where it last changed, when it ever did.
+    fn native_tasks(&self) -> Option<(Vec<Task>, ItemId)> {
+        enum Event<'a> {
+            Call(&'a str, &'a native_tasks::Call),
+            Outcome(&'a native_tasks::Outcome),
+        }
+        let mut events = Vec::new();
+        for (at, (tool, call)) in &self.native_calls {
+            events.push((*at, Event::Call(tool, call)));
+            if let Some((when, outcome)) = self.native_results.get(tool) {
+                events.push((*when, Event::Outcome(outcome)));
+            }
+        }
+        events.sort_by_key(|(at, event)| (*at, matches!(event, Event::Outcome(_))));
+        let mut tasks = native_tasks::Tasks::default();
+        let mut latest = None;
+        for (at, event) in events {
+            match event {
+                Event::Call(tool, call) => tasks.pend(tool, call.clone()),
+                Event::Outcome(outcome) => {
+                    if tasks.outcome(outcome.clone()) {
+                        latest = Some(at);
+                    }
+                }
+            }
+        }
+        latest.map(|at| (tasks.finish(), at))
     }
 }
 

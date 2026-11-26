@@ -39,6 +39,8 @@ fn enabled(preference: Option<bool>, width: f32) -> bool {
 
 pub struct Window {
     pub splitter: Splitter,
+    /// The docked Markdown panel's width and reading width, shared by every pane.
+    pub markdown: ui::Panel,
     area: Rect,
     pane_area: Rect,
     text_focus: bool,
@@ -55,6 +57,7 @@ impl Window {
         }
         Self {
             splitter,
+            markdown: ui::Panel::from_settings(&prefs.markdown_split, &prefs.markdown_reading),
             area: Rect::default(),
             pane_area: Rect::default(),
             text_focus: false,
@@ -333,6 +336,7 @@ impl AppState {
         chat.enabled = self.win_file.chat_default;
         let mut ui = ui::Ui::default();
         ui.set_chat(chat.enabled);
+        ui.set_panel(self.session_view.markdown);
         Pane {
             model,
             wake,
@@ -545,6 +549,9 @@ impl AppState {
             pane.chat.details.reset_scroll();
             pane.chat.details.visible_shells.clear();
         }
+        if let Some(panel) = pane.ui.take_panel_change() {
+            self.share_markdown_panel(panel);
+        }
         match action {
             ui::Release::Miss => false,
             ui::Release::Handled => true,
@@ -561,6 +568,15 @@ impl AppState {
                 true
             }
         }
+    }
+
+    /// One pane's Markdown panel width or reading width, for every pane and the next run.
+    fn share_markdown_panel(&mut self, panel: ui::Panel) {
+        self.session_view.markdown = panel;
+        for pane in self.tabs.list.iter_mut().filter_map(|tab| tab.pane.as_mut()) {
+            pane.ui.set_panel(panel);
+        }
+        self.save_window();
     }
 
     pub fn session_move(&mut self, x: f32, y: f32) -> Option<bool> {

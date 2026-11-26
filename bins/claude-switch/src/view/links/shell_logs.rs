@@ -29,7 +29,7 @@ impl ShellLogs {
             || session
                 .filter(|id| claude_switch_core::launch::validate_session_id(id).is_ok())
                 .is_some_and(|id| same(dir, &self.0.join(id).join("tasks")));
-        allowed.then_some(NamedFile { path, view_only: true })
+        allowed.then_some(NamedFile { path, view_only: true, other: None })
     }
 }
 

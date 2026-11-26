@@ -17,6 +17,20 @@ pub(super) fn decode(bytes: &[u8], side: u32) -> io::Result<Image> {
     image.scaled_to_fit(side, side).ok_or_else(|| io::Error::other("Could not scale picture"))
 }
 
+/// A plain reason for a picture that cannot be shown.
+pub(super) fn reason(error: &io::Error) -> &'static str {
+    let text = error.to_string();
+    if text.contains("exceeds") || text.contains("too large") || text.contains("limit") {
+        "Too large to preview"
+    } else if text.contains("stale") || text.contains("no longer matches") || text.contains("missing picture") {
+        "No longer in the transcript"
+    } else if text.contains("nsupported") || text.contains("format") {
+        "Not a picture format Switch shows"
+    } else {
+        "Could not be decoded"
+    }
+}
+
 pub fn preview(reader: &mut Reader, picture: &Picture, large: bool) -> io::Result<Arc<Image>> {
     let bytes = reader.load_picture(picture)?;
     decode(&bytes, if large { 2048 } else { thumbs::bucket(240) }).map(Arc::new)
@@ -74,5 +88,14 @@ mod tests {
         for bad in [b"\x89PNG\r\n\x1a\nbad".as_slice(), b"GIF89a", b""] {
             assert!(decode(bad, 256).is_err());
         }
+    }
+
+    #[test]
+    fn a_failed_picture_says_why_in_plain_words() {
+        let reason = |text: &str| reason(&io::Error::other(text.to_owned()));
+        assert_eq!(reason("picture exceeds 32 MiB"), "Too large to preview");
+        assert_eq!(reason("stale picture reference"), "No longer in the transcript");
+        assert_eq!(reason("Unsupported picture format"), "Not a picture format Switch shows");
+        assert_eq!(reason("invalid base64"), "Could not be decoded");
     }
 }

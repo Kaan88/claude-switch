@@ -138,3 +138,50 @@ fn both_views_expand_tools_and_put_only_successful_named_markdown_under_the_turn
             > project(false, false)[1].body.as_ref().unwrap().height()
     );
 }
+
+#[test]
+fn notices_are_compact_rows_that_expand_and_thoughts_do_not_split_or_count_in_a_group() {
+    use claude_switch_core::transcript::NoticeKind;
+    let demo = crate::demo::Transcript::new().unwrap();
+    let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let notice = |kind, text: &str| item(ItemKind::Notice { kind, text: text.into() });
+    model.items = [
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        notice(NoticeKind::Thought, "First I **read** the file.\nThen I edit it."),
+        tool("Read", ToolState::Ok, None),
+        notice(NoticeKind::Thought, "Now the edit."),
+        tool("Edit", ToolState::Ok, None),
+        tool("Bash", ToolState::Ok, None),
+        tool("Grep", ToolState::Ok, None),
+        notice(NoticeKind::StopHook, "Stop hook feedback:\nRun the tests first."),
+        notice(NoticeKind::Compaction, "summary"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, item)| (id(i as u64), item))
+    .collect();
+    model.groups = super::super::super::model::group(&model.items);
+    assert_eq!(model.groups[1], Group::Tools((1..7).map(id).collect()), "thoughts stay inside the tool group");
+    let project = |open: BTreeSet<ItemId>, tools: BTreeSet<ItemId>| {
+        let pal = &mdshared_ui::theme::DARK;
+        let mut rows =
+            Rows { list: vec![], previous: BTreeMap::new(), end: 0.0, width: 700.0, scale: 1.0, pal, chat: true };
+        rows.conversation(&model, &open, &tools);
+        rows.list
+    };
+    let closed = project(BTreeSet::new(), BTreeSet::new());
+    assert_eq!(closed[1].title, "4 tool calls", "thoughts are not counted as calls");
+    let hook = &closed[2];
+    assert_eq!(
+        (hook.style, hook.title.as_str(), hook.target.as_str()),
+        (Style::Tool, "Stop hook feedback", "Stop hook feedback:")
+    );
+    assert_eq!(hook.h, TOOL_H);
+    assert_eq!(closed[3].style, Style::Card, "a compaction keeps its card");
+    let open = project([id(1)].into(), [id(1), id(7)].into());
+    let thought = open.iter().find(|r| r.id == Id::Tool(id(1))).unwrap();
+    assert_eq!(thought.title, "Thought");
+    assert!(thought.body.as_ref().unwrap().text().contains("read"), "an open thought shows its text");
+    let hook = open.iter().find(|r| r.id == Id::Tool(id(7))).unwrap();
+    assert!(hook.h > TOOL_H && hook.body.as_ref().unwrap().text().contains("Run the tests first."));
+}

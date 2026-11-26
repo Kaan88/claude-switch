@@ -9,8 +9,11 @@ use mdshared_ui::termview::Scheme;
 use mdshared_ui::theme::Palette;
 use mdshared_ui::tokens::legible;
 
+pub mod palettes;
+use palettes::{DARK_ANSI, DARK_TERMINAL, LIGHT_ANSI, LIGHT_TERMINAL, TermColours};
+
 pub const WINDOW_THEMES: [(&str, &str); 3] = [("system", "System"), ("light", "Light"), ("dark", "Dark")];
-pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Theme"), ("system", "System"), ("custom", "Custom")];
+pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Claude"), ("system", "System"), ("custom", "Custom")];
 pub const CUSTOM: &str = "custom";
 const BLACK: Rgb = rgb(0x000000);
 const WHITE: Rgb = rgb(0xffffff);
@@ -53,9 +56,10 @@ pub struct Preset {
 
 #[derive(Clone, Copy)]
 enum Colors {
+    /// The window palette's own terminal colours.
     Automatic,
     Window,
-    Fixed { background: u32, foreground: u32, cursor: u32, selection: u32, ansi: [u32; 16] },
+    Fixed(TermColours),
 }
 
 const fn fixed(
@@ -67,17 +71,9 @@ const fn fixed(
     selection: u32,
     ansi: [u32; 16],
 ) -> Preset {
-    Preset { id, name, colors: Colors::Fixed { background, foreground, cursor, selection, ansi } }
+    Preset { id, name, colors: Colors::Fixed(TermColours { background, foreground, cursor, selection, ansi }) }
 }
 
-const DARK_ANSI: [u32; 16] = [
-    0x161616, 0xcf5252, 0x6eae56, 0xd2a64f, 0x5888cf, 0xab72c4, 0x51aca9, 0xbebebe, 0x767676, 0xff7777, 0x9cdb81,
-    0xf7d77b, 0x88b6ff, 0xe19bf2, 0x85dedd, 0xf2f2f2,
-];
-const LIGHT_ANSI: [u32; 16] = [
-    0x262626, 0xa92d36, 0x347028, 0x88590a, 0x255da6, 0x873d9b, 0x216a75, 0xd0d0d0, 0x626262, 0xca4148, 0x56883c,
-    0xa66f12, 0x397bc0, 0xa655b1, 0x36868c, 0xf5f5f5,
-];
 // Published foreground, background, cursor and ANSI values for Campbell, Vintage and Tango:
 // https://github.com/microsoft/terminal/blob/main/src/cascadia/TerminalSettingsModel/defaults.json
 // Selection tints are app-specific to keep the selected text readable.
@@ -94,8 +90,8 @@ const TANGO: [u32; 16] = [
     0xfce94f, 0x729fcf, 0xad7fa8, 0x34e2e2, 0xeeeeec,
 ];
 
-const DARK: Preset = fixed("dark", "Dark", 0x101010, 0xd6d6d6, 0xd6d6d6, 0x284a70, DARK_ANSI);
-const LIGHT: Preset = fixed("light", "Light", 0xfcfcfc, 0x262626, 0x262626, 0xb8d5f5, LIGHT_ANSI);
+const DARK: Preset = Preset { id: "dark", name: "Dark", colors: Colors::Fixed(DARK_TERMINAL) };
+const LIGHT: Preset = Preset { id: "light", name: "Light", colors: Colors::Fixed(LIGHT_TERMINAL) };
 
 pub const PRESETS: &[Preset] = &[
     Preset { id: "auto", name: "Automatic", colors: Colors::Automatic },
@@ -118,12 +114,11 @@ pub fn scheme(id: &str, pal: &Palette) -> Scheme {
     let mut s = Scheme::from_palette(pal);
     let preset = &PRESETS[preset_index(id)];
     let colors = match preset.colors {
-        Colors::Automatic if pal.dark => DARK.colors,
-        Colors::Automatic => LIGHT.colors,
+        Colors::Automatic => Colors::Fixed(palettes::of(pal).terminal),
         _ => preset.colors,
     };
     match colors {
-        Colors::Fixed { background, foreground, cursor, selection, ansi } => {
+        Colors::Fixed(TermColours { background, foreground, cursor, selection, ansi }) => {
             s.background = rgb(background);
             s.foreground = rgb(foreground);
             s.cursor = rgb(cursor);
@@ -132,7 +127,9 @@ pub fn scheme(id: &str, pal: &Palette) -> Scheme {
         }
         Colors::Window => {
             s.background = pal.bar;
-            s.selection = mix(pal.bar, pal.selection, 0.40);
+            let tint = mix(pal.bar, pal.selection, 0.40);
+            // High-contrast bars are black or white; a 40% tint does not show there.
+            s.selection = if contrast(tint, pal.bar) >= 1.4 { tint } else { pal.selection };
         }
         Colors::Automatic => unreachable!("automatic resolves to a fixed preset"),
     }
@@ -221,7 +218,8 @@ mod tests {
         let mut ids = HashSet::new();
         for preset in PRESETS {
             assert!(ids.insert(preset.id), "duplicate id {}", preset.id);
-            for pal in [DARK_WINDOW, LIGHT_WINDOW] {
+            for t in palettes::DARK_THEMES.iter().chain(palettes::LIGHT_THEMES) {
+                let pal = crate::windowlook::palette(&t.palette, &Appearance::DEFAULT, None);
                 let s = scheme(preset.id, &pal);
                 assert!(contrast(s.foreground, s.background) >= 7.0, "default text: {}", preset.id);
                 assert!(contrast(s.selection, s.background) >= 1.4, "selection: {}", preset.id);
@@ -232,6 +230,21 @@ mod tests {
                         assert!(squared >= 8 * 8, "{} ANSI {i} and {j} are too close", preset.id);
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn automatic_takes_each_palettes_own_terminal_whatever_the_accent() {
+        for t in palettes::DARK_THEMES.iter().chain(palettes::LIGHT_THEMES) {
+            for accent in ["theme", "system", "custom"] {
+                let prefs = AppearancePrefs {
+                    accent_source: accent.into(),
+                    accent_colour: Some("#2080c0".into()),
+                    ..AppearancePrefs::default()
+                };
+                let pal = crate::windowlook::palette(&t.palette, &appearance(&prefs), Some(rgb(0x30a050)));
+                assert_eq!(scheme("auto", &pal).background, rgb(t.terminal.background), "{}", t.id);
             }
         }
     }

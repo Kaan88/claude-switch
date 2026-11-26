@@ -3,8 +3,6 @@
 use super::*;
 use std::io::BufReader;
 
-mod native_tasks;
-
 pub(crate) enum Entry {
     Prompt(Option<String>, String),
     Assistant(String),

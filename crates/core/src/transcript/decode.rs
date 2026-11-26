@@ -73,6 +73,8 @@ pub(crate) enum LineKind {
     User,
     Assistant,
     System,
+    /// Context Claude Code attaches to a turn; only a few kinds are shown (see `notices`).
+    Attachment,
 }
 
 pub(super) fn message_line(line: &[u8]) -> Option<(LineKind, Value)> {
@@ -87,6 +89,7 @@ pub(super) fn message_line_with_meta(line: &[u8]) -> Option<(LineKind, Value)> {
         LineKind::User => "user",
         LineKind::Assistant => "assistant",
         LineKind::System => "system",
+        LineKind::Attachment => "attachment",
     };
     (value["type"] == expected).then_some((kind, value))
 }
@@ -101,9 +104,14 @@ pub(crate) fn line_kind(mut bytes: &[u8]) -> Option<LineKind> {
         bytes = bytes[key_end..].trim_ascii_start().strip_prefix(b":")?.trim_ascii_start();
         if is_type {
             let value = &bytes[..string_end(bytes)?];
-            return [("user", LineKind::User), ("assistant", LineKind::Assistant), ("system", LineKind::System)]
-                .into_iter()
-                .find_map(|(text, kind)| json_string_eq(value, text).then_some(kind));
+            return [
+                ("user", LineKind::User),
+                ("assistant", LineKind::Assistant),
+                ("system", LineKind::System),
+                ("attachment", LineKind::Attachment),
+            ]
+            .into_iter()
+            .find_map(|(text, kind)| json_string_eq(value, text).then_some(kind));
         }
         let mut i = 0;
         let mut depth = 0usize;

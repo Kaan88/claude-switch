@@ -3,7 +3,7 @@ use std::path::Path;
 use mdshared_ui::gfx::{Face, Painter, Rect, Wrap};
 use mdshared_ui::theme::Palette;
 
-use super::{Details, Hit, Key, Model, Part, Side, task_key, task_status};
+use super::{Details, Hit, Key, Model, Part, Side, plan_update, task_key, task_status};
 use crate::state::Target;
 use crate::view::chat::Control;
 
@@ -21,9 +21,22 @@ pub(in crate::view) struct Frame<'a> {
 }
 
 pub(super) enum Line {
-    Header { label: String, index: usize, expanded: bool, active: bool, file: bool, opens: bool },
+    /// A row: its arrow expands it; with `split`, its name is a separate target that opens the
+    /// item's work when `opens` (otherwise the name is muted), and without, the whole row expands.
+    Header {
+        label: String,
+        index: usize,
+        expanded: bool,
+        active: bool,
+        split: bool,
+        opens: bool,
+    },
     Detail(String),
-    Button { label: String, index: usize, part: Part },
+    Button {
+        label: String,
+        index: usize,
+        part: Part,
+    },
     Heading(&'static str),
     ShellMeta(String),
     Tail(claude_switch_core::transcript::ItemId, Vec<String>),
@@ -43,7 +56,7 @@ impl Lines {
         self.height += h;
     }
 
-    fn detail(&mut self, p: &mut Painter, width: f32, text: String) {
+    pub(super) fn detail(&mut self, p: &mut Painter, width: f32, text: String) {
         let h = p.paragraph_height_wrapped(Face::Ui, BODY_SIZE, width, &text, Wrap::Anywhere);
         self.push(h + 10.0, Line::Detail(text));
     }
@@ -58,7 +71,8 @@ impl Details {
             Side::Tasks => "Tasks",
             Side::Agents => "Agents",
             Side::Files => "Changed files · from tool results",
-            Side::Shells => "Background shells",
+            Side::Shells if f.model.mcp_tasks.is_empty() => "Background shells",
+            Side::Shells => "Background shells and MCP tasks",
             Side::Outputs => "Session outputs",
         };
         p.text(Face::Semibold, 12.0, area.x + 12.0, area.y + 53.0, heading, pal.muted, area.w - 24.0);
@@ -109,10 +123,10 @@ impl Details {
                 f.hover == Some(t)
             };
             match line {
-                Line::Header { label, index, expanded, active, file, opens } => {
+                Line::Header { label, index, expanded, active, split, opens } => {
                     let arrow = Rect::new(r.x, r.y + 1.0, INDENT, r.h - 2.0);
                     let main = Rect::new(arrow.right(), arrow.y, r.w - INDENT, arrow.h);
-                    let toggle = if *file { arrow } else { Rect::new(r.x, arrow.y, r.w, arrow.h) };
+                    let toggle = if *split { arrow } else { Rect::new(r.x, arrow.y, r.w, arrow.h) };
                     let toggle_hot = button(toggle, *index, Part::Expand);
                     let open_hot = *opens && button(main, *index, Part::Open);
                     if toggle_hot || *expanded {
@@ -130,7 +144,7 @@ impl Details {
                     );
                     let color = if *active || open_hot {
                         pal.accent
-                    } else if *file && !*opens {
+                    } else if *split && !*opens {
                         pal.muted
                     } else {
                         pal.text
@@ -205,8 +219,13 @@ impl Details {
                     let r = r.inset(2.0);
                     let hot = button(r, *index, Part::Open);
                     p.frame(r, 5.0, if hot { pal.hover } else { pal.bar }, pal.line);
-                    p.text(Face::Semibold, 11.5, r.x + 7.0, r.y + 10.0, title, pal.text, r.w - 14.0);
-                    p.text(Face::Ui, 10.5, r.x + 7.0, r.y + 25.0, meta, pal.muted, r.w - 14.0);
+                    let icon = f.model.output_list.get(*index).map(|o| o.embed().icon());
+                    if let Some(icon) = icon {
+                        p.icon(icon, 14.0, r.x + 14.0, r.cy(), pal.muted);
+                    }
+                    let tx = r.x + if icon.is_some() { 28.0 } else { 7.0 };
+                    p.text(Face::Semibold, 11.5, tx, r.y + 10.0, title, pal.text, r.right() - tx - 7.0);
+                    p.text(Face::Ui, 10.5, tx, r.y + 25.0, meta, pal.muted, r.right() - tx - 7.0);
                 }
             }
         }
@@ -223,6 +242,7 @@ impl Details {
         let mut out = Lines { lines: Vec::new(), height: 0.0, reveal: None };
         match f.side {
             Side::Tasks => {
+                let opens = plan_update(f.model).is_some();
                 for (index, task) in f.model.tasks.iter().enumerate() {
                     let key = task_key(index, &task.content);
                     let expanded = self.expanded.contains(&key);
@@ -235,13 +255,19 @@ impl Details {
                             index,
                             expanded,
                             active: task.status == claude_switch_core::transcript::TaskStatus::InProgress,
-                            file: false,
-                            opens: false,
+                            split: opens,
+                            opens,
                         },
                     );
                     if expanded {
                         let top = out.height;
                         out.detail(p, width, format!("{status}\n{}", task.content));
+                        if opens {
+                            out.push(
+                                ROW,
+                                Line::Button { label: "Show the latest plan update".into(), index, part: Part::Open },
+                            );
+                        }
                         self.reveal(&mut out, &key, top);
                     }
                 }
@@ -257,6 +283,7 @@ impl Details {
                     };
                     let desc = agent.description.as_deref().unwrap_or(&agent.id);
                     let label = format!("{mark}  {}", first_line(desc));
+                    let opens = f.model.agent.as_deref() != Some(agent.id.as_str());
                     out.push(
                         ROW,
                         Line::Header {
@@ -264,8 +291,8 @@ impl Details {
                             index,
                             expanded,
                             active: agent.finished == Some(false),
-                            file: false,
-                            opens: false,
+                            split: opens,
+                            opens,
                         },
                     );
                     if expanded {
@@ -314,7 +341,7 @@ impl Details {
                             index,
                             expanded,
                             active: false,
-                            file: true,
+                            split: true,
                             opens,
                         },
                     );
@@ -335,7 +362,7 @@ impl Details {
                     }
                 }
             }
-            Side::Shells | Side::Outputs => self.extra_lines(&mut out, f),
+            Side::Shells | Side::Outputs => self.extra_lines(&mut out, p, f, width),
         }
         out
     }

@@ -84,7 +84,7 @@ impl AppState {
             p.fill(l.side, pal.pane);
             p.fill(Rect::new(l.side.x, l.side.y, p.px(), l.side.h), pal.line);
             let w = (l.side.w - 12.0) / 5.0;
-            let shells = format!("Shells {}", pane.model.shells.len());
+            let shells = format!("Shells {}", pane.model.shells.len() + pane.model.mcp_tasks.len());
             for (i, (side, name)) in [
                 (Side::Tasks, "Tasks"),
                 (Side::Agents, "Agents"),

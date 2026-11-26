@@ -118,13 +118,14 @@ fn filters_hidden_invalid_and_repeated_content_and_keeps_order() {
     fs::write(&path, lines.join("\r\n") + "\r\n").unwrap();
     let reader = Reader::open(&path, 4096).unwrap();
     let items: Vec<_> = reader.items().map(|(_, item)| item).collect();
-    assert_eq!(items.len(), 5);
+    assert_eq!(items.len(), 6, "an ordinary system record is no notice");
     assert!(matches!(&items[0].kind, ItemKind::Prompt { text, .. } if text == "/x"));
-    assert_eq!(items[1].timestamp.as_deref(), Some("2026-11-26T01:00:00Z"));
-    assert!(matches!(&items[1].kind, ItemKind::Assistant { markdown } if markdown == "**hi**\n  there"));
-    assert!(matches!(&items[2].kind, ItemKind::Prompt { text, .. } if text == "works"));
-    assert_eq!(items[3].kind, ItemKind::Notice { kind: NoticeKind::Compaction, text: "one\ntwo".into() });
-    assert_eq!(items[4].kind, ItemKind::Notice { kind: NoticeKind::ApiError, text: "unavailable".into() });
+    assert_eq!(items[1].kind, ItemKind::Notice { kind: NoticeKind::Thought, text: "hide".into() });
+    assert_eq!(items[2].timestamp.as_deref(), Some("2026-11-26T01:00:00Z"));
+    assert!(matches!(&items[2].kind, ItemKind::Assistant { markdown } if markdown == "**hi**\n  there"));
+    assert!(matches!(&items[3].kind, ItemKind::Prompt { text, .. } if text == "works"));
+    assert_eq!(items[4].kind, ItemKind::Notice { kind: NoticeKind::Compaction, text: "one\ntwo".into() });
+    assert_eq!(items[5].kind, ItemKind::Notice { kind: NoticeKind::ApiError, text: "unavailable".into() });
     assert!(!reader.has_earlier());
 }
 
@@ -477,4 +478,80 @@ fn timing_generated_20_mb() {
         "{written} bytes: open {open:?} ({items} items), earlier {earlier:?} ({added} items), poll {:?}",
         start.elapsed()
     );
+}
+
+#[test]
+fn native_tasks_follow_confirmed_creates_and_updates_and_the_latest_list_wins() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let result = |id: &str, text: &str, error: bool| {
+        record(json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":id,"content":text,"is_error":error}]}}))
+    };
+    let todo = tool("t", "TodoWrite", json!({"todos":[{"content":"old plan","status":"pending"}]}));
+    fs::write(&path, todo).unwrap();
+    let mut reader = Reader::open(&path, 1024 * 1024).unwrap();
+    assert_eq!(reader.tasks()[0].content, "old plan");
+
+    append(&path, tool("c1", "TaskCreate", json!({"subject":"Write the parser","description":"d"})));
+    assert!(!reader.poll().unwrap().tasks_changed, "a call alone is not a task");
+    append(&path, result("c1", "Task #1 created successfully: Write the parser", false));
+    assert!(reader.poll().unwrap().tasks_changed);
+    assert_eq!(reader.tasks(), [Task { content: "Write the parser".into(), status: TaskStatus::Pending }]);
+
+    append(&path, tool("c2", "TaskCreate", json!({"subject":"Refused"})));
+    append(&path, result("c2", "Task #2 created successfully: Refused", true));
+    append(&path, tool("u1", "TaskUpdate", json!({"taskId":"1","status":"in_progress","subject":"Write the reader"})));
+    append(&path, result("u1", "Updated task #1 status", false));
+    reader.poll().unwrap();
+    assert_eq!(reader.tasks(), [Task { content: "Write the reader".into(), status: TaskStatus::InProgress }]);
+
+    append(&path, tool("t2", "TodoWrite", json!({"todos":[{"content":"new plan","status":"completed"}]})));
+    reader.poll().unwrap();
+    assert_eq!(reader.tasks()[0].content, "new plan", "a later TodoWrite wins again");
+    append(&path, tool("u2", "TaskUpdate", json!({"taskId":"1","status":"deleted"})));
+    append(&path, result("u2", "Updated task #1", false));
+    reader.poll().unwrap();
+    assert!(reader.tasks().is_empty(), "the native list changed last, and is now empty");
+}
+
+#[test]
+fn native_tasks_survive_history_paged_in_after_their_results() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let call = tool("c1", "TaskCreate", json!({"subject":"Early task"}));
+    let filler = prompt(&"x".repeat(4000));
+    let done = record(json!({"type":"user","message":{"content":[
+        {"type":"tool_result","tool_use_id":"c1","content":"Task #7 created successfully: Early task"}]}}));
+    fs::write(&path, call + &filler + &done).unwrap();
+    let mut reader = Reader::open(&path, done.len() + 10).unwrap();
+    assert!(reader.tasks().is_empty());
+    while reader.has_earlier() {
+        reader.earlier().unwrap();
+    }
+    assert_eq!(reader.tasks(), [Task { content: "Early task".into(), status: TaskStatus::Pending }]);
+}
+
+#[test]
+fn shown_attachments_become_notices_and_context_attachments_are_skipped() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let lines = [
+        record(json!({"type":"attachment","attachment":{"type":"prompt_snapshot","systemPrompt":["long"]}})),
+        record(json!({"type":"attachment","attachment":{"type":"nested_memory","displayPath":"docs/CLAUDE.md"}})),
+        record(json!({"type":"attachment","attachment":{"type":"hook_non_blocking_error","hookName":"PreToolUse:Bash",
+            "hookEvent":"PreToolUse","stderr":"refused","exitCode":1}})),
+        record(json!({"type":"system","subtype":"away_summary","content":"Shipped the fix.","isMeta":false})),
+        record(json!({"type":"system","subtype":"turn_duration","durationMs":5})),
+    ];
+    fs::write(&path, lines.concat()).unwrap();
+    let reader = Reader::open(&path, 1024 * 1024).unwrap();
+    let kinds: Vec<_> = reader
+        .items()
+        .map(|(_, item)| match &item.kind {
+            ItemKind::Notice { kind, .. } => *kind,
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(kinds, [NoticeKind::Memory, NoticeKind::HookError, NoticeKind::Recap]);
 }

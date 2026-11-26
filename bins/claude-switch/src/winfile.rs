@@ -49,6 +49,10 @@ pub struct WindowFile {
     pub session_split: String,
     pub chat_default: bool,
     pub chat_pins: Vec<String>,
+    /// The Markdown panel's width ([`mdshared_ui::splitter::Splitter::to_setting`]) and reading
+    /// width beside a conversation.
+    pub markdown_split: String,
+    pub markdown_reading: String,
 }
 
 impl Default for WindowFile {
@@ -63,6 +67,8 @@ impl Default for WindowFile {
             session_split: String::new(),
             chat_default: false,
             chat_pins: Vec::new(),
+            markdown_split: String::new(),
+            markdown_reading: String::new(),
         }
     }
 }
@@ -88,6 +94,8 @@ pub fn parse(text: &str) -> WindowFile {
             "split" => out.split = settings::unescape(v),
             "session_view" => out.session_view = v.trim().parse().ok(),
             "session_split" => out.session_split = settings::unescape(v),
+            "markdown_split" => out.markdown_split = settings::unescape(v),
+            "markdown_reading" => out.markdown_reading = v.trim().to_owned(),
             "chat_default" => out.chat_default = v.trim().parse().unwrap_or(false),
             "chat_pins" => {
                 out.chat_pins = v
@@ -118,6 +126,12 @@ pub fn to_text(f: &WindowFile) -> String {
     w.line("session_split", &settings::escape(&f.session_split));
     w.line("chat_default", if f.chat_default { "true" } else { "false" });
     w.line("chat_pins", &f.chat_pins.join(","));
+    if !f.markdown_split.is_empty() {
+        w.line("markdown_split", &settings::escape(&f.markdown_split));
+    }
+    if !f.markdown_reading.is_empty() {
+        w.line("markdown_reading", &f.markdown_reading);
+    }
     w.finish()
 }
 
@@ -230,6 +244,8 @@ mod tests {
             chat_pins: vec!["model".into(), "example:skill".into()],
             place: Some(saved(240)),
             restore_tabs: RestoreTabs::Always,
+            markdown_split: "b:720".into(),
+            markdown_reading: "medium".into(),
         };
         assert_eq!(parse(&to_text(&f)), f);
     }

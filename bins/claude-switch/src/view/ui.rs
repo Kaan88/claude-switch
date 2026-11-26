@@ -19,7 +19,8 @@ use super::links::NamedFile;
 use super::model::{Follow, Group, Model};
 use super::outputs::{Destination, Output};
 use super::working::{Footer, Turn};
-use rows::{HEAD, Id, PIC, Row, Rows, Style, Tone};
+pub use markdown::Panel;
+use rows::{HEAD, Id, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -48,6 +49,7 @@ enum Action {
     Picture(ItemId, usize),
     File(NamedFile),
     Editor,
+    Reading,
     CloseMarkdown,
     Open,
     Close,
@@ -98,6 +100,13 @@ pub struct Ui {
     working: Option<Footer>,
     /// The code block copied last, so its button can say so.
     copied: Option<String>,
+    /// The docked Markdown panel's width and reading width, the window's, given by the host.
+    panel: markdown::Panel,
+    /// The area the panel and the conversation share while the panel is docked: where the
+    /// divider is dragged.
+    panel_area: Option<Rect>,
+    /// The panel's width or reading width changed here, for the host to keep.
+    panel_changed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -200,7 +209,7 @@ impl Ui {
                 (Page::Conversation, "Conversation", None),
                 (Page::Tasks, "Tasks", (width >= 365.0).then_some(m.tasks.len())),
                 (Page::Agents, "Agents", (width >= 365.0).then_some(m.agents.len())),
-                (Page::Details(Side::Shells), "Shells", Some(m.shells.len())),
+                (Page::Details(Side::Shells), "Shells", Some(m.shells.len() + m.mcp_tasks.len())),
                 (Page::Details(Side::Files), "Files", None),
                 (Page::Details(Side::Outputs), "Outputs", None),
             ];
@@ -247,9 +256,14 @@ impl Ui {
         }
         let full = Rect::new(x, top, width, (footer - top).max(0.0));
         let (content, dock) = if self.markdown.is_some() {
-            let (content, dock) = markdown::split(full);
+            let (content, grip, dock) = self.panel.split(full);
+            self.panel_area = grip.map(|_| full);
+            if let Some(grip) = grip {
+                self.draw_divider(p, pal, grip);
+            }
             (content, Some(dock))
         } else {
+            self.panel_area = None;
             (full, None)
         };
         let visible = content.w > GUTTER;
@@ -442,11 +456,7 @@ impl Ui {
         if let Some(image) = &overlay.image {
             paint_image(p, image, frame, 4.0, true);
         } else {
-            let hint = if m.picture_failed(overlay.id, overlay.index, true) {
-                "This picture could not be decoded."
-            } else {
-                "Loading picture…"
-            };
+            let hint = m.picture_failed(overlay.id, overlay.index, true).unwrap_or("Loading picture…");
             p.text_center(Face::Ui, 14.0, frame, m.error.as_deref().unwrap_or(hint), pal.muted);
         }
         let y = bounds.bottom() - 41.0;

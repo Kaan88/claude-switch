@@ -32,6 +32,8 @@ enum Part {
     Full,
     Follow,
     Stop,
+    /// The tool call a background item began with, in the conversation.
+    Call,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -40,6 +42,7 @@ enum Key {
     Agent(String),
     File(FileKey),
     Shell(ItemId),
+    Mcp(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -71,6 +74,7 @@ enum Action {
     ShellFollow(ItemId),
     ShellFull(ItemId),
     ShellStop(ItemId),
+    McpResult(String),
 }
 
 #[derive(Default)]
@@ -120,7 +124,12 @@ impl Details {
         let i = hit.index;
         match (side, hit.part) {
             (Side::Tasks, Part::Expand) => Some(Action::Expand(task_key(i, &model.tasks.get(i)?.content))),
+            (Side::Tasks, Part::Open) => model.tasks.get(i).and(plan_update(model)).map(Action::Jump),
             (Side::Agents, Part::Expand) => Some(Action::Expand(Key::Agent(model.agents.get(i)?.id.clone()))),
+            (Side::Agents, Part::Open) => {
+                let agent = model.agents.get(i)?;
+                (model.agent.as_deref() != Some(agent.id.as_str())).then(|| Action::AgentTranscript(agent.id.clone()))
+            }
             (Side::Agents, Part::AgentTranscript) => {
                 let agent = model.agents.get(i)?;
                 self.expanded.contains(&Key::Agent(agent.id.clone())).then(|| Action::AgentTranscript(agent.id.clone()))
@@ -200,8 +209,22 @@ pub(in crate::view) fn activate(pane: &mut Pane, tab: u64, side: Side, hit: Hit)
             }
         }
         Action::ShellStop(id) => return Activated::Stop(id),
+        Action::McpResult(id) => {
+            if extra::open_result(pane, &id) {
+                return Activated::Focus;
+            }
+        }
     }
     Activated::None
+}
+
+/// The newest plan or native task update in the loaded conversation: where the task list was
+/// last set.
+fn plan_update(model: &Model) -> Option<ItemId> {
+    model.items.iter().rev().find_map(|(&id, item)| {
+        matches!(&item.kind, ItemKind::Tool { name, .. } if matches!(name.as_str(), "TodoWrite" | "mcp__ccd_turn__update_plan" | "TaskCreate" | "TaskUpdate"))
+            .then_some(id)
+    })
 }
 
 fn open_action(file: &NamedFile) -> Option<Action> {

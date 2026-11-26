@@ -2,7 +2,7 @@
 //! until `generation` changes. Agents and tasks always describe the root.
 mod file_refs;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::SystemTime;
 
-use claude_switch_core::transcript::{Changes, Item, ItemId, ItemKind, Picture, Reader, Subagent, Task};
+use claude_switch_core::transcript::{Changes, Item, ItemId, ItemKind, NoticeKind, Picture, Reader, Subagent, Task};
 use mdshared_text::image::Image;
 use mdshared_ui::thumbs::MemoryCache;
 
@@ -19,7 +19,7 @@ use super::{
     documents::{self, Document},
     outputs::{self, Output},
 };
-use claude_switch_core::transcript::{BackgroundShell, ShellStatus};
+use claude_switch_core::transcript::{BackgroundShell, McpTask, ShellStatus};
 
 const CHUNK: usize = 256 * 1024;
 
@@ -125,10 +125,11 @@ pub enum Group {
     Tools(Vec<ItemId>),
 }
 
-fn group(items: &BTreeMap<ItemId, Item>) -> Vec<Group> {
+pub(super) fn group(items: &BTreeMap<ItemId, Item>) -> Vec<Group> {
     let mut groups = Vec::new();
     for (&id, item) in items {
-        if matches!(item.kind, ItemKind::Tool { .. }) {
+        // A thought between tool calls stays in their group instead of splitting it.
+        if matches!(item.kind, ItemKind::Tool { .. } | ItemKind::Notice { kind: NoticeKind::Thought, .. }) {
             if let Some(Group::Tools(ids)) = groups.last_mut() {
                 ids.push(id);
             } else {
@@ -201,6 +202,7 @@ struct Update {
     files: Vec<(ItemId, Files)>,
     outputs: Vec<(ItemId, Vec<Output>)>,
     shells: Option<Vec<BackgroundShell>>,
+    mcp_tasks: Option<Vec<McpTask>>,
 }
 
 enum Event {
@@ -227,6 +229,7 @@ pub struct Model {
     pub(super) outputs: BTreeMap<ItemId, Vec<Output>>,
     pub(super) output_list: Vec<Output>,
     pub(super) shells: Vec<BackgroundShell>,
+    pub(super) mcp_tasks: Vec<McpTask>,
     shell_logs: ShellLogs,
     pub(super) shell_tails: BTreeMap<ItemId, Option<Vec<String>>>,
     tail_requested: BTreeSet<ItemId>,
@@ -238,7 +241,8 @@ pub struct Model {
     polling: Arc<AtomicBool>,
     cache: MemoryCache<Key>,
     requested: HashSet<Key>,
-    failed: HashSet<Key>,
+    /// Pictures that could not be shown, with the reason said under them.
+    failed: HashMap<Key, &'static str>,
 }
 
 impl Model {
@@ -267,6 +271,7 @@ impl Model {
                 chat: Default::default(),
                 refs: Default::default(),
                 shells: Default::default(),
+                mcp_tasks: Default::default(),
                 shell_logs: worker_logs,
             };
             let mut error = None;
@@ -311,6 +316,7 @@ impl Model {
             outputs: Default::default(),
             output_list: Vec::new(),
             shells: Vec::new(),
+            mcp_tasks: Vec::new(),
             shell_logs,
             shell_tails: Default::default(),
             tail_requested: Default::default(),
@@ -356,6 +362,9 @@ impl Model {
                         }
                         self.output_list = outputs::latest(&self.outputs);
                     }
+                    if let Some(tasks) = u.mcp_tasks {
+                        self.mcp_tasks = tasks;
+                    }
                     if let Some(shells) = u.shells {
                         self.shells = shells;
                         self.shell_tails.retain(|id, _| self.shells.iter().any(|s| s.tool == *id));
@@ -374,7 +383,7 @@ impl Model {
                         if changed_pictures {
                             self.cache.remove_where(|k| k.offset == id.offset && k.block == id.block);
                             self.requested.retain(|k| k.offset != id.offset || k.block != id.block);
-                            self.failed.retain(|k| k.offset != id.offset || k.block != id.block);
+                            self.failed.retain(|k, _| k.offset != id.offset || k.block != id.block);
                         }
                     }
                     if regroup {
@@ -400,8 +409,8 @@ impl Model {
                     self.requested.remove(&key);
                     match result {
                         Ok(image) => self.cache.insert(key, image),
-                        Err(_) => {
-                            self.failed.insert(key);
+                        Err(error) => {
+                            self.failed.insert(key, super::pictures::reason(&error));
                         }
                     }
                 }
@@ -439,15 +448,16 @@ impl Model {
     fn reference(&self, id: ItemId, index: usize) -> Option<&Picture> {
         refs(self.items.get(&id)?).get(index)
     }
-    pub fn picture_failed(&self, id: ItemId, index: usize, large: bool) -> bool {
-        self.failed.contains(&Key::new(id, index, large))
+    /// Why a picture cannot be shown, once its decode failed.
+    pub fn picture_failed(&self, id: ItemId, index: usize, large: bool) -> Option<&'static str> {
+        self.failed.get(&Key::new(id, index, large)).copied()
     }
     pub fn picture(&mut self, id: ItemId, index: usize, large: bool) -> Option<Arc<Image>> {
         let key = Key::new(id, index, large);
         if let Some(image) = self.cache.get(&key) {
             return Some(image);
         }
-        if !self.requested.contains(&key) && !self.failed.contains(&key) {
+        if !self.requested.contains(&key) && !self.failed.contains_key(&key) {
             let pic = self.reference(id, index)?.clone();
             self.requested.insert(key);
             let _ = self.tx.send(Command::Picture(self.generation, key, pic));
@@ -501,6 +511,7 @@ struct Worker {
     chat: claude_switch_core::transcript::ChatInfo,
     refs: file_refs::FileRefs,
     shells: Vec<BackgroundShell>,
+    mcp_tasks: Vec<McpTask>,
     shell_logs: ShellLogs,
 }
 
@@ -667,6 +678,11 @@ impl Worker {
                 self.shells.clone_from(&shells);
                 u.shells = Some(shells);
             }
+            let tasks = reader.mcp_tasks();
+            if reset || self.mcp_tasks != tasks {
+                self.mcp_tasks.clone_from(&tasks);
+                u.mcp_tasks = Some(tasks);
+            }
         }
         Ok((reset
             || earlier_request
@@ -674,6 +690,7 @@ impl Worker {
             || !u.items.is_empty()
             || !u.files.is_empty()
             || u.shells.is_some()
+            || u.mcp_tasks.is_some()
             || u.tasks.is_some()
             || u.agents.is_some())
         .then(|| Event::Update(Box::new(u))))
