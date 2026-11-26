@@ -227,3 +227,10 @@ and in the README, not committed, and not copied to the installed clone
     the file (Markdown in the viewer panel of item 12, other files with the system's default app,
     only files the transcript names), ▸ should expand its edits, and Tasks and Agents rows should
     expand to their detail.
+16. **Show the CLI's live working line in the Chat view** (owner, 2026-11-26, screenshot of
+    "✻ Shimmying… (53m 37s · ↓ 27.1k tokens)"). Today the Chat view reads that line only to tell
+    that a turn is running (`view/chat/submission.rs`, "esc to interrupt"); it never shows it. Show it
+    live at the foot of the conversation while a turn runs: the CLI's word, the elapsed time and the
+    token count as the CLI prints them, updated as the terminal screen changes, with Stop beside it;
+    gone when the turn ends. Read only from the visible screen rows; if the line cannot be parsed,
+    show "Working…" with the elapsed time the app measures itself.
