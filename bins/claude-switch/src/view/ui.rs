@@ -1,6 +1,9 @@
 //! The read-only session pane. Worker updates change its content; they never give it keyboard focus.
 mod input;
+mod markdown;
+mod paint;
 mod rows;
+mod scroll;
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -12,8 +15,10 @@ use mdshared_text::image::Image;
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::theme::Palette;
 
+use super::links::NamedFile;
 use super::model::{Follow, Model};
-use rows::{CompactHead, HEAD, Id, PIC, Row, Rows, Tone};
+use rows::{HEAD, Id, PIC, Row, Rows, Style, Tone};
+use scroll::{Drag, GUTTER, Scrollbar, Surface};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Page {
@@ -34,6 +39,9 @@ enum Action {
     Group(ItemId),
     Tool(ItemId),
     Picture(ItemId, usize),
+    File(NamedFile),
+    Editor,
+    CloseMarkdown,
     Open,
     Close,
 }
@@ -63,6 +71,10 @@ pub struct Ui {
     hot: Option<Action>,
     pressed: Option<Action>,
     overlay: Option<Overlay>,
+    markdown: Option<markdown::Markdown>,
+    scrollbar: Option<Scrollbar>,
+    scroll_drag: Option<Drag>,
+    scroll_hot: Option<Surface>,
     selection: Option<(Id, usize, usize)>,
     dragging: bool,
     start: Option<(f32, f32, String)>,
@@ -74,12 +86,13 @@ pub struct Ui {
 }
 
 const PAD: f32 = 12.0;
-const INSET: f32 = 12.0;
-
 impl Ui {
     pub fn set_chat(&mut self, chat: bool) {
-        self.chat = chat;
-        self.cache = None;
+        if self.chat != chat {
+            self.chat = chat;
+            self.cache = None;
+            self.scroll_drag = None;
+        }
     }
 
     pub fn chat_conversation(&mut self, model: &mut Model) {
@@ -107,6 +120,8 @@ impl Ui {
             self.tool_expanded.clear();
             self.selection = None;
             self.overlay = None;
+            self.markdown = None;
+            self.scroll_drag = None;
             self.cache = None;
         }
         self.area = area;
@@ -158,137 +173,58 @@ impl Ui {
             p.text(Face::Ui, 12.0, x, top + 10.0, error, pal.warn, width);
             top += 24.0;
         }
-        let compact_footer = self.chat && area.h < 125.0 && self.follow.active();
-        let footer = area.bottom()
-            - if compact_footer {
-                4.0
-            } else if self.chat {
-                25.0
-            } else {
-                40.0
-            };
-        if self.page == Page::Conversation && m.has_earlier {
+        // The track must retain its length when paging or dragging toggles follow.
+        let footer = area.bottom() - if self.chat { 25.0 } else { 40.0 };
+        if self.page == Page::Conversation && m.has_earlier && !(self.markdown.is_some() && width < 640.0) {
             let h = if self.chat { 21.0 } else { 26.0 };
             self.button(p, pal, Rect::new(x, top, 106.0, h), "Load earlier", Action::Earlier, false);
             top += h + 6.0;
         }
-        self.body = Rect::new(x, top, width, (footer - top).max(0.0));
-        self.layout(m, pal, p.scale);
-        let body_clip = p.clip(self.body);
-        let compact = CompactHead::new(width);
-        let start = self.rows.partition_point(|r| r.top + r.h < self.offset);
-        for row in &self.rows[start..] {
-            let y = self.body.y + row.top - self.offset;
-            if y > self.body.bottom() {
-                break;
-            }
-            let r = Rect::new(x, y, width, row.h);
-            p.rbox(r, 7.0, pal.pane);
-            let title = if matches!(row.id, Id::Agent(_)) { r } else { Rect::new(x, y, width, HEAD) };
-            let act = match &row.id {
-                Id::Group(id) => Some(Action::Group(*id)),
-                Id::Tool(id) => Some(Action::Tool(*id)),
-                _ => row.agent.clone().map(Action::Agent),
-            };
-            if let Some(act) = act {
-                if title.contains(mouse.0, mouse.1) {
-                    p.rbox(title, 6.0, pal.hover);
-                }
-                if let Some(hit) = intersection(title, self.body) {
-                    self.hits.push((hit, act));
-                }
-            }
-            let color = match row.tone {
-                Tone::Accent => pal.accent,
-                Tone::Normal => pal.text,
-                Tone::Muted => pal.muted,
-                Tone::Warning => pal.warn,
-            };
-            let stamp = row.status();
-            let sw = if row.compact {
-                compact.stamp_w
-            } else if stamp.is_empty() {
-                0.0
-            } else {
-                (p.measure(Face::Ui, 11.5, &stamp) + 10.0).min(width * 0.44)
-            };
-            let tx = x + INSET;
-            let label = if row.agent.is_some() { format!("{}  ›", row.title) } else { row.title.clone() };
-            if !row.compact {
-                p.text(Face::Semibold, 13.0, tx, y + HEAD / 2.0, &label, color, (width - 2.0 * INSET - sw).max(1.0));
-            }
-            let stamp_x = x + if row.compact { compact.stamp_x } else { width - INSET - sw };
-            p.text(Face::Ui, 11.5, stamp_x, y + HEAD / 2.0, &stamp, if row.compact { color } else { pal.muted }, sw);
-            if row.busy && y + HEAD > self.body.y && !self.overlay_open() {
-                self.busy_visible = true;
-                let a = if motion { 0.70 + 0.30 * (phase * 4.0).sin() } else { 1.0 };
-                if stamp_x - 7.0 >= x {
-                    p.rbox_a(Rect::new(stamp_x - 7.0, y + HEAD / 2.0 - 2.0, 4.0, 4.0), 2.0, pal.accent, a);
-                }
-            }
-            let mut py = y + HEAD;
-            if let Some(body) = &row.body {
-                let range = selection(&self.selection, &row.id, body.text());
-                if row.compact {
-                    if compact.text_w > 0.0 {
-                        let bounds = Rect::new(x + compact.text_x, y, compact.text_w, HEAD);
-                        let c = p.clip(bounds);
-                        body.draw(p, Rect::new(bounds.x, y + 7.0, bounds.w, body.height()), bounds, range, pal);
-                        p.restore(c);
-                    }
-                } else {
-                    body.draw(
-                        p,
-                        Rect::new(tx, py, (width - 2.0 * INSET).max(1.0), body.height()),
-                        self.body,
-                        range,
-                        pal,
-                    );
-                    py += body.height();
-                }
-            }
-            {
-                for &(id, i) in &row.pictures {
-                    let frame = Rect::new(tx, py + 4.0, (width - 2.0 * INSET).clamp(1.0, 240.0), PIC - 8.0);
-                    py += PIC;
-                    let Some(hit) = intersection(frame, self.body) else { continue };
-                    self.hits.push((hit, Action::Picture(id, i)));
-                    p.rbox(frame, 5.0, pal.field);
-                    if let Some(image) = m.picture(id, i, false) {
-                        paint_image(p, &image, frame, 4.0, false);
-                    } else {
-                        let hint =
-                            if m.picture_failed(id, i, false) { "Preview unavailable" } else { "Loading preview…" };
-                        p.text_center(Face::Ui, 12.0, frame, hint, pal.muted);
-                    }
-                }
+        let full = Rect::new(x, top, width, (footer - top).max(0.0));
+        let (content, dock) = if self.markdown.is_some() {
+            let (content, dock) = markdown::split(full);
+            (content, Some(dock))
+        } else {
+            (full, None)
+        };
+        let visible = content.w > GUTTER;
+        self.scrollbar = None;
+        self.body = Rect::default();
+        if visible {
+            let rail = if self.chat { content.w.min(790.0) } else { content.w };
+            let left = content.x + (content.w - rail) / 2.0;
+            self.body = Rect::new(left, top, rail - GUTTER, content.h);
+            self.layout(m, pal, p.scale);
+            self.paint_rows(p, pal, m, phase, motion);
+            self.scrollbar =
+                Scrollbar::new(Rect::new(self.body.right() + 1.0, top, GUTTER - 1.0, self.body.h), self.max);
+            if let Some(bar) = self.scrollbar {
+                bar.draw(
+                    p,
+                    pal,
+                    self.offset,
+                    mouse,
+                    self.scroll_drag.is_some_and(|d| d.surface == Surface::Conversation),
+                );
             }
         }
-        p.restore(body_clip);
-        if self.max > 0.0 && self.body.h > 0.0 {
-            let h = (self.body.h.powi(2) / (self.max + self.body.h)).clamp(8.0_f32.min(self.body.h), self.body.h);
-            p.rbox(
-                Rect::new(area.right() - 5.0, top + (self.body.h - h) * self.offset / self.max, 3.0, h),
-                1.5,
-                pal.thumb,
-            );
+        if let Some(dock) = dock {
+            self.draw_markdown(p, pal, dock, m);
         }
         p.fill(Rect::new(x, footer, width, p.px()), pal.line);
-        if self.page == Page::Conversation {
+        if self.page == Page::Conversation && visible {
             let r = Rect::new(
                 area.right() - PAD - 110.0,
                 footer + if self.chat { 1.0 } else { 7.0 },
                 110.0,
                 if self.chat { 23.0 } else { 26.0 },
             );
-            if compact_footer {
-                // Preserve the bottom of the current card in a short Chat viewport.
-            } else if self.follow.active() {
+            if self.follow.active() {
                 p.text_center(Face::Ui, 12.0, r, "Following latest", pal.muted);
             } else {
                 self.button(p, pal, r, "Jump to latest", Action::Latest, false);
             }
-        } else {
+        } else if self.page != Page::Conversation {
             let count = if self.page == Page::Agents { m.agents.len() } else { m.tasks.len() };
             p.text(
                 Face::Ui,
@@ -319,10 +255,10 @@ impl Ui {
                 } else {
                     Default::default()
                 };
-            let mut r = Rows { previous, list: Vec::new(), end: 0.0, width: self.body.w, pal, scale };
+            let mut r = Rows { previous, list: Vec::new(), end: 0.0, width: self.body.w, pal, scale, chat: self.chat };
             match self.page {
                 Page::Conversation => {
-                    r.conversation(m, &self.expanded, self.chat.then_some(&self.tool_expanded));
+                    r.conversation(m, &self.expanded, &self.tool_expanded);
                     if r.list.is_empty() {
                         r.empty(
                             "Waiting for messages",

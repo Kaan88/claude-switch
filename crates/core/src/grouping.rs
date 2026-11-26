@@ -6,6 +6,12 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 mod local;
 
+/// Open a named regular file on a local fixed volume, refusing reparse points on Windows.
+/// `read` is false for existence checks that do not need access to the file's contents.
+pub fn open_local_file(path: &Path, read: bool) -> Option<std::fs::File> {
+    local::Volume::at(path)?.file(path, read)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
     #[default]

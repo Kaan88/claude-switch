@@ -65,7 +65,9 @@ pub enum ItemKind {
         id: String,
         name: String,
         summary: String,
+        file_path: Option<String>,
         state: ToolState,
+        duration_ms: Option<u64>,
         pictures: Vec<Picture>,
         subagent: Option<String>,
         card: Option<ToolCard>,
@@ -357,6 +359,7 @@ struct View {
 
 struct ToolResult {
     state: ToolState,
+    ended_ms: Option<i64>,
     pictures: Vec<Picture>,
     lines: Vec<String>,
 }
@@ -414,7 +417,8 @@ impl View {
                                     .filter_map(|(j, block)| picture(i, Some(j), block))
                                     .collect();
                                 let lines = chat::result_lines(&block["content"]);
-                                results.push((tool, id(i), ToolResult { state, pictures, lines }));
+                                let ended_ms = timestamp.and_then(chat::clock_ms);
+                                results.push((tool, id(i), ToolResult { state, ended_ms, pictures, lines }));
                             }
                         }
                         _ => (),
@@ -464,7 +468,9 @@ impl View {
                             id: tool.into(),
                             name: name.into(),
                             summary: tool_summary(name, input),
+                            file_path: tool_path(name, input).filter(|p| p.len() <= 4096).map(str::to_owned),
                             state: ToolState::Running,
+                            duration_ms: None,
                             pictures: Vec::new(),
                             subagent: None,
                             card: ToolCard::from_input(name, input),
@@ -490,12 +496,18 @@ impl View {
 
     fn update_tool(&mut self, tool: &str, changes: &mut Changes) {
         let Some(&id) = self.tools.get(tool) else { return };
-        let Some(Item { kind: ItemKind::Tool { state, pictures, subagent, card, .. }, .. }) = self.items.get_mut(&id)
+        let Some(Item { kind: ItemKind::Tool { state, duration_ms, pictures, subagent, card, .. }, timestamp }) =
+            self.items.get_mut(&id)
         else {
             return;
         };
         let result = self.results.get(tool).map(|(_, result)| result);
         let new_state = result.map_or(ToolState::Running, |r| r.state);
+        let new_duration = timestamp
+            .as_deref()
+            .and_then(chat::clock_ms)
+            .zip(result.and_then(|r| r.ended_ms))
+            .and_then(|(start, end)| u64::try_from(end - start).ok());
         let new_pictures = result.map_or(&[][..], |r| r.pictures.as_slice());
         let new_agent = self.links.get(tool);
         let changed_result = if let Some(ToolCard::Shell { result: lines, .. }) = card {
@@ -509,8 +521,14 @@ impl View {
         } else {
             false
         };
-        if *state != new_state || *pictures != new_pictures || subagent.as_ref() != new_agent || changed_result {
+        if *state != new_state
+            || *duration_ms != new_duration
+            || *pictures != new_pictures
+            || subagent.as_ref() != new_agent
+            || changed_result
+        {
             *state = new_state;
+            *duration_ms = new_duration;
             *pictures = new_pictures.to_vec();
             *subagent = new_agent.cloned();
             if !changes.added.contains(&id) {
@@ -603,6 +621,13 @@ fn tool_summary(name: &str, input: &Value) -> String {
         _ => &[],
     };
     one_line(keys.iter().find_map(|key| input[*key].as_str()).unwrap_or(name))
+}
+
+fn tool_path<'a>(name: &str, input: &'a Value) -> Option<&'a str> {
+    match name {
+        "Read" | "Write" | "Edit" => input["file_path"].as_str().or_else(|| input["path"].as_str()),
+        _ => None,
+    }
 }
 
 fn one_line(text: &str) -> String {

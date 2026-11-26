@@ -1,5 +1,7 @@
 //! Asynchronous session reader. The selected conversation uses stable item IDs
 //! until `generation` changes. Agents and tasks always describe the root.
+mod file_refs;
+
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
@@ -11,6 +13,8 @@ use std::time::SystemTime;
 use claude_switch_core::transcript::{Changes, Item, ItemId, ItemKind, Picture, Reader, Subagent, Task};
 use mdshared_text::image::Image;
 use mdshared_ui::thumbs::MemoryCache;
+
+use super::links::{self, Files, NamedFile};
 
 const CHUNK: usize = 256 * 1024;
 
@@ -119,6 +123,7 @@ enum Command {
     Select(Option<String>),
     Picture(u64, Key, Picture),
     Open(u64, Picture),
+    Markdown(u64, u64, NamedFile),
 }
 
 #[derive(Default)]
@@ -133,11 +138,13 @@ struct Update {
     generation: u64,
     chat: claude_switch_core::transcript::ChatInfo,
     changed_files: Option<Vec<String>>,
+    files: Vec<(ItemId, Files)>,
 }
 
 enum Event {
     Update(Box<Update>),
     Picture(u64, Key, io::Result<Arc<Image>>),
+    Markdown(u64, u64, io::Result<String>),
     Error(Option<String>),
 }
 
@@ -153,6 +160,9 @@ pub struct Model {
     pub generation: u64,
     pub chat: claude_switch_core::transcript::ChatInfo,
     pub changed_files: Vec<String>,
+    pub files: BTreeMap<ItemId, Files>,
+    markdown_ticket: u64,
+    markdown: Option<io::Result<String>>,
     session: Option<String>,
     tx: mpsc::Sender<Command>,
     rx: mpsc::Receiver<Event>,
@@ -163,14 +173,22 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn new(source: Source, wake: impl Fn() + Send + 'static) -> Self {
+    pub fn new(source: Source, cwd: PathBuf, wake: impl Fn() + Send + 'static) -> Self {
         let (tx, commands) = mpsc::channel();
         let (events, rx) = mpsc::channel();
         let polling = Arc::new(AtomicBool::new(false));
         let queued = polling.clone();
         std::thread::spawn(move || {
-            let mut worker =
-                Worker { source, root: None, child: None, session: None, generation: 0, chat: Default::default() };
+            let mut worker = Worker {
+                source,
+                cwd,
+                root: None,
+                child: None,
+                session: None,
+                generation: 0,
+                chat: Default::default(),
+                refs: Default::default(),
+            };
             let mut error = None;
             for command in commands {
                 if matches!(command, Command::Poll) {
@@ -209,6 +227,9 @@ impl Model {
             generation: 0,
             chat: Default::default(),
             changed_files: Vec::new(),
+            files: Default::default(),
+            markdown_ticket: 0,
+            markdown: None,
             session: None,
             tx,
             rx,
@@ -230,9 +251,18 @@ impl Model {
                 Event::Update(u) => {
                     if u.reset {
                         self.items.clear();
+                        self.files.clear();
+                        self.cancel_markdown();
                         self.cache.remove_where(|_| true);
                         self.requested.clear();
                         self.failed.clear();
+                    }
+                    for (id, files) in u.files {
+                        if files.is_empty() {
+                            self.files.remove(&id);
+                        } else {
+                            self.files.insert(id, files);
+                        }
                     }
                     let regroup = u.reset || !u.items.is_empty();
                     for (id, item) in u.items {
@@ -273,6 +303,10 @@ impl Model {
                     }
                 }
                 Event::Picture(..) => continue,
+                Event::Markdown(g, ticket, result) if g == self.generation && ticket == self.markdown_ticket => {
+                    self.markdown = Some(result);
+                }
+                Event::Markdown(..) => continue,
                 Event::Error(e) => {
                     self.error = e;
                     self.revision += 1;
@@ -314,21 +348,50 @@ impl Model {
             let _ = self.tx.send(Command::Open(self.generation, pic.clone()));
         }
     }
+
+    pub fn request_markdown(&mut self, file: NamedFile) {
+        self.cancel_markdown();
+        if self.tx.send(Command::Markdown(self.generation, self.markdown_ticket, file)).is_err() {
+            self.markdown = Some(Err(io::Error::other("The transcript worker is no longer available.")));
+        }
+    }
+
+    pub fn take_markdown(&mut self) -> Option<io::Result<String>> {
+        self.markdown.take()
+    }
+
+    fn cancel_markdown(&mut self) {
+        self.markdown_ticket = self.markdown_ticket.wrapping_add(1);
+        self.markdown = None;
+    }
 }
 
 struct Worker {
     source: Source,
+    cwd: PathBuf,
     root: Option<Reader>,
     child: Option<(String, Reader)>,
     session: Option<String>,
     generation: u64,
     chat: claude_switch_core::transcript::ChatInfo,
+    refs: file_refs::FileRefs,
 }
 
 fn refs(item: &Item) -> &[Picture] {
     match &item.kind {
         ItemKind::Prompt { pictures, .. } | ItemKind::Tool { pictures, .. } => pictures,
         _ => &[],
+    }
+}
+
+fn named_paths(item: &Item) -> Vec<String> {
+    match &item.kind {
+        ItemKind::Assistant { markdown } => super::preview::markdown_names(markdown),
+        ItemKind::Prompt { text, .. } | ItemKind::Notice { text, .. } => {
+            links::detect(text).into_iter().map(|(_, name)| name).collect()
+        }
+        ItemKind::Tool { file_path: Some(path), .. } => vec![path.clone()],
+        _ => Vec::new(),
     }
 }
 
@@ -410,6 +473,9 @@ impl Worker {
                 super::pictures::open(reader, &pic)?;
                 return Ok(None);
             }
+            Command::Markdown(g, ticket, file) if g == self.generation => {
+                return Ok(Some(Event::Markdown(g, ticket, file.read_markdown())));
+            }
             _ => return Ok(None),
         }
         let reader = self.child.as_ref().map(|(_, r)| r).unwrap_or(root);
@@ -462,10 +528,12 @@ impl Worker {
             u.items =
                 change.added.union(&change.updated).filter_map(|&id| Some((id, reader.item(id)?.clone()))).collect();
         }
+        u.files = self.refs.update(reset, &u.items, &self.cwd);
         Ok((reset
             || earlier_request
             || metadata_changed
             || !u.items.is_empty()
+            || !u.files.is_empty()
             || u.tasks.is_some()
             || u.agents.is_some()
             || u.changed_files.is_some())
@@ -485,7 +553,9 @@ mod tests {
             id: String::new(),
             name: String::new(),
             summary: String::new(),
+            file_path: None,
             state: ToolState::Ok,
+            duration_ms: None,
             pictures: vec![],
             subagent: agent,
             card: None,

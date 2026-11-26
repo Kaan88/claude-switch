@@ -90,7 +90,8 @@ impl ToolCard {
                     .map(|s| format!("− {}", short(s, 180)))
                     .chain(new.take(10).map(|s| format!("+ {}", short(s, 180))))
                     .collect();
-                Some(Self::Edit { path: short(path, 512), added, removed, lines })
+                // Never turn a shortened display string into a different actionable filename.
+                (path.len() <= 4096).then(|| Self::Edit { path: path.to_owned(), added, removed, lines })
             }
             "Bash" | "PowerShell" => {
                 Some(Self::Shell { command: short(input["command"].as_str()?, 500), result: Vec::new() })
@@ -115,6 +116,18 @@ pub(super) fn result_lines(content: &Value) -> Vec<String> {
         .take(10)
         .map(|line| short(line, 180))
         .collect()
+}
+
+pub(super) fn clock_ms(raw: &str) -> Option<i64> {
+    let seconds = crate::usage::timestamp(raw)?;
+    let fraction = raw.split_once(['.', ',']).map_or(0, |(_, tail)| {
+        tail.bytes()
+            .take_while(u8::is_ascii_digit)
+            .chain(std::iter::repeat(b'0'))
+            .take(3)
+            .fold(0, |n, digit| n * 10 + i64::from(digit - b'0'))
+    });
+    Some(seconds * 1000 + fraction)
 }
 
 #[cfg(test)]
@@ -159,7 +172,7 @@ mod tests {
         writeln!(
             file,
             "{}",
-            json!({"type":"assistant","message":{"model":"test-model","stop_reason":"tool_use",
+            json!({"type":"assistant","timestamp":"2026-11-26T23:59:59.800Z","message":{"model":"test-model","stop_reason":"tool_use",
             "usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":30},
             "content":[{"type":"tool_use","id":"a","name":"Bash","input":{"command":"preview --pocket"}}]}})
         )
@@ -171,8 +184,9 @@ mod tests {
         assert_eq!(info.context, Some(60));
         assert_eq!(info.model.as_deref(), Some("test-model"));
 
+        assert!(reader.items().any(|(_, item)| matches!(item.kind, ItemKind::Tool { duration_ms: None, .. })));
         for row in [
-            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a","content":"first\nsecond"}]}}),
+            json!({"type":"user","timestamp":"2026-11-27T01:00:00.225+01:00","message":{"content":[{"type":"tool_result","tool_use_id":"a","content":"first\nsecond"}]}}),
             json!({"type":"assistant","message":{"content":"An incomplete streaming answer."}}),
             json!({"type":"assistant","isSidechain":true,"message":{"content":"Child","stop_reason":"end_turn"}}),
             json!({"type":"user","isMeta":true,"message":{"content":"synthetic prompt"}}),
@@ -185,10 +199,21 @@ mod tests {
         assert_eq!(after.prompt, info.prompt);
         assert_eq!(after.latest.map(|(_, phase)| phase), Some(Phase::Unknown));
         assert!(reader.items().any(|(_, item)| matches!(&item.kind,
-            ItemKind::Tool { card: Some(ToolCard::Shell { result, .. }), .. } if result == &["first", "second"])));
+            ItemKind::Tool { duration_ms: Some(425), card: Some(ToolCard::Shell { result, .. }), .. }
+                if result == &["first", "second"])));
         writeln!(file, "{}", json!({"type":"assistant","message":{"content":"Done.","stop_reason":"end_turn"}}))
             .unwrap();
         reader.poll().unwrap();
         assert_eq!(reader.chat().latest.map(|(_, phase)| phase), Some(Phase::EndTurn));
+    }
+
+    #[test]
+    fn a_tool_card_keeps_the_exact_path_or_refuses_it() {
+        let path = "x".repeat(600) + ".md";
+        assert!(matches!(
+            ToolCard::from_input("Write", &json!({"file_path":path,"content":"hello"})),
+            Some(ToolCard::Edit { path: actual, .. }) if actual == path
+        ));
+        assert!(ToolCard::from_input("Write", &json!({"file_path":"x".repeat(4097),"content":"hello"})).is_none());
     }
 }

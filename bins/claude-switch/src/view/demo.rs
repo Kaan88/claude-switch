@@ -94,7 +94,14 @@ fn seed_chat(file: &mut File) -> io::Result<()> {
         )]),
     )?;
     record(file, 37, "user", json!([result("demo-edit", json!("Updated."))]))?;
-    record(file, 38, "assistant", json!("**The caption is shorter.** I’ll update the print heading next."))?;
+    record(
+        file,
+        38,
+        "assistant",
+        json!(
+            "**The caption is shorter.** Open [the field notes](field-notes.md) to see it. I’ll update the print heading next."
+        ),
+    )?;
     record(
         file,
         39,
@@ -223,7 +230,7 @@ fn seed(demo: &Transcript, file: &mut File) -> io::Result<()> {
 
 ---
 
-Use `caption` for the printed label. See the [Markdown reference](https://commonmark.org/).
+Use `caption` for the printed label. See `field-notes.md` and the [Markdown reference](https://commonmark.org/).
 
 ```rust
 fn caption(night: bool) -> &'static str {

@@ -252,17 +252,32 @@ stays unattached.
 
 Conversation, Agents and Tasks are separate views of the incremental transcript reader. Conversation
 opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
-following. Earlier history is loaded on request. Consecutive tools collapse together; an agent row
-opens its own transcript. A cursor checkpoint detects a replacement or truncate-and-regrow near the
+following. Both Chat and Session view support wheel scrolling, thumb drag, and track clicks that page
+by a viewport. Earlier history is loaded on request. Agent transcripts are reachable from expanded
+tool details and the Agents page. A cursor checkpoint detects a replacement or truncate-and-regrow near the
 read position. Transcript lines over 48 MiB are skipped, picture reads respect the same containing-line
 limit, and sidecar metadata over 1 MiB is ignored. The reported agent state comes from the sidecar, so a missing
 completion flag is shown as unknown rather than guessed.
 
-Conversation renders each assistant answer with mdview-preview's headless Markdown renderer.
-Row heights are cached by answer and width; only visible slices are rasterized. Selection and
-HTTP(S) links use the pane's existing input handling. Markdown images and optional engine jobs
-are disabled; transcript attachments still use the picture pipeline. Prompts and tool lines
-keep the toolkit's selectable text and local file links (Ctrl+click reveals an existing file).
+Chat and Session view use the same conversation projection, painting and input. Prompts sit in
+right-aligned tinted bubbles; cardless answers use a palette-accent Claude mark and body-size prose
+(16 logical px in Chat, 14 in Session view). Indented, bordered mono tool rows show recorded status,
+the tool and its target, and the time between use and result timestamps when both are valid and
+ordered. Runs of four or more consecutive tools start collapsed. Expand a row for the bounded
+details and any output pictures; a group can be expanded independently of its rows.
+
+The embedded Markdown viewer renders assistant answers and named Markdown files. Conversation row
+heights are cached and only visible slices are rasterized. Bare or inline-code Markdown paths and
+explicit Markdown link destinations are actionable when the reader worker finds a regular file.
+Relative paths resolve inside the session folder; absolute fixed-volume paths are also accepted.
+Device and network paths, redirects, and nonexistent files are not actionable. Bash command text
+and output do not infer file links. Successful Write/Edit paths to existing Markdown files get one
+button per file at the end of the loaded turn. Click a path or button to preview up to 1 MiB of
+UTF-8 Markdown on the right in wide Chat or in place of the reading body when narrow. The preview
+does not follow links in the document; images and optional math/diagram engine jobs are disabled
+in both renderer surfaces. **Open in editor** rechecks the named file and asks the OS to open it
+with its default association. Ctrl+click on an inline file link instead reveals it. HTTP(S) links
+in answers still open in the browser; transcript attachments still use the picture pipeline.
 
 Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
 picture work run off the window thread; worker results wake the window rather than making it redraw
@@ -564,7 +579,7 @@ previewed in the drawer before the user submits; Chat never queues Alt+V and Ent
 The composer replaces line feeds and tabs with spaces, refuses other control characters, and
 writes the resulting text in bracketed paste followed by one app-generated Enter. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Recall uses
-loaded main-transcript prompts. Tool cards show bounded previews:
+loaded main-transcript prompts. Expanded tool rows show bounded previews:
 Edit compares the unmatched middle after common leading and trailing lines, Write shows
 additions, and shell output uses only its first text lines. Changed files lists successful
 Edit/Write tool paths seen in loaded history, not a filesystem or Git diff. Context now uses

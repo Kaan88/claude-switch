@@ -243,7 +243,7 @@ impl AppState {
 
     pub(crate) fn new_session_pane(&self, source: model::Source, cwd: PathBuf) -> Pane {
         let proxy = self.proxy.clone();
-        let model = model::Model::new(source.clone(), move || {
+        let model = model::Model::new(source.clone(), cwd.clone(), move || {
             if let Some(proxy) = &proxy
                 && let Ok(proxy) = proxy.lock()
             {
@@ -395,7 +395,7 @@ impl AppState {
         if !self.nothing_over() {
             return false;
         }
-        self.shown_pane(cx.size().0).is_some_and(|pane| pane.ui.release(x, y, cx.mods(), &mut pane.model, &pane.cwd))
+        self.shown_pane(cx.size().0).is_some_and(|pane| pane.ui.release(x, y, cx.mods(), &mut pane.model))
     }
 
     pub fn session_move(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> Option<bool> {
@@ -406,6 +406,13 @@ impl AppState {
         if self.session_view.splitter.dragging() {
             cx.set_cursor(Cursor::ResizeEw);
             return Some(self.session_view.splitter.drag(area, AXIS, x, y));
+        }
+        if let Some(pane) = self.shown_pane(area.w)
+            && pane.ui.scroll_dragging()
+        {
+            let (cursor, changed) = pane.ui.moved(x, y);
+            cx.set_cursor(cursor.unwrap_or(Cursor::Default));
+            return Some(changed);
         }
         let hot = !self.chat_active()
             && self.session_visible(area.w)
@@ -438,14 +445,14 @@ impl AppState {
         let width = self.session_view.area.w;
         if let Some(pane) = self.shown_pane(width) {
             // Re-evaluate hover on re-entry rather than leaving a hot button behind.
-            pane.ui.moved(-1.0, -1.0);
+            pane.ui.pointer_left();
         }
     }
 
     pub fn session_wheel(&mut self, width: f32, x: f32, y: f32, dy: f32) -> bool {
         (self.picture_overlay() || self.session_view.pane_area.contains(x, y))
             && self.shown_pane(width).is_some_and(|pane| {
-                pane.ui.wheel(dy);
+                pane.ui.wheel(x, y, dy);
                 true
             })
     }

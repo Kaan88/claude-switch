@@ -20,6 +20,8 @@ pub struct Preview {
     options: Options,
     top: f32,
     end: f32,
+    local: Vec<(Range<usize>, String)>,
+    underlines: Vec<Range<usize>>,
 }
 
 struct Active {
@@ -58,9 +60,70 @@ fn safe_document(raw: &str) -> Document {
     doc
 }
 
-fn theme(pal: &Palette) -> Theme {
+fn markdown_paths(doc: &Document) -> Vec<(Range<usize>, String)> {
+    let mut excluded: Vec<_> = doc
+        .spans
+        .iter()
+        .filter(|s| matches!(s.kind, SpanKind::Link(_)))
+        .map(|s| s.start as usize..s.end as usize)
+        .collect();
+    excluded.extend(
+        doc.blocks
+            .iter()
+            .filter(|b| {
+                matches!(b.kind, BlockKind::CodeBlock { .. } | BlockKind::Diagram { .. } | BlockKind::Math { .. })
+            })
+            .map(|b| b.text.usize()),
+    );
+    excluded.sort_unstable_by_key(|r| r.start);
+    // Excluded ranges can nest. Coalescing gives monotonic ends as well as starts.
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for r in excluded {
+        if let Some(last) = merged.last_mut().filter(|last| r.start <= last.end) {
+            last.end = last.end.max(r.end);
+        } else {
+            merged.push(r);
+        }
+    }
+    let outside = |r: &Range<usize>| {
+        let at = merged.partition_point(|e| e.end <= r.start);
+        merged.get(at).is_none_or(|e| r.end <= e.start)
+    };
+    let mut paths: Vec<_> = doc
+        .spans
+        .iter()
+        .filter(|s| s.kind == SpanKind::Code)
+        .map(|s| s.start as usize..s.end as usize)
+        .filter_map(|r| {
+            let name = doc.text.get(r.clone())?;
+            (links::target(name) && !links::url(name) && links::is_markdown(std::path::Path::new(name)))
+                .then(|| (r, name.to_owned()))
+        })
+        .collect();
+    paths.retain(|(r, _)| outside(r));
+    paths.sort_unstable_by_key(|(r, _)| r.start);
+    let code: Vec<_> = paths.iter().map(|(r, _)| r.clone()).collect();
+    paths.extend(links::detect(&doc.text).into_iter().filter(|(r, name)| {
+        let at = code.partition_point(|e| e.end <= r.start);
+        !links::url(name)
+            && links::is_markdown(std::path::Path::new(name))
+            && outside(r)
+            && code.get(at).is_none_or(|e| r.end <= e.start)
+    }));
+    paths.sort_unstable_by_key(|(r, _)| r.start);
+    paths
+}
+
+pub fn markdown_names(raw: &str) -> Vec<String> {
+    let doc = mdview_core::parse(raw);
+    let mut names: Vec<_> = markdown_paths(&doc).into_iter().map(|(_, name)| name).collect();
+    names.extend(doc.links.iter().filter(|l| !l.wiki).filter_map(|l| links::markdown_destination(doc.str(l.dest))));
+    names
+}
+
+fn theme(pal: &Palette, size: f32) -> Theme {
     Theme {
-        bg: pal.pane,
+        bg: pal.page,
         text: pal.text,
         heading: pal.text,
         muted: pal.muted,
@@ -71,8 +134,8 @@ fn theme(pal: &Palette) -> Theme {
         tint: pal.on,
         kw: pal.accent,
         string: pal.text,
-        body_size: 14.0,
-        body_line_height: 1.4,
+        body_size: size,
+        body_line_height: 1.5,
         margin: 0.0,
         reading_width: f32::MAX,
         ..if pal.dark { DARK } else { LIGHT }
@@ -80,18 +143,54 @@ fn theme(pal: &Palette) -> Theme {
 }
 
 impl Preview {
-    pub fn new(raw: &str, pal: &Palette, scale: f32, width: f32) -> Self {
+    /// `files` is present for transcript prose, absent for file previews (which cannot open
+    /// additional destinations). The renderer still supplies layout, selection, syntax and pixels.
+    pub fn new(raw: &str, pal: &Palette, scale: f32, width: f32, size: f32, files: Option<&links::Files>) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
-        let doc = safe_document(raw);
-        let options = Options { width, scale, theme: theme(pal), max_height: None, base_dir: None };
+        let mut doc = safe_document(raw);
+        let mut local = Vec::new();
+        if let Some(files) = files {
+            local = markdown_paths(&doc);
+            local.retain(|(_, name)| files.contains_key(name));
+        }
+        let underlines = local.iter().map(|(r, _)| r.clone()).collect();
+        let targets: Vec<_> = doc
+            .links
+            .iter()
+            .map(|l| {
+                if l.wiki {
+                    return None;
+                }
+                let dest = doc.str(l.dest);
+                let files = files?;
+                if links::url(dest) {
+                    Some(None)
+                } else {
+                    links::markdown_destination(dest).filter(|name| files.contains_key(name)).map(Some)
+                }
+            })
+            .collect();
+        for span in &mut doc.spans {
+            if let SpanKind::Link(index) = span.kind {
+                match targets.get(index as usize).and_then(Option::as_ref) {
+                    Some(Some(name)) => local.push((span.start as usize..span.end as usize, name.clone())),
+                    Some(None) => continue,
+                    // Quote carries no link or styling in the renderer; keep the span structure
+                    // intact so any nested emphasis or HTML spans retain their parents.
+                    None => span.kind = SpanKind::Quote,
+                }
+            }
+        }
+        local.sort_unstable_by_key(|(range, _)| range.start);
+        let options = Options { width, scale, theme: theme(pal, size), max_height: None, base_dir: None };
         let (top, end) = MEASURE.with_borrow_mut(|r| {
             let page = r.layout_exact(&doc, &options);
-            // Crop the standalone viewer's outer page padding; row headers supply our own.
+            // Crop the standalone viewer's outer page padding; this surface supplies its own.
             let top = page.blocks().first().map_or(0.0, |s| s.y);
             let end = (page.total_height() - (24.0 * scale).round()).ceil().max(top);
             (top, end)
         });
-        Self { id: NEXT.fetch_add(1, Ordering::Relaxed), doc, options, top, end }
+        Self { id: NEXT.fetch_add(1, Ordering::Relaxed), doc, options, top, end, local, underlines }
     }
 
     fn active<R>(&self, f: impl FnOnce(&mut Active) -> R) -> R {
@@ -123,9 +222,19 @@ impl Preview {
     }
 
     fn link_of(&self, hit: Hit) -> Option<&str> {
-        let link = self.doc.links.get(hit.link? as usize)?;
-        let dest = self.doc.str(link.dest);
-        (!link.wiki && links::url(dest)).then_some(dest)
+        if !hit.on_text {
+            return None;
+        }
+        if let Some(link) = hit.link.and_then(|i| self.doc.links.get(i as usize)) {
+            let dest = self.doc.str(link.dest);
+            if links::url(dest) {
+                return Some(dest);
+            }
+        }
+        let offset = hit.offset as usize;
+        let at = self.local.partition_point(|(r, _)| r.start <= offset);
+        let (range, name) = self.local.get(at.checked_sub(1)?)?;
+        range.contains(&offset).then_some(name)
     }
 
     pub fn point(&self, x: f32, y: f32) -> (usize, Option<&str>) {
@@ -160,6 +269,29 @@ impl Preview {
                 bitmap.height as f32 / scale,
             );
             p.image(&a.rgba, bitmap.width, bitmap.height, frame_rect, 0.0, 1.0);
+            if !self.underlines.is_empty()
+                && let Some(page) = a.renderer.page_layout()
+            {
+                let blocks = page.blocks();
+                let first = blocks.partition_point(|b| b.y + b.height <= from);
+                let end = blocks.partition_point(|b| b.y < to);
+                if let Some((first, last)) = blocks.get(first..end).and_then(|b| b.first().zip(b.last())) {
+                    let start = self.doc.blocks[first.block as usize].text.start as usize;
+                    let stop = self.doc.blocks[last.block as usize].text.end as usize;
+                    let lo = self.underlines.partition_point(|r| r.end <= start);
+                    let hi = self.underlines.partition_point(|r| r.start < stop);
+                    for range in self.underlines.get(lo..hi).unwrap_or_default() {
+                        for r in
+                            a.renderer.selection_rects(&self.doc, &self.options, range.start as u32, range.end as u32)
+                        {
+                            let y = area.y + (r.y + r.h - self.top) / scale - p.px();
+                            if y >= clip.y && y < clip.bottom() {
+                                p.fill(Rect::new(area.x + r.x / scale, y, r.w / scale, p.px()), pal.accent);
+                            }
+                        }
+                    }
+                }
+            }
             if let Some(range) = selection.filter(|r| !r.is_empty()) {
                 for r in a.renderer.selection_rects(&self.doc, &self.options, range.start as u32, range.end as u32) {
                     p.fill_a(
@@ -179,16 +311,38 @@ mod tests {
     use mdshared_ui::theme::LIGHT;
 
     #[test]
-    fn only_web_links_are_actionable_at_renderer_hit_positions() {
+    fn only_existing_markdown_and_web_links_are_actionable_at_renderer_hit_positions() {
+        let demo = crate::demo::Transcript::new().unwrap();
+        let files =
+            links::Files::from([("field-notes.md".into(), links::resolve("field-notes.md", demo.cwd()).unwrap())]);
         let p = Preview::new(
-            "[web](https://example.test) [local](notes.md) [mail](mailto:example@example.test)",
+            "[web](https://example.test) [local](field-notes.md#Heading) `field-notes.md` field-notes.md \
+             [missing](gone.md) [mail](mailto:example@example.test)",
             &LIGHT,
             1.0,
-            320.0,
+            800.0,
+            14.0,
+            Some(&files),
         );
-        let found: std::collections::BTreeSet<_> = (0..320).filter_map(|x| p.point(x as f32, 8.0).1).collect();
-        assert_eq!(found, ["https://example.test"].into());
-        assert!(p.text().contains("web local mail"));
+        let found: std::collections::BTreeSet<_> = (0..800).filter_map(|x| p.point(x as f32, 8.0).1).collect();
+        assert_eq!(found, ["https://example.test", "field-notes.md"].into());
+        assert_eq!(p.local.len(), 3);
+        assert_eq!(p.doc.spans.iter().filter(|s| matches!(s.kind, SpanKind::Link(_))).count(), 2);
+        assert!(p.text().contains("web local field-notes.md field-notes.md missing mail"));
+    }
+
+    #[test]
+    fn a_previewed_file_cannot_supply_new_clickable_destinations() {
+        let p = Preview::new("[other](private.md) [web](https://example.test)", &LIGHT, 1.0, 320.0, 14.0, None);
+        assert!((0..320).all(|x| p.point(x as f32, 8.0).1.is_none()));
+        assert!(!p.doc.spans.iter().any(|s| matches!(s.kind, SpanKind::Link(_))));
+    }
+
+    #[test]
+    fn prose_paths_and_explicit_destinations_do_not_infer_links_from_labels_or_fences() {
+        let raw = "[fake-label.md](https://example.test) [guide](docs/Field%20Guide.md#heading) \
+                   `docs/Second Guide.md` or notes.md.\n\n```sh\ncat do-not-link.md\n```";
+        assert_eq!(markdown_names(raw), ["docs/Second Guide.md", "notes.md", "docs/Field Guide.md"]);
     }
 
     #[test]
@@ -207,7 +361,7 @@ mod tests {
     #[test]
     fn rust_and_shell_fences_rasterize_with_syntax_colors() {
         for raw in ["```rust\nfn demo() -> &str { \"night\" }\n```", "```sh\nif true; then echo \"night\"; fi\n```"] {
-            let p = Preview::new(raw, &LIGHT, 1.0, 320.0);
+            let p = Preview::new(raw, &LIGHT, 1.0, 320.0, 14.0, None);
             assert!(matches!(p.doc.blocks[0].kind, BlockKind::CodeBlock { .. }));
             p.active(|a| {
                 let frame = a.renderer.view_frame(&p.doc, &p.options, p.top, p.height());

@@ -1,9 +1,9 @@
-use std::path::Path;
-
 use mdshared_ui::cursor::Cursor;
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::platform;
 
+use super::super::links;
+use super::scroll::Press;
 use super::*;
 
 impl Ui {
@@ -19,23 +19,77 @@ impl Ui {
         let i = self.rows.partition_point(|r| r.top + r.h < yy);
         let row = self.rows.get(i)?;
         let layout = row.body.as_ref()?;
-        let (start, width) = self.text_span(row);
-        let dx = x - start;
-        let dy = yy - row.top - if row.compact { 7.0 } else { HEAD };
-        if dx < 0.0 || dx >= width || dy < 0.0 || dy > layout.height() {
+        let dx = x - self.body.x - row.geo.tx;
+        let dy = yy - row.top - row.geo.ty;
+        if dx < 0.0 || dx >= row.geo.tw || dy < 0.0 || dy >= layout.height() {
             return None;
         }
         let (at, link) = layout.point(dx, dy);
         Some((row, at, link))
     }
 
-    fn text_span(&self, row: &Row) -> (f32, f32) {
-        if row.compact {
-            let head = CompactHead::new(self.body.w);
-            (self.body.x + head.text_x, head.text_w)
-        } else {
-            (self.body.x + INSET, self.body.w - 2.0 * INSET)
+    fn scrollbar(&self, surface: Surface) -> Option<Scrollbar> {
+        match surface {
+            Surface::Conversation => self.scrollbar,
+            Surface::Markdown => self.markdown.as_ref()?.scroll,
         }
+    }
+
+    fn scroll_surface(&self, x: f32, y: f32) -> Option<Surface> {
+        if self.overlay_open() {
+            return None;
+        }
+        [Surface::Markdown, Surface::Conversation]
+            .into_iter()
+            .find(|&surface| self.scrollbar(surface).is_some_and(|bar| bar.track.contains(x, y)))
+    }
+
+    fn scroll_to(&mut self, surface: Surface, offset: f32) -> bool {
+        match surface {
+            Surface::Conversation => {
+                let offset = offset.clamp(0.0, self.max);
+                let changed = std::mem::replace(&mut self.offset, offset) != offset;
+                let followed = self.follow.active();
+                if self.page == Page::Conversation {
+                    self.follow.scrolled(offset, self.max);
+                }
+                changed || followed != self.follow.active()
+            }
+            Surface::Markdown => self.markdown.as_mut().is_some_and(|pane| pane.set_offset(offset)),
+        }
+    }
+
+    fn scroll_press(&mut self, x: f32, y: f32) -> bool {
+        let Some(surface) = self.scroll_surface(x, y) else { return false };
+        let offset = match surface {
+            Surface::Conversation => self.offset,
+            Surface::Markdown => self.markdown.as_ref().unwrap().offset(),
+        };
+        match self.scrollbar(surface).expect("visible track").press(y, offset) {
+            Press::Page(to) => {
+                self.scroll_to(surface, to);
+            }
+            Press::Thumb(fraction) => self.scroll_drag = Some(Drag { surface, fraction }),
+        }
+        true
+    }
+
+    fn drag_to(&mut self, drag: Drag, y: f32) -> bool {
+        let Some(bar) = self.scrollbar(drag.surface) else { return false };
+        self.scroll_to(drag.surface, bar.drag(y, drag.fraction))
+    }
+
+    pub fn scroll_dragging(&self) -> bool {
+        self.scroll_drag.is_some()
+    }
+
+    pub fn pointer_left(&mut self) {
+        self.hot = None;
+        self.scroll_hot = None;
+        self.scroll_drag = None;
+        self.pressed = None;
+        self.start = None;
+        self.dragging = false;
     }
 
     pub fn blur(&mut self) {
@@ -43,12 +97,18 @@ impl Ui {
         self.dragging = false;
         self.start = None;
         self.pressed = None;
+        self.scroll_drag = None;
     }
 
     pub fn press(&mut self, x: f32, y: f32, clicks: u32, mods: Mods, _: &mut Model) -> bool {
         self.focused = true;
         self.start = None;
         self.dragging = false;
+        self.scroll_drag = None;
+        if self.scroll_press(x, y) {
+            self.pressed = None;
+            return false;
+        }
         self.pressed = self.hit(x, y);
         if self.overlay_open() {
             if self.pressed.is_none() && self.overlay.as_ref().is_some_and(|o| !o.bounds.contains(x, y)) {
@@ -83,9 +143,14 @@ impl Ui {
     }
 
     pub fn moved(&mut self, x: f32, y: f32) -> (Option<Cursor>, bool) {
+        if let Some(drag) = self.scroll_drag {
+            return (Some(Cursor::Default), self.drag_to(drag, y));
+        }
+        let track = self.scroll_surface(x, y);
         let hot = self.hit(x, y);
-        let mut changed = self.hot != hot;
+        let mut changed = self.hot != hot || self.scroll_hot != track;
         self.hot = hot.clone();
+        self.scroll_hot = track;
         if self.dragging {
             if self.start.as_ref().is_some_and(|(sx, sy, _)| (x - sx).abs() + (y - sy).abs() > 4.0) {
                 self.start = None;
@@ -94,10 +159,8 @@ impl Ui {
                 && let Some(row) = self.rows.iter().find(|r| r.id == *id)
                 && let Some(text) = &row.body
             {
-                let (start, width) = self.text_span(row);
-                let dx = x - start;
-                let dx = if row.compact { dx.clamp(0.0, width) } else { dx };
-                let dy = y - self.body.y + self.offset - row.top - if row.compact { 7.0 } else { HEAD };
+                let dx = x - self.body.x - row.geo.tx;
+                let dy = y - self.body.y + self.offset - row.top - row.geo.ty;
                 let next = text.point(dx, dy).0;
                 if next != *caret {
                     self.selection.as_mut().unwrap().2 = next;
@@ -121,14 +184,27 @@ impl Ui {
         (cursor, changed)
     }
 
-    pub fn release(&mut self, x: f32, y: f32, mods: Mods, m: &mut Model, cwd: &Path) -> bool {
+    pub fn release(&mut self, x: f32, y: f32, mods: Mods, m: &mut Model) -> bool {
+        if let Some(drag) = self.scroll_drag.take() {
+            self.drag_to(drag, y);
+            return true;
+        }
         let drag = std::mem::take(&mut self.dragging);
         let pressed = self.pressed.take();
         if let Some((sx, sy, target)) = self.start.take()
             && (sx - x).abs() + (sy - y).abs() < 5.0
-            && self.text_at(x, y).and_then(|(_, _, l)| l) == Some(target.as_str())
+            && let Some((row, _, Some(link))) = self.text_at(x, y)
+            && link == target
         {
-            super::super::links::open(&target, cwd, mods.ctrl || mods.shift);
+            if links::url(&target) {
+                platform::open_url(&target);
+            } else if let Some(file) = row.body.as_ref().and_then(|text| text.files.get(&target)).cloned() {
+                if mods.ctrl || mods.shift || !file.markdown() {
+                    file.open(mods.ctrl || mods.shift);
+                } else {
+                    self.open_markdown(file, m);
+                }
+            }
             return true;
         }
         let Some(action) = pressed.filter(|a| Some(a) == self.hit(x, y).as_ref()) else {
@@ -175,6 +251,13 @@ impl Ui {
                 let image = m.picture(id, index, true).or_else(|| m.picture(id, index, false));
                 self.overlay = Some(Overlay { id, index, image, bounds: Rect::default() });
             }
+            Action::File(file) => self.open_markdown(file, m),
+            Action::Editor => {
+                if let Some(pane) = &mut self.markdown {
+                    pane.editor();
+                }
+            }
+            Action::CloseMarkdown => self.close_markdown(),
             Action::Open => {
                 if let Some(o) = &self.overlay {
                     m.open_picture(o.id, o.index);
@@ -185,7 +268,19 @@ impl Ui {
         true
     }
 
+    fn open_markdown(&mut self, file: NamedFile, m: &mut Model) {
+        self.selection = None;
+        m.request_markdown(file.clone());
+        self.markdown = Some(markdown::Markdown::new(file));
+    }
+
+    fn close_markdown(&mut self) {
+        self.markdown = None;
+        self.scroll_drag = None;
+    }
+
     pub(super) fn show(&mut self, page: Page) {
+        self.close_markdown();
         self.page = page;
         self.selection = None;
         self.rows.clear();
@@ -194,14 +289,20 @@ impl Ui {
         self.follow.latest();
     }
 
-    pub fn wheel(&mut self, dy: f32) {
+    pub fn wheel(&mut self, x: f32, y: f32, dy: f32) {
         if self.overlay_open() {
             return;
         }
-        self.offset = (self.offset - dy).clamp(0.0, self.max);
-        if self.page == Page::Conversation {
-            self.follow.scrolled(self.offset, self.max);
+        if let Some(pane) = &self.markdown {
+            if pane.bounds.contains(x, y) {
+                self.scroll_to(Surface::Markdown, pane.offset() - dy);
+                return;
+            }
+            if self.body.w == 0.0 {
+                return;
+            }
         }
+        self.scroll_to(Surface::Conversation, self.offset - dy);
     }
 
     pub fn key(&mut self, name: &KeyName, mods: Mods) -> bool {
@@ -215,6 +316,7 @@ impl Ui {
             return false;
         }
         match name {
+            KeyName::Escape if self.markdown.is_some() => self.close_markdown(),
             KeyName::Char('c') if mods.ctrl && !mods.alt => {
                 let Some((id, _, _)) = &self.selection else { return false };
                 let Some(text) = self.rows.iter().find(|r| r.id == *id).and_then(|r| r.body.as_ref()).map(|b| b.text())
@@ -261,4 +363,87 @@ fn word(text: &str, at: usize) -> (usize, usize) {
     let right = left + text[left..].chars().take_while(|&x| class(x) == k).map(char::len_utf8).sum::<usize>();
     left -= text[..left].chars().rev().take_while(|&x| class(x) == k).map(char::len_utf8).sum::<usize>();
     (left, right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mdshared_text::bitmap::Bitmap;
+    use mdshared_ui::gfx::Gfx;
+
+    #[test]
+    fn conversation_scrollbar_pages_drags_resumes_follow_and_releases_outside() {
+        let demo = crate::demo::Transcript::new().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let mut model = Model::new(source, demo.cwd().into(), || {});
+        for chat in [false, true] {
+            let bar = Scrollbar::new(Rect::new(290.0, 100.0, GUTTER, 200.0), 800.0);
+            let mut ui = Ui {
+                chat,
+                scrollbar: bar,
+                max: 800.0,
+                offset: 800.0,
+                area: Rect::new(0.0, 0.0, 330.0, 400.0),
+                ..Default::default()
+            };
+            assert!(!ui.press(295.0, 140.0, 1, Mods::default(), &mut model));
+            assert_eq!(ui.offset, 600.0);
+            assert!(!ui.follow.active());
+            assert!(!ui.scroll_dragging());
+            // The thumb is now at y=220..260. Take it by its middle, move back up
+            // and release outside the pane below the track.
+            ui.press(295.0, 240.0, 1, Mods::default(), &mut model);
+            assert!(ui.scroll_dragging());
+            assert!(ui.moved(100.0, 120.0).1);
+            assert_eq!(ui.offset, 0.0);
+            assert!(ui.release(800.0, 500.0, Mods::default(), &mut model));
+            assert_eq!(ui.offset, 800.0);
+            assert!(ui.follow.active());
+            assert!(!ui.scroll_dragging());
+        }
+    }
+
+    #[test]
+    fn file_chips_open_the_worker_loaded_viewer_in_both_conversation_surfaces() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        let wait = || events.recv_timeout(std::time::Duration::from_secs(3)).expect("transcript worker wake");
+        wait();
+        assert!(model.collect());
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(920, 720);
+        let pal = &mdshared_ui::theme::DARK;
+        let ts = Instant::now();
+        for (chat, width) in [(true, 900.0), (false, 360.0)] {
+            let view = Rect::new(0.0, 0.0, width, 680.0);
+            let mut ui = Ui::default();
+            ui.set_chat(chat);
+            let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+            ui.draw(&mut p, pal, view, &mut model, (0.0, 0.0), ts, false);
+            let chip = ui.hits.iter().find_map(|(r, a)| matches!(a, Action::File(_)).then_some(*r)).unwrap();
+            let (x, y) = (chip.cx(), chip.cy());
+            ui.press(x, y, 1, Mods::default(), &mut model);
+            assert!(ui.release(x, y, Mods::default(), &mut model));
+            // Visible pictures can wake the same worker while the named file is
+            // still queued. Drive collection until the requested viewer is drawn.
+            for _ in 0..8 {
+                wait();
+                model.collect();
+                ui.draw(&mut p, pal, view, &mut model, (x, y), ts, false);
+                if ui.markdown.as_ref().is_some_and(markdown::Markdown::rendered) {
+                    break;
+                }
+            }
+            assert!(ui.hits.iter().any(|(_, a)| *a == Action::Editor));
+            assert!(ui.markdown.as_ref().unwrap().rendered());
+            assert_eq!(ui.body.w > 0.0, chat);
+            assert!(ui.key(&KeyName::Escape, Mods::default()));
+            assert!(ui.markdown.is_none());
+        }
+    }
 }

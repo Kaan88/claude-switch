@@ -108,6 +108,11 @@ impl Volume {
         self.open(path, false)?.metadata()
     }
 
+    pub(super) fn file(&self, path: &Path, read: bool) -> Option<std::fs::File> {
+        let file = self.open(&normalize(path)?, read).ok()?;
+        file.metadata().ok()?.is_file().then_some(file)
+    }
+
     #[cfg(not(windows))]
     pub(super) fn open(&self, path: &Path, _: bool) -> std::io::Result<std::fs::File> {
         for at in path.ancestors() {
@@ -203,5 +208,20 @@ mod tests {
         for name in ["comp", "lptx", "COM10", "COMP.txt"] {
             assert!(normalize(&Path::new(r"C:\work").join(name)).is_some(), "{name}");
         }
+    }
+
+    #[test]
+    fn named_file_open_refuses_an_intermediate_junction_for_metadata_and_reads() {
+        let dir = crate::util::testing::TempDir::new("named-file");
+        let real = dir.0.join("real");
+        crate::util::testing::put(&real.join("note.md"), "# A note");
+        let alias = dir.0.join("redirect");
+        crate::share::junction::create(&alias, &real).unwrap();
+        for read in [false, true] {
+            assert!(crate::grouping::open_local_file(&real.join("note.md"), read).is_some());
+            assert!(crate::grouping::open_local_file(&real, read).is_none());
+            assert!(crate::grouping::open_local_file(&alias.join("note.md"), read).is_none());
+        }
+        std::fs::remove_dir(alias).unwrap();
     }
 }

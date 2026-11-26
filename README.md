@@ -215,9 +215,16 @@ and never overwrites an existing file. Treat the report as private conversation 
 
 Pick **Chat** or **Terminal** at the right of a Claude session’s tab strip. The choice stays
 with each tab and sets the default for new ones. Chat shows the local conversation, a multiline
-composer, tool previews, and a collapsible Tasks, Agents, and Changed files panel on wider windows.
+composer, and a collapsible Tasks, Agents, and Changed files panel on wider windows.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
 to resize it, and answer permissions and other CLI dialogs there.
+
+Chat and the narrower **Session view** share the same conversation design: your prompts are
+right-aligned bubbles, Claude’s replies are open prose, and compact tool rows expand for details.
+Long runs of consecutive tools start collapsed. Drag the scrollbar thumb or click its track to
+page through either view. Click an existing Markdown path in a reply, or a Markdown file button
+under the turn, to preview the file without leaving the conversation. **Open in editor** uses
+the system’s default app; **×** returns to the conversation.
 
 | Shortcut in a session tab | Action |
 | --- | --- |
