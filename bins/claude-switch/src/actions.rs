@@ -84,7 +84,7 @@ impl AppState {
             NEW_SESSION => self.ask_new_session(),
             NEW_DESKTOP => self.new_session_now(now, App::Desktop, &self.current().slug.clone(), &self.start_folder()),
             REFRESH => self.refresh(now),
-            ACCOUNTS => self.dialog = Some(dialogs::accounts(self)),
+            ACCOUNTS => self.dialog = Some(dialogs::accounts(self, now)),
             SETTINGS => self.dialog = Some(dialogs::settings(self)),
             ABOUT => self.dialog = Some(Dialog::About),
             PALETTE => self.open_palette(),

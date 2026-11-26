@@ -14,7 +14,8 @@
 //!   "terminalScheme": "auto",
 //!   "terminalFontSize": 13,
 //!   "windowTheme": "system",
-//!   "appearance": {"backdrop":"off", "accentSource":"system", "reduceMotion":false,
+//!   "showUsage": true,
+//!   "appearance": {"backdrop":"off", "accentSource":"theme", "reduceMotion":false,
 //!                  "cornerRadius":8, "softShadows":true, "cursorBlink":false}
 //! }
 //! ```
@@ -49,7 +50,7 @@ impl Default for AppearancePrefs {
     fn default() -> Self {
         Self {
             backdrop: "off".into(),
-            accent_source: "system".into(),
+            accent_source: "theme".into(),
             accent_colour: None,
             corner_radius: 8,
             soft_shadows: true,
@@ -190,6 +191,7 @@ pub fn load(roots: &Roots) -> Config {
         embedded_terminal,
         show_archived,
         show_workers,
+        show_usage: flag("showUsage", true),
         show_hidden: flag("showHidden", false),
         folders_view: flag("foldersView", false),
         terminal_scheme,
@@ -215,6 +217,7 @@ pub fn save(roots: &Roots, config: &Config) -> Result<(), Refusal> {
         "embeddedTerminal": config.embedded_terminal,
         "showArchived": config.show_archived,
         "showWorkers": config.show_workers,
+        "showUsage": config.show_usage,
         "showHidden": config.show_hidden,
         "foldersView": config.folders_view,
         "terminalScheme": config.terminal_scheme,
@@ -340,7 +343,7 @@ mod tests {
         assert_eq!(load(&roots).appearance, defaults);
         assert_eq!(
             (defaults.backdrop.as_str(), defaults.accent_source.as_str(), defaults.corner_radius),
-            ("off", "system", 8)
+            ("off", "theme", 8)
         );
         assert!(defaults.soft_shadows && !defaults.cursor_blink && !defaults.reduce_motion);
         put(
@@ -367,6 +370,17 @@ mod tests {
         };
         save(&roots, &c).unwrap();
         assert_eq!(load(&roots), c);
+    }
+
+    #[test]
+    fn show_usage_defaults_on_and_can_be_disabled_persistently() {
+        let t = TempDir::new("cfg-usage");
+        let roots = t.roots();
+        let mut config = load(&roots);
+        assert!(config.show_usage);
+        config.show_usage = false;
+        save(&roots, &config).unwrap();
+        assert!(!load(&roots).show_usage);
     }
 
     #[test]

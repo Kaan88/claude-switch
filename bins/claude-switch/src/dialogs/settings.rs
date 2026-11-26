@@ -24,6 +24,7 @@ const SET_TERM_BACKGROUND: u32 = 15;
 const SET_TERM_FOREGROUND: u32 = 16;
 const SET_TERM_ACCENT: u32 = 17;
 const SET_HIDDEN: u32 = 18;
+const SET_USAGE: u32 = 19;
 
 pub fn settings(st: &AppState) -> Dialog {
     let mut options = vec!["Same account as the session".to_string(), "The other account".to_string()];
@@ -43,7 +44,7 @@ pub fn settings(st: &AppState) -> Dialog {
     }
     let a = &st.config.appearance;
     let auto = termtheme::scheme("auto", st.pal());
-    let accent = ACCENT_SOURCES.iter().position(|(id, _)| *id == a.accent_source).unwrap_or(1);
+    let accent = ACCENT_SOURCES.iter().position(|(id, _)| *id == a.accent_source).unwrap_or(0);
     let accent_names = ACCENT_SOURCES.map(|(_, label)| label);
     let colour = |id, label, saved: &Option<String>, fallback| {
         Row::text(id, label, termtheme::swatch(saved.as_deref(), fallback))
@@ -86,6 +87,9 @@ pub fn settings(st: &AppState) -> Dialog {
             .help("Tints the selection, cursor and active tab mark."),
         Row::header("Workers"),
         Row::choice(SET_WORKERS, "Account the bridge's workers use", &refs, value),
+        Row::header("Accounts"),
+        Row::toggle(SET_USAGE, "Show usage", st.config.show_usage)
+            .help("Read each account’s login token to ask Anthropic for subscription usage."),
         Row::header("Sessions"),
         Row::toggle(SET_EMBEDDED, "Open CLI sessions in a tab of this window", st.config.embedded_terminal)
             .help("Off: they open in Windows Terminal, or a console window without it."),
@@ -123,6 +127,12 @@ pub fn settings_outcome(st: &mut AppState, o: Outcome) {
                     }
                 }
                 (SET_EMBEDDED, Value::Bool(b)) => st.config.embedded_terminal = b,
+                (SET_USAGE, Value::Bool(b)) => {
+                    st.config.show_usage = b;
+                    if !b {
+                        st.usage.disable();
+                    }
+                }
                 (SET_ARCHIVED, Value::Bool(b)) => {
                     st.config.show_archived = b;
                     st.rebuild_view();

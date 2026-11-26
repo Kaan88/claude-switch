@@ -49,7 +49,7 @@ that pid is alive.
   `sessions`, `settings.json`, `skills`, `agents`, `plugins`. Without the variable the CLI uses
   `%USERPROFILE%\.claude`, and its `.claude.json` is `%USERPROFILE%\.claude.json` (beside the folder, not
   in it). The Accounts dialog reads these per-account records directly and checks that the credentials
-  file exists without opening it. `claude auth status` prints JSON with `"loggedIn"`; `claude auth login` signs in.
+  file exists without opening it. Usage is a separate path described below. `claude auth login` signs in.
 - Desktop: the app is an MSIX package; its executable is in the command registered for the `claude:`
   protocol (`HKCU\Software\Classes\claude\shell\open\command`). Started with
   `--user-data-dir=<dir>` it runs as a second, separate copy with its own login, beside the normal one.
@@ -83,6 +83,32 @@ session records (only files with a `cliSessionId` count); `sessions/` also holds
 files (only numeric `<pid>.json` is read); entrypoints seen are `cli`, `sdk-cli`, `sdk-ts` and
 `claude-desktop`.
 
+## Usage
+
+**Show usage** (Settings → Accounts, on by default) controls both the figures and the credential read.
+On demand, a worker reads only `claudeAiOauth.accessToken` and `expiresAt` from each account's
+CLI `.credentials.json`. Claude Switch never refreshes, writes or deletes credentials. Expired
+tokens are never sent; the window keeps any previous figures and says “Open a session to refresh.”
+
+WinHTTP sends the token as a bearer header only to `https://api.anthropic.com/api/oauth/usage`,
+with normal Windows TLS certificate validation, no proxy, no redirects, and a 10-second request
+deadline. There is no URL override outside tests. The token lives only for the request; it is not
+part of app state, error details, logs, UI, clipboard or storage. Responses are reduced to numeric
+utilizations and reset instants; errors carry only a kind, never response bodies or headers.
+
+Opening the window, account selector or Accounts page can request a reading if it is at least five
+minutes old. The selected-account usage popup can do the same for that account. The manual Refresh
+button allows a successful reading to be updated after 30 seconds. After a failure both paths wait
+at least five minutes, or 30 minutes for HTTP 429. Failure cooldowns are in memory, not shared across
+processes or saved on exit. There are no periodic requests. Turning the setting
+off cancels pending work and prevents new credential reads; a request already sent cannot be unsent.
+Demo uses synthetic figures and does not read or write the usage cache, open credentials or use the network.
+
+`%APPDATA%\claude-switch\usage.json` holds only limit names, percentages, normalized reset times and the
+reading time by account. It is replaced via a separate temporary file and rename. The plan name
+comes from the existing account status (`oauthAccount.planDisplayName`); there is no renewal date.
+The Anthropic endpoint is undocumented and can change or disappear.
+
 ## The safeguard
 
 Before resuming or carrying a session, the running sessions of every account are read again, including
@@ -115,7 +141,7 @@ Not settled (needs a second signed-in account to try): which copy of the desktop
 
 One value, `Launch`, says program, arguments, folder and environment. The window decides where it runs:
 an embedded terminal tab (`mdshared-pty` + `mdshared-term`), an external terminal window, or a detached
-process (the desktop app). The core never spawns anything itself except `claude auth status`.
+process (the desktop app). Reading the account status does not launch Claude.
 
 **New session.** The toolbar button asks for a folder and account first. It starts with the selected
 session's folder (or home when none is selected) and the current account. The four most recent
@@ -211,8 +237,8 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 Settings has navigable Appearance, Terminal, and Custom colours sections (as well as Workers and
 Sessions). The window theme is System, Light or Dark; `--theme light|dark` overrides that preference.
-Windows high contrast takes priority. The toolkit's appearance model supplies the accent (theme,
-system or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
+Windows high contrast takes priority. The toolkit's appearance model supplies the accent (clay by
+default, or system or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
 Mica and Acrylic are optional on Windows 11 in the title bar, capped at 15% compositor colour.
 The terminal grid, its padding, and the strip it joins stay opaque.
 

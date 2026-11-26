@@ -1,6 +1,7 @@
 //! The window loop's side of the state: the host's events routed to the open layer (palette,
 //! drop-down, menu, dialog, then the window), timers, and the frame drawn from top to bottom.
 
+use claude_switch_core::usage::Demand;
 use mdshared_ui::chrome::{TITLE_H, WinButton};
 use mdshared_ui::cursor::Cursor;
 use mdshared_ui::dropdown::Outcome as DdOutcome;
@@ -55,6 +56,7 @@ impl AppState {
             self.toasts.deadline(),
             self.undo_hide.as_ref().map(|u| u.until),
             self.marks_flush_at,
+            self.usage.popup.due,
         ]
         .into_iter()
         .flatten()
@@ -87,6 +89,11 @@ impl AppState {
             }
             Target::NewSession => self.command(now, actions::NEW_SESSION, None),
             Target::Refresh => self.command(now, actions::REFRESH, None),
+            Target::UsageLines => self.open_usage(now, true),
+            Target::UsageRefresh => {
+                let slug = self.current().slug.clone();
+                self.request_usage(now, Demand::Refresh, Some(&slug));
+            }
             Target::MenuButton => {
                 if let Some(r) = self.rect_of(t) {
                     self.main_menu(r);
@@ -146,7 +153,11 @@ impl AppState {
         }
     }
 
-    fn dropdown_outcome(&mut self, o: DdOutcome) {
+    fn dropdown_outcome(&mut self, now: std::time::Instant, o: DdOutcome) {
+        if o == DdOutcome::Opened {
+            self.usage.popup = Default::default();
+            self.request_usage(now, Demand::Automatic, None);
+        }
         if let DdOutcome::Changed(i) = o
             && let Some(slug) = self.accounts_dd.value(i).cloned()
         {
@@ -185,7 +196,7 @@ impl AppState {
         }
         if self.accounts_dd.is_open() {
             let o = self.accounts_dd.key(bar.account, &name, mods);
-            self.dropdown_outcome(o);
+            self.dropdown_outcome(now, o);
             return;
         }
         if let Some((_, menu)) = &mut self.menu {
@@ -200,6 +211,14 @@ impl AppState {
         }
         if self.dialog.is_some() {
             dialogs::key(self, now, &name, mods, text);
+            return;
+        }
+        if self.usage.popup.open {
+            match name {
+                KeyName::Escape | KeyName::Tab => self.usage.popup = Default::default(),
+                KeyName::Enter | KeyName::Space => self.activate(cx, Target::UsageRefresh, 0.0),
+                _ => {}
+            }
             return;
         }
         if self.session_key(cx.size().0, &name, mods) {
@@ -246,8 +265,12 @@ impl AppState {
                 }
             },
             Focus::Account => {
-                let o = self.accounts_dd.key(bar.account, &name, mods);
-                self.dropdown_outcome(o);
+                if name == KeyName::Enter && mods.shift && self.rect_of(Target::UsageLines).is_some() {
+                    self.open_usage(now, true);
+                } else {
+                    let o = self.accounts_dd.key(bar.account, &name, mods);
+                    self.dropdown_outcome(now, o);
+                }
             }
             Focus::List => {
                 if name == KeyName::Delete && !mods.ctrl && !mods.alt && !mods.shift {
@@ -281,7 +304,7 @@ impl AppState {
         }
         if self.accounts_dd.is_open() {
             let o = self.accounts_dd.press(bar.account, x, y);
-            self.dropdown_outcome(o);
+            self.dropdown_outcome(cx.now(), o);
             return;
         }
         if let Some((_, menu)) = &self.menu {
@@ -302,6 +325,11 @@ impl AppState {
             }
             return;
         }
+        if matches!(hover, Some(Target::UsageLines | Target::UsageRefresh | Target::UsagePopup)) {
+            self.pressed = hover;
+            return;
+        }
+        self.usage.popup = Default::default();
         if self.session_press(cx, x, y, clicks) {
             return;
         }
@@ -328,7 +356,7 @@ impl AppState {
             Some(Target::Account) => {
                 self.focus = Focus::Account;
                 let o = self.accounts_dd.press(bar.account, x, y);
-                self.dropdown_outcome(o);
+                self.dropdown_outcome(cx.now(), o);
             }
             Some(Target::Search) => {
                 self.focus = Focus::Search;
@@ -353,6 +381,12 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
+        if matches!(self.pressed, Some(Target::UsageLines | Target::UsageRefresh | Target::UsagePopup)) {
+            if let Some(t) = self.pressed.take().filter(|t| self.hit(x, y) == Some(*t)) {
+                self.activate(cx, t, x);
+            }
+            return;
+        }
         if self.term_release(x, y, Button::Left, cx.mods()) {
             return;
         }
@@ -371,7 +405,7 @@ impl AppState {
         if self.accounts_dd.is_open() || self.accounts_dd.pressed() {
             let bar = Bar::layout(cx.size().0);
             let o = self.accounts_dd.release(bar.account, x, y);
-            self.dropdown_outcome(o);
+            self.dropdown_outcome(cx.now(), o);
             return;
         }
         if let Some((_, menu)) = &mut self.menu {
@@ -397,7 +431,11 @@ impl AppState {
     fn moved(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> bool {
         self.mouse = (x, y);
         let terminal_drag = self.tabs.shown().is_some_and(|tab| tab.term.selecting || tab.term.reported.is_some());
-        if !terminal_drag && let Some(changed) = self.session_move(cx, x, y) {
+        if !terminal_drag
+            && !self.usage.popup.open
+            && y >= TITLE_H
+            && let Some(changed) = self.session_move(cx, x, y)
+        {
             return changed;
         }
         let area = self.main_area(cx);
@@ -422,6 +460,7 @@ impl AppState {
             changed |= form.pointer_move(x, y);
         }
         let hover = self.hit(x, y);
+        changed |= self.usage_hover(cx.now(), hover);
         if hover != self.hover {
             self.hover = hover;
             changed = true;

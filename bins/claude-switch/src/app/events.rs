@@ -13,6 +13,7 @@ impl App for AppState {
         windowlook::apply(self, cx);
         let now = cx.now();
         self.refresh(now);
+        self.request_usage(now, Demand::Automatic, None);
         self.resume_polling(now);
         self.start_debug(cx);
         self.start_demo_session();
@@ -30,6 +31,7 @@ impl App for AppState {
             }
             Event::PointerLeave => {
                 self.hover = None;
+                self.usage_hover(cx.now(), None);
                 self.session_pointer_left();
                 self.tip.hover(cx.now(), None);
                 cx.request_redraw_all();
@@ -74,6 +76,8 @@ impl App for AppState {
                     menu.scroll_by(-dy);
                 } else if self.dialog.is_some() {
                     dialogs::wheel(self, x, y, dy);
+                } else if self.usage.popup.open {
+                    self.usage.popup.scroll = (self.usage.popup.scroll - dy).max(0.0);
                 } else if self.list_area.contains(x, y) {
                     self.sections.scroll = self.sections.clamp_scroll(self.sections.scroll - f64::from(dy));
                     self.moved(cx, x, y);
@@ -89,7 +93,10 @@ impl App for AppState {
                     self.after_search();
                 }
             }
-            Event::Focus(false) => self.term_focus(false),
+            Event::Focus(false) => {
+                self.usage.popup = Default::default();
+                self.term_focus(false);
+            }
             Event::Focus(true) => {
                 self.term_focus(true);
                 self.see_shown();
@@ -117,6 +124,12 @@ impl App for AppState {
                     cx.wake_at(at);
                 }
                 if self.tip.tick(now) | self.toasts.tick(now) {
+                    cx.request_redraw_all();
+                }
+                if self.usage_hover_due(now) {
+                    cx.request_redraw_all();
+                }
+                if self.usage.repaint_at.take_if(|at| *at <= now).is_some() {
                     cx.request_redraw_all();
                 }
                 if self.undo_hide.take_if(|undo| undo.until <= now).is_some() {
@@ -167,7 +180,7 @@ impl App for AppState {
     fn message(&mut self, cx: &mut Cx<'_, Msg>, m: Msg) {
         match m {
             Msg::Woke => {
-                let changed = self.take_jobs();
+                let changed = self.take_jobs() | self.take_usage_jobs(cx.now());
                 if self.quit && self.naming_job.is_none() {
                     self.finish_exit(cx);
                 } else if changed {

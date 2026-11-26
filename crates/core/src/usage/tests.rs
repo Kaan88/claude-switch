@@ -1,0 +1,121 @@
+use super::*;
+use crate::util::testing::{TempDir, put};
+
+#[test]
+fn credentials_are_read_fresh_and_never_changed_or_debugged() {
+    let t = TempDir::new("usage-token");
+    let dir = t.roots().primary_cli_dir();
+    let p = dir.join(".credentials.json");
+    assert_eq!(read_token(&dir, 0).unwrap_err(), Error::NoFile);
+    put(&p, r#"{"other":123}"#);
+    assert_eq!(read_token(&dir, 0).unwrap_err(), Error::NotLoggedIn);
+    put(&p, r#"{"claudeAiOauth":{"accessToken":"secret\r\nbad","expiresAt":100}}"#);
+    assert_eq!(read_token(&dir, 0).unwrap_err(), Error::NotUnderstood);
+    let one = r#"{"claudeAiOauth":{"accessToken":"synthetic-first","expiresAt":100,"ignored":"anything"}}"#;
+    put(&p, one);
+    let token = read_token(&dir, 99).unwrap();
+    assert_eq!(format!("{token:?}"), "<token>");
+    assert_eq!(token.bearer(99), Ok("synthetic-first"));
+    assert_eq!(token.bearer(100), Err(Error::Expired));
+    assert_eq!(read_token(&dir, 100).unwrap_err(), Error::Expired);
+    assert_eq!(fs::read_to_string(&p).unwrap(), one);
+    let two = one.replace("first", "second");
+    put(&p, &two);
+    assert_eq!(read_token(&dir, 99).unwrap().bearer(99), Ok("synthetic-second"));
+    assert_eq!(fs::read_to_string(&p).unwrap(), two);
+    put(&p, r#"{"claudeAiOauth":{"accessToken":"must-not-leak","expiresAt":"invalid"}}"#);
+    assert_eq!(read_token(&dir, 0).unwrap_err(), Error::NotUnderstood);
+}
+
+#[test]
+fn tolerant_limits_remain_sorted_and_only_normalized_data_survives() {
+    let token = Token { value: b"synthetic-token".to_vec(), expires_at: 100 };
+    let limits = token
+        .limits(
+            br#"{
+        "z_future":{"utilization":1e400},
+        "extra_usage":{"utilization":42.5,"resets_at":"garbage","extra":"synthetic-token"},
+        "seven_day_sonnet":{"utilization":23,"resets_at":"1970-01-02T04:30:00.123+04:30"},
+        "seven_day":{"utilization":79.9,"resets_at":null},
+        "five_hour":{"utilization":-1,"resets_at":"2024-02-29T00:00:00Z"},
+        "seven_day_opus":{"utilization":80},
+        "bad":null,"other":[],"f":{"utilization":"12"},"g":{"foo":2},"large":1e990,
+        "\u0073ynthetic-token":{"utilization":53}
+    }"#,
+        )
+        .unwrap();
+    assert_eq!(
+        limits.iter().map(Limit::label).collect::<Vec<_>>(),
+        ["Session", "Week", "Week, Opus", "Week, Sonnet", "extra usage", "z future"]
+    );
+    assert_eq!(limits.iter().map(|l| l.used).collect::<Vec<_>>(), [0.0, 79.9, 80.0, 23.0, 42.5, 100.0]);
+    assert_eq!(limits[0].reset, Some(1_709_164_800));
+    assert_eq!(limits[3].reset, Some(86_400));
+    assert_eq!(limits[4].reset, None);
+    assert_eq!(timestamp("2023-02-29T00:00:00Z"), None);
+    assert_eq!(timestamp("1970-01-01T00:00:00-01:30"), Some(5400));
+    assert_eq!(timestamp("1970-01-01T00:00:00.++01:30"), None);
+    assert_eq!(token.limits(b"[]"), Err(Error::NotUnderstood));
+    assert_eq!(token.limits(b"no"), Err(Error::NotUnderstood));
+    assert!(token.limits(b"{}").unwrap().is_empty());
+}
+
+#[test]
+fn cache_atomically_replaces_the_file_with_just_measurements() {
+    let t = TempDir::new("usage-cache");
+    let path = t.roots().config_file().with_file_name(CACHE_NAME);
+    assert!(load_cache(&path).is_empty());
+    let token = Token { value: b"synthetic-token".to_vec(), expires_at: 100 };
+    let limits = token.limits(br#"{"five_hour":{"utilization":42.5,"resets_at":"1970-01-01T00:00:34Z","other":"synthetic-token"},"synthetic-token":{"utilization":99}}"#).unwrap();
+    let readings = Cache::from([("main".into(), Reading { read_at: 7, limits })]);
+    save_cache(&path, &Cache::new()).unwrap();
+    save_cache(&path, &readings).unwrap();
+    assert_eq!(load_cache(&path), readings);
+    let bytes = fs::read(&path).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap(),
+        json!({"main":{"read_at":7,"limits":{"five_hour":{"used":42.5,"reset":34}}}})
+    );
+    assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+}
+
+#[test]
+fn replacing_cache_does_not_write_through_a_hard_link() {
+    let t = TempDir::new("usage-cache-link");
+    let path = t.roots().config_file().with_file_name(CACHE_NAME);
+    let other = path.with_file_name("generated-original");
+    put(&other, "{}");
+    fs::hard_link(&other, &path).unwrap();
+    save_cache(&path, &Cache::new()).unwrap();
+    assert_eq!(fs::read(&other).unwrap(), b"{}");
+    assert_eq!(fs::read(&path).unwrap(), b"{}\n");
+}
+
+#[test]
+fn on_demand_throttle_has_distinct_automatic_manual_and_failure_floors() {
+    let now = Instant::now();
+    let later = |s| now + Duration::from_secs(s);
+    let mut a = Attempt::default();
+    let auto = Demand::Automatic;
+    let manual = Demand::Refresh;
+    assert!(!a.allowed(auto, now, Some(Duration::from_secs(299))));
+    assert!(a.allowed(auto, now, Some(Duration::from_secs(300))));
+    assert!(!a.allowed(manual, now, Some(Duration::from_secs(29))));
+    assert!(a.allowed(manual, now, Some(Duration::from_secs(30))));
+    a.start(now);
+    assert!(!a.allowed(manual, later(2000), None));
+    a.finish(later(1), Ok(()));
+    assert!(!a.allowed(manual, later(29), None));
+    assert!(a.allowed(manual, later(30), Some(Duration::ZERO)));
+    assert!(!a.allowed(auto, later(299), None));
+    assert!(a.allowed(auto, later(300), None));
+    for (failure, seconds) in [(Error::Expired, 300), (Error::Network, 300), (Error::Http(429), 1800)] {
+        let mut b = Attempt::default();
+        b.start(now);
+        b.finish(later(10), Err(failure));
+        for demand in [auto, manual] {
+            assert!(!b.allowed(demand, later(seconds + 9), None));
+            assert!(b.allowed(demand, later(seconds + 10), None));
+        }
+    }
+}

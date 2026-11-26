@@ -4,8 +4,7 @@
 //! against a temporary folder. `docs/DESIGN.md` says what the files look like and why.
 //!
 //! Deliberately not here: any window or drawing, starting a terminal or the desktop app (the caller
-//! runs a [`Launch`]), and anything that reads or prints a credential. This crate never opens
-//! `.credentials.json`; it only asks whether the file exists.
+//! runs a [`Launch`]), and networking. Only [`usage`] opens the credentials file, read-only.
 //!
 //! THE CONTRACT: the public items of this file are fixed. The window is written against them while
 //! the bodies are filled in. Add private items and modules freely; do not change a public name, field
@@ -24,6 +23,7 @@ pub mod running;
 pub mod sessions;
 pub mod share;
 pub mod transcript;
+pub mod usage;
 mod util;
 
 /// Where the files of this computer are, so that tests can point everything at a temporary folder.
@@ -261,6 +261,8 @@ pub struct Config {
     pub show_archived: bool,
     /// Show the sessions started by tools and subagents ([`Session::worker`]) in the list.
     pub show_workers: bool,
+    /// Read and display subscription usage.
+    pub show_usage: bool,
     /// Show hidden sessions and folders.
     pub show_hidden: bool,
     /// Use the folder-grouped view instead of Recent.

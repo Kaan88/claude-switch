@@ -3,9 +3,9 @@
 //! one place the rectangles come from, for drawing and for the pointer alike.
 
 use mdshared_ui::chrome::{self, TITLE_H, WIN_BTN_W, WinButton};
-use mdshared_ui::dropdown::{DROPDOWN_H, Look, draw_dropdown};
+use mdshared_ui::dropdown::DROPDOWN_H;
 use mdshared_ui::focus::draw_ring;
-use mdshared_ui::gfx::{Face, Painter, Rect};
+use mdshared_ui::gfx::{Face, Painter, Rect, mix};
 use mdshared_ui::glyph;
 use mdshared_ui::infobar::{Hit, draw_infobar};
 use mdshared_ui::textfield::FieldColors;
@@ -13,6 +13,7 @@ use mdshared_ui::window;
 
 use crate::state::{AppState, Focus, Msg, Target};
 use crate::tabs;
+use crate::usage_ui;
 
 pub struct Bar {
     pub row: Rect,
@@ -26,17 +27,19 @@ pub struct Bar {
 }
 
 const NEW_W: f32 = 118.0;
+const BRAND_W: f32 = 124.0;
+const LOGO: &[u8] = include_bytes!("../../../assets/logo-256.png");
 
 impl Bar {
     pub fn layout(w: f32) -> Bar {
         let y = ((TITLE_H - DROPDOWN_H) / 2.0).round();
         let row = Rect::new(0.0, 0.0, w, TITLE_H);
-        // A narrow window leaves out the name and gives the account less room.
-        let left = if Bar::shows_name(w) { 134.0 } else { 14.0 };
-        let dot = Rect::new(left, (TITLE_H - 10.0) / 2.0, 10.0, 10.0);
-        let account = Rect::new(left + 18.0, y, if w >= 900.0 { 200.0 } else { 170.0 }, DROPDOWN_H);
         let right_free = w - 3.0 * WIN_BTN_W - 16.0;
         let tools_w = NEW_W + 8.0 + 32.0 + 4.0 + 32.0;
+        let dot = Rect::new(BRAND_W, (TITLE_H - 10.0) / 2.0, 10.0, 10.0);
+        let account_x = dot.x + 18.0;
+        let account_w = (right_free - tools_w - 24.0 - 140.0 - account_x).clamp(100.0, 200.0);
+        let account = Rect::new(account_x, y, account_w, DROPDOWN_H);
         let search_x = account.right() + 12.0;
         let search_w = (right_free - tools_w - 12.0 - search_x).clamp(140.0, 420.0);
         let search = Rect::new(search_x, y, search_w, DROPDOWN_H);
@@ -45,10 +48,6 @@ impl Bar {
         let refresh = Rect::new(new_session.right() + 8.0, y, 32.0, DROPDOWN_H);
         let menu = Rect::new(refresh.right() + 4.0, y, 32.0, DROPDOWN_H);
         Bar { row, dot, account, search, clear, new_session, refresh, menu }
-    }
-
-    pub fn shows_name(w: f32) -> bool {
-        w >= 1000.0
     }
 
     /// The search field's text area.
@@ -72,20 +71,36 @@ pub fn draw(st: &mut AppState, p: &mut Painter, w: f32, maximized: bool, focused
     p.fill(bar.row, pal.title);
     p.fill(Rect::new(0.0, TITLE_H - p.px(), w, p.px()), pal.line);
     st.hits.push((bar.row, Target::Title));
-    if Bar::shows_name(w) {
-        p.text(Face::Semibold, 13.0, 16.0, TITLE_H / 2.0, "Claude Switch", pal.text, 112.0);
+    static ICON: std::sync::OnceLock<Option<mdshared_text::image::Image>> = std::sync::OnceLock::new();
+    if let Some(im) =
+        ICON.get_or_init(|| mdshared_text::image::decode(LOGO, mdshared_text::image::Limits::DEFAULT).ok())
+    {
+        p.image(&im.rgba, im.width, im.height, Rect::new(10.0, (TITLE_H - 18.0) / 2.0, 18.0, 18.0), 0.0, 1.0);
     }
+    p.text(Face::Semibold, 13.0, 34.0, TITLE_H / 2.0, "Claude Switch", pal.text, BRAND_W - 39.0);
 
     // The account: its colour, then the drop-down.
     let current = st.current().clone();
     p.rbox(bar.dot, 5.0, current.color);
-    let look = Look {
-        hovered: st.hover == Some(Target::Account),
-        focused: st.key_used && st.focus == Focus::Account,
-        disabled: false,
-    };
-    draw_dropdown(p, &pal, bar.account, &st.accounts_dd, look);
-    st.hits.push((bar.account, Target::Account));
+    let r = bar.account;
+    let hot = matches!(st.hover, Some(Target::Account | Target::UsageLines)) || st.accounts_dd.is_open();
+    if st.key_used && st.focus == Focus::Account {
+        draw_ring(p, &pal, r, 6.0);
+    }
+    let fill = if hot { mix(pal.field, pal.text, 0.05) } else { pal.field };
+    let edge = if hot { mix(pal.line, pal.text, 0.18) } else { pal.line };
+    p.frame(r, 6.0, fill, edge);
+    let reading = if st.config.show_usage { st.usage.reading(&current.slug) } else { None };
+    let limits = usage_ui::hairlines(reading);
+    let slot = usage_ui::hairline_rect(r);
+    let name_w = if limits.is_empty() { r.w - 36.0 } else { slot.x - r.x - 15.0 };
+    p.text(Face::Ui, 13.0, r.x + 11.0, r.cy(), &current.name, pal.text, name_w);
+    p.icon(glyph::DOWN, 10.0, r.right() - 15.0, r.cy(), pal.muted);
+    st.hits.push((r, Target::Account));
+    if !limits.is_empty() {
+        usage_ui::draw_hairlines(p, &pal, slot, &limits);
+        st.hits.push((slot, Target::UsageLines));
+    }
 
     // The search field.
     let active = st.focus == Focus::Search;
@@ -93,7 +108,8 @@ pub fn draw(st: &mut AppState, p: &mut Painter, w: f32, maximized: bool, focused
     p.icon(glyph::SEARCH, 14.0, bar.search.x + 15.0, bar.search.cy(), pal.muted);
     let colors = FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
     let inner = bar.search_inner();
-    st.search.draw(p, inner, Face::Ui, 13.0, &colors, "Search sessions", active && focused, caret_on);
+    let placeholder = if bar.search.w < 165.0 { "Search" } else { "Search sessions" };
+    st.search.draw(p, inner, Face::Ui, 13.0, &colors, placeholder, active && focused, caret_on);
     st.search_stops = p.caret_stops(Face::Ui, 13.0, &st.search.display());
     st.hits.push((bar.search, Target::Search));
     if !st.search.is_empty() {
@@ -209,6 +225,8 @@ pub fn tip_of(t: Target) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mdshared_text::bitmap::Bitmap;
+    use mdshared_ui::gfx::Gfx;
 
     #[test]
     fn the_bar_fits_between_the_left_edge_and_the_caption_buttons_from_the_least_width_up() {
@@ -221,6 +239,45 @@ mod tests {
             assert!(b.search.x > b.account.right() && b.search.w >= 140.0, "width {w}");
             assert!(b.new_session.x > b.search.right());
             w += 20.0;
+        }
+    }
+
+    #[test]
+    fn the_logo_and_warning_hairline_rasterize_at_one_and_one_and_a_half_scale() {
+        for dark in [true, false] {
+            let mut demo = AppState::new(crate::source::Source::Demo, Some(dark), Default::default());
+            let warning = demo.pal().warn;
+            let title = demo.pal().title;
+            let bgr = |[r, g, b]: [u8; 3]| [b, g, r, 255];
+            let mut gfx = Gfx::new();
+            for scale in [1.0, 1.5] {
+                let mut bmp = Bitmap::new((760.0 * scale) as u32, (TITLE_H * scale) as u32);
+                demo.hits.clear();
+                draw(&mut demo, &mut Painter::new(&mut bmp, &mut gfx, scale), 760.0, false, false, true);
+                let logo = (10.0 * scale) as usize..(28.0 * scale) as usize;
+                let painted_logo_pixels = bmp
+                    .pixels
+                    .chunks_exact(bmp.width as usize * 4)
+                    .skip((11.0 * scale).round() as usize)
+                    .take((18.0 * scale) as usize)
+                    .flat_map(|row| row[logo.start * 4..logo.end * 4].as_chunks::<4>().0.iter())
+                    .filter(|p| **p != bgr(title))
+                    .count();
+                assert!(painted_logo_pixels > 100);
+                assert!(bmp.pixels.as_chunks::<4>().0.contains(&bgr(warning)));
+                assert!(demo.hits.iter().any(|(_, target)| *target == Target::UsageLines));
+                if scale == 1.5
+                    && let Some(folder) = std::env::var_os("CS_USAGE_TEST_SHOTS")
+                {
+                    let name = if dark { "dark" } else { "light" };
+                    bmp.write_png(&std::path::Path::new(&folder).join(format!("{name}-header-150.png"))).unwrap();
+                }
+            }
+            demo.config.show_usage = false;
+            demo.hits.clear();
+            let mut bmp = Bitmap::new(760, TITLE_H as u32);
+            draw(&mut demo, &mut Painter::new(&mut bmp, &mut gfx, 1.0), 760.0, false, false, true);
+            assert!(!demo.hits.iter().any(|(_, target)| *target == Target::UsageLines));
         }
     }
 }

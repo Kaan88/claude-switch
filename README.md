@@ -53,7 +53,7 @@ You can also middle-click a terminal tab to close it.
 
 ## Privacy
 
-Claude Switch reads Claude Code's local files. Claude Switch itself sends nothing anywhere and has no telemetry. The Claude CLI and desktop app still use their own network connections when you run them.
+Claude Switch has no telemetry. When **Show usage** is on (the default), Claude Switch reads each account’s CLI login token to ask Anthropic for its subscription usage. It sends the token only to Anthropic over HTTPS and caches the figures, not the token. The usage endpoint is undocumented and may stop working. Turn **Show usage** off in Settings → Accounts to disable these reads and requests. Claude Code and Claude Desktop use their own network connections when you run them.
 
 ## Licence
 

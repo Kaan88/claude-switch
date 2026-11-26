@@ -60,4 +60,14 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
     }
     st.draw_session_overlay(p, &pal, window);
     windowlook::draw_overlays(st, cx, p, window);
+    st.usage.repaint_at = if st.config.show_usage
+        && (st.usage.popup.open || matches!(st.dialog, Some(crate::dialogs::Dialog::Accounts { .. })))
+    {
+        let now = cx.now();
+        let at = *st.usage.repaint_at.get_or_insert(now + std::time::Duration::from_secs(5));
+        cx.wake_at(at);
+        Some(at)
+    } else {
+        None
+    };
 }

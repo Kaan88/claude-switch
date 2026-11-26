@@ -7,3 +7,5 @@
 - Refuse duplicate session launches and offer to open a separate copy in the CLI.
 - Add Recent and Folders views, last-prompt search, status filters and a fuzzy quick switcher.
 - Add local names, pins, reversible hiding, and opt-in Claude name suggestions with review.
+- Show subscription usage and reset times in the account selector and Accounts page, with a local figures-only cache and a **Show usage** opt-out.
+- Use Claude clay as the default accent and show the Claude Switch icon beside the window title.

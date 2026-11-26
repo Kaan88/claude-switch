@@ -443,6 +443,7 @@ dependencies = [
  "mdview-render",
  "png",
  "serde_json",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

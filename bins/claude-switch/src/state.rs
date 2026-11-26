@@ -62,6 +62,9 @@ pub enum Target {
     Title,
     Caption(WinButton),
     Account,
+    UsageLines,
+    UsagePopup,
+    UsageRefresh,
     Search,
     SearchClear,
     NewSession,
@@ -121,6 +124,7 @@ pub struct AppState {
     pub by_id: HashMap<String, usize>,
     pub running: Vec<Running>,
     pub statuses: HashMap<String, AccountStatus>,
+    pub usage: crate::usage::Usage,
     /// The core's groups of all sessions, newest first.
     pub all_groups: Vec<claude_switch_core::sessions::Group>,
     pub groups: Vec<ViewGroup>,
@@ -189,6 +193,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(source: Source, forced_dark: Option<bool>, win_file: WindowFile) -> AppState {
         let config = source.load_config();
+        let usage = crate::usage::Usage::new(&source);
         let marks = match &source {
             Source::Real(roots) => claude_switch_core::marks::Marks::load(roots),
             Source::Demo => Ok(Default::default()),
@@ -212,6 +217,7 @@ impl AppState {
             by_id: HashMap::new(),
             running: Vec::new(),
             statuses: HashMap::new(),
+            usage,
             all_groups: Vec::new(),
             groups: Vec::new(),
             row_locations: HashMap::new(),
@@ -522,7 +528,7 @@ fn appearance(config: &Config, forced_dark: Option<bool>, high_contrast: bool) -
         Tokens::high_contrast_with(platform::system_contrast_colors().as_ref(), platform::system_is_dark())
     } else {
         let mut tokens = Tokens::new(dark());
-        tokens.palette = look.palette(&tokens.palette, platform::system_accent(), None);
+        tokens.palette = crate::windowlook::palette(&tokens.palette, &look, platform::system_accent());
         tokens
     };
     let terminal =

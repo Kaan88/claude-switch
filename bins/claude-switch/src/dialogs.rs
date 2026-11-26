@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use claude_switch_core::App;
 use claude_switch_core::share::{LinkState, ShareState};
+use claude_switch_core::usage::Demand;
 use mdshared_ui::gfx::{Face, Painter, Rect, Wrap};
 use mdshared_ui::host::Cx;
 use mdshared_ui::keys::{KeyName, Mods};
@@ -19,6 +20,7 @@ use mdshared_ui::theme::Palette;
 
 use crate::session_panel::Panel;
 use crate::state::{AppState, Msg, Target};
+use crate::usage_ui::AccountUsage;
 
 #[path = "newsession.rs"]
 mod newsession;
@@ -36,6 +38,7 @@ const ACT_DESKTOP: u32 = 1;
 const ACT_RENAME: u32 = 2;
 const ACT_REMOVE: u32 = 3;
 const ACT_LINK: u32 = 4;
+const ACT_REFRESH_USAGE: u32 = 5;
 
 /// What a confirmation leads to.
 #[derive(Clone, Debug)]
@@ -84,7 +87,8 @@ pub enum Dialog {
     About,
 }
 
-pub fn accounts(st: &AppState) -> Dialog {
+pub fn accounts(st: &mut AppState, now: Instant) -> Dialog {
+    st.request_usage(now, Demand::Automatic, None);
     let shares =
         st.config.accounts.iter().filter(|a| !a.primary).map(|a| (a.slug.clone(), st.source.share_status(a))).collect();
     Dialog::Accounts { scroll: 0.0, shares }
@@ -161,6 +165,28 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     }
     let pal = *st.pal();
     draw_backdrop_presence(p, &pal, w, h, t);
+    let usage = if matches!(dialog, Dialog::Accounts { .. }) && st.config.show_usage {
+        let counts = st.config.accounts.iter().map(|a| st.running_for_usage(&a.slug)).collect::<Vec<_>>();
+        let (usage, statuses, demo) = (&st.usage, &st.statuses, st.source.is_demo());
+        st.config
+            .accounts
+            .iter()
+            .zip(counts)
+            .map(|(a, running)| {
+                let status = statuses.get(&a.slug);
+                AccountUsage {
+                    plan: status.and_then(|s| s.plan.as_deref()),
+                    reading: usage.reading(&a.slug),
+                    attempt: usage.attempt(&a.slug),
+                    signed_in: status.map(|s| s.cli_logged_in),
+                    running,
+                    refresh: !demo && usage.can_refresh(&a.slug, cx.now()),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut d = Draw { hits: &mut st.hits, hover: st.hover, pressed: st.pressed, pal, radius: look.radius, shadow };
     match &mut dialog {
         Dialog::Confirm { title, text, ok, then } => {
@@ -209,7 +235,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
             d.footer(p, footer, &[("Close", true, CANCEL)]);
         }
         Dialog::Accounts { scroll, shares } => {
-            draw_accounts((&st.config, &st.statuses), &mut d, p, w, h, scroll, shares)
+            draw_accounts((&st.config, &st.statuses, &usage), &mut d, p, w, h, scroll, shares)
         }
         Dialog::NewSession(picker) => picker.draw(&mut d, p, w, h),
         Dialog::Session(panel) => panel.draw(&mut d, p, window),
@@ -218,14 +244,17 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     st.dialog = Some(dialog);
 }
 
-type StView<'a> =
-    (&'a claude_switch_core::Config, &'a std::collections::HashMap<String, claude_switch_core::AccountStatus>);
+type StView<'a> = (
+    &'a claude_switch_core::Config,
+    &'a std::collections::HashMap<String, claude_switch_core::AccountStatus>,
+    &'a [AccountUsage<'a>],
+);
 
 const BLOCK: f32 = 96.0;
 const SHARE_BLOCK: f32 = 58.0;
 
 fn draw_accounts(
-    (config, statuses): StView<'_>,
+    (config, statuses, usage): StView<'_>,
     d: &mut Draw<'_>,
     p: &mut Painter,
     w: f32,
@@ -234,8 +263,10 @@ fn draw_accounts(
     shares: &[(String, Vec<ShareState>)],
 ) {
     let pal = d.pal;
-    let content: f32 =
-        config.accounts.iter().map(|a| if a.primary { BLOCK } else { BLOCK + SHARE_BLOCK }).sum::<f32>() + 8.0;
+    let content: f32 = config.accounts.iter().map(|a| if a.primary { BLOCK } else { BLOCK + SHARE_BLOCK }).sum::<f32>()
+        + usage.iter().map(AccountUsage::height).sum::<f32>()
+        + 8.0;
+    let now = claude_switch_core::usage::now_ms();
     let card = dialog_card(640.0, 60.0 + content + DIALOG_FOOTER, w, h);
     let footer = d.card(p, card);
     d.title(p, card, "Accounts");
@@ -257,7 +288,9 @@ fn draw_accounts(
             Some(s) if s.cli_logged_in => {
                 let mut parts = vec!["Signed in to the CLI".to_string()];
                 parts.extend(s.display_name.clone());
-                parts.extend(s.plan.clone());
+                if usage.is_empty() {
+                    parts.extend(s.plan.clone());
+                }
                 parts.extend(s.email.clone());
                 parts.join(" \u{b7} ")
             }
@@ -288,6 +321,16 @@ fn draw_accounts(
             bx += bw + 8.0;
         }
         y += BLOCK;
+        if let Some(u) = usage.get(k) {
+            let ar = Rect::new(x + 18.0, y - 6.0, tw - 18.0, u.height());
+            let button = u.draw(p, &pal, ar, now);
+            if !u.refresh {
+                mdshared_ui::overlay::draw_dialog_button_disabled(p, &pal, button, "Refresh", false);
+            } else if button.y >= body.y && button.bottom() <= body.bottom() {
+                d.button(p, button, "Refresh", false, base + ACT_REFRESH_USAGE);
+            }
+            y += u.height();
+        }
         if !a.primary {
             let states = shares.iter().find(|(s, _)| s == &a.slug).map_or(&[][..], |(_, v)| v.as_slice());
             let names =
@@ -340,15 +383,15 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
                     Ok(()) => accounts_changed(st, now),
                     Err(e) => st.error("Not removed", e.to_string()),
                 }
-                st.dialog = Some(accounts(st));
+                st.dialog = Some(accounts(st, now));
             }
-            (CANCEL, Pending::Remove { .. }) => st.dialog = Some(accounts(st)),
+            (CANCEL, Pending::Remove { .. }) => st.dialog = Some(accounts(st, now)),
             (CANCEL, _) => {}
             (_, then) => st.dialog = Some(Dialog::Confirm { title, text, ok, then }),
         },
         Dialog::Name { mut field, stops, then, title, error } => match id {
             OK => submit_name(st, now, field, stops, then, title),
-            CANCEL => st.dialog = Some(accounts(st)),
+            CANCEL => st.dialog = Some(accounts(st, now)),
             FIELD => {
                 let inner_x =
                     x - st.hits.iter().find(|(_, t)| *t == Target::Dialog(FIELD)).map_or(0.0, |(r, _)| r.x + 8.0);
@@ -409,8 +452,9 @@ fn account_action(st: &mut AppState, now: Instant, k: usize, act: u32) {
             if let Err(e) = st.source.share_apply(&a) {
                 st.error("Not every link was made", e.to_string());
             }
-            st.dialog = Some(accounts(st));
+            st.dialog = Some(accounts(st, now));
         }
+        ACT_REFRESH_USAGE => st.request_usage(now, Demand::Refresh, Some(&a.slug)),
         _ => {}
     }
 }
@@ -424,7 +468,7 @@ fn submit_name(st: &mut AppState, now: Instant, field: TextField, stops: Vec<f32
     match result {
         Ok(()) => {
             accounts_changed(st, now);
-            st.dialog = Some(accounts(st));
+            st.dialog = Some(accounts(st, now));
         }
         Err(e) => st.dialog = Some(Dialog::Name { title, field, stops, then, error: Some(e.to_string()) }),
     }

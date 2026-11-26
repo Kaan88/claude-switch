@@ -52,7 +52,11 @@ impl AppState {
 
     /// No popup, menu, palette or dialog is over the window.
     pub fn nothing_over(&self) -> bool {
-        self.dialog.is_none() && self.palette.is_none() && self.menu.is_none() && !self.accounts_dd.is_open()
+        self.dialog.is_none()
+            && self.palette.is_none()
+            && self.menu.is_none()
+            && !self.accounts_dd.is_open()
+            && !self.usage.popup.open
     }
 
     /// Whether the terminal shown has the keyboard: the window has it and nothing is over it.

@@ -68,6 +68,7 @@ pub fn config() -> Config {
         embedded_terminal: true,
         show_archived: false,
         show_workers: false,
+        show_usage: true,
         show_hidden: false,
         folders_view: false,
         terminal_scheme: "auto".into(),
