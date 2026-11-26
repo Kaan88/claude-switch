@@ -89,19 +89,23 @@ fn a_compaction_after_the_last_answer_makes_the_context_size_stale() {
         "\n",
         r#"{"type":"assistant","message":{"id":"a","usage":{"input_tokens":275000,"output_tokens":10}}}"#,
         "\n",
-        r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","compactMetadata":{"trigger":"manual","preTokens":275000}}"#,
+        r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","compactMetadata":{"trigger":"manual","preTokens":275000,"postTokens":18000}}"#,
         "\n",
         r#"{"type":"user","isCompactSummary":true,"message":{"content":"Summary of the conversation"}}"#,
         "\n",
     );
     let stats = measure(before);
     assert!(stats.compacted);
+    assert_eq!(stats.compacted_size, Some(18000));
     assert_eq!(stats.turns, 1, "the summary is not a turn");
+    let without = measure(&before.replace(r#","postTokens":18000"#, ""));
+    assert_eq!((without.compacted, without.compacted_size), (true, None));
     let after = format!(
         "{before}{}\n",
         r#"{"type":"assistant","message":{"id":"b","usage":{"input_tokens":9000,"output_tokens":10}}}"#
     );
     let stats = measure(&after);
     assert!(!stats.compacted);
+    assert_eq!(stats.compacted_size, None);
     assert_eq!(stats.context, Tokens { count: 9000, about: false });
 }

@@ -180,7 +180,7 @@ are never saved unless you accept them. Rename, pins and hiding never edit trans
 All search terms must appear on the same line, in any order. Results show up to three matching
 lines per session, newest sessions first. The details pane shows turns, tool calls, pictures,
 subagents, and context/output tokens. Figures marked **about** are character-based estimates.
-After a compaction, context reads **— after compact** until Claude's next answer.
+After a compaction, context shows the size it left (**… after compact**) until Claude's next answer.
 
 | Shortcut in Sessions | Action |
 | --- | --- |

@@ -15,8 +15,8 @@
 - Chat: a finished plan shows as Markdown in the conversation and is approved from a card with the
   terminal's own choices.
 - Chat: the Effort chip shows the level the session started with (environment, `--effort`,
-  settings, or the model's default) and follows `/effort` and `/model` typed in the terminal; Context
-  reads "— after compact" after a compaction until the next answer.
+  settings, or the model's default) and follows `/effort` and `/model` typed in the terminal; after a
+  compaction Context shows the size the compaction left until the next answer.
 - Chat: a Mode chip shows the permission mode and cycles it like Shift+Tab at an idle prompt.
 - Chat: messages keep their line breaks; a message of several lines is submitted once Claude Code
   shows it on its input line.

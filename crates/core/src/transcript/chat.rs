@@ -19,6 +19,8 @@ pub struct ChatInfo {
     /// The conversation was compacted after the last usage: `context` is the size from before,
     /// and the real size comes with the next answer.
     pub compacted: bool,
+    /// While `compacted`: the size the compaction left (`compactMetadata.postTokens`), if known.
+    pub compacted_size: Option<u64>,
     /// The newest "Set effort level to …" a local command printed, whoever typed it, with its
     /// offset.
     pub effort_report: Option<(u64, String)>,
@@ -55,14 +57,26 @@ impl ChatInfo {
             }
             self.context = context;
             self.compacted = self.compacted_at.is_some_and(|c| c > at);
+            if !self.compacted {
+                self.compacted_size = None;
+            }
         }
     }
 
-    /// A compaction record: the last usage no longer tells the conversation's size.
-    pub(super) fn compaction(&mut self, at: u64) {
+    /// A compaction record: the last usage no longer tells the conversation's size. `boundary`:
+    /// the `compact_boundary` record with its `compactMetadata`; else the summary that follows it,
+    /// which keeps the boundary's size.
+    pub(super) fn compaction(&mut self, at: u64, boundary: Option<&Value>) {
         if self.compacted_at.is_none_or(|old| at > old) {
+            let after_boundary = self.compacted;
             self.compacted_at = Some(at);
             self.compacted = self.usage_at.is_none_or(|usage| at > usage);
+            self.compacted_size = match boundary {
+                Some(meta) => meta["postTokens"].as_u64(),
+                None if after_boundary => self.compacted_size,
+                None => None,
+            }
+            .filter(|_| self.compacted);
         }
     }
 
@@ -412,13 +426,15 @@ mod tests {
             json!({"type":"user","message":{"content":"<command-name>/effort</command-name>"}}),
             json!({"type":"user","message":{"content":"<local-command-stdout>Set effort level to \u{1b}[1mmedium\u{1b}[22m (saved as your default for new sessions)</local-command-stdout>"}}),
             json!({"type":"system","subtype":"local_command","content":"<local-command-stdout>Set model to Opus 5.5 (default)</local-command-stdout>"}),
-            json!({"type":"system","subtype":"compact_boundary","content":"Conversation compacted","compactMetadata":{"preTokens":275000}}),
+            json!({"type":"system","subtype":"compact_boundary","content":"Conversation compacted","level":"info","compactMetadata":{"trigger":"manual","preTokens":275000,"postTokens":18000}}),
+            json!({"type":"user","isCompactSummary":true,"message":{"content":"Summary"}}),
         ] {
             writeln!(file, "{row}").unwrap();
         }
         let mut reader = Reader::open(&path, 8192).unwrap();
         let info = reader.chat();
         assert!(info.compacted);
+        assert_eq!(info.compacted_size, Some(18000), "the summary keeps the boundary's size");
         assert_eq!(
             info.effort_report.map(|(_, s)| s).as_deref(),
             Some("Set effort level to medium (saved as your default for new sessions)")
@@ -430,6 +446,7 @@ mod tests {
         reader.poll().unwrap();
         let info = reader.chat();
         assert!(!info.compacted);
+        assert_eq!(info.compacted_size, None);
         assert_eq!(info.context, Some(9000));
     }
 

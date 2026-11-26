@@ -65,11 +65,13 @@ fn record(bytes: &[u8], visit: &mut impl FnMut(LineKind, &Value)) -> io::Result<
         ));
     }
     let Ok(value) = serde_json::from_slice::<Value>(bytes) else { return Ok(()) };
-    // A compaction of the main conversation is passed on as a `System` record without content.
+    // A compaction of the main conversation is passed on as a `System` record: the boundary's
+    // `compactMetadata`, or null for the summary.
     let compaction = value["type"] == "system" && value["subtype"] == "compact_boundary"
         || value["type"] == "user" && value["isCompactSummary"] == true;
     if compaction && value["isSidechain"] != true && value["parent_tool_use_id"].is_null() {
-        visit(LineKind::System, &Value::Null);
+        let meta = if value["type"] == "system" { &value["compactMetadata"] } else { &Value::Null };
+        visit(LineKind::System, if meta.is_object() { meta } else { &Value::Null });
         return Ok(());
     }
     if kind == LineKind::System {

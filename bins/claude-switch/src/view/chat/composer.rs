@@ -267,8 +267,9 @@ impl Draw<'_> {
         let model = model_label(p, model);
         let effort = chat.effort_label(info);
         let compacted = info.compacted;
+        let after = info.compacted_size.map_or_else(|| "—".to_owned(), tokens);
         let context = match info.context {
-            _ if compacted => "Context — after compact".into(),
+            _ if compacted => format!("Context {after} after compact"),
             Some(n) => format!("Context {}", tokens(n)),
             None => "Context —".into(),
         };
@@ -285,7 +286,7 @@ impl Draw<'_> {
         let room = r.w - right - (MODEL_W + 79.0 + 92.0 + 62.0 + 44.0 + 32.0 + 6.0 * 4.0);
         if effort_w + context_w - 79.0 - 92.0 > room {
             effort = format!("Effort {} ▾", chat.effort_label(info).trim_end_matches(" (default)"));
-            context = if compacted { "Context —".into() } else { context };
+            context = if compacted { format!("Context {after}") } else { context };
             (effort_w, context_w) = (79.0, 92.0);
         }
         // The permission mode, when the row has room left for it.

@@ -680,8 +680,9 @@ the transcript's `<local-command-stdout>` records, whoever typed the command (a 
 `settings.local.json` and `settings.json` and the account's `settings.json` (read once when the tab
 opens, never written), else the model's documented default, marked "(default)"; unknown stays
 blank. Per-model `modelSettings` and managed settings are not read. After a `compact_boundary` or
-compact summary record, Context reads "— after compact" until the next answer reports a size; the
-Session view's "Context now" does the same. Direct slash commands need a
+compact summary record, Context reads "<postTokens> after compact" from the boundary's
+`compactMetadata` ("— after compact" without it) until the next answer reports a size; the Session
+view's "Context now" does the same. Direct slash commands need a
 verified, quiet, visibly empty CLI prompt, no active turn or blocking interaction, and the same
 terminal mode checks as Send. Chat writes command text first, and only writes Enter after seeing
 the exact text on the live input row, within two seconds. Compact and Clear (including Clear aliases)

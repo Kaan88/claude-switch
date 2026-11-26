@@ -406,8 +406,10 @@ impl View {
                 self.chat.local_output(offset, text);
             }
         }
-        if kind == LineKind::System && value["subtype"] == "compact_boundary" || flag(&value, "isCompactSummary") {
-            self.chat.compaction(offset);
+        if kind == LineKind::System && value["subtype"] == "compact_boundary" {
+            self.chat.compaction(offset, Some(&value["compactMetadata"]));
+        } else if flag(&value, "isCompactSummary") {
+            self.chat.compaction(offset, None);
         }
         if flag(&value, "isMeta") {
             return;
