@@ -35,7 +35,8 @@ impl Ui {
         let clip = p.clip(body);
         let start = self.rows.partition_point(|r| r.top + r.h < self.offset);
         let mouse = self.mouse;
-        for row in &self.rows[start..] {
+        let ends = self.selection.as_ref().and_then(|s| s.ends(&self.rows));
+        for (index, row) in self.rows.iter().enumerate().skip(start) {
             let y = body.y + row.top - self.offset;
             if y >= body.bottom() {
                 break;
@@ -154,8 +155,18 @@ impl Ui {
                 }
             }
             if let Some(text) = &row.body {
-                let range = selection(&self.selection, &row.id, text.text());
+                let range = ends.and_then(|ends| select::Selection::range_in(ends, index, text.text()));
                 text.draw(p, Rect::new(tx, py, geo.tw, text.height()), body, range, pal);
+                for (top, h, code) in text.code_blocks() {
+                    let r = Rect::new(tx + geo.tw - 60.0, py + top + 5.0, 54.0, 20.0);
+                    if h < 30.0 || geo.tw < 120.0 || intersection(r, body).is_none() {
+                        continue;
+                    }
+                    let copied = self.copied.as_deref() == Some(code);
+                    let hot = frame_hit(r, Action::CopyCode(code.to_owned()));
+                    p.rbox(r, 4.0, if hot { pal.hover } else { pal.bar });
+                    p.text_center(Face::Ui, 11.5, r, if copied { "Copied" } else { "Copy" }, pal.muted);
+                }
                 py += text.height();
             }
             for &(id, i) in &row.pictures {

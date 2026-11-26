@@ -118,6 +118,8 @@ pub enum MenuKind {
     Chat(u64, crate::view::chat::MenuMode),
     /// Cut, Copy, Paste, Select all on a text field.
     Field(crate::fieldmouse::FieldId),
+    /// Copy, Select all, Copy message, Copy as Markdown on the conversation of a tab.
+    Conversation(u64),
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.

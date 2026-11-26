@@ -54,6 +54,7 @@ impl App for AppState {
                     return;
                 }
                 match self.hit(x, y) {
+                    _ if button == Button::Right && self.conversation_menu(x, y) => {}
                     Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Middle && id != SESSIONS => {
                         self.ask_close_tab(id)
                     }

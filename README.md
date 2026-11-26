@@ -251,14 +251,17 @@ and never overwrites an existing file. Treat the report as private conversation 
 
 Pick **Chat** or **Terminal** at the right of a Claude session’s tab strip. The choice stays
 with each tab and sets the default for new ones. Chat shows the local conversation, a multiline
-composer, and a collapsible Details panel on wider windows.
+composer, and a collapsible Details panel on wider windows. The composer is three lines tall and
+grows with your text up to about 40% of the view, then scrolls.
 The same Claude Code process keeps running in the terminal drawer. Drag the bar above the drawer
 to resize it, and answer permissions and other CLI dialogs there.
 
 Chat and the narrower **Session view** share the same conversation design: your prompts are
 right-aligned bubbles, Claude’s replies are open prose, and compact tool rows expand for details.
 Long runs of consecutive tools start collapsed. Drag the scrollbar thumb or click its track to
-page through either view. Click an existing Markdown path in a reply, or a Markdown file button
+page through either view. Select text across messages with the mouse and press Ctrl+C, or
+right-click for **Copy**, **Select all**, and on a message **Copy message** or **Copy as
+Markdown**; each code block has its own **Copy** button. Click an existing Markdown path in a reply, or a Markdown file button
 under the turn, to preview the file without leaving the conversation. **Open in editor** uses
 the system’s default app; **×** returns to the conversation.
 
@@ -281,7 +284,7 @@ the viewer. Both tabs are also available in **Session view**.
 | Enter / Shift+Enter in the composer | Send or queue / insert a new line in the draft (sent as a space) |
 | Up on the first line / Down on the last line | Browse earlier or newer prompts, including terminal prompts. Escape or Down past newest restores the draft unless you edit or send |
 | Click, drag or Shift+click; double- or triple-click | Place the caret, extend a selection, select a word, or select everything |
-| Right-click in the composer | Cut, Copy, Paste, Select all |
+| Right-click in the composer or any text box | Cut, Copy, Paste, Select all |
 | Ctrl+V / Ctrl+Shift+V | Paste text if available (otherwise a picture) / paste a picture explicitly |
 | **Attach…** or file drop | Choose files or **Paste picture** from the menu, or drop files into Chat |
 | `/` in the empty composer or **/ …** | Open the local command list. ↑/↓ selects, Tab fills, Enter runs, and ★ pins |
