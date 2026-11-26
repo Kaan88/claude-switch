@@ -1,3 +1,4 @@
+use super::FocusKind;
 use crate::{Refusal, Roots};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -18,6 +19,8 @@ pub struct Preferences {
     /// Where a handover continues: false (the default) is in place, in the tab that runs the
     /// session (`/clear`, then the handover as the first message); true opens a new tab.
     pub new_tab: bool,
+    /// Focus texts replacing the built-in ones, by [`FocusKind::index`]; `None` is built-in.
+    pub focus: [Option<String>; 3],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -71,6 +74,9 @@ impl Preferences {
                 .and_then(|n| u8::try_from(n).ok())
                 .filter(|n| AUTO_PERCENT.contains(n)),
             new_tab: value["continueIn"].as_str() == Some("newTab"),
+            focus: FocusKind::ALL.map(|kind| {
+                value["focus"][kind.key()].as_str().and_then(super::clean_focus).filter(|t| t != kind.built_in())
+            }),
         }
     }
 
@@ -81,7 +87,21 @@ impl Preferences {
             "defaultAgent": self.default_agent,
             "auto": {"mode": self.auto.key(), "percent": self.auto_percent},
             "continueIn": if self.new_tab { "newTab" } else { "thisTab" },
+            "focus": FocusKind::ALL
+                .iter()
+                .filter_map(|kind| Some((kind.key().to_owned(), Value::from(self.focus[kind.index()].clone()?))))
+                .collect::<serde_json::Map<_, _>>(),
         })
+    }
+
+    /// The focus used for `kind` when the user gives none.
+    pub fn focus_text(&self, kind: FocusKind) -> &str {
+        self.focus[kind.index()].as_deref().unwrap_or(kind.built_in())
+    }
+
+    /// Saves `text` for `kind`; empty or the built-in text resets it.
+    pub fn set_focus(&mut self, kind: FocusKind, text: &str) {
+        self.focus[kind.index()] = super::clean_focus(text).filter(|t| t != kind.built_in());
     }
 
     pub fn set_default_agent(&mut self, name: &str) -> Result<(), Refusal> {

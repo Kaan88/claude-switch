@@ -397,7 +397,7 @@ impl Compact {
         match result {
             Ok(Update::Loaded(data, models)) => {
                 if let Some(data) = data {
-                    self.focus.set(data.focus().unwrap_or_default().to_owned());
+                    self.focus.set(data.chosen_focus(&st.config.compact).1);
                     self.data = Some(data);
                 }
                 match models {

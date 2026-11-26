@@ -13,6 +13,16 @@ fn auto_handover_preferences_round_trip_and_reject_out_of_range_values() {
     assert!(!Preferences::read(&serde_json::json!({})).new_tab, "in place unless chosen");
     let new_tab = Preferences { new_tab: true, ..Default::default() };
     assert_eq!(Preferences::read(&new_tab.json()), new_tab);
+    let mut prefs = Preferences::default();
+    assert!(prefs.focus_text(FocusKind::Default).starts_with("The reader continues this work unattended"));
+    prefs.set_focus(FocusKind::NonCode, "  Keep the glossary.\u{7}  ");
+    assert_eq!(prefs.focus_text(FocusKind::NonCode), "Keep the glossary.");
+    assert_eq!(Preferences::read(&prefs.json()), prefs, "kept across saves");
+    prefs.set_focus(FocusKind::NonCode, FocusKind::NonCode.built_in());
+    assert_eq!(prefs.focus[FocusKind::NonCode.index()], None, "the built-in text is a reset");
+    prefs.set_focus(FocusKind::Default, "   ");
+    assert_eq!(prefs.focus_text(FocusKind::Default), FocusKind::Default.built_in(), "empty resets");
+    assert_eq!(prefs.json()["focus"], serde_json::json!({}));
 }
 use crate::{App, Roots, config, sessions, util::testing::TempDir};
 use std::fs;

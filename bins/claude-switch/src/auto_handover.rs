@@ -273,12 +273,12 @@ impl AppState {
         let from = self.title_of(&session).to_owned();
         let data_session = session.clone();
         let name = from.clone();
+        let prefs = self.config.compact.clone();
         let job = Job::start(self.wake_fn(), move |cancel, _| {
             let data = compact::Handover::read_cancel(data_session, name, || cancel.cancelled())
                 .map_err(|_| "Could not read the transcript.".to_string())?;
-            crate::compact_runner::make(&roots, &program, &model, &data, data.focus().unwrap_or(""), || {
-                cancel.cancelled()
-            })
+            let focus = data.chosen_focus(&prefs).1;
+            crate::compact_runner::make(&roots, &program, &model, &data, &focus, || cancel.cancelled())
         });
         match job {
             Ok(job) => {

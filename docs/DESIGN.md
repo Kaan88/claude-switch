@@ -375,6 +375,15 @@ uses it as the initial tab label and reads native custom-title records on scan. 
 launch reservation in `marks.json` avoids reusing names before the transcript appears; it is
 not a permanent Switch rename. A failed spawn rolls it back with the new UUID's provenance.
 
+**Settings → Handovers** holds, in order: **Where it continues** (This tab, the default, or A new
+tab; `compact.continueIn`), **Summary written by**, **Default focus text**, **New chat starts as**
+(new tabs only: a session continued in place keeps its process and agent), then **Hand over
+automatically** and **When the context reaches**. The default focus text is used when the user
+gives no focus of their own (in the dialog's focus box, in the transcript, or `--focus-file`); it
+is built in until edited, saved as typed (`compact.focus`, at most 4,000 characters, control
+characters dropped), and **Reset**, an emptied box, or the built-in text itself go back to the
+built-in text.
+
 The editor's **Agent** picker is CLI-only. **Settings → Handovers → New chat starts as** is a
 choice, not a text box: **None (plain Claude)** first, then the agents every account has in its own
 `agents/` and its user-scope plugins (read when the page opens, local files only), each labelled
@@ -489,9 +498,8 @@ A handover continues in the tab and CLI process that run the session, by default
 dialog (whose **Open in CLI** then reads **Continue here**), automatically, and from
 `compact --open` or `/switch-compact` through the pipe. It needs a tab of the running window
 whose identity is verified as that session, with a live process and the Chat view's pane (and,
-for the dialog and automatic handovers, as the chosen account). Otherwise, when the handover
-settings say a new tab (`continueIn: "newTab"`), or when Switch is not running, it opens a new
-tab as before.
+for the dialog and automatic handovers, as the chosen account). Otherwise, when **Where it
+continues** is A new tab, or when Switch is not running, it opens a new tab as before.
 
 Switch shows that tab in the Chat view and goes through the Chat view's gate for every write; it
 never writes to the terminal itself. At an idle prompt it sends `/clear` with the gate's slash

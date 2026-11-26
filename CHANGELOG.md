@@ -8,6 +8,9 @@
   checks; the dialog's button reads **Continue here**. The old session is marked handed over in
   its tab and in Sessions. A step that does not happen in time stops it with the reason and the
   saved file's path. Otherwise, or with a new tab chosen, it opens a new tab as before.
+- Settings › Handovers: **Where it continues** (This tab, A new tab), **Summary written by**,
+  **Default focus text** (used when you give no focus; editable, with Reset), **New chat starts
+  as** (new tabs only), **Hand over automatically** and **When the context reaches**, in that order.
 - Chat: new Claude tabs use Claude Code's classic renderer (Settings › Sessions › Classic terminal
   view for Claude tabs, on by default), so Chat no longer refuses every send in fresh chats; the
   refusal now says how to switch the renderer.

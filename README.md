@@ -82,6 +82,9 @@ session. The character/token estimate updates as you edit. You can also copy or 
 **New session name** starts with the source’s displayed name plus ` · continued` (then
 ` · continued 2`, ` · continued 3`, and so on if needed). Edit it before opening to set the
 Claude Code session name, not just the handover tab label.
+**Settings → Handovers** sets **Where it continues** (this tab, or a new tab), **Summary written
+by**, the **Default focus text** used when you give no focus (editable, with Reset), and **New chat
+starts as** for new tabs.
 The editor's **Agent** picker starts with **New chat starts as** from **Settings → Handovers**, a
 list of the agents your accounts have (with the accounts named when they differ). **None (plain
 Claude)** adds no `--agent` override. If the target account and folder do not have the saved agent,

@@ -136,15 +136,11 @@ fn run(options: Options) -> Result<(), String> {
     }
     let data = compact::Handover::read(session.clone(), name_of(&roots, session))
         .map_err(|_| "Could not read the transcript.")?;
-    let focus = options.focus_file.as_deref().map(Path::new).map(focus_from_file).transpose()?;
-    let text = compact_runner::make(
-        &roots,
-        &program,
-        model,
-        &data,
-        focus.as_deref().or_else(|| data.focus()).unwrap_or(""),
-        || false,
-    )?;
+    let focus = match options.focus_file.as_deref() {
+        Some(file) => focus_from_file(Path::new(file))?,
+        None => data.chosen_focus(&config.compact).1,
+    };
+    let text = compact_runner::make(&roots, &program, model, &data, &focus, || false)?;
     if !options.open {
         return print(&roots, &session.id, &text, options.save, io::stdout().lock());
     }

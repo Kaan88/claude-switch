@@ -7,7 +7,9 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::io;
 
+mod focus;
 mod storage;
+pub use focus::{FOCUS_MAX, FocusKind, clean_focus};
 pub use storage::{AUTO_PERCENT, AutoHandover, Preferences, export, list, provider, save};
 
 pub const PART_CHARS: usize = 60_000;
@@ -108,6 +110,21 @@ impl Handover {
 
     pub fn focus(&self) -> Option<&str> {
         self.turns.iter().rev().flat_map(|t| t.answers().rev()).find_map(find_focus)
+    }
+
+    /// The focus the handover is written with: the user's own (kind `None`), else the text
+    /// Settings give for this kind of session.
+    pub fn chosen_focus(&self, prefs: &Preferences) -> (Option<FocusKind>, String) {
+        if let Some(own) = self.focus() {
+            return (None, own.to_owned());
+        }
+        let kind = self.focus_kind();
+        (Some(kind), prefs.focus_text(kind).to_owned())
+    }
+
+    /// Which built-in focus fits this session.
+    pub fn focus_kind(&self) -> FocusKind {
+        FocusKind::Default
     }
 
     /// Prefer turn boundaries, but split a turn that exceeds the hard per-part budget.
