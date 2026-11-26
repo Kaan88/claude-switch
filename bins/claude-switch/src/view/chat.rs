@@ -9,7 +9,7 @@ mod paint;
 mod recall;
 mod shortcuts;
 pub(super) mod side;
-mod submission;
+pub(super) mod submission;
 
 pub(crate) use commands::valid_name as valid_command_name;
 pub use input::Control;

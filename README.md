@@ -270,7 +270,7 @@ edit jumps to that tool call in the conversation.
 chip or a tool row’s **background** badge to get there. Expand a running shell for its latest
 eight lines; toggle **Following** to freeze the tail or choose **Full output** for a text snapshot.
 **Stop…** asks before opening the CLI’s own shell manager. Switch never stops a shell itself.
-**Outputs** collects HTTPS links, artifacts, pull requests, and saved files and pictures. The
+**Outputs** collects HTTP(S) links, artifacts, pull requests, and saved files and pictures. The
 conversation also shows output cards. Links open in the default browser; local previews open in
 the viewer. Both tabs are also available in **Session view**.
 

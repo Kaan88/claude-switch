@@ -77,14 +77,16 @@ impl Ui {
         let title = pane.file.path().file_name().and_then(|s| s.to_str()).unwrap_or("File preview");
         let close = Rect::new(area.right() - 32.0, area.y + 6.0, 25.0, 25.0);
         let editor = Rect::new(close.x - 114.0, close.y, 108.0, close.h);
+        let can_open = pane.file.supports_default_app();
         if let Some(r) = intersection(close, area) {
             self.button(p, pal, r, "×", Action::CloseMarkdown, false);
         }
-        if let Some(r) = intersection(editor, area).filter(|_| pane.file.supports_default_app()) {
+        if let Some(r) = intersection(editor, area).filter(|_| can_open) {
             let label = if pane.file.picture() { "Open in app" } else { "Open in editor" };
             self.button(p, pal, r, label, Action::Editor, false);
         }
-        p.text(Face::Semibold, 13.0, area.x + 11.0, close.cy(), title, pal.text, (editor.x - area.x - 18.0).max(0.0));
+        let title_end = if can_open { editor.x } else { close.x };
+        p.text(Face::Semibold, 13.0, area.x + 11.0, close.cy(), title, pal.text, (title_end - area.x - 18.0).max(0.0));
         let top = area.y + 37.0;
         p.fill(Rect::new(area.x + 1.0, top, (area.w - 2.0).max(0.0), p.px()), pal.line);
         let top = if let Some(error) = pane.error {

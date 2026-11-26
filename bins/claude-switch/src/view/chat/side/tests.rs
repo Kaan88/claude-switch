@@ -13,13 +13,20 @@ const TAB: u64 = 7;
 fn shell_actions_are_bound_to_the_expanded_row_and_refuse_stale_or_finished_stop_hits() {
     use claude_switch_core::transcript::{BackgroundShell, ShellStatus};
     let demo = crate::demo::Transcript::new_chat().unwrap();
-    let mut model = Model::new(Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let mut model = Model::new(Source::Demo(demo.path().into()), demo.cwd().into(), || {});
     let id = ItemId { offset: 2, block: 0 };
     model.shells.push(BackgroundShell {
         tool: id,
         id: "b1".into(),
         command: "preview".into(),
-        output: "b1.output".into(),
+        output: demo
+            .cwd()
+            .join("claude")
+            .join(crate::view::model::project_slug(demo.cwd()))
+            .join("tasks/b1.output")
+            .to_str()
+            .unwrap()
+            .into(),
         status: ShellStatus::Running,
         start_ms: None,
         end_ms: None,

@@ -96,7 +96,7 @@ pub(super) fn prompt(screen: &Screen) -> Option<String> {
     Some(text.trim().to_owned())
 }
 
-pub(super) fn clean_prompt(screen: &Screen) -> bool {
+pub(in crate::view) fn clean_prompt(screen: &Screen) -> bool {
     prompt(screen).as_deref() == Some("")
 }
 

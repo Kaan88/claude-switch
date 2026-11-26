@@ -707,19 +707,22 @@ is inactive when those checks fail.
 **Shells** uses only background `Bash` inputs whose successful paired result names a task ID and
 output path. Later task notifications or matching successful status/stop tools determine the
 finished state and exit code; a missing terminal record does not prove a shell stopped. The
-visible expanded rows read at most the final 16 KiB of the exact named log through the reader
-worker and the fixed-volume, no-reparse open, showing at most eight lines. Following is on by
+visible expanded rows read at most the final 16 KiB through the reader worker and the fixed-volume,
+no-reparse open, showing at most eight lines. Only a result's exact `<task-id>.output` under
+Claude Code’s temp project (or that project’s current session) `tasks` directory is eligible.
+Following is on by
 default; pausing retains the displayed lines. **Full output** opens a literal UTF-8 snapshot from
-the start (first 1 MiB). It does not interpret formatting or follow links in the log. **Stop…**
+the start (first 1 MiB). Shell logs are view-only: no external open action or active links. **Stop…**
 binds confirmation to the tab, transcript generation and shell. Switch opens the terminal drawer
 and can send a single Down key only at a verified, unblocked, empty CLI prompt with the adjacent
 “↓ to manage” footer. Otherwise it explains the manual path; it never selects a menu entry or
 stops a process.
 
-**Outputs** lists the newest occurrence of each HTTPS destination or verified saved path, with
+**Outputs** lists the newest occurrence of each HTTP(S) destination or verified saved path, with
 tool-result pictures identified by their transcript references. It sorts by reported timestamps
 when available. It reads assistant prose and bounded tool-result text for links, with no fetching;
-opening requires a click and uses the default browser. Saved files use the same path authorization
+opening requires a click and uses the default browser. Outputs and conversation links share the
+same host checks and reject userinfo. Saved files use the same path authorization
 as conversation links; a tool result mentioning an arbitrary filename does not grant access. The
 shared viewer handles bounded Markdown, UTF-8 text and supported images. Cards are deduplicated per
 turn and prefer the answer over a tool result that repeated the same link. Both Chat and Session
