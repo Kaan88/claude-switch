@@ -4,9 +4,9 @@ mod markdown;
 mod paint;
 mod rows;
 mod scroll;
+mod select;
 
 use std::collections::BTreeSet;
-use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -51,6 +51,8 @@ enum Action {
     CloseMarkdown,
     Open,
     Close,
+    /// A code block's Copy button, with the code.
+    CopyCode(String),
 }
 
 struct Overlay {
@@ -83,7 +85,9 @@ pub struct Ui {
     scrollbar: Option<Scrollbar>,
     scroll_drag: Option<Drag>,
     scroll_hot: Option<Surface>,
-    selection: Option<(Id, usize, usize)>,
+    selection: Option<select::Selection>,
+    /// The message a right-click menu was opened on.
+    menu_row: Option<Id>,
     dragging: bool,
     start: Option<(f32, f32, String)>,
     focused: bool,
@@ -92,6 +96,8 @@ pub struct Ui {
     epoch: Option<Instant>,
     mouse: (f32, f32),
     working: Option<Footer>,
+    /// The code block copied last, so its button can say so.
+    copied: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -477,10 +483,4 @@ fn intersection(a: Rect, b: Rect) -> Option<Rect> {
     let (x, y) = (a.x.max(b.x), a.y.max(b.y));
     let (w, h) = (a.right().min(b.right()) - x, a.bottom().min(b.bottom()) - y);
     (w > 0.0 && h > 0.0).then(|| Rect::new(x, y, w, h))
-}
-
-fn selection(sel: &Option<(Id, usize, usize)>, id: &Id, text: &str) -> Option<Range<usize>> {
-    let (row, a, b) = sel.as_ref()?;
-    let r = *a.min(b)..*a.max(b);
-    (row == id && text.get(r.clone()).is_some()).then_some(r)
 }

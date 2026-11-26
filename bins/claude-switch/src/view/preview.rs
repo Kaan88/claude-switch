@@ -237,6 +237,26 @@ impl Preview {
         range.contains(&offset).then_some(name)
     }
 
+    /// The top-level code blocks: their top and height in logical px from the text's top, and
+    /// their text, for a Copy button.
+    pub fn code_blocks(&self) -> Vec<(f32, f32, &str)> {
+        let blocks: Vec<_> = self.active(|a| {
+            a.renderer
+                .page_layout()
+                .map_or_else(Vec::new, |page| page.blocks().iter().map(|b| (b.block, b.y, b.height)).collect())
+        });
+        let scale = self.options.scale;
+        blocks
+            .into_iter()
+            .filter_map(|(index, y, h)| {
+                let block = self.doc.blocks.get(index as usize)?;
+                matches!(block.kind, BlockKind::CodeBlock { .. }).then_some(())?;
+                let code = self.doc.text.get(block.text.usize())?;
+                Some(((y - self.top) / scale, h / scale, code))
+            })
+            .collect()
+    }
+
     pub fn point(&self, x: f32, y: f32) -> (usize, Option<&str>) {
         match self.hit(x, y) {
             Some(hit) => (hit.offset as usize, self.link_of(hit)),

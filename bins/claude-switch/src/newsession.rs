@@ -8,7 +8,7 @@ use claude_switch_core::sessions::{Group, folder_key};
 use mdshared_ui::gfx::{Face, Painter, Rect};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::overlay::{DIALOG_FOOTER, DIALOG_PAD, dialog_card};
-use mdshared_ui::textfield::{FieldColors, TextField};
+use mdshared_ui::textfield::{FieldColors, FieldHit, TextField};
 
 use super::{CANCEL, Dialog, Draw, FIELD, OK};
 use crate::folder_defaults::{CLI, DESKTOP, draw_app};
@@ -21,7 +21,7 @@ const NEXT: u32 = 21;
 
 pub struct NewSession {
     field: TextField,
-    stops: Vec<f32>,
+    hit: Option<FieldHit>,
     recent: Vec<PathBuf>,
     accounts: Vec<(String, String)>,
     account: usize,
@@ -62,7 +62,7 @@ impl NewSession {
         field.select_all();
         let mut picker = Self {
             field,
-            stops: Vec::new(),
+            hit: None,
             recent: recent_folders(&st.all_groups),
             accounts,
             account: 0,
@@ -100,7 +100,7 @@ impl NewSession {
         p.frame(fr, 5.0, pal.field, if self.focus == 0 { pal.accent } else { pal.line });
         let colors = FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
         self.field.draw(p, fr.inset(8.0), Face::Ui, 13.0, &colors, "Folder path", self.focus == 0, true);
-        self.stops = p.caret_stops(Face::Ui, 13.0, &self.field.display());
+        self.hit = crate::fieldmouse::hit(p, fr.inset(8.0), 13.0);
         d.hits.push((fr, Target::Dialog(FIELD)));
         if let Some(error) = self.error {
             p.text(Face::Ui, 12.0, x, fr.bottom() + 10.0, error, pal.danger, width);
@@ -144,7 +144,7 @@ impl NewSession {
         }
     }
 
-    pub(super) fn click(&mut self, st: &mut AppState, now: Instant, id: u32, x: f32) -> bool {
+    pub(super) fn click(&mut self, st: &mut AppState, now: Instant, id: u32) -> bool {
         self.sync_defaults(st);
         match id {
             CANCEL => return false,
@@ -168,12 +168,7 @@ impl NewSession {
                     }
                 }
             }
-            FIELD => {
-                self.focus = 0;
-                let inner_x =
-                    x - st.hits.iter().find(|(_, t)| *t == Target::Dialog(FIELD)).map_or(0.0, |(r, _)| r.x + 8.0);
-                self.field.press(inner_x, &self.stops, false);
-            }
+            FIELD => self.focus = 0,
             PREVIOUS | NEXT => {
                 self.focus = 1;
                 self.step_account(id == NEXT);
@@ -209,6 +204,20 @@ impl NewSession {
             }
             _ => {}
         }
+    }
+
+    pub(crate) fn field_parts(&mut self) -> (&mut TextField, Option<FieldHit>) {
+        (&mut self.field, self.hit)
+    }
+
+    pub(crate) fn focus_folder(&mut self) {
+        self.focus = 0;
+    }
+
+    /// The folder changed other than by typing (the right-click menu).
+    pub(crate) fn edited(&mut self, st: &AppState) {
+        self.error = None;
+        self.sync_defaults(st);
     }
 
     pub(super) fn text_input(&mut self, st: &AppState, text: &str) {

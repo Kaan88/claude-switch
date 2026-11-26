@@ -58,7 +58,9 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
     if let Some(menu) = st.accounts_dd.menu_mut() {
         popup(cx, p, window, &pal, menu, style, "accounts-menu");
     }
-    if let Some((kind, menu)) = &mut st.menu {
+    // A field's menu over a dialog belongs above it.
+    let over_dialog = st.dialog.is_some();
+    if !over_dialog && let Some((kind, menu)) = &mut st.menu {
         popup(cx, p, window, &pal, menu, style, ("popup", *kind));
     }
     let t = if st.dialog.is_some() {
@@ -68,6 +70,9 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
         1.0
     };
     dialogs::draw(st, cx, p, window, t);
+    if over_dialog && let Some((kind, menu)) = &mut st.menu {
+        popup(cx, p, window, &pal, menu, style, ("popup", *kind));
+    }
     if let Some(palette) = &mut st.palette {
         let t = cx.anim().value_from("palette-enter", 0.0_f32, 1.0, document::MENU.enter);
         palette.draw_presence(p, &pal, window, TITLE_H, true, t);

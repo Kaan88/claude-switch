@@ -10,6 +10,12 @@
   is shown in Threads as the continuation of the old one.
 - Chat: Claude's questions (AskUserQuestion) appear as a card you can answer from the chat; the
   working line says "Waiting for your answer".
+- Text boxes (search, name and folder dialogs, Settings) select with the mouse: drag, Shift+click,
+  double-click a word, triple-click all, and a right-click menu with Cut, Copy, Paste, Select all.
+- The conversation in Chat and Session view can be selected across messages and copied with
+  Ctrl+C or the right-click menu (Copy, Select all, Copy message, Copy as Markdown); code blocks
+  have a Copy button.
+- The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 - Handover: `/switch-handover:switch-compact` and `claude-switch compact --open` open the new chat as

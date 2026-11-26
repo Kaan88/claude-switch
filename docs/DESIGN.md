@@ -292,6 +292,16 @@ the tool and its target, and the time between use and result timestamps when bot
 ordered. Runs of four or more consecutive tools start collapsed. Expand a row for the bounded
 details and any output pictures; a group can be expanded independently of its rows.
 
+**Selecting and copying.** A selection runs from an anchor to a focus, each a row (by its stable
+identity, so it survives an appended message) and a byte in that row's shown text, so a drag or
+Shift+click can cross messages; dragging past the top or bottom scrolls. A double click takes a
+word, a triple click the message. Ctrl+C copies the selection, the rows' parts joined by a blank
+line; Ctrl+A selects the whole loaded conversation. The right-click menu has Copy and Select all,
+and over a message Copy message (its text as shown) and Copy as Markdown (its source). Each
+top-level code block of an answer has a **Copy** button for its code alone. The toolkit's
+`richtext` manages no selection, so this is the app's (`view/ui/select.rs`) over the renderer's
+selection rectangles and block boxes.
+
 The embedded Markdown viewer renders assistant answers and named Markdown files. Conversation row
 heights are cached and only visible slices are rasterized. Bare or inline-code Markdown paths and
 explicit Markdown link destinations are actionable when the reader worker finds a regular file.
@@ -826,7 +836,25 @@ Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+The message box shows three lines when empty and grows with the draft's wrapped rows up to 40% of
+the chat column, then scrolls. The terminal drawer is sized against the smallest box, so typing
+never resizes the terminal; a window too short to keep 80 px of conversation gets the two-line box.
 Demo shows the waiting state, and its composer writes only to the synthetic terminal screen.
+
+## Text fields
+
+Every single-line field (the session search, the name dialogs, the new-session folder, the quick
+switcher and rename boxes, the handover's new session name) takes the mouse through the toolkit's
+`textfield::Pointer`: a click places the caret, a drag or Shift+click selects, a double click takes
+a word, a triple click everything, and a drag past either end scrolls the text. Each field records
+its text rectangle as drawn (`FieldHit`) every frame; a press in the box's padding goes to the
+nearest end. One drag is held at a time (`fieldmouse.rs`). A right click opens the toolkit's Cut,
+Copy, Paste, Select all (`TextField::context_menu`), drawn above a dialog; outside the selection it
+first moves the caret. Settings text rows keep the form's own mouse selection; the app adds the
+triple click, the I-beam and the same menu, applied through the form's Ctrl+X/C/V/A, with Cut and
+Copy enabled whenever the row has text. Colour rows and an open colour picker take no caret. The
+I-beam shows only over a field that takes the mouse now, the composer, the handover editor and
+terminal text.
 
 ## Session organization
 

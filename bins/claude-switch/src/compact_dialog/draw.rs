@@ -182,8 +182,7 @@ impl Compact {
         p.text(Face::Ui, FONT, body.x, field.y + 14.0, "New session name", d.pal.text, 111.0);
         p.frame(field, 5.0, d.pal.field, if self.name_focused { d.pal.accent } else { d.pal.line });
         let inner = field.inset(7.0);
-        self.name_x = inner.x;
-        self.name_stops = p.caret_stops(Face::Ui, FONT, &self.new_name.display());
+        self.name_hit = crate::fieldmouse::hit(p, inner, FONT);
         let colors =
             FieldColors { text: d.pal.text, placeholder: d.pal.muted, selection: d.pal.selection, caret: d.pal.text };
         self.new_name.draw(p, inner, Face::Ui, FONT, &colors, "Enter a name", self.name_focused, true);

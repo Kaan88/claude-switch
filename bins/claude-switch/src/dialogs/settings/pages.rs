@@ -234,6 +234,35 @@ impl Settings {
         self.form.pointer_move(x, y) || changed
     }
 
+    /// The enabled text row whose box is under the pointer, for the I-beam and the field menu.
+    pub(crate) fn text_row_at(&self, x: f32, y: f32) -> Option<u32> {
+        if self.form.colour_open().is_some() || !self.form.body_rect().contains(x, y) {
+            return None;
+        }
+        // Colour rows are text rows drawn as a swatch; they take no caret.
+        self.form.rows().iter().enumerate().find_map(|(i, row)| match row {
+            mdshared_ui::settings::Row::Text { id, .. }
+                if self.form.colour(*id).is_none() && self.form.control_rect(i).contains(x, y) =>
+            {
+                Some(*id)
+            }
+            _ => None,
+        })
+    }
+
+    pub(crate) fn text_of(&self, id: u32) -> Option<String> {
+        match self.form.value(id)? {
+            mdshared_ui::settings::Value::Text(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Puts the keyboard on text row `id` without touching its selection.
+    pub(crate) fn focus_text_row(&mut self, id: u32) -> bool {
+        self.rail_focus = false;
+        self.form.focus_row(id)
+    }
+
     pub(in super::super) fn wheel(&mut self, x: f32, y: f32, dy: f32) {
         if !self.layout.rail.contains(x, y) {
             self.form.wheel(x, y, dy);
