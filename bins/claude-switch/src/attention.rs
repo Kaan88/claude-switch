@@ -95,6 +95,11 @@ impl TabAttention {
     }
 }
 
+/// How many rows above its footer a permission prompt's choices and question may use.
+const PROMPT_ROWS: usize = 24;
+/// How many rows one long choice may wrap onto.
+const CHOICE_WRAP: usize = 4;
+
 pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
     // Anchor at the last visible text near the input cursor, not arbitrary output or scrollback.
     let cursor = screen.cursor().row;
@@ -106,35 +111,43 @@ pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
     if !text.trim_start().starts_with("Esc to cancel") || cursor > footer + 2 || footer > cursor + 8 {
         return false;
     }
-    let rows: Vec<_> = (footer.saturating_sub(8)..footer)
+    let rows: Vec<_> = (footer.saturating_sub(PROMPT_ROWS)..footer)
         .rev()
         .map(|row| screen.row_text(row))
         .filter(|s| !s.trim().is_empty())
         .collect();
-    let mut rows = rows.iter().map(|s| s.trim());
+    let mut rows = rows.iter().map(|s| s.trim().trim_start_matches(['❯', '>']).trim_start());
     let option = |row: &str, labels: &[&str]| {
-        let row = row.trim_start_matches(['❯', '>']).trim_start();
         labels.iter().any(|label| {
             row.strip_prefix(label).is_some_and(|rest| rest.chars().next().is_none_or(|ch| !ch.is_alphanumeric()))
         })
     };
-    let Some(deny) = rows.next() else { return false };
-    let deny = deny.trim_start_matches(['❯', '>']).trim_start();
+    let numbered = |row: &str| {
+        row.split_once(". ")
+            .is_some_and(|(n, _)| !n.is_empty() && n.len() <= 2 && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    // Bottom up: each choice is its numbered row and the rows a long choice wraps onto below it.
+    let mut choice = || {
+        let mut wrapped = 0;
+        for row in rows.by_ref() {
+            if numbered(row) {
+                return Some(row);
+            }
+            wrapped += 1;
+            if wrapped > CHOICE_WRAP {
+                return None;
+            }
+        }
+        None
+    };
+    let Some(deny) = choice() else { return false };
     // The last choice declines ("N. No…"); the choices above it count down to "1. Yes" or
     // "1. Allow" (two to five choices, such as "Yes, and switch to auto mode").
     let Some(count) = (2..=5).find(|n| option(deny, &[&format!("{n}. No"), &format!("{n}. Deny")])) else {
         return false;
     };
     for n in (1..count).rev() {
-        // A long choice may wrap onto a second row; nothing else sits between choices.
-        let Some(row) = rows
-            .by_ref()
-            .take(2)
-            .map(|r| r.trim_start_matches(['❯', '>']).trim_start())
-            .find(|r| r.starts_with(&format!("{n}. ")))
-        else {
-            return false;
-        };
+        let Some(row) = choice().filter(|r| r.starts_with(&format!("{n}. "))) else { return false };
         if n == 1 && !option(row, &["1. Yes", "1. Allow"]) {
             return false;
         }

@@ -381,6 +381,58 @@ fn a_prompt_for_another_call_or_with_other_choices_is_left_to_the_terminal() {
     assert_eq!(f.chat().question.error, Some(CHANGED));
 }
 
+/// A permission prompt whose "don't ask again" choice wraps onto three rows.
+fn wrapped_prompt(command: &str) -> String {
+    [
+        "\x1b[2J\x1b[H────────────────────",
+        " Bash command",
+        "",
+        &format!("   {command}"),
+        "   Remove the build output",
+        "",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   2. Yes, and don't ask again for rm commands in",
+        "      /home/someone/projects/a-rather-long-folder-name",
+        "      /and-one-more-level",
+        "   3. No, and tell Claude what to do differently (esc)",
+        "",
+        " Esc to cancel",
+    ]
+    .join("\r\n")
+}
+
+#[test]
+fn a_permission_prompt_never_becomes_a_menu_card_even_when_its_choices_wrap() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model
+        .items
+        .insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: shell("toolu_0", "rm -rf target"), timestamp: None });
+    let now = Instant::now();
+    f.screen(&wrapped_prompt("rm -rf target"), now);
+    assert!(crate::attention::screen_permission_prompt(&f.tab().term.screen), "wrapped choices are read");
+    f.sync();
+    assert!(f.chat().question.menu.is_none(), "never the generic menu card");
+    assert_eq!(f.chat().question.answerable, None, "two calls pending: the terminal answers");
+    assert_eq!(f.decide(now), Some(Reason::Permission));
+    assert_ne!(f.chat().drawer, Drawer::Closed);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+
+    // A screen that only looks like a permission prompt (its footer offers Tab to amend) is not
+    // recognised, yet still never shows as a menu card.
+    let mut f = Fixture::tool("cargo test --workspace");
+    let odd = prompt("cargo test --workspace", 0, None).replace(" Do you want to proceed?", " Proceed?");
+    f.screen(&odd, now);
+    f.sync();
+    assert!(f.chat().question.menu.is_none() && f.chat().question.shown.is_none());
+    assert_eq!(f.decide(now), Some(Reason::Permission));
+    assert_ne!(f.chat().drawer, Drawer::Closed);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+}
+
 #[test]
 fn declining_with_a_comment_opens_the_prompts_field_and_types_before_enter() {
     let mut f = Fixture::tool("cargo test --workspace");

@@ -928,7 +928,11 @@ and its numbered choices as buttons, answered like a question (arrows, then Ente
 shows the highlight on that row with the same title and choices); the step ends as soon as that
 menu is gone. A menu without numbered rows shows its rows read-only with Open terminal. While a
 card shows a menu, sends are refused with "Choose in Claude Code's menu above" and the drawer stays
-closed; a slash command no longer opens the drawer by itself.
+closed; a slash command no longer opens the drawer by itself. A menu that may be a permission
+prompt never shows as a menu card: within 24 rows of its footer a "Do you want to"/"Would you like
+to" row, "Tab to amend", "don't ask again" or "tell Claude what to do", or Yes and No choices over
+"Esc to cancel". Unless a question card answers that menu, the gate treats it as a permission
+prompt left to the terminal (drawer, notice).
 
 **Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
 the call's input (header, question, options with descriptions), never from the screen. Chat answers
@@ -949,7 +953,8 @@ above" and the drawer does not open by itself; the working line reads "Waiting f
 (2026-11-27): "give that up, otherwise all I see is that chat has stopped. convenience trumps". The
 safeguards that cost nothing stay. While the main transcript has exactly one pending tool call and
 the screen shows a permission prompt (a "Do you want to …" or "Would you like to …" row, then
-`1. Yes`/`1. Allow` down to a `No`/`Deny` choice, then the "Esc to cancel" footer), the card shows
+`1. Yes`/`1. Allow` down to a `No`/`Deny` choice, each choice wrapping onto at most four rows, then
+the "Esc to cancel" footer), the card shows
 the call as the transcript records it (command, file and diff lines, MCP server and tool), the
 prompt's own rows above the question (warnings and countdowns included), the question and the
 screen's choices, exactly as written. Clicks are answered only if the prompt names that call (the

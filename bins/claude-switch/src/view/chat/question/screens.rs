@@ -39,6 +39,12 @@ pub(super) const AMEND: &str = "tab to amend";
 /// How the comment field Tab opens shows on its choice's row: the choice, this mark, then the text
 /// typed so far. Without it the row is still a menu row, where digits pick choices.
 pub(super) const COMMENT_MARK: &str = ":";
+/// Rows only a permission prompt shows, lower case. A menu with one of them near its footer is
+/// never offered as a generic menu card, even when the prompt itself is not recognised.
+const PERMISSION_LOOKS: [&str; 5] =
+    ["do you want to ", "would you like to ", "tab to amend", "don't ask again", "tell claude what to do"];
+/// How many rows above its footer a prompt's look is searched.
+const LOOK_ROWS: usize = 24;
 /// The plan approval question shown for `ExitPlanMode`.
 pub(super) const PLAN_ASKS: &str = "Would you like to proceed?";
 /// The plan approval choice that declines (keeps planning).
@@ -215,8 +221,35 @@ pub(super) struct Panel {
     pub esc: bool,
 }
 
+/// The screen may show a permission prompt: recognised, or a menu with a permission prompt's rows
+/// (or Yes and No choices over "Esc to cancel").
+pub(in crate::view::chat) fn permission_like(screen: &Screen) -> bool {
+    if crate::attention::screen_permission_prompt(screen) {
+        return true;
+    }
+    let lines: Vec<String> =
+        (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1.to_lowercase().replace('’', "'")).collect();
+    // The last row with anything on it, a prompt mark included, by the input.
+    let Some(footer) = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty()) else {
+        return false;
+    };
+    let cursor = screen.cursor().row;
+    if !menu_footer(&lines[footer]) || footer + 2 < cursor || footer > cursor + 9 {
+        return false;
+    }
+    let near = &lines[footer.saturating_sub(LOOK_ROWS)..=footer];
+    let yes_no = menu(screen).is_some_and(|m| {
+        let texts = m.texts();
+        let first = texts.first().map(|t| t.to_lowercase()).unwrap_or_default();
+        (first.starts_with("yes") || first.starts_with("allow"))
+            && texts.iter().any(|t| t.starts_with("No") || t.starts_with("Deny"))
+    });
+    near.iter().any(|row| PERMISSION_LOOKS.iter().any(|look| row.contains(look)))
+        || yes_no && lines[footer].contains("esc to cancel")
+}
+
 pub(super) fn panel(screen: &Screen) -> Option<Panel> {
-    if crate::attention::screen_permission_prompt(screen) || screen.modes().alt_screen {
+    if permission_like(screen) || screen.modes().alt_screen {
         return None;
     }
     let lines: Vec<String> = (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1).collect();
