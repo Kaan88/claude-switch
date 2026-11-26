@@ -169,3 +169,14 @@ and in the README, not committed, and not copied to the installed clone
    widget sets the text cursor on hover and the reset on leave is skipped when the tab is created
    under the pointer (no enter/leave pair), and whether the app or the toolkit owns the cursor
    choice each frame. Possibly related to the toolkit's cursor-shape item already noted there.
+10. **Quick access to common slash commands in the Chat view, and CLI menus answered from the chat**
+    (owner, 2026-11-26). Mock-ups: https://claude.ai/artifact/CVdwHaufYDmg86uvapfgYN (private to the
+    owner). A: the hint line under the message box becomes chips (Model, Effort, Context, Compact,
+    Clear, "/ …"); a chip with choices applies the choice directly (`/model sonnet`) and updates when
+    the CLI confirms. B: typing "/" opens a list of built-in commands, the account's skills and plugins
+    and the user's own, with pinned ones first and argument choices inline. C: a selection menu or
+    permission question the CLI draws in the terminal is shown as a card of buttons; a tap sends the
+    option's keys, and nothing is sent if the screen changed meanwhile. D: Settings > Chat > Quick
+    commands (which chips, order, own commands, the switch for C). Replaces the single "/model" button
+    (item 7). To find out: which commands take their argument on the line (`/model <name>` does;
+    `/effort` to check), and how reliably the menus can be read from the terminal screen.
