@@ -1,7 +1,7 @@
 //! Claude Switch: lists the Claude Code sessions of this computer and opens one in the CLI or
 //! the desktop app, as the chosen account. `docs/DESIGN.md` says what and why.
 //!
-//! `--demo` shows the window with made-up data and writes nothing; `--theme light|dark` forces
+//! `--demo` uses made-up data and never writes personal settings; `--theme light|dark` forces
 //! the look instead of following Settings.
 //!
 //! For testing the terminal tabs only (not shown anywhere): `--shell <program>` opens a tab that
@@ -13,6 +13,7 @@
 
 mod actions;
 mod app;
+mod app_draw;
 mod demo;
 mod details;
 mod dialogs;
@@ -26,6 +27,7 @@ mod termapp;
 mod termkeys;
 mod termtheme;
 mod topbar;
+mod view;
 mod windowlook;
 mod winfile;
 
@@ -69,7 +71,7 @@ fn main() {
     state.debug_type = typed
         .iter()
         .enumerate()
-        .map(|(k, t)| (start + std::time::Duration::from_secs(2 * (k as u64 + 1)), termapp::unescape(t)))
+        .map(|(k, t)| (start + std::time::Duration::from_secs(2 * (k as u64 + 1)), termkeys::unescape(t)))
         .collect();
     let config = Config::new("Claude Switch")
         .size(win_file.w, win_file.h)

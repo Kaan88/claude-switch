@@ -196,6 +196,23 @@ impl Term {
         before != extent(sel)
     }
 
+    /// Tab switches can lose the matching mouse-up; end any drag on the original tab.
+    pub fn stop_pointer(&mut self) {
+        self.selecting = false;
+        if let (Some(button), Some((row, col))) = (self.reported.take(), self.last_cell.take()) {
+            let ev = mdshared_term::MouseEvent {
+                kind: mdshared_term::MouseKind::Release,
+                button: Some(button),
+                col,
+                row,
+                mods: mdshared_term::Mods::NONE,
+            };
+            if let Some(bytes) = mdshared_term::input::encode_mouse(ev, &self.screen.modes()) {
+                self.write(&bytes);
+            }
+        }
+    }
+
     /// The selected text, when something is selected.
     pub fn selected_text(&self) -> Option<String> {
         self.selection.filter(|s| !s.is_empty()).map(|s| s.text(&self.screen)).filter(|t| !t.is_empty())
@@ -306,5 +323,18 @@ mod tests {
         assert!(!t.extend_selection(Point::new(row, 3)));
         assert_ne!(before, t.selection, "the drag still tracked the new endpoint");
         assert!(t.extend_selection(Point::new(row + 1, 7)));
+    }
+
+    #[test]
+    fn losing_the_tab_ends_a_drag_without_erasing_its_selection() {
+        let mut term = Term::empty((10, 3));
+        let at = Point::new(term.screen.screen_start(), 0);
+        term.selection = Some(Selection::start(&term.screen, at, mdshared_term::SelectionKind::Stream, 1));
+        term.selecting = true;
+        term.reported = Some(MouseButton::Left);
+        term.last_cell = Some((0, 0));
+        term.stop_pointer();
+        assert!(term.selection.is_some() && !term.selecting);
+        assert_eq!((term.reported, term.last_cell), (None, None));
     }
 }

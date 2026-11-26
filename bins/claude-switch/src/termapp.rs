@@ -33,6 +33,7 @@ pub struct Woken {
     pub rects: Vec<Rect>,
     pub all: bool,
     pub strip: bool,
+    pub output: bool,
 }
 
 fn button_of(b: Button) -> Option<MouseButton> {
@@ -72,7 +73,12 @@ impl AppState {
 
     /// Opens a tab that runs `l` and shows it.
     pub fn open_tab(&mut self, l: &Launch, session: Option<&str>, account: Option<&str>) -> io::Result<u64> {
-        self.open_command(&term::command(l), l.label.clone(), session, account)
+        let pane = self.pane_for_launch(l, session, account);
+        let id = self.open_command(&term::command(l), l.label.clone(), session, account)?;
+        if let Some(tab) = self.tabs.get_mut(id) {
+            tab.pane = pane;
+        }
+        Ok(id)
     }
 
     /// Opens a tab that runs `command` and shows it.
@@ -96,7 +102,14 @@ impl AppState {
     /// asked to be told.
     fn report_switch(&mut self, before: Option<u64>) {
         let now = self.tabs.active;
-        if before == now || !self.window_focused {
+        if before == now {
+            return;
+        }
+        self.clear_session_text_focus();
+        if let Some(tab) = before.and_then(|id| self.tabs.get_mut(id)) {
+            tab.term.stop_pointer();
+        }
+        if !self.window_focused {
             return;
         }
         for (id, on) in [(before, false), (now, true)] {
@@ -188,6 +201,7 @@ impl AppState {
             if shown != Some(tab.id) || !r.output {
                 continue;
             }
+            w.output = true;
             match metrics {
                 Some(m) if had_selection == tab.term.selection.is_some() => {
                     let view = tab.term.view(true);
@@ -205,12 +219,12 @@ impl AppState {
 
     /// A key press while a terminal tab is shown and nothing is over it.
     pub fn term_key(&mut self, now: Instant, k: &KeyPress) {
+        self.flush_drop_before_input();
         let Some(tab) = self.tabs.shown() else { return };
         let id = tab.id;
-        if tab.term.ended.is_some() {
-            if k.name == Some(KeyName::Enter) {
-                self.close_tab_now(id);
-            }
+        let ended = tab.term.ended.is_some();
+        if ended && k.name == Some(KeyName::Enter) {
+            self.close_tab_now(id);
             return;
         }
         let modes = tab.term.screen.modes();
@@ -219,26 +233,27 @@ impl AppState {
         match action {
             KeyAction::Command(c) => self.command(now, c, None),
             KeyAction::Copy => self.copy_selection(),
-            KeyAction::Paste => self.paste(),
+            KeyAction::Paste if !ended => self.paste(),
             KeyAction::Page(n) => {
                 if let Some(tab) = self.tabs.shown_mut() {
                     let rows = tab.term.screen.rows() as i32;
                     tab.term.scroll_by(n * (rows - 1).max(1));
                 }
             }
-            KeyAction::Send(bytes) => {
+            KeyAction::Send(bytes) if !ended => {
                 if let Some(tab) = self.tabs.shown_mut() {
                     tab.term.scroll = 0;
                     tab.term.selection = None;
                     tab.term.write(&bytes);
                 }
             }
-            KeyAction::None => {}
+            _ => {}
         }
     }
 
     /// Text an input method committed.
     pub fn term_text(&mut self, text: &str) {
+        self.flush_drop_before_input();
         if let Some(tab) = self.tabs.shown_mut() {
             tab.term.scroll = 0;
             tab.term.write(text.as_bytes());
@@ -254,9 +269,10 @@ impl AppState {
     }
 
     pub fn paste(&mut self) {
-        let Some(text) = platform::clipboard_text() else { return };
+        self.flush_drop_before_input();
+        let text = platform::clipboard_text();
         if let Some(tab) = self.tabs.shown_mut() {
-            let bytes = termkeys::paste(&text, &tab.term.screen.modes());
+            let bytes = crate::view::attach::clipboard(text.as_deref(), &tab.term.screen.modes());
             tab.term.scroll = 0;
             tab.term.write(&bytes);
         }
@@ -396,20 +412,25 @@ impl AppState {
         self.term_colours.0
     }
 
-    /// Fits all tabs, even while Sessions is shown.
-    pub fn layout_terminals(&mut self, area: Rect, scale: f32) {
-        let inner = Rect::new(area.x + PAD, area.y + PAD, (area.w - 2.0 * PAD).max(0.0), (area.h - 2.0 * PAD).max(0.0));
+    /// Fits each tab to its own area, so switching to a shell doesn't reflow a hidden session.
+    pub fn layout_terminals(&mut self, shown: Rect, full: Rect, scale: f32) {
+        let inner = |area: Rect| {
+            Rect::new(area.x + PAD, area.y + PAD, (area.w - 2.0 * PAD).max(0.0), (area.h - 2.0 * PAD).max(0.0))
+        };
         let metrics = self.cell_font.metrics(f32::from(self.config.terminal_font_size), scale);
-        let (cols, rows) = metrics.grid_size(inner);
-        let (cols, rows) = (cols.clamp(1, u16::MAX as usize), rows.clamp(1, u16::MAX as usize));
-        let grid = (cols as u16, rows as u16);
-        if self.grid != grid {
-            self.grid = grid;
-            for tab in &mut self.tabs.list {
-                tab.term.resize(cols, rows);
-            }
+        let grid = |area| {
+            let (cols, rows) = metrics.grid_size(inner(area));
+            (cols.clamp(1, u16::MAX as usize), rows.clamp(1, u16::MAX as usize))
+        };
+        let open = self.session_width_enabled(full.w);
+        let split = self.session_view.splitter.rects(full, mdshared_ui::splitter::Axis::Horizontal).0;
+        let (full_grid, pane_grid) = (grid(full), grid(split));
+        for tab in &mut self.tabs.list {
+            let (cols, rows) = if open && tab.pane.is_some() { pane_grid } else { full_grid };
+            tab.term.resize(cols, rows);
         }
-        self.term_area = inner;
+        self.grid = (full_grid.0 as u16, full_grid.1 as u16);
+        self.term_area = inner(shown);
         self.metrics = Some(metrics);
     }
 
@@ -463,6 +484,9 @@ impl AppState {
     /// A terminal's program wrote or ended: feeds them all and redraws what changed.
     pub fn term_woke(&mut self, cx: &mut Cx<'_, Msg>) {
         let w = self.pump_terms();
+        if w.output {
+            self.session_tick(cx, true);
+        }
         if w.all || !w.rects.is_empty() {
             Self::cursor_moved(cx);
         }
@@ -530,46 +554,24 @@ impl AppState {
     }
 }
 
-/// `--type` text with `\r`, `\n`, `\t`, `\e`, `\\` and `\xHH` read as the characters.
-pub fn unescape(s: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'\\' && i + 1 < b.len() {
-            let (bytes, used): (Vec<u8>, usize) = match b[i + 1] {
-                b'r' => (vec![b'\r'], 2),
-                b'n' => (vec![b'\n'], 2),
-                b't' => (vec![b'\t'], 2),
-                b'e' => (vec![0x1b], 2),
-                b'\\' => (vec![b'\\'], 2),
-                b'x' if i + 4 <= b.len() => {
-                    match u8::from_str_radix(std::str::from_utf8(&b[i + 2..i + 4]).unwrap_or(""), 16) {
-                        Ok(v) => (vec![v], 4),
-                        Err(_) => (vec![b'\\'], 1),
-                    }
-                }
-                _ => (vec![b'\\'], 1),
-            };
-            out.extend(bytes);
-            i += used;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn typed_text_reads_its_escapes() {
-        assert_eq!(unescape(r"dir\r"), b"dir\r");
-        assert_eq!(unescape(r"\e:q\x0d"), b"\x1b:q\r");
-        assert_eq!(unescape(r"a\\b\q"), b"a\\b\\q");
-        assert_eq!(unescape(r"end\"), b"end\\");
+    fn ended_tabs_still_handle_local_scrollback() {
+        let mut app = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+        let mut term = Term::empty((10, 3));
+        term.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+        term.ended = Some(mdshared_pty::Exit { code: Some(0), signal: None });
+        app.tabs.open(NewTab { label: "ended".into(), color: [0; 3], account: None, session: None }, term);
+        let key = KeyPress {
+            name: Some(KeyName::PageUp),
+            mods: Mods { shift: true, ..Mods::default() },
+            text: None,
+            repeat: false,
+        };
+        app.term_key(Instant::now(), &key);
+        assert!(app.tabs.shown().unwrap().term.scroll > 0);
     }
 }

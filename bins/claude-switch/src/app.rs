@@ -9,9 +9,8 @@ use mdshared_ui::dropdown::Outcome as DdOutcome;
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::host::{App, Button, Cx, Event, KeyPress};
 use mdshared_ui::keys::KeyName;
-use mdshared_ui::overlay::{Bubble, TOAST_H};
 use mdshared_ui::palette::Outcome as PalOutcome;
-use mdshared_ui::splitter::{self, Axis};
+use mdshared_ui::splitter::Axis;
 use mdshared_ui::tooltip::Over;
 
 use crate::actions;
@@ -20,7 +19,7 @@ use crate::state::{AppState, Focus, MenuKind, Msg, POLL, Target};
 use crate::tabs::SESSIONS;
 use crate::termkeys;
 use crate::topbar::{self, Bar};
-use crate::{details, list, windowlook, winfile};
+use crate::{list, windowlook, winfile};
 
 impl AppState {
     fn resume_polling(&mut self, now: std::time::Instant) {
@@ -56,8 +55,9 @@ impl AppState {
         }
     }
 
-    fn save_window(&mut self) {
+    pub(crate) fn save_window(&mut self) {
         self.win_file.split = self.splitter.to_setting();
+        self.win_file.session_split = self.session_view.splitter.to_setting();
         winfile::save(self.source.window_file().as_deref(), &self.win_file);
     }
 
@@ -70,6 +70,7 @@ impl AppState {
                 }
             }
             Target::TabClose(id) => self.ask_close_tab(id),
+            Target::SessionToggle => self.toggle_session_view(),
             Target::Caption(WinButton::Max) => cx.toggle_maximize(),
             Target::Caption(WinButton::Min) => cx.minimize(),
             Target::SearchClear => {
@@ -135,7 +136,7 @@ impl AppState {
         let now = cx.now();
         let Some(name) = k.name.clone() else {
             // A key the toolkit has no name for may still have typed text for a program.
-            if self.terminal_shown() && self.nothing_over() {
+            if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
                 self.term_key(now, &k);
             }
             return;
@@ -166,8 +167,13 @@ impl AppState {
             dialogs::key(self, now, &name, mods, text);
             return;
         }
+        if self.session_key(cx.size().0, &name, mods) {
+            return;
+        }
         // The shortcuts that stay with the window in every tab, then a terminal's own keys.
-        if let Some(id) = termkeys::shortcut(&name, mods) {
+        if let Some(id) = termkeys::shortcut(&name, mods)
+            && (id != actions::SESSION_VIEW || self.tabs.shown().is_some_and(|t| t.pane.is_some()))
+        {
             self.command(now, id, None);
             return;
         }
@@ -259,6 +265,9 @@ impl AppState {
             }
             return;
         }
+        if self.session_press(cx, x, y, clicks) {
+            return;
+        }
         match hover {
             Some(Target::Tab(id)) => {
                 self.show_tab(id);
@@ -306,11 +315,14 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
-        if self.splitter.release() {
-            self.save_window();
+        if self.term_release(x, y, Button::Left, cx.mods()) {
             return;
         }
-        if self.term_release(x, y, Button::Left, cx.mods()) {
+        if self.session_release(cx, x, y) {
+            return;
+        }
+        if self.splitter.release() {
+            self.save_window();
             return;
         }
         if let Some(p) = &mut self.palette {
@@ -346,6 +358,10 @@ impl AppState {
     /// The pointer moved. True when something shows a change.
     fn moved(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) -> bool {
         self.mouse = (x, y);
+        let terminal_drag = self.tabs.shown().is_some_and(|tab| tab.term.selecting || tab.term.reported.is_some());
+        if !terminal_drag && let Some(changed) = self.session_move(cx, x, y) {
+            return changed;
+        }
         let area = self.main_area(cx);
         if self.splitter.dragging() {
             cx.set_cursor(Cursor::ResizeEw);
@@ -402,6 +418,7 @@ impl App for AppState {
         self.refresh(now);
         self.resume_polling(now);
         self.start_debug(cx);
+        self.start_demo_session();
         self.timers(cx);
     }
 
@@ -416,13 +433,14 @@ impl App for AppState {
             }
             Event::PointerLeave => {
                 self.hover = None;
+                self.session_pointer_left();
                 self.tip.hover(cx.now(), None);
                 cx.request_redraw_all();
             }
             Event::Press { x, y, button: Button::Left, clicks } => self.press(cx, x, y, clicks),
             Event::Release { x, y, button: Button::Left } => self.release(cx, x, y),
             Event::Press { x, y, button, clicks } => {
-                if !self.nothing_over() {
+                if !self.nothing_over() || self.picture_overlay() {
                     return;
                 }
                 match self.hit(x, y) {
@@ -434,13 +452,13 @@ impl App for AppState {
                 }
             }
             Event::Release { x, y, button } => {
-                if !self.term_release(x, y, button, cx.mods()) {
+                if self.picture_overlay() || !self.term_release(x, y, button, cx.mods()) {
                     return;
                 }
             }
             Event::Wheel { dy, .. } if self.nothing_over() && self.terminal_shown() => {
                 let (x, y) = self.mouse;
-                if self.term_area.contains(x, y) {
+                if !self.session_wheel(cx.size().0, x, y, dy) && self.term_area.contains(x, y) {
                     self.term_wheel(dy, cx.mods());
                 }
             }
@@ -463,7 +481,7 @@ impl App for AppState {
             Event::Text(t) => {
                 if self.dialog.is_some() {
                     dialogs::text_input(self, &t);
-                } else if self.terminal_shown() && self.nothing_over() {
+                } else if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
                     self.term_text(&t);
                 } else if self.focus == Focus::Search && self.palette.is_none() && self.search.insert(&t) {
                     self.after_search();
@@ -490,6 +508,8 @@ impl App for AppState {
                 self.retheme();
             }
             Event::Wake(now) => {
+                self.terminal_drop_due(cx, now);
+                self.session_tick(cx, false);
                 if let Some(at) = self.typed_due(now) {
                     cx.wake_at(at);
                 }
@@ -521,6 +541,12 @@ impl App for AppState {
         self.timers(cx);
     }
 
+    fn raw(&mut self, cx: &mut Cx<'_, Msg>, event: &winit::event::WindowEvent) {
+        if let winit::event::WindowEvent::DroppedFile(file) = event {
+            self.terminal_drop(cx, file.clone());
+        }
+    }
+
     fn message(&mut self, cx: &mut Cx<'_, Msg>, m: Msg) {
         match m {
             Msg::Woke => {
@@ -529,60 +555,16 @@ impl App for AppState {
                 }
             }
             Msg::Term => self.term_woke(cx),
+            Msg::SessionView => self.session_ready(cx),
+            Msg::AttachPictures(id, files) => {
+                if self.paste_paths(id, &files) {
+                    cx.request_redraw(self.term_area);
+                }
+            }
         }
     }
 
     fn draw(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, _damage: Rect) {
-        let pal = *self.pal();
-        let (w, h) = cx.size();
-        let window = Rect::new(0.0, 0.0, w, h);
-        self.hits.clear();
-        p.fill(window, pal.page);
-
-        let focused = cx.focused();
-        let search_focus = focused
-            && self.focus == Focus::Search
-            && self.dialog.is_none()
-            && self.palette.is_none()
-            && !self.terminal_shown();
-        let caret_on = self.search.blink_caret(cx.anim(), "search", self.blink, search_focus);
-        if search_focus && self.blink.is_some() && cx.anim().animates() {
-            cx.animating(Bar::layout(w).search);
-        }
-        let max = topbar::draw(self, p, w, cx.maximized(), search_focus, caret_on);
-        cx.frost(p, Bar::layout(w).row);
-        cx.set_maximize_button(Some(max));
-
-        let top = topbar::draw_below_title(self, cx, p, w);
-
-        // The terminal of the tab shown, or the two panes.
-        let area = Rect::new(0.0, top, w, (h - top).max(0.0));
-        if !self.tabs.is_empty() {
-            self.layout_terminals(area, cx.scale());
-        }
-        if self.terminal_shown() {
-            self.draw_terminal(cx, p, area);
-        } else {
-            let rects = self.splitter.rects(area, Axis::Horizontal);
-            list::draw(self, cx, p, rects.0);
-            details::draw(self, p, rects.2);
-            let hot = self.splitter.dragging() || self.splitter.hit(area, Axis::Horizontal, self.mouse.0, self.mouse.1);
-            splitter::draw(p, &pal, rects, Axis::Horizontal, hot && self.dialog.is_none());
-            self.hits.push((rects.1, Target::Splitter));
-        }
-
-        // Toasts at the bottom of the window.
-        for shown in self.toasts.frame(cx.anim(), "toasts", |_| TOAST_H, 8.0) {
-            let mut b = Bubble::toast(p, shown.item, window);
-            b.rect.y -= shown.lift;
-            b.draw_presence(p, &pal, shown.t);
-            cx.animating(b.presence_bounds().inset(-8.0));
-        }
-        if let Some(over) = self.tip.shown() {
-            Bubble::tip(p, &over.text, over.anchor, w, h).draw(p, &pal);
-        }
-
-        // Overlays, last.
-        windowlook::draw_overlays(self, cx, p, window);
+        crate::app_draw::draw(self, cx, p);
     }
 }

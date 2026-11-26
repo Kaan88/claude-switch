@@ -4,8 +4,9 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
 
 ## State
 
-- `crates/core`: reviewed once (Opus), review fixes in. 63 tests pass; one that reads real sessions is ignored.
-- `bins/claude-switch`: the window, with terminal tabs. 47 tests pass. The workspace compiles.
+- `crates/core`: session index, launch safeguards and incremental transcript reader. Real-data and
+  manual timing checks are ignored by the ordinary workspace test run.
+- `bins/claude-switch`: terminal tabs, session view and clipboard/file attachment input.
 - The toolkit (`markdown-shared-rs`) is a git dependency pinned to a revision of its `main`; raise the
   revision in `bins/claude-switch/Cargo.toml` to take a newer toolkit.
 - Build: `cargo build -p claude-switch`.
@@ -61,7 +62,10 @@ as the second account, Windows Terminal, the desktop hand-over.
   time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
   Cancel. Read-only on the bridge's files.
 - A real hand-over out of Desktop (make it let go of a session). No supported way is known.
-- Split panes, search in scrollback, font-family settings, tab reordering, restoring tabs.
+- Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
+- Reuse Conversation in Sessions details later. That view is currently a short read-only preview
+  and has no independently scrollable transcript region.
+- Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.
 
 ## For the toolkit (what the app's authors had to work around)
 
@@ -96,6 +100,13 @@ as the second account, Windows Terminal, the desktop hand-over.
 18. The grouped form's style controls its card, not its internal dropdown menus or colour-picker
     flyouts. The app styles its own menus through `menu::Look`; those internal popups keep the
     toolkit's look.
+19. `richtext` draws externally shaped text but does not parse Markdown or manage selection.
+    The session pane supplies a small Markdown parser and uses Parley's selection geometry for
+    mixed-font text.
+20. No safe clipboard-image getter in the toolkit or std. Paste picture as file is not offered;
+    Claude Code can read the clipboard via its own Alt+V key.
+21. `host::Event` has no file-drop event with positions or file batches. The raw winit hook supplies
+    file paths to the active terminal tab, with a short coalescing delay for multiple files.
 
 ## The bridge (`claude-flash-bridge`)
 

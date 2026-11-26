@@ -162,6 +162,7 @@ pub fn draw_below_title(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Ms
             hover: st.hover,
             pressed: st.pressed,
             terminal: terminal.map(|s| (s.background, s.foreground, st.term_colours.1)),
+            session_view: st.tabs.shown().and_then(|t| t.pane.as_ref()).map(|_| st.session_visible(w)),
         };
         let strip = tabs::strip_rect(top, w);
         if tabs::draw(p, &pal, cx.anim(), &st.tabs, strip, &look, &mut st.hits) {
@@ -200,6 +201,7 @@ pub fn tip_of(t: Target) -> Option<&'static str> {
         Target::NewSession => "Choose a folder and account for a new CLI session (Ctrl+N)",
         Target::SearchClear => "Clear the search",
         Target::Account => "The account sessions are opened as",
+        Target::SessionToggle => "Toggle session view (Ctrl+Shift+E)",
         _ => return None,
     })
 }

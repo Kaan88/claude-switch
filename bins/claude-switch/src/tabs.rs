@@ -33,6 +33,7 @@ pub struct Tab {
     pub session: Option<String>,
     pub account: Option<String>,
     pub term: Term,
+    pub pane: Option<crate::view::Pane>,
 }
 
 impl Tab {
@@ -72,7 +73,7 @@ impl Tabs {
         self.next += 1;
         let id = self.next;
         let NewTab { label, color, session, account } = new;
-        self.list.push(Tab { id, label, program_title: String::new(), color, session, account, term });
+        self.list.push(Tab { id, label, program_title: String::new(), color, session, account, term, pane: None });
         self.active = Some(id);
         id
     }
@@ -153,6 +154,7 @@ pub struct Look {
     pub hover: Option<Target>,
     pub pressed: Option<Target>,
     pub terminal: Option<(Rgb, Rgb, Rgb)>,
+    pub session_view: Option<bool>,
 }
 
 /// Elide the launch label, not its ended marker, when the tab's text area is narrow.
@@ -190,7 +192,7 @@ pub fn draw(
     let mut labels: Vec<_> = vec![(SESSIONS, Cow::Borrowed("Sessions"), None, false)];
     labels.extend(tabs.list.iter().map(|t| (t.id, t.title(), Some(t.color), t.term.ended.is_some())));
     let natural: Vec<f32> = labels.iter().map(|(_, l, _, _)| chrome::tab_natural_width(p, l)).collect();
-    let avail = (w - 2.0 * LEFT).max(0.0);
+    let avail = (w - 2.0 * LEFT - if look.session_view.is_some() { 112.0 } else { 0.0 }).max(0.0);
     let widths = chrome::tab_widths(&natural, avail);
     let active = tabs.active.unwrap_or(SESSIONS);
     let hovered = |id: u64| matches!(look.hover, Some(Target::Tab(t) | Target::TabClose(t)) if t == id);
@@ -257,6 +259,20 @@ pub fn draw(
     }
     p.restore(clip);
     p.restore_offset(origin);
+    if let Some(open) = look.session_view {
+        let r = Rect::new(strip.right() - 117.0, strip.y + 7.0, 105.0, strip.h - 14.0);
+        let target = Target::SessionToggle;
+        let bg = if look.pressed == Some(target) || look.hover == Some(target) {
+            pal.hover
+        } else if open {
+            pal.on
+        } else {
+            pal.bar
+        };
+        p.rbox(r, 5.0, bg);
+        p.text_center(Face::Semibold, 12.0, r, "Session view", pal.text);
+        hits.push((r, target));
+    }
     moving
 }
 

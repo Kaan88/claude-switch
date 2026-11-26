@@ -1,6 +1,10 @@
 //! Made-up data for `--demo`: two accounts, a few dozen sessions in several folders, two of them
 //! running. It stands in for every call of [`crate::source::Source`] so the window can be seen
-//! before the core is filled in. Nothing here reads or writes a file or starts a process.
+//! without accessing real accounts or starting a process. The live view uses temporary fixtures.
+
+#[path = "view/demo.rs"]
+mod transcript;
+pub use transcript::Transcript;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

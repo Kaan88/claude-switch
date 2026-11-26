@@ -680,10 +680,10 @@ mod tests {
             });
             st.show_sessions();
             let area = Rect::new(0.0, 80.0, 760.0, 400.0);
-            st.layout_terminals(area, 1.0);
+            st.layout_terminals(area, area, 1.0);
             let before = st.grid;
             settings_outcome(&mut st, Outcome::Changed { id: SET_TERM_FONT, value: Value::Number(24) });
-            st.layout_terminals(area, 1.0);
+            st.layout_terminals(area, area, 1.0);
             assert!(st.grid.0 < before.0 && st.grid.1 < before.1);
             for id in ids {
                 let screen = &st.tabs.get(id).unwrap().term.screen;

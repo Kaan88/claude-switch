@@ -38,6 +38,7 @@ pub fn shortcut(name: &KeyName, mods: Mods) -> Option<u32> {
         (KeyName::Char('w'), true) => actions::CLOSE_TAB,
         (KeyName::Char('t'), true) => actions::NEW_SHELL,
         (KeyName::Char('k'), true) => actions::PALETTE,
+        (KeyName::Char('e'), true) => actions::SESSION_VIEW,
         _ => return None,
     })
 }
@@ -86,7 +87,7 @@ pub fn key(name: Option<&KeyName>, mods: Mods, text: Option<&str>, modes: &Modes
     let ctrl_shift = mods.ctrl && mods.shift && !mods.alt;
     match name {
         KeyName::Char('c') if ctrl_shift => return KeyAction::Copy,
-        KeyName::Char('v') if ctrl_shift => return KeyAction::Paste,
+        KeyName::Char('v') if mods.ctrl && !mods.alt => return KeyAction::Paste,
         KeyName::Char('c') if mods.ctrl && !mods.shift && !mods.alt && selected => return KeyAction::Copy,
         KeyName::PageUp if mods.shift && !mods.ctrl && !mods.alt && !modes.alt_screen => return KeyAction::Page(1),
         KeyName::PageDown if mods.shift && !mods.ctrl && !mods.alt && !modes.alt_screen => {
@@ -167,6 +168,37 @@ pub fn mouse_to_program(modes: &Modes, shift: bool) -> bool {
     modes.mouse != MouseMode::Off && !shift
 }
 
+/// `--type` text with `\r`, `\n`, `\t`, `\e`, `\\` and `\xHH` read as the characters.
+pub fn unescape(s: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 1 < b.len() {
+            let (byte, used): (u8, usize) = match b[i + 1] {
+                b'r' => (b'\r', 2),
+                b'n' => (b'\n', 2),
+                b't' => (b'\t', 2),
+                b'e' => (0x1b, 2),
+                b'\\' => (b'\\', 2),
+                b'x' if i + 4 <= b.len() => {
+                    match u8::from_str_radix(std::str::from_utf8(&b[i + 2..i + 4]).unwrap_or(""), 16) {
+                        Ok(v) => (v, 4),
+                        Err(_) => (b'\\', 1),
+                    }
+                }
+                _ => (b'\\', 1),
+            };
+            out.push(byte);
+            i += used;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +209,14 @@ mod tests {
     const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, ..NONE };
     const ALT: Mods = Mods { alt: true, ..NONE };
     const ALTGR: Mods = Mods { ctrl: true, alt: true, ..NONE };
+
+    #[test]
+    fn typed_text_reads_its_escapes() {
+        assert_eq!(unescape(r"dir\r"), b"dir\r");
+        assert_eq!(unescape(r"\e:q\x0d"), b"\x1b:q\r");
+        assert_eq!(unescape(r"a\\b\q"), b"a\\b\\q");
+        assert_eq!(unescape(r"end\"), b"end\\");
+    }
 
     fn k(name: KeyName, mods: Mods, text: Option<&str>) -> KeyAction {
         key(Some(&name), mods, text, &Modes::default(), false)
@@ -229,9 +269,11 @@ mod tests {
         assert_eq!(k(KeyName::Char('w'), CTRL_SHIFT, None), KeyAction::Command(actions::CLOSE_TAB));
         assert_eq!(k(KeyName::Char('t'), CTRL_SHIFT, None), KeyAction::Command(actions::NEW_SHELL));
         assert_eq!(k(KeyName::Char('k'), CTRL_SHIFT, None), KeyAction::Command(actions::PALETTE));
+        assert_eq!(k(KeyName::Char('e'), CTRL_SHIFT, None), KeyAction::Command(actions::SESSION_VIEW));
         assert_eq!(k(KeyName::Char('w'), CTRL, Some("\u{17}")), send(b"\x17"), "Ctrl+W is the program's");
         assert_eq!(k(KeyName::Char('c'), CTRL_SHIFT, None), KeyAction::Copy);
         assert_eq!(k(KeyName::Char('v'), CTRL_SHIFT, None), KeyAction::Paste);
+        assert_eq!(k(KeyName::Char('v'), CTRL, None), KeyAction::Paste);
         // Ctrl+C copies a selection, and is the program's interrupt without one.
         assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), true), KeyAction::Copy);
         assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), false), send(b"\x03"));

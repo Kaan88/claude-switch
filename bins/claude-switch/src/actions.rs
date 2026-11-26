@@ -30,6 +30,8 @@ pub const NEXT_TAB: u32 = 14;
 pub const PREV_TAB: u32 = 15;
 pub const CLOSE_TAB: u32 = 16;
 pub const OPEN_COPY: u32 = 17;
+pub const SESSION_VIEW: u32 = 18;
+pub const PASTE: u32 = 19;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -71,6 +73,8 @@ impl AppState {
             SETTINGS => self.dialog = Some(dialogs::settings(self)),
             ABOUT => self.dialog = Some(Dialog::About),
             PALETTE => self.open_palette(),
+            SESSION_VIEW => self.toggle_session_view(),
+            PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
             CLOSE_TAB => {
@@ -314,6 +318,12 @@ impl AppState {
 
     pub fn open_palette(&mut self) {
         let mut entries: Vec<Entry> = self.keymap.entries().map(|e| e.group(0)).collect();
+        if self.terminal_shown() {
+            entries.push(Entry::new(PASTE, "Paste").group(0));
+        }
+        if self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) {
+            entries.push(Entry::new(SESSION_VIEW, "Toggle session view · Ctrl+Shift+E").group(0));
+        }
         for (k, a) in self.config.accounts.iter().enumerate() {
             entries.push(Entry::new(ACCOUNT_BASE + k as u32, format!("Switch to account {}", a.name)).group(1));
         }

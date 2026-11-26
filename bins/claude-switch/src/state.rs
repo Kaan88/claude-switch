@@ -36,6 +36,8 @@ use crate::winfile::WindowFile;
 pub enum Msg {
     Woke,
     Term,
+    SessionView,
+    AttachPictures(u64, Vec<std::path::PathBuf>),
 }
 
 /// The height of a folder heading and of a session row in the list.
@@ -82,6 +84,7 @@ pub enum Target {
     TabClose(u64),
     /// The terminal of the tab shown.
     Terminal,
+    SessionToggle,
 }
 
 /// Which popup menu is open.
@@ -152,6 +155,7 @@ pub struct AppState {
     pub list_scroll_track: Option<Rect>,
     /// The terminal tabs, and what the last frame laid out for them.
     pub tabs: Tabs,
+    pub session_view: crate::view::Window,
     pub cell_font: CellFont,
     pub metrics: Option<Metrics>,
     pub term_area: Rect,
@@ -218,6 +222,7 @@ impl AppState {
             pressed: None,
             mouse: (-1.0, -1.0),
             blink: mdshared_ui::platform::caret_blink_time(),
+            session_view: crate::view::Window::new(&win_file),
             win_file,
             proxy: None,
             list_area: Rect::default(),

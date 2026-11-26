@@ -1,6 +1,6 @@
 //! Where the window's data comes from: the core over the real folders of this computer, or the
 //! made-up data of `--demo` ([`crate::demo`]). Every call the window makes into the core goes
-//! through here, so the demo can stand in for all of it and never touches the disk.
+//! through here, so the demo doesn't touch personal files. Its session-view fixture uses only temp.
 
 use std::io;
 use std::path::PathBuf;

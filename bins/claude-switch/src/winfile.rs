@@ -13,11 +13,14 @@ pub struct WindowFile {
     pub h: f32,
     /// [`mdshared_ui::splitter::Splitter::to_setting`].
     pub split: String,
+    /// `None` follows the window-width default.
+    pub session_view: Option<bool>,
+    pub session_split: String,
 }
 
 impl Default for WindowFile {
     fn default() -> WindowFile {
-        WindowFile { w: 1100.0, h: 720.0, split: String::new() }
+        WindowFile { w: 1100.0, h: 720.0, split: String::new(), session_view: None, session_split: String::new() }
     }
 }
 
@@ -36,6 +39,8 @@ pub fn parse(text: &str) -> WindowFile {
             "width" => out.w = size(v, out.w),
             "height" => out.h = size(v, out.h),
             "split" => out.split = settings::unescape(v),
+            "session_view" => out.session_view = v.trim().parse().ok(),
+            "session_split" => out.session_split = settings::unescape(v),
             _ => {}
         }
     }
@@ -47,6 +52,10 @@ pub fn to_text(f: &WindowFile) -> String {
     w.line("width", &format!("{:.0}", f.w));
     w.line("height", &format!("{:.0}", f.h));
     w.line("split", &settings::escape(&f.split));
+    if let Some(open) = f.session_view {
+        w.line("session_view", if open { "true" } else { "false" });
+    }
+    w.line("session_split", &settings::escape(&f.session_split));
     w.finish()
 }
 
@@ -69,7 +78,13 @@ mod tests {
 
     #[test]
     fn the_text_reads_back_as_what_was_written() {
-        let f = WindowFile { w: 1280.0, h: 800.0, split: "a:420".into() };
+        let f = WindowFile {
+            w: 1280.0,
+            h: 800.0,
+            split: "a:420".into(),
+            session_view: Some(false),
+            session_split: "b:450".into(),
+        };
         assert_eq!(parse(&to_text(&f)), f);
     }
 

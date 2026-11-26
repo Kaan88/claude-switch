@@ -26,9 +26,9 @@ file stem (a UUID). Lines of use:
   the first one that is not `isMeta` and does not start with `<` is the fallback title;
 - lines with `"isSidechain":true` and files under a `subagents` folder are not sessions of their own.
 
-Files can be tens of megabytes: read at most the first 256 KiB and the last 256 KiB, never the whole file.
-Entries are internal to Claude Code and may change: a line that does not parse, or lacks a field, is
-skipped, never an error.
+Files can be tens of megabytes: the session index reads at most the first 256 KiB and the last
+256 KiB. Entries are internal to Claude Code and may change: a line that does not parse, or lacks a
+field, is skipped, never an error.
 
 **Desktop records.** The desktop app keeps one JSON file per session of its own:
 `<desktop data dir>/claude-code-sessions/<account uuid>/<organisation uuid>/local_<uuid>.json` with
@@ -147,7 +147,7 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
 - **Keys** go to the program while a terminal tab is shown, as an xterm sends them. The window keeps
   Ctrl+Tab and Ctrl+Shift+Tab (next and previous tab), Ctrl+Shift+W (close the tab), Ctrl+Shift+T (a
   plain shell in the selected session's folder), Ctrl+Shift+K (the command palette; Ctrl+K is the
-  program's), Ctrl+Shift+C and Ctrl+Shift+V (copy, paste; Ctrl+C copies only while something is
+  program's), Ctrl+Shift+C and Ctrl+V / Ctrl+Shift+V (copy, paste; Ctrl+C copies only while something is
   selected) and Shift+Page Up/Down (scroll back). A middle click on a tab closes it.
 - **Mouse**: the wheel scrolls the scrollback 3 lines a notch, is reported to a program that asked for
   the mouse, and is arrow keys on the alternate screen of one that did not. Drag selects (double click a
@@ -159,9 +159,52 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
 shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
 running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
 
-**Not there:** split panes, moving tabs by drag, search in the scrollback, links, font-family settings, tabs
-restored after a restart; Shift+Insert and the Insert key (the window host has no name for Insert);
-input-method composition (the host turns input methods off on Windows).
+**Not there:** more than one terminal in a tab, moving tabs by drag, search or links in the terminal,
+font-family settings, tabs restored after a restart; Shift+Insert and the Insert key (the window host
+has no name for Insert); input-method composition (the host turns input methods off on Windows).
+
+## Session view
+
+Terminal tabs for Claude sessions (including forks) can show a read-only transcript beside the terminal.
+The tab-strip button, Ctrl+Shift+E and the command palette toggle it. The splitter holds the width of the
+right pane. Both the explicit visibility choice and the splitter width are stored in `window.ini`;
+without an explicit choice the pane opens from 1100 logical pixels up. Shell and sign-in tabs never
+have a pane.
+
+Resumed tabs use the transcript file already found by the session scan. New and forked tabs look for
+the newest JSONL **created** in the launch folder's encoded project directory after launch, under
+that tab's account config folder. This needs a transcript to have been written, and can't disambiguate
+concurrent starts in the same project (including accounts sharing `projects`). It doesn't track a
+later working-directory change. The reader rejects an explicit mismatched working folder found in
+the candidate's first 64 KiB; otherwise it relies on the project directory and creation time. The
+pane updates the tab's session ID once discovered.
+
+Conversation, Agents and Tasks are separate views of the incremental transcript reader. Conversation
+opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
+following. Earlier history is loaded on request. Consecutive tools collapse together; an agent row
+opens its own transcript. The reported agent state comes from the transcript sidecar, so a missing
+completion flag is shown as unknown rather than guessed.
+
+Conversation uses the toolkit's `Painter::rich_text` for selectable, wrapped headings, emphasis,
+bullets, quotes, code and links. It is a Markdown subset, not a web renderer: no inline HTML, remote
+images or tables. Local file links are resolved on click; only recognized document, source and
+media types open in their default applications. Ctrl+click reveals any recognized existing file.
+
+Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
+picture work run off the window thread; worker results wake the window rather than making it redraw
+every poll. Image bytes are decoded with `mdshared-text`'s existing PNG/JPEG decoder and cached for
+inline previews and an enlarged overlay. Opening a picture in the system viewer explicitly exports
+a copy to the application's temp folder. No transcript is edited. The demo supplies a synthetic
+session, writes only to temp, and appends a few updates without starting Claude Code.
+
+## Pictures into the CLI
+
+Ctrl+V, Ctrl+Shift+V and the palette's Paste send clipboard text using the terminal's usual paste
+mode. With no text they send `ESC v` (Alt+V), so Claude Code reads its clipboard image directly.
+The Attach picture button opens the toolkit's file picker. File drops arrive through the host's raw
+winit hook (one file at a time, without a drop coordinate); the shown terminal tab receives the batch.
+Both routes send space-separated paths, with whitespace-containing paths in double quotes, and use
+bracketed paste only when requested by the program. They do not send Enter.
 
 ## Appearance
 
