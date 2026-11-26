@@ -381,6 +381,29 @@ fn a_prompt_for_another_call_or_with_other_choices_is_left_to_the_terminal() {
     assert_eq!(f.chat().question.error, Some(CHANGED));
 }
 
+#[test]
+fn a_queued_draft_lets_the_cards_answer_go_first_but_not_text_for_the_composer() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)], "the queue waits for the turn, which waits for this answer");
+    assert!(f.chat().locked(), "the draft stays queued");
+
+    // "Chat about this" would put its text in the composer, which holds the queued draft.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    f.chat().editor.set("next message".into());
+    f.chat().queue_draft(0);
+    f.chat().question.field.set_text("Let's talk it through");
+    assert!(press(f.tab(), now, Hit::ChatAbout));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(QUEUED_TEXT));
+    assert_eq!(f.chat().question.field.text(), "Let's talk it through", "the text is kept");
+}
+
 /// A permission prompt whose "don't ask again" choice wraps onto three rows.
 fn wrapped_prompt(command: &str) -> String {
     [

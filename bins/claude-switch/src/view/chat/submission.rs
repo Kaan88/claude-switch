@@ -99,6 +99,12 @@ impl Chat {
         self.queue.is_some() || self.waiting().is_some() || self.enter_only()
     }
 
+    /// A draft queued behind the running turn, as Queue makes it.
+    #[cfg(test)]
+    pub(super) fn queue_draft(&mut self, generation: u64) {
+        self.queue = Some(Queue { generation, latest: None, stop: None });
+    }
+
     pub(super) fn interrupt_submission(&mut self) {
         if let Some(wait) = self.image_wait.take() {
             self.staging.recovery = Some(Recovery::Picture(Stamp { epoch: self.output_epoch, ..wait.stamp }));

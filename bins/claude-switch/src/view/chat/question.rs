@@ -37,6 +37,8 @@ const NOT_CLOSED: &str = "The answer was sent, but the prompt is still open. Che
 const TERMINAL_ONLY: &str = "Answer this in the terminal.";
 const NO_FIELD: &str = "The terminal's prompt has no such choice. Answer it in the terminal.";
 const BAD_TEXT: &str = "Type a short answer without control characters.";
+const SENDING: &str = "A message is on its way to the terminal. Answer once it has gone, or Cancel it.";
+const QUEUED_TEXT: &str = "A message is queued, and this text would go to the composer. Cancel the queued message first, or answer without text.";
 const DIGIT_FIRST: &str =
     "Start the answer with a word, not a digit (digits pick a choice), or answer in the terminal.";
 const BLOCKED: &str = "Chat cannot answer now. Check the terminal.";
@@ -495,7 +497,14 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             chat.open_drawer();
             return true;
         }
-        _ if chat.question.step.is_some() || chat.locked() => return false,
+        _ if chat.question.step.is_some() => return false,
+        // A message on its way to the terminal: its keys and the card's must not mix.
+        _ if chat.waiting().is_some() || chat.enter_only() => {
+            chat.question.error = Some(SENDING);
+            return true;
+        }
+        // A queued draft waits for the turn to end, which waits for this answer: the answer goes
+        // first, under the same checks. Only text meant for the composer has to wait for it.
         _ => {}
     }
     if hit == Hit::Background {
@@ -557,6 +566,12 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
                 return true;
             }
         },
+        (Subject::Question(_), Hit::ChatAbout) | (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny)
+            if !text.is_empty() && chat.queue.is_some() && !(shown.amend && hit == Hit::Deny) =>
+        {
+            chat.question.error = Some(QUEUED_TEXT);
+            return true;
+        }
         (Subject::Question(_), Hit::ChatAbout) => (chat_row, Then::Chat(text)),
         (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) if text.is_empty() => (shown.deny, Then::Choose),
         (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) => match answer_text(&chat.question.field) {

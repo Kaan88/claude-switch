@@ -970,6 +970,12 @@ fail-closed rules as questions apply. While the card can answer, sends are refus
 Claude's request above", the drawer stays closed and the working line reads "Waiting for your
 approval".
 
+A card answers ahead of a queued draft: the queue waits for the turn to end, which waits for the
+answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer
+("Chat about this", "No, and tell Claude") is refused while a draft is queued, saying to cancel it
+first. While a message is still on its way to the terminal, a card click says so and writes
+nothing.
+
 **Plan approval.** A pending `ExitPlanMode` call shows its plan as Markdown in the conversation, from
 the call's input (cut at 20,000 characters), always open. The card under it offers the plan menu's
 own choices, and only while the screen shows that menu: the row right above the choices reads
