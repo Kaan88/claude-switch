@@ -282,7 +282,11 @@ impl AppState {
             return;
         }
         if self.dialog.is_some() {
-            dialogs::key(self, now, &name, mods, text);
+            // A held Enter opened the colour picker; its repeats must not apply it at once.
+            let picker_open = matches!(&self.dialog, Some(Dialog::Settings(s)) if s.colour_open());
+            if !(k.repeat && picker_open && matches!(name, KeyName::Enter | KeyName::Escape)) {
+                dialogs::key(self, now, &name, mods, text);
+            }
             return;
         }
         if self.usage.popup.takes_keyboard() {

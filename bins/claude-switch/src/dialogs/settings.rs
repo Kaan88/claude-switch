@@ -87,7 +87,8 @@ fn page_form(st: &AppState, index: usize) -> Form {
     let (name, rows) = PAGES[index];
     let mut form = Form::new(name, rows(st)).single_page();
     for id in [SET_ACCENT_COLOUR, SET_TERM_BACKGROUND, SET_TERM_FOREGROUND, SET_TERM_ACCENT] {
-        form.show_as_colour(id);
+        // Changes stay in the picker until Apply, Enter or a press outside; Escape restores.
+        form.show_as_colour_with_confirmation(id);
     }
     form
 }

@@ -446,9 +446,15 @@ compositor colour. Terminal opacity is set separately below. The tab strip stays
 
 Automatic terminal colours use Dark (`#101010`) or Light according to the effective window theme.
 Match window uses the window bar background. Custom uses the background, text and accent picked on
-the Terminal page; the renderer adjusts pairs below 7:1. Colours apply immediately, and 9–24 logical px font-size
+the Terminal page; the renderer adjusts pairs below 7:1. An applied colour takes effect at once, and 9–24 logical px font-size
 changes resize all open screens and pseudo-terminals. Cursor shape and background opacity are
 described under [Terminal cursor and backdrop](#terminal-cursor-and-backdrop).
+
+The four colour rows (accent, terminal background, text and accent) use the toolkit's confirming
+picker (`Form::show_as_colour_with_confirmation`). The picker previews a choice without saving it;
+Apply, Enter or a press outside the picker saves it, and that press activates nothing underneath.
+Cancel and Escape put the opening colour back. Tab reaches both buttons. Held Enter or Escape
+repeats are ignored while the picker is open, so the key that opened it cannot also close it.
 
 Tab marks, hover, menu entrances, the dialog dimmer, sessions-list selection and settings controls
 animate briefly. Reduce motion snaps them to their targets, as does the system setting. Tab content
