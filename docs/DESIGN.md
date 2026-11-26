@@ -943,7 +943,10 @@ keys, and writes Enter only after newer output shows the highlight on the chosen
 is written on the "Type something" row and Enter follows only once the screen shows that text; an
 answer starting with a digit is refused, since that row shows no field of its own and digits pick
 choices.
-"Chat about this" chooses that row and puts the card's text in the composer. Every step has a two
+"Chat about this" chooses that row and puts the card's text in the composer: once Enter went, the
+text is kept (the composer's notice says so) until the composer is empty and nothing is being sent,
+whether the call resolves, the prompt closes or the step stops; it never replaces a draft. Only a
+question or permission card has a field: when none shows, the card's field gives the keyboard back. Every step has a two
 second deadline; a mismatch, timeout or a question still open eight seconds after Enter stops, says
 why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
 stay terminal-only. While the card can answer, sends are refused with "Answer Claude's question

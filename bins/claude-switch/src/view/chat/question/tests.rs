@@ -225,6 +225,53 @@ fn chat_about_this_leaves_the_question_and_keeps_the_text_for_the_composer() {
 }
 
 #[test]
+fn text_for_the_composer_is_kept_until_it_lands_there() {
+    // The composer holds a draft: the text waits, and lands once the composer is empty.
+    let mut f = Fixture::new(vec![question(false)]);
+    let now = Instant::now();
+    f.screen(&menu(3, None), now);
+    f.chat().editor.set("my draft".into());
+    f.chat().question.field.set_text("Let us talk first");
+    press(f.tab(), now, Hit::ChatAbout);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.resolve();
+    advance(f.tab(), now, true);
+    assert_eq!(f.chat().editor.text, "my draft", "never over the user's draft");
+    assert_eq!(f.chat().question.held.as_deref(), Some("Let us talk first"));
+    assert_eq!(f.chat().held_notice(), Some(HELD));
+    assert!(f.chat().question.field.text().is_empty(), "not left in the next card's field");
+    f.chat().editor.set(String::new());
+    advance(f.tab(), now, true);
+    assert_eq!(f.chat().editor.text, "Let us talk first");
+    assert_eq!(f.chat().question.held, None);
+
+    // The prompt closes but the call stays pending past the deadline: the text still lands.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(3, None), now);
+    f.chat().question.field.set_text("Let us talk first");
+    press(f.tab(), now, Hit::ChatAbout);
+    f.writes();
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    advance(f.tab(), now + RESULT, true);
+    assert!(f.chat().question.step.is_none());
+    assert_eq!(f.chat().editor.text, "Let us talk first");
+}
+
+#[test]
+fn a_card_that_goes_away_gives_the_keyboard_back() {
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    assert!(press(f.tab(), now, Hit::Field));
+    assert!(f.chat().question.focus);
+    // The prompt closes while the call stays pending: no card, so no hidden field takes keys.
+    f.screen("\x1b[2J\x1b[H\x1b[?2004h❯ ", now);
+    f.sync();
+    assert!(!f.chat().question.focus);
+    assert!(!key(f.tab(), now, &KeyName::Char('x'), Mods::default(), Some("x")));
+}
+
+#[test]
 fn several_questions_or_answers_stay_in_the_terminal_and_the_drawer_opens_as_before() {
     for questions in [vec![question(true)], vec![question(false), question(false)]] {
         let mut f = Fixture::new(questions);

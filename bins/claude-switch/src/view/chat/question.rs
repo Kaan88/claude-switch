@@ -40,6 +40,7 @@ const NO_FIELD: &str = "The terminal's prompt has no such choice. Answer it in t
 const BAD_TEXT: &str = "Type a short answer without control characters.";
 const SENDING: &str = "A message is on its way to the terminal. Answer once it has gone, or Cancel it.";
 const QUEUED_TEXT: &str = "A message is queued, and this text would go to the composer. Cancel the queued message first, or answer without text.";
+const HELD: &str = "Your text for Claude goes to the message box once it is empty.";
 const DIGIT_FIRST: &str =
     "Start the answer with a word, not a digit (digits pick a choice), or answer in the terminal.";
 const BLOCKED: &str = "Chat cannot answer now. Check the terminal.";
@@ -325,6 +326,9 @@ pub(super) struct Card {
     pub(super) answerable: Option<u64>,
     /// The card answers a permission prompt, not a question.
     pub(super) approval: bool,
+    /// Text a "Chat about this" or "No, and tell Claude" answer left for the composer, until it
+    /// lands there (once the composer is empty).
+    pub(super) held: Option<String>,
 }
 
 impl Card {
@@ -482,7 +486,12 @@ fn tool_prompt(kind: &ItemKind, alone: bool, cwd: &Path, screen: &Screen) -> Opt
 
 impl Chat {
     fn question_failed(&mut self, error: &'static str) {
-        self.question.step = None;
+        if let Some(step) = self.question.step.take()
+            && step.stage == Stage::Sent
+        {
+            // Enter went: the text is kept for the composer all the same.
+            self.hold(&step);
+        }
         self.question.error = Some(error);
         self.question.failed = true;
         self.question.answerable = None;
@@ -491,22 +500,42 @@ impl Chat {
         }
     }
 
+    /// Keeps the text of an answer meant for the composer until it lands there.
+    fn hold(&mut self, step: &Step) {
+        let Then::Chat(text) = &step.then else { return };
+        if text.is_empty() {
+            return;
+        }
+        if collapse(self.question.field.text()) == *text {
+            self.question.field.clear();
+        }
+        self.question.held = Some(text.clone());
+        self.land_held();
+    }
+
+    /// Puts the held text in the composer once it is empty and nothing is being sent.
+    fn land_held(&mut self) -> bool {
+        if self.question.held.is_none() || !self.editor.text.trim().is_empty() || self.locked() {
+            return false;
+        }
+        self.editor.set(self.question.held.take().unwrap_or_default());
+        true
+    }
+
     /// Follows the transcript's pending call and the screen's prompt; true when the card changed.
     fn sync_question(&mut self, model: &Model, cwd: &Path, screen: &Screen) -> bool {
         let pending = pending(model);
         let item = pending.as_ref().map(|p| p.item);
         let mut changed = false;
         if self.question.item != item {
-            if let Some(Step { then: Then::Chat(text), stage: Stage::Sent, .. }) = &self.question.step
-                && !text.is_empty()
-                && self.editor.text.trim().is_empty()
-            {
+            if let Some(step) = self.question.step.take().filter(|step| step.stage == Stage::Sent) {
                 // "Chat about this" and "No, and tell Claude" return to the prompt; the text
                 // goes as the next message.
-                self.editor.set(text.clone());
+                self.hold(&step);
             }
             let field = std::mem::take(&mut self.question.field);
-            self.question = Card { item, field, ..Card::default() };
+            let held = self.question.held.take();
+            self.question = Card { item, field, held, ..Card::default() };
             if item.is_none() {
                 self.question.field.clear();
             }
@@ -537,13 +566,23 @@ impl Chat {
         changed |= self.question.background != background;
         self.question.background = background;
         self.question.menu = menu;
+        // Only a question or permission card has a field: no hidden card keeps the keyboard.
+        let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some();
+        if !field && std::mem::take(&mut self.question.focus) {
+            changed = true;
+        }
         self.question.shown = shown;
         changed |= std::mem::replace(&mut self.question.answerable, answerable) != answerable;
-        changed
+        changed | self.land_held()
     }
 
     pub(super) fn question_notice(&self) -> Option<&'static str> {
         self.question.step.is_some().then_some(WAITING)
+    }
+
+    /// The composer's notice while a card's text waits for it.
+    pub(super) fn held_notice(&self) -> Option<&'static str> {
+        self.question.held.as_ref().map(|_| HELD)
     }
 }
 
@@ -828,7 +867,9 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         Action::Wait => return changed,
         Action::Fail(error) => Err(error),
         Action::Closed => {
-            tab.pane.as_mut().unwrap().chat.question.step = None;
+            let chat = &mut tab.pane.as_mut().unwrap().chat;
+            chat.question.step = None;
+            chat.hold(&step);
             return true;
         }
         Action::Arrive => arrived(tab, &mut step, now),
@@ -925,6 +966,9 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
 /// A key while the card's field has the keyboard. Enter answers, Escape leaves the field.
 pub(super) fn key(tab: &mut Tab, now: Instant, name: &KeyName, mods: Mods, text: Option<&str>) -> bool {
     let chat = &mut tab.pane.as_mut().expect("Chat pane").chat;
+    if !chat.question.visible() {
+        chat.question.focus = false;
+    }
     if !chat.question.focus {
         return false;
     }
@@ -944,6 +988,9 @@ pub(super) fn key(tab: &mut Tab, now: Instant, name: &KeyName, mods: Mods, text:
 }
 
 pub(super) fn text(chat: &mut Chat, text: &str) -> bool {
+    if !chat.question.visible() {
+        chat.question.focus = false;
+    }
     if !chat.question.focus {
         return false;
     }

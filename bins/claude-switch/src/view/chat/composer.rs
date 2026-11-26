@@ -57,6 +57,7 @@ impl Chat {
             .or_else(|| self.recovery_notice())
             .or_else(|| self.reason.map(super::Reason::label))
             .or_else(|| self.waiting())
+            .or_else(|| self.held_notice())
             .or_else(|| self.recall.waiting().then_some("Loading earlier prompts…"))
             .or_else(|| {
                 self.queue.as_ref().map(|_| {
