@@ -66,6 +66,12 @@ fn same_file(a: &Path, b: &Path) -> bool {
     matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
+/// Whether `dir` is a real folder (not a link) with nothing in it.
+fn is_empty_real_dir(dir: &Path) -> bool {
+    std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_dir())
+        && std::fs::read_dir(dir).is_ok_and(|mut rd| rd.next().is_none())
+}
+
 fn state_of(source: &Path, target: &Path) -> LinkState {
     let Ok(src) = std::fs::metadata(source) else { return LinkState::NoSource };
     let Ok(dst) = std::fs::symlink_metadata(target) else { return LinkState::Missing };
@@ -74,7 +80,14 @@ fn state_of(source: &Path, target: &Path) -> LinkState {
             (std::fs::canonicalize(source), std::fs::canonicalize(target)),
             (Ok(a), Ok(b)) if a == b
         );
-        if same { LinkState::Linked } else { LinkState::Conflict }
+        if same {
+            LinkState::Linked
+        } else if is_empty_real_dir(target) {
+            // Claude makes empty folders on first use; an empty one holds nothing of the owner's.
+            LinkState::Missing
+        } else {
+            LinkState::Conflict
+        }
     } else if !dst.file_type().is_dir() && same_file(source, target) {
         // The same file: a hard link, or a file link that leads to it.
         LinkState::Linked
@@ -120,8 +133,8 @@ fn make_junction(link: &Path, _target: &Path) -> Result<(), Refusal> {
     Err(io_refusal("link", link, &"links are not supported here"))
 }
 
-/// Makes every `Missing` link (directory junctions for folders; hard links for files).
-/// An existing directory or copy
+/// Makes every `Missing` link (directory junctions for folders; hard links for files; an empty
+/// real folder in the way is removed first). A folder with content or an existing copy
 /// is left alone: Claude does not participate in our locks. An error making one
 /// link does not stop the others; the first such error is returned after all were tried.
 pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusal> {
@@ -146,6 +159,13 @@ pub fn apply(roots: &Roots, account: &Account) -> Result<Vec<ShareState>, Refusa
         if let Err(e) = std::fs::create_dir_all(&account.cli_dir) {
             note(Err(io_refusal("create the folder", &account.cli_dir, &e)));
             continue;
+        }
+        if is_empty_real_dir(&target) {
+            // `remove_dir` removes only an empty folder, so nothing of the owner's can go here.
+            if let Err(e) = std::fs::remove_dir(&target) {
+                note(Err(io_refusal("remove the empty folder", &target, &e)));
+                continue;
+            }
         }
         if source.is_dir() {
             note(make_junction(&target, &source));
@@ -264,7 +284,7 @@ mod tests {
             states(&before),
             [
                 ("projects", LinkState::Missing),
-                ("skills", LinkState::Conflict),
+                ("skills", LinkState::Missing),
                 ("agents", LinkState::Conflict),
                 ("plugins", LinkState::NoSource),
                 ("mcp-servers", LinkState::NoSource),

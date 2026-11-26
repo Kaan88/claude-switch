@@ -1,7 +1,9 @@
 # Changelog
 
-## 0.1.0 (Unreleased)
+## 0.1.0 (2026-11-26)
 
+- First release: a session list, terminal tabs and a Chat layout for Claude Code on Windows, with several accounts, usage at a glance and handovers through OpenCode.
+- Known: a translucent terminal background (off by default) has rendering defects with colour emoji and page transitions; fixes are pending in the shared toolkit.
 - Prefer scoped subscription limits and show the weekly model breakdown when available.
 - Block Chat sends during recognized CLI interactions, require a terminal preview for clipboard
   pictures, and make persisted usage opt-out and restore snapshots safe across cooperating windows.
