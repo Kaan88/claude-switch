@@ -35,6 +35,9 @@ cargo build --release --locked -p claude-switch
 
 The executable is `target\release\claude-switch.exe`. The [markdown-shared-rs](https://github.com/Kaan88/markdown-shared-rs) toolkit is fetched by Cargo.
 
+`claude-switch --help` lists its options; `claude-switch --demo` starts it with made-up sessions
+and accounts. Unknown options are refused rather than ignored.
+
 ## Accounts and settings
 
 The first account uses your existing Claude CLI and Desktop profiles. Each extra account gets separate profile folders and sign-ins. Switch links CLI transcripts, skills, agents, plugins, and settings from the first account where there is no conflict. It seeds user-level MCP server settings in a missing secondary `.claude.json`, not in an existing profile file. Credentials and running-session records stay separate.

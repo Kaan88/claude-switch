@@ -2,7 +2,8 @@
 //! the desktop app, as the chosen account. `docs/DESIGN.md` says what and why.
 //!
 //! `--demo` uses made-up data and never writes personal settings; `--theme light|dark` forces
-//! the look instead of following Settings.
+//! the look instead of following Settings. `cli_args` reads the flags and refuses unknown ones;
+//! `--help` lists them all.
 //!
 //! For testing the terminal tabs only (not shown anywhere): `--shell <program>` opens a tab that
 //! runs the program at start, also in the demo, and each `--type <text>` writes text to it, the
@@ -17,6 +18,7 @@ mod app_draw;
 mod archive;
 mod archive_report;
 mod attention;
+mod cli_args;
 mod compact_cli;
 mod compact_dialog;
 mod compact_open;
@@ -63,71 +65,40 @@ use crate::source::Source;
 use crate::state::AppState;
 
 fn main() {
-    let mut demo = false;
-    let mut demo_notifications = false;
-    let mut demo_usage_hover = false;
-    let mut demo_permission = false;
-    let mut demo_working = false;
-    let mut demo_terminal = None;
-    let mut demo_terminal_settings = false;
-    let mut forced_dark = None;
-    let mut usage_shape = None;
-    let mut usage_labels = false;
-    let mut handoff = None;
-    let mut demo_compact = None;
-    let mut demo_search = None;
-    let mut demo_offscreen = false;
-    let mut demo_workers = false;
-    let mut demo_compact_long = false;
-    let (mut shell, mut typed, mut list_tab) = (None, Vec::new(), false);
     let mut args = std::env::args().skip(1).peekable();
-    let mut handoff_ack = None;
     if args.next_if(|a| a == "compact").is_some() {
         std::process::exit(compact_cli::entry(args));
     }
-    while let Some(a) = args.next() {
-        match a.as_str() {
-            "--demo" => demo = true,
-            "--demo-notifications" => demo_notifications = true,
-            "--demo-usage-hover" => demo_usage_hover = true,
-            "--demo-permission" => demo_permission = true,
-            "--demo-working" => demo_working = true,
-            "--demo-terminal" => demo_terminal = args.next().as_deref().and_then(demo_terminal::Preview::parse),
-            "--demo-terminal-settings" => demo_terminal_settings = true,
-            "--theme" => forced_dark = args.next().as_deref().and_then(termtheme::window_dark),
-            "--shell" => shell = debug_value(cfg!(debug_assertions), args.next()),
-            "--type" => typed.extend(debug_value(cfg!(debug_assertions), args.next())),
-            "--sessions-tab" => list_tab = true,
-            "--demo-search" => demo_search = args.next(),
-            "--demo-compact" => demo_compact = Some(false),
-            "--demo-compact-preview" => demo_compact = Some(true),
-            "--demo-compact-long" => {
-                demo_compact = Some(true);
-                demo_compact_long = true;
-            }
-            "--demo-workers" => demo_workers = true,
-            "--demo-offscreen" => demo_offscreen = true,
-            "--compact-open-window" => match compact_cli::window_args(&mut args) {
-                Ok((request, ack)) => {
-                    handoff = Some(request);
-                    handoff_ack = Some(ack);
-                }
-                Err(error) => {
-                    eprintln!("claude-switch compact: {error}");
-                    std::process::exit(2);
-                }
-            },
-            "--usage-shape" => {
-                if args.next_if(|s| s == "--labels").is_some() {
-                    usage_labels = true;
-                }
-                let account = if args.peek().is_some_and(|s| !s.starts_with('-')) { args.next() } else { None };
-                usage_shape = Some(account);
-            }
-            "--labels" => usage_labels = true,
-            _ => {}
+    let options = match cli_args::parse(args, cfg!(debug_assertions)) {
+        Ok(options) => options,
+        Err(stop) => {
+            let (text, code) = cli_args::message(&stop);
+            cli_args::show(&text, code != 0);
+            std::process::exit(code);
         }
-    }
+    };
+    let cli_args::Options {
+        demo,
+        demo_notifications,
+        demo_usage_hover,
+        demo_permission,
+        demo_working,
+        demo_terminal,
+        demo_terminal_settings,
+        forced_dark,
+        usage_shape,
+        usage_labels,
+        handoff,
+        demo_compact,
+        demo_compact_long,
+        demo_search,
+        demo_offscreen,
+        demo_workers,
+        shell,
+        typed,
+        list_tab,
+    } = options;
+    let (handoff, handoff_ack) = handoff.map_or((None, None), |(request, ack)| (Some(request), Some(ack)));
     if let Some(account) = usage_shape {
         std::process::exit(usage_shape::run(demo, account.as_deref(), usage_labels));
     }
@@ -201,14 +172,4 @@ fn main() {
         eprintln!("claude-switch: {e}");
         std::process::exit(1);
     }
-}
-
-fn debug_value(debug_build: bool, value: Option<String>) -> Option<String> {
-    value.filter(|_| debug_build)
-}
-
-#[test]
-fn shell_and_typed_arguments_are_discarded_in_release() {
-    assert_eq!(debug_value(false, Some("ignored".into())), None);
-    assert_eq!(debug_value(true, Some("example".into())).as_deref(), Some("example"));
 }

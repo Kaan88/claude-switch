@@ -10,6 +10,8 @@
 - Chat composer: `@` completes paths in the session folder, Ctrl+R searches earlier prompts, and
   Claude Code's grey next-prompt suggestion appears as a chip that fills the draft.
 - The Chat message box is three lines tall and grows with the draft up to about 40% of the view.
+- Unknown command-line options are refused with a short usage text instead of being ignored (an
+  ignored typo started the real app); `--help` lists every option, hidden ones marked.
 - Handover: long sessions no longer fail with "Handover transcript exceeds 64 MiB"; the limit is
   now 2 GiB.
 

@@ -11,6 +11,13 @@ Built with the owner's toolkit (`markdown-shared-rs`: `mdshared-ui` with the `ho
   against temporary folders. No toolkit dependency. `serde_json` is its one dependency.
 - `bins/claude-switch`: the window.
 
+The window's command line is read by `cli_args`. An unknown option, a stray word or a missing or
+unreadable value is refused with a short usage text and exit code 2, so a typo such as `--dmeo`
+cannot start the real app in place of the demo. `--help` (also `-h`, `/?`) lists every option,
+the testing, diagnostic and internal ones under "Hidden" headings, and exits 0. The text goes to the
+console the app was started from, or to a message box when there is none. `compact` is read first
+and keeps its own parser.
+
 ## Facts this is built on (checked on this computer, 2026-11-26)
 
 **Transcripts.** Every session, CLI or desktop, is one file
