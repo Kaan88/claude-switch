@@ -43,6 +43,11 @@ fn step(items: &BTreeMap<ItemId, Item>, current: Option<ItemId>, up: bool) -> Op
 }
 
 impl Recall {
+    /// Commit the text currently in the editor as the draft, without restoring the old draft.
+    pub fn end(&mut self) {
+        *self = Self::default();
+    }
+
     fn active(&self) -> bool {
         self.browsing.is_some()
     }

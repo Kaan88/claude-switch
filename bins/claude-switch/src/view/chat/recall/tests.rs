@@ -80,7 +80,7 @@ fn history_boundaries_preserve_normal_vertical_motion_with_explicit_and_visual_w
 }
 
 #[test]
-fn escape_restores_the_unsent_draft_even_after_editing_the_recalled_text() {
+fn escape_restores_the_unsent_draft_before_any_edit() {
     let mut model = fixture();
     prompt(&mut model, 70, "/context", false);
     let mut chat = Chat::default();
@@ -89,11 +89,83 @@ fn escape_restores_the_unsent_draft_even_after_editing_the_recalled_text() {
     assert!(chat.recall_key(&model, &KeyName::Up));
     assert_eq!(chat.editor.text, "/context");
     assert!(!chat.commands.open, "history must not open the slash picker");
-    chat.editor.insert("edited:");
     assert!(chat.recall_key(&model, &KeyName::Escape));
     assert_eq!(chat.editor.text, "keep me\nsecond line");
     assert_eq!(chat.editor.caret, 3);
     assert!(!chat.recall_key(&model, &KeyName::Escape));
+}
+
+#[test]
+fn editing_a_recalled_prompt_makes_it_the_new_draft_for_future_navigation() {
+    let mut model = fixture();
+    prompt(&mut model, 60, "older", false);
+    prompt(&mut model, 70, "newest", false);
+    let mut chat = Chat::default();
+    chat.insert_text("original draft");
+    assert!(chat.recall_key(&model, &KeyName::Up));
+    chat.editor.select_all();
+    assert!(chat.edit_key(&KeyName::Char('e'), Mods::default(), Some("edited")));
+    assert_eq!(chat.editor.text, "edited");
+    assert!(!chat.recall_key(&model, &KeyName::Down));
+    assert!(!chat.recall_key(&model, &KeyName::Escape));
+    assert_eq!(chat.editor.text, "edited");
+    assert!(chat.recall_key(&model, &KeyName::Up));
+    assert_eq!(chat.editor.text, "newest");
+    assert!(chat.recall_key(&model, &KeyName::Down));
+    assert_eq!(chat.editor.text, "edited");
+}
+
+#[test]
+fn a_send_ends_recall_and_down_cannot_replace_the_next_draft() {
+    use crate::state::AppState;
+    use std::time::Instant;
+
+    // Include the queued/cancelled path, which doesn't go through successful-send cleanup.
+    for cancelled in [false, true] {
+        let mut app = super::super::tests::demo();
+        let tab = app.tabs.shown_mut().unwrap();
+        let now = Instant::now();
+        if cancelled {
+            super::super::tests::running(tab, now);
+        }
+        let pane = tab.pane.as_mut().unwrap();
+        prompt(&mut pane.model, 70, "previous", false);
+        pane.chat.editor.set("draft A".into());
+        assert!(pane.chat.recall_key(&pane.model, &KeyName::Up));
+        AppState::chat_send(tab, now, !cancelled);
+        let pane = tab.pane.as_mut().unwrap();
+        if cancelled {
+            assert!(pane.chat.queue.is_some());
+            pane.chat.stop_waiting();
+        } else {
+            assert!(pane.chat.editor.text.is_empty());
+            assert_eq!(pane.chat.writes, [b"\x1b[200~previous\x1b[201~".as_slice(), b"\r"]);
+        }
+        assert!(!pane.chat.recall.active());
+        pane.chat.editor.select_all();
+        pane.chat.insert_text("draft B");
+        assert!(!pane.chat.recall_key(&pane.model, &KeyName::Down));
+        assert_eq!(pane.chat.editor.text, "draft B");
+    }
+}
+
+#[test]
+fn starting_a_send_disarms_an_earlier_page_before_the_terminal_refresh() {
+    let mut app = super::super::tests::demo();
+    let pane = app.tabs.shown_mut().unwrap().pane.as_mut().unwrap();
+    prompt(&mut pane.model, 70, "visible prompt", false);
+    pane.chat.insert_text("original draft");
+    assert!(pane.chat.recall_key(&pane.model, &KeyName::Up));
+    pane.model.has_earlier = true;
+    assert!(pane.chat.recall_key(&pane.model, &KeyName::Up));
+    assert!(pane.chat.recall.waiting());
+    app.end_chat_recall();
+
+    let pane = app.tabs.shown_mut().unwrap().pane.as_mut().unwrap();
+    prompt(&mut pane.model, 60, "late prompt", false);
+    pane.model.earlier_version += 1;
+    assert!(!pane.chat.recall.advance(&mut pane.chat.editor, &pane.model, true));
+    assert_eq!(pane.chat.editor.text, "visible prompt");
 }
 
 #[test]

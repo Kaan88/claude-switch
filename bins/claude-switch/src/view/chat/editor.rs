@@ -94,25 +94,40 @@ impl ComposerEditor {
         self.inner.move_to(byte, select);
     }
 
-    pub fn key(&mut self, k: &KeyName, mods: Mods, text: Option<&str>) {
-        let row = self.caret_row();
-        if matches!(k, KeyName::Up | KeyName::Down) {
-            self.vertical(*k == KeyName::Up, mods.shift);
-            return;
-        }
-        if !mods.ctrl
-            && matches!(k, KeyName::Home | KeyName::End)
-            && let Some(range) = self.inner.rows.get(row)
-        {
-            let byte = if *k == KeyName::Home { range.start } else { range.end };
-            self.place(byte, row, mods.shift);
-        } else {
-            self.row_hint = None;
-            self.inner.key(k, mods, text);
-            if self.inner.rows.is_empty() {
-                self.metrics = None;
+    /// Returns whether the key edited text, not whether it moved the caret or invalidated layout.
+    pub fn key(&mut self, k: &KeyName, mods: Mods, text: Option<&str>) -> bool {
+        match k {
+            KeyName::Up | KeyName::Down => self.vertical(*k == KeyName::Up, mods.shift),
+            KeyName::Home | KeyName::End if !mods.ctrl => {
+                let row = self.caret_row();
+                if let Some(range) = self.rows.get(row) {
+                    let byte = if *k == KeyName::Home { range.start } else { range.end };
+                    self.place(byte, row, mods.shift);
+                } else {
+                    self.move_to(if *k == KeyName::Home { 0 } else { self.text.len() }, mods.shift);
+                }
             }
+            KeyName::Left | KeyName::Right | KeyName::Home | KeyName::End | KeyName::PageUp | KeyName::PageDown => {
+                self.row_hint = None;
+                self.inner.key(k, mods, None);
+            }
+            KeyName::Backspace | KeyName::Delete | KeyName::Enter => {
+                let before = self.text.len();
+                self.row_hint = None;
+                self.inner.key(k, mods, None);
+                self.metrics = None;
+                return self.text.len() != before;
+            }
+            _ if !mods.ctrl
+                && !mods.alt
+                && let Some(text) = text.filter(|s| !s.is_empty()) =>
+            {
+                self.insert(text);
+                return true;
+            }
+            _ => {}
         }
+        false
     }
 
     fn vertical(&mut self, up: bool, select: bool) {

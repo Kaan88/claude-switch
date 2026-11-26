@@ -140,7 +140,7 @@ impl Chat {
         self.commands.open = false;
         self.chips.clear();
         self.chip_page = 0;
-        self.recall = Default::default();
+        self.recall.end();
     }
 }
 
@@ -221,6 +221,7 @@ impl AppState {
         if chat.editor.text.trim().is_empty() && chat.chips.is_empty() {
             return;
         }
+        chat.recall.end();
         let Some(bytes) = send_bytes(&chat.chips, &chat.editor.text) else {
             chat.refused(BAD_TEXT, None);
             return;
@@ -423,6 +424,7 @@ impl AppState {
             chat.refused("Cancel the queued or pending send before running a command.", None);
             return;
         }
+        chat.recall.end();
         if from_editor && !chat.chips.is_empty() {
             chat.refused(REMOVE_ATTACHMENTS, None);
             return;

@@ -128,8 +128,6 @@ impl AppState {
 
     pub fn chat_input_tick(&mut self, cx: &mut Cx<'_, Msg>) {
         let active = self.tabs.active;
-        let may_write_shown =
-            self.nothing_over() && !self.picture_overlay() && cx.window().is_minimized() != Some(true);
         let now = cx.now();
         let pending = self.tabs.list.iter().any(Self::has_chat_work);
         // A transcript worker or timer may beat the PTY wake; check the latest screen before writing.
@@ -139,7 +137,8 @@ impl AppState {
                 cx.request_redraw_all();
             }
         }
-        if self.progress_chat_tabs(now, may_write_shown) {
+        let window_allows_writes = self.chat_window_allows_writes(cx.window().is_minimized() == Some(true));
+        if self.progress_chat_tabs(now, window_allows_writes) {
             cx.request_redraw_all();
         }
         for tab in &self.tabs.list {
@@ -159,7 +158,11 @@ impl AppState {
         }
     }
 
-    pub(super) fn progress_chat_tabs(&mut self, now: Instant, may_write_shown: bool) -> bool {
+    pub(super) fn chat_window_allows_writes(&self, minimized: bool) -> bool {
+        !minimized && self.nothing_over() && !self.picture_overlay()
+    }
+
+    pub(super) fn progress_chat_tabs(&mut self, now: Instant, window_allows_writes: bool) -> bool {
         let active = self.tabs.active;
         let mut redraw = false;
         for tab in &mut self.tabs.list {
@@ -190,7 +193,7 @@ impl AppState {
             let catalog = chat.commands.collect();
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let changed = chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
-            let may_write = !shown || may_write_shown && !chat.drawer_focus;
+            let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
             let advanced = Self::advance_submission(tab, now, may_write);
@@ -257,13 +260,11 @@ impl AppState {
             Some(key @ (KeyName::Up | KeyName::Down | KeyName::Escape))
                 if mods.none() && chat.recall_key(&pane.model, key) => {}
             Some(name) => {
-                chat.recall.cancel_load();
-                chat.editor.key(name, mods, k.text.as_deref());
-                changed = chat.editor.rows.is_empty();
+                changed = chat.edit_key(name, mods, k.text.as_deref());
             }
             None => {
                 if let Some(text) = &k.text {
-                    chat.editor.insert(text);
+                    chat.insert_text(text);
                     changed = true;
                 }
             }
@@ -280,7 +281,7 @@ impl AppState {
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
         if !chat.locked() {
-            chat.editor.insert(text);
+            chat.insert_text(text);
             self.chat_editor_changed();
         }
         true
@@ -400,6 +401,7 @@ impl AppState {
             _ => {}
         }
         if matches!(control, Control::Send | Control::Override | Control::SendNow | Control::PressEnter) {
+            self.end_chat_recall();
             // Don't let a pre-click tick submit the queue before processing an explicit Send now.
             // Stop returned above through `stop_conversation`, which wakes the terminals itself.
             self.term_woke(cx);
@@ -425,6 +427,7 @@ impl AppState {
                 chat.details.reset_scroll();
             }
             Control::Remove(i) if i < chat.chips.len() && !chat.locked() => {
+                chat.recall.end();
                 let clipboard = matches!(chat.chips.remove(i), Chip::Clipboard(_));
                 chat.chip_page = chat.chip_page.min(chat.attachment_pages() - 1);
                 if clipboard && chat.error == Some(submission::CHANGED_CLIPBOARD) {
@@ -450,6 +453,13 @@ impl AppState {
             _ => {}
         }
         self.arm_chat_tick(cx);
+    }
+
+    pub(super) fn end_chat_recall(&mut self) {
+        // A pre-send tick can finish an older-history load; disarm it before refreshing the terminal.
+        if let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) {
+            pane.chat.recall.end();
+        }
     }
 
     pub(in crate::view) fn stop_conversation(
@@ -490,6 +500,7 @@ impl AppState {
                 }
                 let chip = Chip::Path(path.clone());
                 if !chat.chips.contains(&chip) {
+                    chat.recall.end();
                     chat.chips.push(chip);
                 }
             }
@@ -499,6 +510,20 @@ impl AppState {
 }
 
 impl Chat {
+    pub(super) fn edit_key(&mut self, key: &KeyName, mods: Mods, text: Option<&str>) -> bool {
+        self.recall.cancel_load();
+        let edited = self.editor.key(key, mods, text);
+        if edited {
+            self.recall.end();
+        }
+        edited
+    }
+
+    pub(super) fn insert_text(&mut self, text: &str) {
+        self.recall.end();
+        self.editor.insert(text);
+    }
+
     pub(super) fn resize_drawer(&mut self, y: f32) -> bool {
         let Some((start, height)) = self.resizing else { return false };
         self.drawer_height = Some((height + start - y).max(52.0));
@@ -527,8 +552,9 @@ impl Chat {
         picture: impl FnOnce() -> Option<clipboard::Picture>,
     ) {
         if !picture_only && let Some(text) = text().filter(|s| !s.is_empty()) {
-            self.editor.insert(&text);
+            self.insert_text(&text);
         } else if let Some(picture) = picture() {
+            self.recall.end();
             self.chips.retain(|c| !matches!(c, Chip::Clipboard(_)));
             self.chips.push(Chip::Clipboard(picture));
             if self.error == Some(submission::CHANGED_CLIPBOARD) {
@@ -544,7 +570,7 @@ impl Chat {
     pub(super) fn editor_copy(&mut self, cut: bool) {
         let selection = self.editor.selection();
         if !selection.is_empty() && platform::set_clipboard_text(&self.editor.text[selection]) && cut {
-            self.editor.insert("");
+            self.insert_text("");
         }
     }
 
