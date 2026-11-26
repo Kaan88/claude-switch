@@ -42,6 +42,10 @@ pub struct Cache {
     retiring: Vec<Work>,
     pub startup: Option<crate::compact_open::NewHandover>,
     pub startup_ack: Option<String>,
+    /// The handover channel this window claimed at startup, until it serves it.
+    pub listener: Option<crate::handover_pipe::Listener>,
+    /// Why the channel could not be claimed, shown once the window runs.
+    pub listen_failed: Option<String>,
     pub demo: Option<bool>,
     pub demo_long: bool,
     pub history: Option<(String, Vec<PathBuf>)>,

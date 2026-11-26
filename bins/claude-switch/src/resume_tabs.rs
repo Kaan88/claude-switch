@@ -36,6 +36,8 @@ struct Entry {
 
 #[derive(Default)]
 pub struct Restore {
+    /// Another Claude Switch window holds the handover channel: that one restores the saved tabs.
+    pub second_window: bool,
     pub save_failed: bool,
     pub window_save_failed: bool,
     baseline: Option<String>,
@@ -218,7 +220,7 @@ impl AppState {
             self.restore.save_failed = true;
             self.error("Could not read saved terminal tabs", format!("{error} The saved file was left unchanged."));
         }
-        if self.win_file.restore_tabs == RestoreTabs::Never {
+        if self.win_file.restore_tabs == RestoreTabs::Never || self.restore.second_window {
             return;
         }
         if self.source.is_demo() {
@@ -592,6 +594,18 @@ mod tests {
         assert!(app.restore.pending.is_empty() && app.dialog.is_none());
         assert_eq!(app.tabs.list.iter().map(|t| t.session.clone().unwrap()).collect::<Vec<_>>(), expected);
         assert_eq!(app.tabs.active, Some(app.tabs.list[0].id));
+    }
+
+    #[test]
+    fn a_window_that_did_not_claim_the_handover_channel_restores_no_tabs() {
+        let prefs = crate::winfile::WindowFile { restore_tabs: RestoreTabs::Always, ..Default::default() };
+        let mut app = AppState::new(Source::Demo, Some(false), prefs);
+        app.restore.second_window = true;
+        app.load_tab_restore();
+        assert!(app.restore.pending.is_empty(), "the window holding the channel restores them");
+        app.apply_scan(crate::demo::scan(&app.config));
+        assert!(!app.restore_tabs_if_always(Instant::now()));
+        assert!(app.tabs.list.is_empty());
     }
 
     #[test]

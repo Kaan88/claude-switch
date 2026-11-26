@@ -16,6 +16,10 @@
   (jobs, workers, reviews and what was promised when they report); "instructions" holds only rules
   still in force; long fields are cut at a line with a visible `[cut]`; Files leaves out temporary
   paths and keeps the 30 most recent; the task list is marked possibly stale.
+- Handover channel: an elevated window refuses requests from lower-integrity processes; the
+  window claims the channel before restoring tabs, so two windows starting together never both
+  restore them; a client that connects and never writes no longer blocks later requests; the
+  client checks the channel's owner, and a window that cannot create it says so.
 - Handover tabs now get the classic renderer too (they name Claude Code by its full path), so
   Chat can send in them; continuing in place in a tab that shows Claude Code's full-screen view
   stops at once and says how to fix it, instead of waiting for the deadline.

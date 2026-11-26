@@ -199,10 +199,19 @@ impl AppState {
 
 impl AppState {
     /// Lets a later `claude-switch compact --open` of this user open its tab here.
-    pub fn serve_handovers(&self) {
+    pub fn serve_handovers(&mut self) {
+        if let Some(reason) = self.compact.listen_failed.take() {
+            self.warn(
+                "Handovers from the command line cannot reach this window",
+                format!(
+                    "{reason} `claude-switch compact --open` and /switch-compact will start another window instead."
+                ),
+            );
+        }
         let (Source::Real(roots), Some(proxy)) = (&self.source, self.proxy.clone()) else { return };
+        let Some(listener) = self.compact.listener.take() else { return };
         let roots = roots.clone();
-        crate::handover_pipe::serve(move |bytes| {
+        listener.serve(move |bytes| {
             let result = (|| {
                 let args = crate::compact_cli::decode_request(&bytes)?;
                 let request = crate::compact_cli::load(&roots, args)?;

@@ -432,9 +432,17 @@ The CLI runs headlessly for `--print` (the default) and writes the handover only
 `--save` is supplied. Explicit `--open` keeps the handover and hands the request to the running
 Claude Switch window, which opens the tab beside the source session's tab when one of its tabs
 runs it (otherwise at the end) and comes to the front. The channel is one per-user named pipe,
-`\\.\pipe\claude-switch-handover-<user SID>`: its DACL grants only that SID, remote clients are
-rejected, only the first window creates it, and each end checks that the process on the other end
-runs as the same user (the client allows identification, not impersonation). It carries one
+`\\.\pipe\claude-switch-handover-<user SID>`: it is owned by that SID and its DACL grants only
+that SID, remote clients are rejected, and only the first instance can be created. A window
+claims the name at startup before it restores any tabs, so of two windows starting together only
+one restores the saved tabs; a window started for a handover that finds the name taken forwards
+the request and exits, and requests sent before the holder serves wait in the pipe. The client
+checks that the pipe object's owner is its own SID before writing (another user cannot create
+the name with that owner) and allows identification, not impersonation. The server accepts only
+a client running as the same user at an integrity level no lower than its own, so a normal
+process cannot steer an elevated window; an elevated window also labels the pipe High with
+no-write-up. A client has 5 seconds to write its request, repeated connect errors back off, and a
+window that cannot create the channel says so. It carries one
 request kind only: a versioned list of the same validated words as the window arguments (session
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
 decoded and revalidated by the window, which then continues in place when one of its tabs runs

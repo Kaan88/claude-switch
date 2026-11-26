@@ -111,7 +111,6 @@ fn main() {
             "--demo-workers" => demo_workers = true,
             "--demo-offscreen" => demo_offscreen = true,
             "--compact-open-window" => match compact_cli::window_args(&mut args) {
-                Ok((request, ack)) if compact_cli::forward_to_running(&request, &ack) => std::process::exit(0),
                 Ok((request, ack)) => {
                     handoff = Some(request);
                     handoff_ack = Some(ack);
@@ -146,6 +145,17 @@ fn main() {
             }
         }
     };
+    // Claim the handover channel before restoring anything: only the window that holds it is the
+    // main one. A window started for a handover gives it to the holder instead.
+    let mut claim = if demo { handover_pipe::Claim::Failed(String::new()) } else { handover_pipe::claim() };
+    if matches!(claim, handover_pipe::Claim::Taken)
+        && let (Some(request), Some(ack)) = (&handoff, &handoff_ack)
+    {
+        if compact_cli::forward_to_running(request, ack) {
+            std::process::exit(0);
+        }
+        claim = handover_pipe::claim(); // The holder went away meanwhile.
+    }
     let mut win_file = winfile::load(source.window_file().as_deref());
     if demo && demo_offscreen {
         win_file.place = Some(winfile::demo_offscreen());
@@ -173,6 +183,12 @@ fn main() {
     }
     if demo_terminal_settings {
         demo_terminal::show_settings(&mut state);
+    }
+    match claim {
+        handover_pipe::Claim::Mine(listener) => state.compact.listener = Some(listener),
+        handover_pipe::Claim::Taken => state.restore.second_window = true,
+        handover_pipe::Claim::Failed(reason) if !demo => state.compact.listen_failed = Some(reason),
+        handover_pipe::Claim::Failed(_) => {}
     }
     state.compact.startup = startup;
     state.compact.startup_ack = handoff_ack;
