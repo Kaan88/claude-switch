@@ -393,3 +393,11 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     the protocol handler always starts the default profile).
     Closed (owner, 2026-11-26): "Continue with email" with the Google account's address gives the
     code and reaches the same account; no further work needed.
+34. **The Markdown side panel is too narrow** (owner, 2026-11-26): let it be wider: a draggable
+    divider between conversation and panel (width remembered), and toolbar options for reading width
+    as in the mdview app (narrow / medium / wide / full, or its exact set; reuse the toolkit's or
+    mdview's control if it is shared). Also seen in the same screenshot: a bare `CHANGELOG.md` in an
+    answer opened the session folder's file (kweb-mail's), while the answer meant another
+    repository's; a relative name is resolved against the session's folder only. Consider showing
+    the full path in the panel's title and, when the answer's recent tool calls name a file with that
+    name elsewhere, preferring that one or offering both.
