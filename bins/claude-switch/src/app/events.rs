@@ -262,6 +262,10 @@ impl App for AppState {
                 self.report_saved(result);
                 cx.request_redraw_all();
             }
+            Msg::FolderPicked(folder) => {
+                self.new_session_folder_picked(&folder);
+                cx.request_redraw_all();
+            }
             Msg::AttachPictures(id, files, chat) => {
                 if chat {
                     self.chat_attach(id, &files);

@@ -38,6 +38,8 @@ pub enum Msg {
     Term,
     SessionView,
     AttachPictures(u64, Vec<std::path::PathBuf>, bool),
+    /// The folder chosen in the New session dialog's folder picker.
+    FolderPicked(std::path::PathBuf),
     ArchiveReportSaved(crate::archive_report::ReportResult),
     Tray(crate::tray::Event),
     /// Another process of this user asked to open a handover tab (`handover_pipe`).

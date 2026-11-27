@@ -18,6 +18,8 @@ const RECENT_LIMIT: usize = 4;
 const RECENT: u32 = 10;
 const PREVIOUS: u32 = 20;
 const NEXT: u32 = 21;
+const BROWSE: u32 = 22;
+const BROWSE_W: f32 = 84.0;
 
 pub struct NewSession {
     field: TextField,
@@ -35,11 +37,43 @@ impl AppState {
     pub fn ask_new_session(&mut self) {
         self.dialog = Some(Dialog::NewSession(Box::new(NewSession::new(self))));
     }
+
+    /// Opens the system's folder picker at `start` when it is a folder; the choice comes back as
+    /// [`crate::state::Msg::FolderPicked`].
+    fn pick_new_session_folder(&self, start: &Path) {
+        if self.source.is_demo() {
+            return;
+        }
+        let proxy = self.proxy.clone();
+        let start = start.is_dir().then_some(start);
+        mdshared_ui::platform::pick_folder_async(start, move |folder| {
+            if let Some(folder) = folder
+                && let Some(proxy) = proxy
+                && let Ok(proxy) = proxy.lock()
+            {
+                proxy.send(crate::state::Msg::FolderPicked(folder));
+            }
+        });
+    }
+
+    /// Puts a picked folder into the New session dialog, if it is still open.
+    pub fn new_session_folder_picked(&mut self, folder: &Path) {
+        if let Some(Dialog::NewSession(mut picker)) = self.dialog.take_if(|d| matches!(d, Dialog::NewSession(_))) {
+            picker.picked(self, folder);
+            self.dialog = Some(Dialog::NewSession(picker));
+        }
+    }
 }
 
-fn recent_folders(groups: &[Group]) -> Vec<PathBuf> {
-    // The session groups already deduplicate Windows paths and are ordered newest first.
-    groups.iter().filter(|g| !g.cwd.as_os_str().is_empty()).take(RECENT_LIMIT).map(|g| g.cwd.clone()).collect()
+fn recent_folders(groups: &[Group], exists: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    // The session groups already deduplicate Windows paths and are ordered newest first. A folder
+    // deleted since (an old worktree) is left out.
+    groups
+        .iter()
+        .filter(|g| !g.cwd.as_os_str().is_empty() && exists(&g.cwd))
+        .take(RECENT_LIMIT)
+        .map(|g| g.cwd.clone())
+        .collect()
 }
 
 fn folder_from_text(text: &str, is_dir: impl FnOnce(&Path) -> bool) -> Result<PathBuf, &'static str> {
@@ -63,7 +97,7 @@ impl NewSession {
         let mut picker = Self {
             field,
             hit: None,
-            recent: recent_folders(&st.all_groups),
+            recent: recent_folders(&st.all_groups, |path| st.source.is_demo() || path.is_dir()),
             accounts,
             account: 0,
             app: App::Cli,
@@ -95,8 +129,9 @@ impl NewSession {
         let x = card.x + DIALOG_PAD;
         let width = card.w - 2.0 * DIALOG_PAD;
 
-        let fr = Rect::new(x, card.y + 64.0, width, 32.0);
+        let fr = Rect::new(x, card.y + 64.0, width - BROWSE_W - 8.0, 32.0);
         p.text(Face::Ui, 12.0, x, fr.y - 9.0, "Folder", pal.muted, width);
+        d.button(p, Rect::new(fr.right() + 8.0, fr.y, BROWSE_W, 32.0), "Browse…", false, BROWSE);
         p.frame(fr, 5.0, pal.field, if self.focus == 0 { pal.accent } else { pal.line });
         let colors = FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
         self.field.draw(p, fr.inset(8.0), Face::Ui, 13.0, &colors, "Folder path", self.focus == 0, true);
@@ -169,6 +204,10 @@ impl NewSession {
                 }
             }
             FIELD => self.focus = 0,
+            BROWSE => {
+                self.focus = 0;
+                st.pick_new_session_folder(Path::new(self.field.text().trim()));
+            }
             PREVIOUS | NEXT => {
                 self.focus = 1;
                 self.step_account(id == NEXT);
@@ -208,6 +247,15 @@ impl NewSession {
 
     pub(crate) fn field_parts(&mut self) -> (&mut TextField, Option<FieldHit>) {
         (&mut self.field, self.hit)
+    }
+
+    /// A folder chosen in the system's folder picker.
+    pub(crate) fn picked(&mut self, st: &AppState, folder: &Path) {
+        self.field.set_text(&folder.to_string_lossy());
+        self.field.select_all();
+        self.error = None;
+        self.focus = 0;
+        self.sync_defaults(st);
     }
 
     pub(crate) fn focus_folder(&mut self) {
@@ -263,6 +311,34 @@ mod tests {
         st.selected = None;
         st.command(now, actions::NEW_SESSION, None);
         assert_eq!(picker(&st).field.text(), st.source.home().to_string_lossy());
+    }
+
+    #[test]
+    fn recent_choices_leave_out_folders_that_no_longer_exist() {
+        let st = demo_state();
+        let all = recent_folders(&st.all_groups, |_| true);
+        let gone = all[0].clone();
+        let shown = recent_folders(&st.all_groups, |path| path != gone);
+        assert!(!shown.contains(&gone));
+        assert_eq!(shown[0], all[1]);
+        assert_eq!(shown.len(), RECENT_LIMIT.min(all.len() + usize::from(st.all_groups.len() > RECENT_LIMIT) - 1));
+    }
+
+    #[test]
+    fn a_picked_folder_fills_the_field_and_keeps_the_dialog_open() {
+        let mut st = demo_state();
+        let now = Instant::now();
+        st.ask_new_session();
+        dialogs::click(&mut st, now, BROWSE, 0.0);
+        assert!(matches!(st.dialog, Some(Dialog::NewSession(_))), "Browse keeps the dialog (demo opens no picker)");
+        let folder = st.sessions[1].cwd.clone();
+        st.new_session_folder_picked(&folder);
+        let modal = picker(&st);
+        assert_eq!(modal.field.text(), folder.to_string_lossy());
+        assert!(modal.error.is_none());
+        st.dialog = None;
+        st.new_session_folder_picked(&folder);
+        assert!(st.dialog.is_none(), "a late pick after the dialog closed opens nothing");
     }
 
     #[test]
