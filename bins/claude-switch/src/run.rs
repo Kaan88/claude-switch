@@ -205,6 +205,37 @@ pub fn command_for(launch: &Launch, program: &Path) -> Command {
     cmd
 }
 
+/// Opens `folder` in Explorer through the shell, as a double-click would. Only an existing folder
+/// with an absolute path: never a file, so nothing can be started this way.
+pub fn open_folder(folder: &Path) -> io::Result<()> {
+    if !folder.is_absolute() || !folder.is_dir() {
+        return Err(io::ErrorKind::NotFound.into());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        let path: Vec<u16> = folder.as_os_str().encode_wide().chain([0]).collect();
+        let verb: Vec<u16> = "open".encode_utf16().chain([0]).collect();
+        // SAFETY: both strings are NUL-terminated and outlive the call; the other pointers may be
+        // null. The return value is a status code, not a handle to close.
+        let status = unsafe {
+            windows_sys::Win32::UI::Shell::ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                path.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+            )
+        } as isize;
+        if status <= 32 { Err(io::Error::other(format!("the shell refused it (code {status})"))) } else { Ok(()) }
+    }
+    #[cfg(not(windows))]
+    {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
 pub fn reveal(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {

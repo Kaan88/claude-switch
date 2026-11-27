@@ -425,3 +425,31 @@ fn the_dialog_draws_with_a_long_list() {
     st.ask_new_session();
     save(&paint(&mut st, (760.0, 480.0), 1.0).0, "new-session-small.png");
 }
+
+#[test]
+fn only_a_missing_full_path_under_an_existing_folder_may_be_created() {
+    let scratch = crate::testing::Scratch::new("cs-new-folder");
+    let root = scratch.to_path_buf();
+    std::fs::create_dir_all(&root).unwrap();
+    assert!(creatable(&root.join("new").join("deeper")), "missing folders under an existing one");
+    assert!(!creatable(&root), "it exists");
+    std::fs::write(root.join("file"), "x").unwrap();
+    assert!(!creatable(&root.join("file")), "a file");
+    assert!(!creatable(&root.join("file").join("under")), "under a file");
+    assert!(!creatable(Path::new(r"relative\folder")), "not a full path");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn start_on_a_missing_folder_in_the_demo_only_says_so() {
+    let mut st = state_with(&numbered(3));
+    if let Some(Dialog::NewSession(picker)) = &mut st.dialog {
+        picker.field.set_text(r"C:\work\not-there-yet");
+    }
+    let mut dialog = st.dialog.take();
+    if let Some(Dialog::NewSession(picker)) = &mut dialog {
+        assert!(picker.click(&mut st, std::time::Instant::now(), OK));
+        assert_eq!(picker.error, Some(MISSING), "the demo creates nothing");
+        assert!(picker.create.is_none());
+    }
+}
