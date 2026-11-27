@@ -9,7 +9,8 @@ const FONT: f32 = 12.5;
 
 pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y: f32, w: f32, area: Rect) -> f32 {
     let pal = *st.pal();
-    let files = st.compact.history.as_ref().filter(|(sid, _)| sid == id).map(|(_, files)| files.as_slice());
+    let files = st.compact.history.as_ref().filter(|(sid, _)| sid == id).map(|(_, files)| files.clone());
+    let files = files.as_deref();
     let label =
         files.filter(|f| !f.is_empty()).map_or_else(|| "Handovers…".into(), |f| format!("Handovers ({})…", f.len()));
     let r = Rect::new(x, y - 13.0, 132.0, 27.0);
@@ -25,6 +26,9 @@ pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y:
     );
     if r.bottom() <= area.bottom() {
         st.hits.push((r, target));
+        // A handover of this session being written, written or failed in the background.
+        let line = (w - r.w - 12.0).max(0.0);
+        crate::handover_jobs::draw_details_line(st, p, id, r.right() + 12.0, r.cy(), line, Instant::now());
     }
     if let Some(latest) = files.and_then(|f| f.first()).and_then(|p| p.file_name()).and_then(|p| p.to_str()) {
         p.text(Face::Mono, 11.0, x, y + 29.0, latest, pal.muted, w);

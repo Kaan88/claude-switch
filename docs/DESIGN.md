@@ -633,6 +633,41 @@ compare-and-swap for this value. An interruption after append but before recordi
 leave an untracked entry rather than let uninstall claim an entry it cannot prove it added.
 The plugin retains its fallback to the default per-user installation.
 
+### Writing in the background
+
+**Compact and open…** (session menu, palette, details pane, tab menu, the usage pop-up's offer and
+Automatic handover's **Ask first**, which all open the same dialog) keeps its setup step: model,
+account, focus and provider consent, all checked as before. **Make handover** (or **Allow and make
+handover**) starts the worker and closes the dialog at once; the dialog itself, with every choice
+made in it, waits while the model writes, so the app can be used meanwhile. Several handovers can
+be written at once, one a session: asking again for a session whose handover is being written says
+so, and one that is written or failed opens instead.
+
+When it is written, the same **Review handover** window opens by itself with the result, as soon as
+nothing modal is open (a dialog, Settings, a confirmation, a menu, the palette, the accounts list or
+the usage pop-up); several open one after another, in the order they finished. It opens over the
+Chat composer or a terminal, but for its first 300 ms it ignores keys and typed text, and clicks on
+Open in CLI, In OpenCode and the delete box, so a key already on its way (an Enter half-typed into
+the composer) cannot act in it. The delete box starts off and where it continues (in place or a
+new tab) is checked again, as each time the review opens. When the window is not in front, its
+taskbar button flashes (and, when it is hidden in the notification area, a notice says the handover
+is ready); it never takes the focus from another program.
+
+The Sessions column shows a strip between its filter chips and the list, taking no room when empty:
+**Writing handover · 0:42 · <session>** with a spinner and **Cancel** (which stops the worker), a
+failure in the danger colour with its reason on a second line and **Retry** (which starts again with
+the same choices, through the consent check; when consent is needed again the dialog opens), and
+**Handover ready · <session>** with **Review** and ✕ for a review closed with Cancel or Esc without
+acting on it (✕ discards it). More than two fold into one line ("3 handovers · 1 being written ·
+1 ready · 1 failed") with **Show**/**Hide**. The session's details pane has the same entry beside
+**Handovers…**. A failure while a terminal tab is shown also puts up the error bar with **Retry**.
+
+Closing the window while a handover is being written or a written one has not been opened asks
+first (with the terminal tabs' line when tabs run) and says what happens: one being written is
+canceled, and a written one that was not opened is lost, since previewing does not save a handover
+(only Open, In OpenCode and Save as… write the file). An open review is moved to the strip before
+the confirmation, so it is still there when you stay. Nothing about them survives a restart.
+
 ### Automatic handover instead of compaction
 
 **Settings → Handovers → Hand over automatically** is Off (the default), Ask first or Automatic.

@@ -607,6 +607,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
         Dialog::Compact(mut compact) => {
             if compact.click(st, now, id, x) {
                 st.dialog = Some(Dialog::Compact(compact));
+            } else {
+                st.compact_closed(compact, now);
             }
         }
         d @ Dialog::Settings(_) => st.dialog = Some(d),

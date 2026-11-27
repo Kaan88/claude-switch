@@ -175,6 +175,12 @@ impl AppState {
             Target::UndoHide => self.undo_hidden(now),
             Target::InfoClose => self.info = None,
             Target::Info(topbar::RESET_SETTINGS) => self.reset_settings(now),
+            Target::Info(id) if id >= crate::handover_jobs::INFO_RETRY => {
+                self.info = None;
+                let job = u64::from(id - crate::handover_jobs::INFO_RETRY);
+                self.handover_act(job, crate::handover_jobs::Act::Retry, now);
+            }
+            Target::HandoverJob(id, act) => self.handover_act(id, act, now),
             Target::Dialog(id) => dialogs::click(self, now, id, x),
             _ => {}
         }
