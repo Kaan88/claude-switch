@@ -66,6 +66,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
 }
 
 /// [`draw_with`] at the current time, for tests that draw the list under another layer.
+#[cfg(test)]
 pub(crate) fn draw_in(st: &mut AppState, anim: &mut Animator, p: &mut Painter, area: Rect) -> Vec<Rect> {
     draw_with(st, anim, p, area, std::time::Instant::now())
 }

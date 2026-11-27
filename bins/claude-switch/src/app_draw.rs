@@ -2,20 +2,11 @@
 
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::host::Cx;
-use mdshared_ui::overlay::Bubble;
 use mdshared_ui::splitter::{self, Axis};
 
 use crate::state::{AppState, Focus, Msg, Target};
 use crate::topbar::{self, Bar};
 use crate::{details, list, windowlook};
-
-fn draw_tip(st: &AppState, p: &mut Painter, w: f32, h: f32) {
-    if let Some(over) = st.tip.shown() {
-        let pal = *st.pal();
-        let tip = Bubble::tip(p, &over.text, over.anchor, w, h);
-        windowlook::Cards::for_frame(st, p).draw(p, tip.rect, pal.popup, |p| tip.draw(p, &pal));
-    }
-}
 
 pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
     st.sync_usage_setting();
@@ -69,16 +60,12 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
 
     crate::resume_tabs::draw_toasts(st, cx, p, window);
     list::draw_undo(st, p, window);
-    // The Peek button's tip belongs above the Settings dialog; every other tip is under overlays.
-    let peek_tip = st.tip.shown().is_some_and(|over| over.key == Target::SettingsPeek);
-    if !peek_tip {
-        draw_tip(st, p, w, h);
+    // A dialog's tooltip is drawn above the dialog, with the overlays.
+    if st.dialog.is_none() {
+        windowlook::draw_tip(st, p, window);
     }
     st.draw_session_overlay(p, &pal, window);
     windowlook::draw_overlays(st, cx, p, window);
-    if peek_tip && !st.settings_peeking() {
-        draw_tip(st, p, w, h);
-    }
     st.usage.repaint_at = if st.config.show_usage
         && (st.usage.popup.open || matches!(st.dialog, Some(crate::dialogs::Dialog::Accounts { .. })))
     {

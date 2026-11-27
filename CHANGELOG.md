@@ -53,6 +53,12 @@
 - Handover: the review's text wraps at word boundaries instead of in the middle of words.
 - Handover: the Review handover dialog's buttons always fit; Copy and Save as… sit on the left, or
   under **More ▾** when the dialog is narrow.
+- New session: **Recent folders** is now a scrolling list of up to 200 folders instead of four, newest
+  activity first, with the last-active time. It leaves out archived and hidden sessions, sessions
+  started by tools while the list hides them, folders that no longer exist, temporary folders and
+  Git worktrees (you can still type or browse to those), and counts different spellings of a folder
+  once. Type in the folder field to filter it; the arrows, Page Up/Down, Home, End and Enter work in
+  it.
 
 ## 0.1.2 (2026-11-27)
 

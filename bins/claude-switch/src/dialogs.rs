@@ -697,7 +697,12 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
                 return true;
             }
         }
-        Dialog::NewSession(picker) => picker.key(st, k, mods, text),
+        Dialog::NewSession(picker) => {
+            if picker.key(st, k, mods, text) {
+                st.dialog = Some(dialog);
+                return true;
+            }
+        }
         Dialog::FolderOpen(editor) => editor.key(k),
         Dialog::Archive(archive) => archive.key(st, k),
         Dialog::Compact(compact) => {
