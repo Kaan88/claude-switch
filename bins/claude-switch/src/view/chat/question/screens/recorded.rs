@@ -94,6 +94,8 @@ pub(in crate::view::chat) const REWIND_CUT_UP2: &str = include_str!("../fixtures
 pub(in crate::view::chat) const PLAIN_IDLE: &str = include_str!("../fixtures/plain_idle.ansi");
 /// A named session's idle input: the name sits in the rule above it (150 x 40, auto mode).
 pub(in crate::view::chat) const PLAIN_NAMED: &str = include_str!("../fixtures/plain_named.ansi");
+/// The folder trust dialog of a new folder (120 x 40, the path replaced).
+pub(in crate::view::chat) const PLAIN_TRUST: &str = include_str!("../fixtures/plain_trust.ansi");
 pub(in crate::view::chat) const PLAIN_START: &str = include_str!("../fixtures/plain_start.ansi");
 pub(in crate::view::chat) const PLAIN_TYPED: &str = include_str!("../fixtures/plain_typed.ansi");
 pub(in crate::view::chat) const PLAIN_QUESTION: &str = include_str!("../fixtures/plain_question.ansi");

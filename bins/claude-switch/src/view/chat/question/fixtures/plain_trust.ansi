@@ -1,0 +1,43 @@
+cursor 16 33
+@size 120 40
+@modes paste
+
+[0;38;2;255;193;7m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0;1;38;2;255;193;7mAccessing[0m [0;1;38;2;255;193;7mworkspace:[0m
+
+ [0;1mC:\Users\demo\Desktop\new-project[0m
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
+ project, or work from your team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ [0;38;2;153;153;153mSecurity guide[0m
+
+ [0;38;2;177;185;249m❯[0m [0;38;2;177;185;249mNo,[0m [0;38;2;177;185;249mexit[0m
+   Yes, I trust this folder
+
+ [0;38;2;153;153;153mEnter[0m [0;38;2;153;153;153mto[0m [0;38;2;153;153;153mconfirm[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153mEsc[0m [0;38;2;153;153;153mto[0m [0;38;2;153;153;153mcancel[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

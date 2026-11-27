@@ -6,6 +6,9 @@
   rule over its input, and Chat took the row for earlier text: it never saw an empty, idle input.
   Messages stayed queued, Send now said the input was not visibly empty, and Chat could say Claude
   Code might be waiting for an answer. Chat now reads that rule as the input's border.
+- Chat: a new session in a folder Claude Code has not seen asks whether you trust it. Chat
+  showed that dialog without its choices (they carry no numbers), so Yes needed the terminal;
+  its card now offers both.
 
 ## 0.1.4 (2026-11-27)
 

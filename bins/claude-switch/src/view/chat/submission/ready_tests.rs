@@ -11,8 +11,8 @@ use crate::view::chat::question::screens::recorded::{
     ASK_OTHER, ASK_OTHER_FIRST, ASK_OTHER_LONG, ASK_OTHER_TYPED, FORM_OTHER, FORM_OTHER_FIRST, FORM_OTHER_TYPED,
 };
 use crate::view::chat::question::screens::recorded::{
-    PLAIN_EMPTIED, PLAIN_IDLE, PLAIN_INTERRUPTED, PLAIN_NAMED, PLAIN_QUESTION, PLAIN_RESTORED, PLAIN_TYPED,
-    PLAIN_WORKING_TYPED, WORKING_TOOL, recorded,
+    PLAIN_EMPTIED, PLAIN_IDLE, PLAIN_INTERRUPTED, PLAIN_NAMED, PLAIN_QUESTION, PLAIN_RESTORED, PLAIN_TRUST,
+    PLAIN_TYPED, PLAIN_WORKING_TYPED, WORKING_TOOL, recorded,
 };
 use crate::view::chat::question::{self, Hit};
 use std::ops::Not;
@@ -119,6 +119,41 @@ fn a_named_sessions_idle_input_is_ready_and_a_message_goes_at_once() {
     assert_eq!(f.pass(SECOND), (Gate::Ready, None));
     f.send("hello");
     assert_eq!(f.writes(), message("hello"));
+}
+
+#[test]
+fn a_new_folders_trust_dialog_is_answered_from_its_card() {
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = None;
+        pane.model.chat.latest = None;
+        pane.chat.awaiting_transcript = true;
+    }
+    f.show(PLAIN_TRUST);
+    assert_eq!(f.pass(SECOND), (Gate::Check, Some(Reason::Menu)));
+    let shown = f.chat().question.menu.clone().expect("a card");
+    assert!(format!("{shown:?}").contains(r#"choices: ["No, exit", "Yes, I trust this folder"]"#), "{shown:?}");
+    assert_eq!(f.chat().drawer, Drawer::Closed, "no terminal needed");
+    // "Yes": the highlight moves down first; Enter only once the screen shows it there.
+    let now = f.now;
+    assert!(question::press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [b"\x1b[B".to_vec()]);
+    f.pass(SECOND);
+    assert!(f.writes().is_empty(), "the screen still shows No highlighted");
+    let moved: Vec<String> = PLAIN_TRUST
+        .lines()
+        .map(|line| match line {
+            l if l.contains("exit") => "   No, exit".to_owned(),
+            l if l.contains("Yes, I trust") => " \u{276f} Yes, I trust this folder".to_owned(),
+            l => l.to_owned(),
+        })
+        .collect();
+    let moved = moved.join("\n");
+    assert_ne!(moved, PLAIN_TRUST);
+    f.show(&moved);
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
 }
 
 #[test]

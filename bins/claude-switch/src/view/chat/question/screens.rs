@@ -276,7 +276,37 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
             entries.clear();
         }
     }
+    if entries.is_empty() {
+        entries = trust_choices(&rows, footer);
+    }
     (!entries.is_empty()).then(|| Menu { entries, lines: rows.into_iter().map(|(_, t)| t).collect(), footer })
+}
+
+/// The folder trust dialog a new folder opens with: its two choices carry no numbers (`❯ No,
+/// exit`, `Yes, I trust this folder`, right above `Enter to confirm · Esc to cancel`; Claude
+/// Code 2.1.332, older ones say `Yes, proceed`). Only this dialog: an unnumbered list elsewhere
+/// is never read as choices.
+fn trust_choices(rows: &[(bool, String)], footer: usize) -> Vec<Entry> {
+    if !rows[footer].1.to_lowercase().contains("enter to confirm") {
+        return Vec::new();
+    }
+    let end = (0..footer).rev().find(|&row| !rows[row].1.is_empty()).map_or(0, |row| row + 1);
+    let start = (0..end).rev().take_while(|&row| !rows[row].1.is_empty()).last().unwrap_or(end);
+    let block = &rows[start..end];
+    let no = |text: &str| text == "No, exit";
+    let yes = |text: &str| text == "Yes, I trust this folder" || text == "Yes, proceed";
+    let fits = block.len() == 2
+        && block.iter().filter(|(highlighted, _)| *highlighted).count() == 1
+        && block.iter().any(|(_, text)| no(text))
+        && block.iter().any(|(_, text)| yes(text));
+    if !fits {
+        return Vec::new();
+    }
+    block
+        .iter()
+        .enumerate()
+        .map(|(i, (highlighted, text))| Entry { row: start + i, highlighted: *highlighted, text: text.clone() })
+        .collect()
 }
 
 /// A permission prompt as the screen shows it: the question row right above its choices and the
