@@ -453,7 +453,8 @@ mod tests {
 
     #[test]
     fn the_listing_skips_hidden_and_build_folders_and_stays_bounded() {
-        let root = std::env::temp_dir().join(format!("cs-popups-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-popups");
+        let root = scratch.to_path_buf();
         let _ = std::fs::remove_dir_all(&root);
         for dir in ["src/deep", ".git", "node_modules/pkg", "Target"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();

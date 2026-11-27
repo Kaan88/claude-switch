@@ -64,7 +64,8 @@ fn a_missing_saved_agent_is_checked_before_launch_even_without_opening_the_picke
 
 #[test]
 fn creating_a_handover_dialog_reads_another_windows_saved_default() {
-    let root = std::env::temp_dir().join(format!("cs-agent-default-{}", crate::compact_open::session_id().unwrap()));
+    let scratch = crate::testing::Scratch::new("cs-agent-default");
+    let root = scratch.to_path_buf();
     let roots = claude_switch_core::Roots { home: root.join("home"), appdata: root.join("appdata") };
     let mut st = app();
     let session = st.selected_session().unwrap().clone();
@@ -115,7 +116,8 @@ fn compact(st: &AppState) -> &Compact {
 
 #[test]
 fn real_source_preview_and_cancel_leave_no_handover_history() {
-    let root = std::env::temp_dir().join(format!("cs-preview-cancel-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-preview-cancel");
+    let root = scratch.to_path_buf();
     std::fs::create_dir(&root).unwrap();
     let roots = claude_switch_core::Roots { home: root.clone(), appdata: root.clone() };
     let mut st = app();

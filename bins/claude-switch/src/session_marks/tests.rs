@@ -20,7 +20,8 @@ fn open(st: &mut AppState, session: Option<String>, source: TranscriptSource, cw
 #[test]
 fn identical_running_snapshot_retries_after_transcript_appears() {
     let mut st = AppState::new(Source::Demo, None, Default::default());
-    let root = std::env::temp_dir().join(format!("cs-identical-running-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-identical-running");
+    let root = scratch.to_path_buf();
     std::fs::create_dir(&root).unwrap();
     let cwd = root.join("work");
     let file = crate::view::handover_transcript(&root, &cwd, A);
@@ -98,7 +99,8 @@ fn a_competing_writer_merges_unless_it_changed_the_same_field_which_rolls_back()
     st.select_first();
     let s = st.selected_session().unwrap().clone();
     st.marks = Marks::default();
-    let root = std::env::temp_dir().join(format!("cs-marks-conflict-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-marks-conflict");
+    let root = scratch.to_path_buf();
     std::fs::create_dir(&root).unwrap();
     let roots = Roots { home: root.clone(), appdata: root.clone() };
     let marks = roots.config_file().with_file_name("marks.json");

@@ -410,7 +410,8 @@ mod tests {
 
     #[test]
     fn startup_cleanup_removes_only_old_job_files() {
-        let dir = std::env::temp_dir().join(format!("cs-job-clean-{}", new_key().unwrap()));
+        let scratch = crate::testing::Scratch::new("cs-job-clean");
+        let dir = scratch.to_path_buf();
         std::fs::create_dir(&dir).unwrap();
         let job = |name: &str| {
             let path = dir.join(name);

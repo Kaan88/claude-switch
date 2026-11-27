@@ -312,11 +312,8 @@ mod tests {
             .collect()
     }
 
-    fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("claude-switch-run-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn scratch(name: &str) -> crate::testing::Scratch {
+        crate::testing::Scratch::created(&format!("claude-switch-run-{name}"))
     }
 
     #[test]
@@ -428,7 +425,7 @@ mod tests {
         let d = scratch("detached");
         let path = d.join("claude.exe");
         std::fs::write(&path, b"").unwrap();
-        let c = command(&launch(Place::Detached), &d.clone().into_os_string(), &".EXE".into()).unwrap();
+        let c = command(&launch(Place::Detached), &d.to_path_buf().into_os_string(), &".EXE".into()).unwrap();
         assert_eq!(c.get_program(), path.as_os_str());
         assert_eq!(args(&c), ["--resume", "abc def"]);
         assert_eq!(c.get_current_dir(), Some(Path::new(r"C:\work\my project")));
@@ -444,7 +441,7 @@ mod tests {
         std::fs::write(d.join("claude.exe"), b"").unwrap();
         let mut l = launch(Place::Terminal);
         l.cwd = Some(d.join("R&D"));
-        let c = command(&l, &d.clone().into_os_string(), &".EXE".into()).unwrap();
+        let c = command(&l, &d.to_path_buf().into_os_string(), &".EXE".into()).unwrap();
         assert_eq!(c.get_program(), d.join("claude.exe").as_os_str());
         assert_eq!(args(&c), ["--resume", "abc def"]);
         assert_eq!(c.get_current_dir(), l.cwd.as_deref());
@@ -458,7 +455,7 @@ mod tests {
         std::fs::write(d.join("wt.exe"), b"").unwrap();
         std::fs::write(d.join("claude.cmd"), b"").unwrap();
         let mut l = launch(Place::Terminal);
-        let path = d.clone().into_os_string();
+        let path = d.to_path_buf().into_os_string();
         assert!(command(&l, &path, &".EXE;.CMD".into()).is_err());
         l.args = vec!["auth".into(), "login".into()];
         assert!(command(&l, &path, &".EXE;.CMD".into()).is_err());
@@ -471,7 +468,7 @@ mod tests {
         std::fs::write(d.join("claude.exe"), b"").unwrap();
         let mut l = launch(Place::Terminal);
         l.cwd = None;
-        let c = command(&l, &d.clone().into_os_string(), &".EXE".into()).unwrap();
+        let c = command(&l, &d.to_path_buf().into_os_string(), &".EXE".into()).unwrap();
         assert_eq!(args(&c), ["--resume", "abc def"]);
         assert_eq!(c.get_current_dir(), None);
         let _ = std::fs::remove_dir_all(&d);
@@ -481,7 +478,7 @@ mod tests {
     fn resolve_finds_a_bare_name_by_its_extensions_and_leaves_paths_and_unknown_names_alone() {
         let d = scratch("resolve");
         std::fs::write(d.join("tool.cmd"), b"").unwrap();
-        let path = d.clone().into_os_string();
+        let path = d.to_path_buf().into_os_string();
         assert_eq!(resolve(Path::new("tool"), &path, &".EXE;.CMD".into()), Some(d.join("tool.cmd")));
         assert_eq!(resolve(Path::new("tool.cmd"), &path, &".EXE".into()), Some(d.join("tool.cmd")));
         assert_eq!(resolve(Path::new("missing"), &path, &".EXE;.CMD".into()), None);

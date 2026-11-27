@@ -121,7 +121,8 @@ fn git(dir: &Path, args: &[&str]) {
 
 #[test]
 fn a_real_git_worktree_and_its_subfolders_are_left_out_once_the_worker_has_looked() {
-    let root = std::env::temp_dir().join(format!("cs-recent-worktree-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-recent-worktree");
+    let root = scratch.to_path_buf();
     let (main, linked) = (root.join("main"), root.join("linked"));
     std::fs::create_dir_all(&main).unwrap();
     git(&main, &["init", "--quiet"]);
@@ -192,7 +193,8 @@ fn worker_sessions_count_only_while_the_list_shows_them() {
 
 #[test]
 fn a_folder_that_is_not_on_disk_is_dropped_once_the_worker_has_looked() {
-    let root = std::env::temp_dir().join(format!("cs-recent-folders-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-recent-folders");
+    let root = scratch.to_path_buf();
     let (kept, gone) = (root.join("kept"), root.join("gone"));
     std::fs::create_dir_all(&kept).unwrap();
     std::fs::create_dir_all(&gone).unwrap();

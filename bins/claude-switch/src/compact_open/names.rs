@@ -117,7 +117,8 @@ mod tests {
 
     #[test]
     fn continuation_uses_switch_names_and_numbers_against_native_titles_and_pending_launches() {
-        let root = std::env::temp_dir().join(format!("cs-handover-index-{}", super::super::session_id().unwrap()));
+        let scratch = crate::testing::Scratch::new("cs-handover-index");
+        let root = scratch.to_path_buf();
         std::fs::create_dir(&root).unwrap();
         let source = "5eed3dde-1c2d-4e5f-8a9b-000000000001";
         let first = "5eed3dde-1c2d-4e5f-8a9b-000000000002";

@@ -37,7 +37,8 @@ fn off_by_default_and_nothing_starts_while_off() {
 
 #[test]
 fn the_confirmation_names_what_is_sent_and_to_which_model() {
-    let t = std::env::temp_dir().join(format!("cs-meaning-confirm-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-meaning-confirm");
+    let t = scratch.to_path_buf();
     let mut st = demo();
     st.source = Source::Real(claude_switch_core::Roots { home: t.clone(), appdata: t.clone() });
     st.config.meaning.enabled = true;

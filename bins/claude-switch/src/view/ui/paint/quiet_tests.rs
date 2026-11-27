@@ -138,7 +138,8 @@ fn user_theme(dark: bool, page: [u8; 3], text: [u8; 3], muted: [u8; 3], accent: 
 
 #[test]
 fn tool_rows_are_quiet_in_light_dark_and_custom_themes_and_failures_still_show() {
-    let dir = std::env::temp_dir().join(format!("cs-quiet-rows-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-quiet-rows");
+    let dir = scratch.to_path_buf();
     let path = fixture(&dir, &[]);
     use crate::termtheme::palettes::{DARK_THEMES, LIGHT_THEMES};
     let mut themes = vec![
@@ -213,7 +214,8 @@ fn tool_rows_are_quiet_in_light_dark_and_custom_themes_and_failures_still_show()
 
 #[test]
 fn command_results_and_shell_mode_are_quiet_mono_cards_under_their_command() {
-    let dir = std::env::temp_dir().join(format!("cs-quiet-local-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-quiet-local");
+    let dir = scratch.to_path_buf();
     let user = |sec: u8, text: &str| {
         json!({"timestamp": format!("2026-11-27T10:01:{sec:02}Z"), "type": "user",
             "message": {"role": "user", "content": text}})

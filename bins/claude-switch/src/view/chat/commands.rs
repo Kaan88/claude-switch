@@ -483,7 +483,8 @@ mod tests {
 
     #[test]
     fn reads_fixture_headers_and_names_not_bodies_or_outside_registrations() {
-        let root = std::env::temp_dir().join(format!("chat-commands-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("chat-commands");
+        let root = scratch.to_path_buf();
         let account = root.join("account");
         let cwd = root.join("project");
         let plug = account.join("plugins");

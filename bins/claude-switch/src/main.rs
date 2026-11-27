@@ -55,6 +55,8 @@ mod term;
 mod termapp;
 mod termkeys;
 mod termtheme;
+#[cfg(test)]
+mod testing;
 mod topbar;
 mod tray;
 mod usage;

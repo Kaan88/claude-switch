@@ -25,7 +25,7 @@ impl Drop for Fixture {
 
 impl Fixture {
     fn new(name: &str, source: impl FnOnce(&std::path::Path) -> model::Source) -> Self {
-        let root = std::env::temp_dir().join(format!("cs-identity-{name}-{}", std::process::id()));
+        let root = crate::testing::unique(&format!("cs-identity-{name}"));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let mut app = AppState::new(Source::Demo, Some(false), Default::default());

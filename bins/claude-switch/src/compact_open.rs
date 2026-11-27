@@ -353,7 +353,8 @@ mod tests {
 
     #[test]
     fn failed_spawn_rolls_back_the_pending_name_and_only_the_new_provenance() {
-        let root = std::env::temp_dir().join(format!("cs-handover-name-{}", session_id().unwrap()));
+        let scratch = crate::testing::Scratch::new("cs-handover-name");
+        let root = scratch.to_path_buf();
         let roots = Roots { home: root.join("home"), appdata: root.join("appdata") };
         let mut st = AppState::new(Source::Real(roots.clone()), None, Default::default());
         let parent = session_id().unwrap();

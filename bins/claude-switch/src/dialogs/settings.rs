@@ -904,7 +904,9 @@ mod tests {
     fn switching_pages_reads_the_merged_config_without_writing_navigation_or_republishing_preferences() {
         use claude_switch_core::{Roots, config};
 
-        let folder = std::env::temp_dir().join(format!("cs-settings-pages-test-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-settings-pages-test");
+
+        let folder = scratch.to_path_buf();
         let roots = Roots { home: folder.join("home"), appdata: folder.join("appdata") };
         let mut st = AppState::new(Source::Real(roots.clone()), None, WindowFile::default());
         st.dialog = Some(settings(&mut st, Some("Sessions")));

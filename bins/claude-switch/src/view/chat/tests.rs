@@ -87,7 +87,8 @@ fn a_visible_permission_question_vetoes_fresh_completion() {
 #[test]
 fn real_pane_vetoes_both_send_paths_until_its_identity_is_verified() {
     use crate::{source::Source, state::AppState, tabs::NewTab, term::Term};
-    let root = std::env::temp_dir().join(format!("cs-real-chat-identity-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-real-chat-identity");
+    let root = scratch.to_path_buf();
     std::fs::create_dir(&root).unwrap();
     let roots = claude_switch_core::Roots { home: root.clone(), appdata: root.clone() };
     let mut app = AppState::new(Source::Real(roots), Some(false), Default::default());
@@ -120,7 +121,8 @@ fn real_pane_vetoes_both_send_paths_until_its_identity_is_verified() {
 fn direct_input_watermark_uses_cached_discovery_path_without_rereading_head() {
     use crate::{source::Source, state::AppState};
     let id = "11111111-0000-0000-0000-000000000000";
-    let root = std::env::temp_dir().join(format!("cs-chat-watermark-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-chat-watermark");
+    let root = scratch.to_path_buf();
     std::fs::create_dir(&root).unwrap();
     let file = crate::view::handover_transcript(&root, &root, id);
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();

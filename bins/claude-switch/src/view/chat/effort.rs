@@ -101,7 +101,8 @@ mod tests {
 
     #[test]
     fn the_starting_level_follows_claude_codes_order() {
-        let root = std::env::temp_dir().join(format!("cs-effort-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-effort");
+        let root = scratch.to_path_buf();
         let _ = std::fs::remove_dir_all(&root);
         let (home, project) = (root.join("home"), root.join("project"));
         std::fs::create_dir_all(home.join(".claude")).unwrap();

@@ -79,7 +79,9 @@ mod tests {
     fn a_probe_refreshes_the_open_opencode_page_without_rebuilding_other_pages() {
         use opencode_cli::Status;
 
-        let directory = std::env::temp_dir().join(format!("cs-settings-workers-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-settings-workers");
+
+        let directory = scratch.to_path_buf();
         let mut st = AppState::new(
             Source::Real(Roots { home: directory.join("home"), appdata: directory.join("appdata") }),
             None,

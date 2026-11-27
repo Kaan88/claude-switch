@@ -457,7 +457,8 @@ mod tests {
 
     #[test]
     fn other_windows_opt_out_drops_a_completed_but_unaccepted_reading() {
-        let folder = std::env::temp_dir().join(format!("cs-w3-optout-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-w3-optout");
+        let folder = scratch.to_path_buf();
         let roots = claude_switch_core::Roots { home: folder.clone(), appdata: folder.clone() };
         let mut second = AppState::new(Source::Demo, None, WindowFile::default());
         second.source = Source::Real(roots.clone());
