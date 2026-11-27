@@ -127,7 +127,7 @@ and in the README, not committed, and not copied to the installed clone
 
 Status of items 23 to 60 (2026-11-27, merged into `main` after two reviews by Claude Fable and the fixes
 of both): built and passing format, lint and the test suite: 23 to 31, 34 to 48, 50 to 55, 57, 58 and 60.
-Partly: 47 (no `!` toggle in the composer), 53 (no Stop agent; the key that opens the CLI's agent panel
+Partly: 47 (no `!` toggle in the composer; see the item), 53 (no Stop agent; the key that opens the CLI's agent panel
 is not known). Not built: 22, 32 (later; fonts need toolkit work), 49 (rewind, waits for a live check of
 42 and 48), 56 (later), 59 (idea only). Item 14 for Settings text rows waits for the toolkit pin move
 (toolkit 7da7b22). Nothing was tried against a live Claude Code: the screen shapes the cards read (the
@@ -551,6 +551,20 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 47. **Command results and shell mode in the conversation**: `<local-command-stdout>` and `<bash-input>`/`<bash-stdout>`
     records as mono cards under their command (filtered out today, `prompt_clean.rs`); interactive panels get a
     card; a `!` toggle in the composer once shell mode by paste is verified.
+    **Done except the `!` toggle** (2026-11-27, branch `fix/items-47-tools`). The records were already read into
+    finished rows (`transcript/local.rs`); this pass gave them item 71's quiet look. One-line replies (at most 140
+    characters, which covers the shapes found read-only in this machine's transcripts: "Set model to …", "Goal
+    set: …", "Settings dialog dismissed", "Reconnected to …") sit on their command's row. Longer output
+    (`/context`) and shell output are muted mono cards under the row. They now get their real height (before,
+    an always-open output or plan card kept a one-line height and was drawn over the rows below) and fold on a
+    click. A shell output's first-line indent is kept (`git status --short`). An empty `<local-command-stdout>`
+    no longer leaves its command's name to label the next output. Real transcripts also hold shell mode as
+    one record with two text blocks (`<bash-input>` then `<bash-stdout>`). The reader stopped at the first
+    block and lost the output; it now reads every block. Checked: parser, reader and row unit tests (the
+    shapes copied from real records), plus a bitmap test with `/model`, `/context` and two shell commands
+    (one failing) in light and dark, whose pictures were looked at. Not built: the `!` toggle. Shell mode
+    by paste was not checked against a real Claude Code: that needs an interactive CLI session driven
+    through a terminal, which this pass did not start. Nothing was seen in the running app.
 48. **CLI menus and dialogs as cards**: any menu, picker or startup dialog the CLI shows (the native /model and
     /effort pickers, /config, /permissions, /mcp, folder trust, the fullscreen offer, settings errors, MCP sign-in
     and elicitation, the rate-limit menu) is copied from the screen into a card with its rows as buttons, answered
@@ -753,3 +767,14 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     opens the ⋯ menu over normal and dim glyphs, checks the entrance and settled card, and checks
     tooltip bounds and modal dimming over black and white. The separate per-cell contrast issue
     in item 62 still needs its toolkit change. Not checked on the owner's live desktop.
+71. **Tool use pulls the eye away from Claude's text** (owner, 2026-11-27, screenshot of bordered "✓ done Read
+    C:\…  53 ms" rows and "5 tool calls" boxes). **Done.** Tool rows and groups lost their box: one low line
+    (22 px, 1 px apart) in the theme's muted text with the tool name no longer in the accent colour and in the UI
+    face rather than mono, a faint "✓" and duration (set right after the target), a leading chevron, and a little
+    air before the next answer. A failure keeps "✗ failed" in the warning colour on a soft wash of the theme's
+    warning ground; a running call keeps its accent pulse. Hover, open and jump fills come from palette tokens.
+    A bitmap test draws a synthetic conversation in the light and dark palettes, every built-in theme and two
+    user-made themes (through the app's own theme code) and checks: no accent, no border, quieter than the answer
+    text yet readable, a failure in the warning colour on its wash, and that opened rows and groups stay
+    clickable. The pictures were looked at for light, dark and both user themes; nothing was seen in the
+    running app.

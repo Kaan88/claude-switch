@@ -610,10 +610,12 @@ impl View {
         }
     }
 
-    /// Command output and shell mode as finished rows; true when the record was one of them.
+    /// Command output and shell mode as finished rows; true when the record was one of them. The CLI
+    /// may write a shell command and its output as two text blocks of one record, so every block is read.
     fn local_record(&mut self, offset: u64, timestamp: Option<&str>, texts: &[&str], changes: &mut Changes) -> bool {
-        let id = ItemId { offset, block: 0 };
-        for text in texts {
+        let mut found = false;
+        for (block, text) in texts.iter().enumerate() {
+            let id = ItemId { offset, block };
             if let Some(command) =
                 text.trim_start().strip_prefix("<command-name>").and_then(|s| s.split_once("</command-name>"))
             {
@@ -623,16 +625,24 @@ impl View {
                 self.last_command = Some(one_line(&line));
                 return false;
             }
-            let Some(record) = local::parse(text) else { continue };
+            let Some(record) = local::parse(text) else {
+                // A command that printed nothing (a menu closed without a choice): its name must not
+                // label the next command's output.
+                if text.trim_start().starts_with("<local-command-std") {
+                    self.last_command = None;
+                }
+                continue;
+            };
+            found = true;
+            let key = format!("local:{offset}:{block}");
             match record {
                 local::Local::Output { text, failed } => {
                     let name = self.last_command.take().unwrap_or_else(|| "Command output".to_owned());
-                    let item = local::item(format!("local:{offset}"), &name, String::new(), text, failed);
+                    let item = local::item(key, &name, String::new(), text, failed);
                     self.add(id, timestamp, item, changes);
                 }
                 local::Local::Shell(input) => {
-                    let item =
-                        local::item(format!("local:{offset}"), "Shell", format!("! {input}"), String::new(), false);
+                    let item = local::item(key, "Shell", format!("! {input}"), String::new(), false);
                     self.add(id, timestamp, item, changes);
                     self.last_shell = Some(id);
                 }
@@ -648,14 +658,13 @@ impl View {
                         }
                     }
                     _ => {
-                        let item = local::item(format!("local:{offset}"), "Shell", String::new(), text, failed);
+                        let item = local::item(key, "Shell", String::new(), text, failed);
                         self.add(id, timestamp, item, changes);
                     }
                 },
             }
-            return true;
         }
-        false
+        found
     }
 
     fn add(&mut self, id: ItemId, timestamp: Option<&str>, kind: ItemKind, changes: &mut Changes) {
