@@ -302,7 +302,8 @@ impl AppState {
         }
         let modes = tab.term.screen.modes();
         let selected = tab.term.selected_text().is_some();
-        let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected, tab.term.keyboard);
+        let keyboard = termkeys::keyboard_now(tab.term.keyboard, &tab.term.screen);
+        let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected, keyboard);
         match action {
             KeyAction::Command(c) => self.command(now, c, None),
             KeyAction::Copy => self.copy_selection(),

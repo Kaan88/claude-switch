@@ -246,8 +246,11 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   program's), Ctrl+Shift+C and Ctrl+V / Ctrl+Shift+V (copy, paste; Ctrl+C copies only while something is
   selected) and Shift+Page Up/Down (scroll back). Shift+Enter alone sends `CSI 13;2u` only when
   Switch launched Claude Code in the tab, identified by the executable's filename, not its title
-  or transcript. Shells and other programs keep the classic Return encoding; this is not full
-  kitty keyboard negotiation. A middle click on a tab closes it.
+  or transcript, and only while Claude Code is what the screen shows: on the main screen (its
+  classic view), or on the alternate screen while the cursor is in its input box (a `❯` row between
+  solid rules, which its full-screen view draws there too). Any other program on the alternate
+  screen, such as an editor Claude Code opened, gets the classic Return. Shells and other programs
+  keep the classic Return encoding; this is not full kitty keyboard negotiation. A middle click on a tab closes it.
 - **Mouse**: the terminal uses the arrow pointer. Drag selects (double click a word, triple click a
   line, Alt a block); the drag requests a redraw only when the selected cells change. Releasing the
   mouse does not copy. Right-click copies and clears the selection, or pastes when there is none.

@@ -24,6 +24,12 @@ fn shift_enter_uses_the_shown_tabs_launch_executable_not_its_label_or_modes() {
         app.term_key(Instant::now(), &shift_enter);
         assert_eq!(std::mem::take(&mut app.usage.demo_keys), bytes, "{program}");
     }
+    // A program Claude Code started on the alternate screen (an editor) gets a plain Enter.
+    let mut term = Term::for_command(&mdshared_pty::Command::new("claude"), (30, 4));
+    term.feed(b"\x1b[?2004h\x1b[?1049hediting a file");
+    app.tabs.open(NewTab { label: "Claude".into(), color: [0; 3], account: None, session: None }, term);
+    app.term_key(Instant::now(), &shift_enter);
+    assert_eq!(std::mem::take(&mut app.usage.demo_keys), b"\r");
 }
 
 #[test]

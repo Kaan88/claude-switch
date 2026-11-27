@@ -836,6 +836,13 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     sequence even without kitty negotiation. The same run showed line breaks from the Chat composer's bracketed
     paste encoding (item 46); the composer test checks that Enter waits for the echo. No prompt was submitted.
     The desktop key path, other CLI versions and other programs were not checked interactively.
+    Review fix (2026-11-27): the tab's launch name alone sent `CSI 13;2u` to any program in it, such as an editor
+    Claude Code opened. Now it goes on the main screen (the classic view) and on the alternate screen only while the
+    cursor is in Claude Code's input box. Checked by recording Claude Code 2.1.332 with its full-screen view turned on
+    for that session only (`--settings '{"tui":"fullscreen"}'`): it draws on the alternate screen, with the same
+    input box, and `CSI 13;2u` started a second input line there. Not checked: a terminal editor opened with Ctrl+G
+    (Claude Code offers Notepad on this computer, a window of its own, so none was opened); a program that draws such a box on the alternate screen would get
+    Claude Code's Shift+Enter.
 68. **The `/usage` card loses the terminal's bars, and its spinner line jumps** (owner, 2026-11-27, screenshot of the
     read-only menu card for /usage). The card copies the panel's rows as plain text, so the usage bars the terminal
     draws (coloured cells or block characters) are missing; copy each cell's colours and draw the rows as the

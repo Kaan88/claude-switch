@@ -3,7 +3,7 @@
 //! (`mdshared_term::input`). Pure functions of the event and the screen's modes, so every
 //! decision is tested here without a window or a program.
 
-use mdshared_term::{Key, Modes, MouseMode, input};
+use mdshared_term::{Key, Modes, MouseMode, Screen, input};
 use mdshared_ui::keys::{KeyName, Mods};
 
 use crate::actions;
@@ -13,6 +13,39 @@ use crate::actions;
 pub enum Keyboard {
     Classic,
     Claude,
+}
+
+/// A solid rule as Claude Code draws above and below its input box.
+fn input_rule(text: &str) -> bool {
+    let text = text.trim();
+    text.chars().count() >= 20 && text.chars().all(|c| c == '─')
+}
+
+/// The cursor is in Claude Code's input box: under a solid rule whose next row starts with `❯`,
+/// over another solid rule, with no rule between. Its classic and its full-screen view draw the box
+/// alike; the full-screen view does so on the alternate screen (Claude Code 2.1.332).
+pub fn claude_input_at_cursor(screen: &Screen) -> bool {
+    const ROWS: usize = 40;
+    let cursor = screen.cursor().row;
+    let rule = |row: usize| input_rule(&screen.row_text(row));
+    if rule(cursor) {
+        return false;
+    }
+    let Some(top) = (cursor.saturating_sub(ROWS)..cursor).rev().find(|&row| rule(row)) else { return false };
+    let closed = (cursor + 1..(cursor + ROWS).min(screen.rows())).any(rule);
+    closed && screen.row_text(top + 1).trim_start().starts_with('❯')
+}
+
+/// The conventions a key is encoded with now. A Claude tab keeps Claude Code's (Shift+Enter as
+/// CSI-u) on the main screen, where only Claude Code's classic view draws, and on the alternate
+/// screen only while it shows Claude Code's input box (its full-screen view). Any other program
+/// on the alternate screen, such as an editor Claude Code opened, gets the classic keys: one that
+/// does not read CSI-u would type it as stray characters.
+pub fn keyboard_now(keyboard: Keyboard, screen: &Screen) -> Keyboard {
+    match keyboard {
+        Keyboard::Claude if screen.modes().alt_screen && !claude_input_at_cursor(screen) => Keyboard::Classic,
+        keyboard => keyboard,
+    }
 }
 
 /// What a key press in a terminal tab comes to.
@@ -284,6 +317,47 @@ mod tests {
         let newline = Modes { newline: true, ..Modes::default() };
         assert_eq!(key(Some(&KeyName::Enter), NONE, None, &newline, false, Classic), send(b"\r\n"));
         assert_eq!(k(KeyName::F(30), NONE, None), KeyAction::None);
+    }
+
+    /// A screen fed these rows, then the cursor put at `cursor` (row, column).
+    fn screen_of(alt: bool, rows: &[&str], cursor: (usize, usize)) -> Screen {
+        let mut screen = Screen::new(100, 12, 0);
+        if alt {
+            screen.feed(b"\x1b[?1049h");
+        }
+        for (i, row) in rows.iter().enumerate() {
+            screen.feed(format!("\x1b[{};1H{row}", i + 1).as_bytes());
+        }
+        screen.feed(format!("\x1b[{};{}H", cursor.0 + 1, cursor.1 + 1).as_bytes());
+        screen
+    }
+
+    #[test]
+    fn shift_enter_is_claudes_only_while_its_input_box_shows_on_the_alternate_screen() {
+        let rule = "─".repeat(100);
+        // Claude Code 2.1.332's full-screen view (`--settings {"tui":"fullscreen"}`), recorded:
+        // the input box on the alternate screen, the cursor on its second line.
+        let fullscreen = [" ▐▛███▛█   Claude Code v2.1.332", "", &rule, "❯ first line", "  second line", &rule];
+        let input = screen_of(true, &fullscreen, (4, 13));
+        assert!(input.modes().alt_screen && claude_input_at_cursor(&input));
+        assert!(keyboard_now(Claude, &input) == Claude);
+        // An editor Claude Code opened on the alternate screen: classic keys.
+        let editor =
+            screen_of(true, &["  GNU nano 8.0   note.txt", "", "first line", "", "^G Help  ^O Write Out"], (2, 10));
+        assert!(!claude_input_at_cursor(&editor));
+        assert!(keyboard_now(Claude, &editor) == Classic);
+        let enter = |screen: &Screen| {
+            key(Some(&KeyName::Enter), SHIFT, Some("\r"), &screen.modes(), false, keyboard_now(Claude, screen))
+        };
+        assert_eq!(enter(&input), send(b"\x1b[13;2u"));
+        assert_eq!(enter(&editor), send(b"\r"));
+        // The cursor outside the box (a menu below it) on the alternate screen: classic.
+        assert!(keyboard_now(Claude, &screen_of(true, &fullscreen, (8, 2))) == Classic);
+        // The main screen is Claude Code's classic view: its Shift+Enter, whatever it shows.
+        let classic = screen_of(false, &["some output"], (0, 3));
+        assert!(keyboard_now(Claude, &classic) == Claude);
+        assert_eq!(enter(&classic), send(b"\x1b[13;2u"));
+        assert!(keyboard_now(Classic, &input) == Classic);
     }
 
     #[test]
