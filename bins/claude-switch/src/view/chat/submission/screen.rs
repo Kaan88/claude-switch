@@ -24,6 +24,12 @@ pub(super) fn menu(screen: &Screen) -> bool {
     (cursor.saturating_sub(1)..(cursor + 9).min(screen.rows())).any(|row| footer(&screen.row_text(row)))
 }
 
+/// A row that is only a horizontal rule, as the CLI draws above and below its input.
+fn rule(cells: &[Cell]) -> bool {
+    let mut chars = cells.iter().map(|c| c.ch).filter(|&c| c != ' ').peekable();
+    chars.peek().is_some() && chars.all(|c| matches!(c, '─' | '━' | '═'))
+}
+
 fn frame(cells: &[Cell], left: usize, right: usize, top: bool) -> bool {
     let pair = (cells.get(left).map(|c| c.ch), cells.get(right).map(|c| c.ch));
     let edge = match (pair, top) {
@@ -42,7 +48,10 @@ pub(super) fn prompt(screen: &Screen) -> Option<String> {
     }
     let cursor = screen.cursor();
     let line = screen.line(cursor.row)?;
-    if line.wrapped() || cursor.row > 0 && screen.line(cursor.row - 1).is_some_and(|line| line.wrapped()) {
+    // A row wrapping onto the prompt row is earlier text, except the input box's top rule: mid-turn
+    // the CLI sometimes redraws that full-width rule so that it is marked as wrapping.
+    let above = cursor.row.checked_sub(1).and_then(|row| screen.line(row));
+    if line.wrapped() || above.is_some_and(|above| above.wrapped() && !rule(above.cells())) {
         return None;
     }
     let cells = line.cells();

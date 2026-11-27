@@ -115,6 +115,22 @@ fn an_apparently_empty_row_cannot_be_the_head_or_tail_of_wrapped_terminal_input(
 }
 
 #[test]
+fn a_wrapped_rule_above_the_prompt_is_the_input_box_not_earlier_text() {
+    // Seen mid-turn in Claude Code 2.1.332: the full-width rule over `❯` carries the wrap mark.
+    let mut screen = Screen::new(12, 8, 0);
+    screen.feed(
+        "────────────❯ 
+────────────[2;3H"
+            .as_bytes(),
+    );
+    assert!(screen.line(0).unwrap().wrapped());
+    assert!(clean_prompt(&screen));
+    let mut screen = Screen::new(12, 8, 0);
+    screen.feed("─────── text❯ ".as_bytes());
+    assert!(!clean_prompt(&screen));
+}
+
+#[test]
 fn the_effort_chip_reads_the_transcripts_replies_whoever_typed_the_command() {
     use crate::view::chat::effort::Start;
     let now = Instant::now();
