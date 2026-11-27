@@ -103,12 +103,15 @@ const CHOICE_WRAP: usize = 4;
 pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
     // Anchor at the last visible text near the input cursor, not arbitrary output or scrollback.
     let cursor = screen.cursor().row;
+    // The footer is the last row with text; a rule or two under it (left by a redraw) are passed
+    // over.
+    let rule = |text: &str| text.trim().chars().all(|c| matches!(c, '─' | '━' | '═'));
     let bottom = (0..screen.rows()).rev().find_map(|row| {
         let text = screen.row_text(row);
-        (!text.trim().is_empty()).then_some((row, text))
+        (!text.trim().is_empty() && !rule(&text)).then_some((row, text))
     });
     let Some((footer, text)) = bottom else { return false };
-    if !text.trim_start().starts_with("Esc to cancel") || cursor > footer + 2 || footer > cursor + 8 {
+    if !text.trim_start().starts_with("Esc to cancel") || cursor > footer + 4 || footer > cursor + 8 {
         return false;
     }
     let rows: Vec<_> = (footer.saturating_sub(PROMPT_ROWS)..footer)

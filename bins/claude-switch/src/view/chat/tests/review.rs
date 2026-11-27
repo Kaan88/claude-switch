@@ -19,7 +19,7 @@ fn command_uses_separate_writes_and_times_out_on_wrong_or_unfresh_echo() {
         if echoed {
             tab.pane.as_mut().unwrap().chat.output(now, true, false);
         }
-        let when = if echoed { now } else { now + Duration::from_secs(2) };
+        let when = if echoed { now } else { now + crate::view::chat::submission::ECHO_TIMEOUT };
         assert!(AppState::advance_submission(tab, when, true));
         let chat = &tab.pane.as_ref().unwrap().chat;
         assert_eq!(chat.writes[0], command.as_bytes());
@@ -41,7 +41,7 @@ fn timed_out_image_blocks_plain_overrides_and_slashes_until_a_fresh_clean_input_
     tab.pane.as_mut().unwrap().chat.fresh = true;
     AppState::chat_send(tab, now, true);
     assert!(!tab.pane.as_ref().unwrap().chat.fresh);
-    let later = now + Duration::from_secs(4);
+    let later = now + crate::view::chat::submission::IMAGE_TIMEOUT;
     assert!(AppState::advance_submission(tab, later, true));
     tab.pane.as_mut().unwrap().chat.chips.clear();
     for force in [false, true] {
@@ -124,7 +124,7 @@ fn stop_releases_the_queue_only_after_working_disappears_and_the_input_is_clean(
     let tab = app.tabs.shown_mut().unwrap();
     let now = Instant::now();
     running(tab, now);
-    tab.term.feed("\r\nWorking… (esc to interrupt)\r\n❯ ".as_bytes());
+    tab.term.feed("\r\n✻ Working… (esc to interrupt)\r\n❯ ".as_bytes());
     AppState::chat_send(tab, now, false);
     AppState::chat_stop(tab, now);
     tab.pane.as_mut().unwrap().chat.output(now, true, false);
@@ -155,7 +155,7 @@ fn background_queue_and_image_respect_window_vetoes_but_still_progress_or_expire
             let pane = tab.pane.as_mut().unwrap();
             pane.model = crate::view::model::Model::new(pane.transcript_source.clone(), pane.cwd.clone(), || {});
             pane.next = Some(now + Duration::from_secs(60));
-            let later = if timeout { now + Duration::from_secs(4) } else { now };
+            let later = if timeout { now + crate::view::chat::submission::IMAGE_TIMEOUT } else { now };
             if picture {
                 image_draft(tab, "background");
                 AppState::chat_send(tab, now, true);

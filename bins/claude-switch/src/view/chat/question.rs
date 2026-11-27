@@ -341,9 +341,18 @@ pub(super) struct MenuShown {
     rows: Vec<String>,
     /// Its footer offers Esc.
     pub(super) esc: bool,
+    /// A question of Claude's: the description under each choice (empty for other menus).
+    notes: Vec<String>,
+    /// It is a question Claude asks, read from the screen.
+    question: bool,
 }
 
 impl MenuShown {
+    /// How many choices have a description to show under them.
+    fn noted(&self) -> usize {
+        self.notes.iter().filter(|note| !note.is_empty()).count()
+    }
+
     /// It only shows information: no choices to pick.
     pub(super) fn panel(&self) -> bool {
         self.choices.is_empty()
@@ -353,7 +362,8 @@ impl MenuShown {
 fn menu_shown(screen: &Screen) -> Option<MenuShown> {
     let panel = screens::panel(screen)?;
     let choices = panel.menu.as_ref().map(screens::Menu::texts).unwrap_or_default();
-    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc })
+    let (notes, question) = (panel.notes, panel.question);
+    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc, notes, question })
 }
 
 /// A permission prompt as last read from the screen, for the card.
@@ -633,7 +643,7 @@ fn pristine(multi: bool, row: &str) -> bool {
 /// row's own words (the single-choice rendering is not recorded yet, so only that it is there).
 fn typed_shows(multi: bool, row: &str, text: &str) -> bool {
     if multi {
-        squash(row) == squash(&format!("[✔] {text}"))
+        [squash(&format!("[✔] {text}")), squash(&format!("[√] {text}"))].contains(&squash(row))
     } else {
         !pristine(false, row) && squash(row).contains(&squash(text))
     }
@@ -1012,6 +1022,12 @@ impl Chat {
         changed | self.clear_busy() | self.land_held()
     }
 
+    /// The working line's words while the card shows a CLI menu with choices: the CLI waits for
+    /// the user, whatever the transcript says.
+    pub(in crate::view) fn menu_waiting(&self) -> Option<&'static str> {
+        self.question.menu.as_ref().filter(|menu| !menu.panel()).map(|_| ASKING)
+    }
+
     pub(super) fn question_notice(&self) -> Option<&'static str> {
         let card = &self.question;
         let rewind = card.rewind.as_ref().is_some_and(rewind::Rewind::in_flight);
@@ -1030,7 +1046,7 @@ fn ready(tab: &Tab) -> bool {
     !pane.chat.identity_unverified
         && pane.model.error.is_none()
         && tab.term.ended.is_none()
-        && (pane.chat.demo || tab.term.running())
+        && (pane.chat.demo || pane.chat.scripted() || tab.term.running())
 }
 
 /// The rewind's card is the one shown: while it runs or offers its choices, and once it stopped
@@ -1648,7 +1664,7 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
                 let title = if m.title.is_empty() { 0.0 } else { LINE };
                 HEADER + 6.0 + title + m.rows.len() as f32 * LINE
             } else {
-                HEADER + LINE + 6.0 + m.choices.len() as f32 * (CHOICE + 4.0)
+                HEADER + LINE + 6.0 + m.choices.len() as f32 * (CHOICE + 4.0) + m.noted() as f32 * LINE
             }
         })
     });
@@ -1714,26 +1730,32 @@ impl Draw<'_> {
             return self.panel(p, chat, inner, &menu, hits);
         }
         let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code menu", pal.muted, inner.w);
+        let kind = if menu.question { "Claude asks" } else { "Claude Code menu" };
+        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, kind, pal.muted, inner.w);
         y += HEADER;
         let title = if menu.title.is_empty() { "Choose in the terminal's menu" } else { menu.title.as_str() };
         copied_row(p, Face::Semibold, 12.5, inner.x, y + LINE / 2.0, title, pal.text, inner.w);
         y += LINE + 6.0;
         for (i, choice) in menu.choices.iter().enumerate() {
-            let row = Rect::new(inner.x, y, inner.w, CHOICE);
+            let note = menu.notes.get(i).filter(|note| !note.is_empty());
+            let row = Rect::new(inner.x, y, inner.w, CHOICE + if note.is_some() { LINE } else { 0.0 });
             let target = Target::Chat(Control::Question(Hit::Option(i)));
             p.rbox(row, 6.0, if self.hover == Some(target) { pal.hover } else { pal.bar });
             p.text(
                 Face::Semibold,
                 12.0,
                 row.x + 10.0,
-                row.cy(),
-                &format!("{}. {choice}", i + 1),
+                row.y + CHOICE / 2.0,
+                // A question's rows are not all numbered on the screen (Next, Submit).
+                &if menu.question { choice.clone() } else { format!("{}. {choice}", i + 1) },
                 pal.text,
                 row.w - 20.0,
             );
+            if let Some(note) = note {
+                p.text(Face::Ui, 11.0, row.x + 10.0, row.y + CHOICE + LINE / 2.0 - 4.0, note, pal.muted, row.w - 20.0);
+            }
             hits.push((row, target));
-            y += CHOICE + 4.0;
+            y += row.h + 4.0;
         }
         let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
         let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or("");

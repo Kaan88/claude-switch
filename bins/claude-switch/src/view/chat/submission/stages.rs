@@ -84,12 +84,40 @@ impl Recovery {
     }
 }
 
+/// The message Chat last submitted, kept until the CLI's input shows idle again or the terminal
+/// gets other input: interrupted before any answer, Claude Code puts it back on its input.
+pub(super) struct Sent {
+    /// What the CLI's input showed for it.
+    pub expected: String,
+    /// The draft's text.
+    pub text: String,
+    pub picture: bool,
+}
+
+/// The CLI's input being emptied of a message it put back: one Ctrl+U at a time, each after
+/// newer output than the one before.
+pub(super) struct Takeback {
+    pub epoch: u64,
+    pub presses: u8,
+    pub due: Instant,
+}
+
+/// A slash command held for a moment because the CLI's prompt was not quiet yet.
+pub(super) struct CommandWait {
+    pub due: Instant,
+    pub line: String,
+    pub from_editor: bool,
+}
+
 #[derive(Default)]
 pub(in crate::view::chat) struct Staging {
     pub(super) echo: Option<EchoWait>,
     pub(super) lines: Option<LinesWait>,
     pub(super) retry: Option<EnterOnly>,
     pub(super) recovery: Option<Recovery>,
+    pub(super) sent: Option<Sent>,
+    pub(super) takeback: Option<Takeback>,
+    pub(super) command: Option<CommandWait>,
 }
 
 impl Chat {
@@ -100,11 +128,22 @@ impl Chat {
             Some("Waiting for Claude Code to show the message on its input line…")
         } else if self.image_wait.is_some() {
             Some("Waiting for Claude Code to confirm the picture…")
+        } else if self.staging.takeback.is_some() {
+            Some("Taking your message back from Claude Code's input…")
+        } else if self.staging.command.is_some() {
+            Some("Waiting for Claude Code's prompt to run the command…")
         } else if self.mode_step.is_some() {
             // Part of the chat's work, so it also ends in a hidden tab.
             Some("Waiting for Claude Code to change the permission mode…")
         } else {
             self.question_notice()
+        }
+    }
+
+    /// The last message's turn is over or under way for good: nothing to take back.
+    pub(in crate::view::chat) fn forget_sent(&mut self) {
+        if self.staging.takeback.is_none() {
+            self.staging.sent = None;
         }
     }
 
@@ -155,5 +194,6 @@ pub(super) fn shown_exactly(tab: &Tab, expected: &str) -> bool {
     if expected.contains('\n') {
         return screen::shows_lines(&tab.term.screen, expected);
     }
-    prompt(&tab.term.screen).as_deref() == Some(expected)
+    // A command line longer than the terminal is wide wraps onto more rows.
+    prompt(&tab.term.screen).as_deref() == Some(expected) || screen::shows_wrapped(&tab.term.screen, expected)
 }

@@ -16,6 +16,10 @@ fn ready() -> Signals<'static> {
         ended: false,
         bracketed: true,
         alternate: false,
+        idle: false,
+        working: false,
+        typed: false,
+        resting: false,
     }
 }
 
@@ -319,7 +323,8 @@ fn demo_refuses_an_uncertain_draft_then_sends_only_into_its_fake_screen() {
     AppState::chat_send(tab, now, false);
     let chat = &tab.pane.as_ref().unwrap().chat;
     assert_eq!(chat.editor.text, "Synthetic one\nSynthetic two");
-    assert_eq!(chat.error, Some("Open the terminal to check"));
+    // Not refused: held until the prompt is ready, with nothing written.
+    assert!(chat.queue.is_some() && chat.error.is_none() && chat.writes.is_empty());
     assert!(!chat.demo_progress);
 
     AppState::chat_send(tab, now, true);
@@ -342,20 +347,26 @@ pub(super) fn demo() -> crate::state::AppState {
 }
 
 #[test]
-fn uncertain_notice_survives_editing_and_offers_the_explicit_override() {
+fn an_uncertain_draft_is_held_and_cancel_or_send_now_stay_explicit() {
     use crate::state::AppState;
     let mut app = demo();
     let now = Instant::now();
     let tab = app.tabs.shown_mut().unwrap();
     tab.pane.as_mut().unwrap().chat.editor.insert("First");
     AppState::chat_send(tab, now, false);
-    tab.pane.as_mut().unwrap().chat.editor.insert(" and second");
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    assert!(chat.queue.is_some() && chat.locked() && chat.error.is_none());
+    assert!(chat.writes.is_empty());
+    // Cancel unlocks the draft for editing; nothing was written.
+    chat.stop_waiting();
+    assert!(!chat.locked() && chat.writes.is_empty());
+    chat.editor.insert(" and second");
     app.chat_editor_changed();
     let tab = app.tabs.shown_mut().unwrap();
+    AppState::chat_send(tab, now, false);
     let chat = &tab.pane.as_ref().unwrap().chat;
-    assert_eq!(chat.error, Some(submission::CHECK));
     assert_eq!(chat.editor.text, "First and second");
-    assert!(chat.writes.is_empty());
+    assert!(chat.queue.is_some() && chat.writes.is_empty());
     AppState::chat_send(tab, now, true);
     assert_eq!(
         tab.pane.as_ref().unwrap().chat.writes,
@@ -406,7 +417,7 @@ fn picture_timeout_and_permission_never_press_enter_and_keep_the_draft() {
             now
         } else {
             // Even a now-visible marker cannot authorize an expired attempt.
-            now + Duration::from_secs(4)
+            now + submission::IMAGE_TIMEOUT
         };
         assert!(AppState::advance_submission(tab, when, true));
         let chat = &tab.pane.as_ref().unwrap().chat;

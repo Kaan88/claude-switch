@@ -4,15 +4,43 @@
 //! the same way and keep the old one if both versions are in use.
 use super::*;
 
-/// The fixture's rows on a 100 x 40 screen, with the cursor where the CLI left it.
+/// The fixture's rows on its screen (100 x 40 unless it says otherwise), with the cursor where the
+/// CLI left it. After the cursor line a fixture may say `@size cols rows`, `@wrapped row…` (rows
+/// the terminal marked as wrapping onto the next) and `@modes [paste] [alt] [cursor]`; a fixture
+/// without `@modes` has bracketed paste on, as Claude Code sets it.
 pub(in crate::view::chat) fn recorded(fixture: &str) -> Screen {
-    let mut lines = fixture.lines();
+    let mut lines = fixture.lines().peekable();
     let cursor = lines.next().and_then(|l| l.strip_prefix("cursor ")).expect("cursor line");
     let (row, col) = cursor.split_once(' ').expect("row and column");
     let (row, col): (usize, usize) = (row.parse().unwrap(), col.parse().unwrap());
-    let mut screen = Screen::new(100, 40, 0);
+    let (mut cols, mut rows, mut wrapped, mut modes) = (100, 40, Vec::new(), "paste");
+    while let Some(head) = lines.peek().and_then(|l| l.strip_prefix('@')) {
+        let numbers = |s: &str| s.split(' ').map(|n| n.parse::<usize>().unwrap()).collect::<Vec<_>>();
+        if let Some(size) = head.strip_prefix("size ") {
+            (cols, rows) = (numbers(size)[0], numbers(size)[1]);
+        } else if let Some(rows) = head.strip_prefix("wrapped ") {
+            wrapped = numbers(rows);
+        } else if let Some(set) = head.strip_prefix("modes") {
+            modes = set;
+        } else {
+            break;
+        }
+        lines.next();
+    }
+    let mut screen = Screen::new(cols, rows, 0);
     for (i, line) in lines.enumerate() {
+        if wrapped.contains(&i) {
+            // Two characters from the last column: the second wraps and marks the row. The
+            // first is then blanked; a character there does not end the mark.
+            screen.feed(format!("\x1b[{row};{cols}Hxx\x1b[2K\x1b[{row};{cols}H ", row = i + 1).as_bytes());
+        }
         screen.feed(format!("\x1b[{};1H{line}", i + 1).as_bytes());
+    }
+    if modes.contains("paste") {
+        screen.feed(b"\x1b[?2004h");
+    }
+    if modes.contains("alt") {
+        screen.feed(b"\x1b[?1049h");
     }
     screen.feed(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
     screen
@@ -63,6 +91,32 @@ pub(in crate::view::chat) const REWIND_ACTIONS_CODE_DOWN: &str =
 pub(in crate::view::chat) const REWIND_DONE: &str = include_str!("../fixtures/rewind_done.txt");
 pub(in crate::view::chat) const REWIND_CUT_UP1: &str = include_str!("../fixtures/rewind_cut_up1.txt");
 pub(in crate::view::chat) const REWIND_CUT_UP2: &str = include_str!("../fixtures/rewind_cut_up2.txt");
+pub(in crate::view::chat) const PLAIN_IDLE: &str = include_str!("../fixtures/plain_idle.ansi");
+pub(in crate::view::chat) const PLAIN_START: &str = include_str!("../fixtures/plain_start.ansi");
+pub(in crate::view::chat) const PLAIN_TYPED: &str = include_str!("../fixtures/plain_typed.ansi");
+pub(in crate::view::chat) const PLAIN_QUESTION: &str = include_str!("../fixtures/plain_question.ansi");
+pub(in crate::view::chat) const PLAIN_PERM_BASH: &str = include_str!("../fixtures/plain_perm_bash.ansi");
+pub(in crate::view::chat) const PLAIN_FORM: &str = include_str!("../fixtures/plain_form.ansi");
+pub(in crate::view::chat) const PLAIN_SUGGEST: &str = include_str!("../fixtures/plain_suggest.ansi");
+pub(in crate::view::chat) const WORKING_TOOL: &str = include_str!("../fixtures/working_tool.ansi");
+pub(in crate::view::chat) const PLAIN_WORKING_TYPED: &str = include_str!("../fixtures/plain_working_typed.ansi");
+pub(in crate::view::chat) const PLAIN_QUEUED: &str = include_str!("../fixtures/plain_queued.ansi");
+pub(in crate::view::chat) const DECLINED_WRAPPED: &str = include_str!("../fixtures/declined_wrapped.ansi");
+pub(in crate::view::chat) const STATUS_FOOTER: &str = include_str!("../fixtures/status_footer.ansi");
+pub(in crate::view::chat) const PLAIN_INTERRUPTED: &str = include_str!("../fixtures/plain_interrupted.ansi");
+pub(in crate::view::chat) const PLAIN_BG_SHELL: &str = include_str!("../fixtures/plain_bg_shell.ansi");
+pub(in crate::view::chat) const NARROW_WORKING: &str = include_str!("../fixtures/narrow_working.ansi");
+pub(in crate::view::chat) const PLAIN_PASTED_MARKER: &str = include_str!("../fixtures/plain_pasted_marker.ansi");
+pub(in crate::view::chat) const PLAIN_PASTED_LINES: &str = include_str!("../fixtures/plain_pasted_lines.ansi");
+pub(in crate::view::chat) const PLAIN_LONG: &str = include_str!("../fixtures/plain_long.ansi");
+pub(in crate::view::chat) const PLAIN_COMPACTING: &str = include_str!("../fixtures/plain_compacting.ansi");
+pub(in crate::view::chat) const PLAIN_PLAN: &str = include_str!("../fixtures/plain_plan.ansi");
+pub(in crate::view::chat) const PLAIN_RESTORED: &str = include_str!("../fixtures/plain_restored.ansi");
+pub(in crate::view::chat) const PLAIN_EMPTIED: &str = include_str!("../fixtures/plain_emptied.ansi");
+pub(in crate::view::chat) const PROMPT_IDLE: &str = include_str!("../fixtures/prompt_idle.ansi");
+pub(in crate::view::chat) const PROMPT_SUGGEST: &str = include_str!("../fixtures/prompt_suggest.ansi");
+pub(in crate::view::chat) const PROMPT_PASTED: &str = include_str!("../fixtures/prompt_pasted.ansi");
+pub(in crate::view::chat) const PROMPT_CLEARED: &str = include_str!("../fixtures/prompt_cleared.ansi");
 
 fn sends_blocked(screen: &Screen) -> bool {
     !crate::view::chat::submission::screen::clean_prompt(screen)
@@ -113,7 +167,12 @@ fn the_review_step_reads_its_questions_answers_and_highlight() {
     assert_eq!(pairs(&multi), ["Which fruits do you like? = Pear"]);
     for fixture in [ASK_REVIEW, FORM_REVIEW, MULTI_REVIEW] {
         let screen = recorded(fixture);
-        assert!(!permission_like(&screen) && panel(&screen).is_none());
+        assert!(!permission_like(&screen));
+        // The review has no footer: it is a menu of its two entries all the same, for the card
+        // that shows a question the transcript does not hold yet.
+        let review = panel(&screen).expect("the review as a menu");
+        assert_eq!(review.menu.expect("its entries").texts(), ["Submit answers", "Cancel"]);
+        assert!(review.question && review.title.starts_with("Review your answers: "));
         assert!(sends_blocked(&screen));
     }
     for fixture in [ASK_SINGLE, ASK_TWO, ASK_MULTI, FORM_MULTI, FORM_SECOND, PERM_BASH, PLAN, IDLE_NBSP] {
@@ -267,4 +326,187 @@ fn a_status_line_that_reads_like_a_menu_hint_under_the_idle_input_is_not_a_menu(
     assert!(panel(&screen).is_none() && !permission_like(&screen));
     // A real menu with the same hint still counts.
     assert!(crate::view::chat::submission::screen::menu(&recorded(PLAN)));
+}
+
+// Recorded on 2026-11-27 from Claude Code 2.1.332 with the recorder's `.ansi` snapshots (styles,
+// size, wrap marks). `PLAIN_*`: started without `TERM`, as a tab of a program opened from the
+// Start menu, where Claude Code draws `>`, `[ ]` and `√`; the rest with `TERM=xterm-256color`.
+
+fn idle(screen: &Screen) -> bool {
+    crate::view::chat::submission::screen::idle_slash_prompt(screen, true)
+}
+
+#[test]
+fn the_idle_input_is_read_in_both_drawings_and_under_any_hint_row() {
+    use crate::view::chat::submission::screen::{clean_prompt, menu, prompt, working};
+    // After a turn, at the start (a faint placeholder), with the faint next-prompt suggestion,
+    // with a background shell, after an interruption, over a status line that reads like a menu's
+    // footer, and on a row the terminal still marks as wrapping after a declined prompt.
+    for (name, fixture) in [
+        ("plain idle", PLAIN_IDLE),
+        ("plain start", PLAIN_START),
+        ("plain suggestion", PLAIN_SUGGEST),
+        ("plain background shell", PLAIN_BG_SHELL),
+        ("plain interrupted", PLAIN_INTERRUPTED),
+        ("status line", STATUS_FOOTER),
+        ("declined, wrap mark left", DECLINED_WRAPPED),
+        ("idle", PROMPT_IDLE),
+        ("suggestion", PROMPT_SUGGEST),
+        ("cleared", PROMPT_CLEARED),
+    ] {
+        let screen = recorded(fixture);
+        assert!(clean_prompt(&screen), "{name}: {:?}", prompt(&screen));
+        assert!(idle(&screen) && !working(&screen) && !menu(&screen), "{name}");
+        assert!(!permission_like(&screen) && panel(&screen).is_none(), "{name}");
+    }
+    assert!(recorded(DECLINED_WRAPPED).line(recorded(DECLINED_WRAPPED).cursor().row).unwrap().wrapped());
+    // Typed text is never an empty input.
+    assert_eq!(prompt(&recorded(PLAIN_TYPED)).as_deref(), Some("Reply with just the word: pong"));
+    assert_eq!(prompt(&recorded(PROMPT_PASTED)).as_deref(), Some("fix the typo"));
+    assert_eq!(prompt(&recorded(PLAIN_PASTED_MARKER)).as_deref(), Some("[Pasted text #1 +13 lines]"));
+    // A draft of several rows has the cursor under its first row: not a one-row prompt.
+    assert_eq!(prompt(&recorded(PLAIN_PASTED_LINES)), None);
+    assert_eq!(prompt(&recorded(PLAIN_LONG)), None);
+}
+
+#[test]
+fn a_running_turn_is_known_by_its_hint_or_its_working_line_and_is_never_idle() {
+    use crate::view::chat::submission::screen::{prompt, working};
+    for (name, fixture, input) in [
+        ("a tool runs", WORKING_TOOL, ""),
+        ("60 columns", NARROW_WORKING, ""),
+        // The hint row drops "esc to interrupt" while the input holds text.
+        ("typed while busy", PLAIN_WORKING_TYPED, "hello while busy"),
+        ("a message queued in the CLI", PLAIN_QUEUED, ""),
+        ("compacting", PLAIN_COMPACTING, ""),
+    ] {
+        let screen = recorded(fixture);
+        assert!(working(&screen) && !idle(&screen), "{name}");
+        assert_eq!(prompt(&screen).as_deref(), Some(input), "{name}");
+    }
+}
+
+#[test]
+fn several_rows_of_input_read_back_whatever_the_mark() {
+    use crate::view::chat::submission::screen::{shows_lines, shows_wrapped};
+    let lines = recorded(PLAIN_PASTED_LINES);
+    assert!(shows_lines(&lines, "line one\nline two\nline three"));
+    assert!(!shows_lines(&lines, "line one\nline two"));
+    assert!(shows_lines(&recorded(PLAIN_PASTED_MARKER), "any\ntext\nof several lines"));
+    let long = "The quick brown fox jumps over the lazy dog while the river keeps moving past the old stone \
+        bridge and the children watch the little boats drift slowly toward the sea where gulls circle above \
+        the harbour walls and fishermen mend their nets in the warm afternoon light.";
+    assert!(shows_wrapped(&recorded(PLAIN_LONG), long));
+    assert!(!shows_wrapped(&recorded(PLAIN_LONG), &long[..40]));
+    assert!(!shows_wrapped(&recorded(PLAIN_IDLE), "x"));
+}
+
+#[test]
+fn a_question_reads_from_the_screen_alone_with_its_text_choices_and_descriptions() {
+    // Claude Code 2.1.332 writes an `AskUserQuestion` call to the transcript only once it is
+    // answered, so the screen is all there is while it waits. 170 x 22, drawn without Unicode.
+    let screen = recorded(PLAIN_QUESTION);
+    assert!(!permission_like(&screen) && sends_blocked(&screen));
+    let asked = panel(&screen).expect("the question as a menu");
+    assert!(asked.question && asked.esc);
+    assert_eq!(
+        asked.title,
+        "Which agent should do the translation for episode 1035634? The last two episodes used astra at high effort."
+    );
+    let menu = asked.menu.expect("its choices");
+    assert_eq!(
+        menu.texts(),
+        ["Astra, high (Recommended)", "Astra, medium", "Sol", "Claude", "Type something.", "Chat about this"]
+    );
+    assert_eq!(menu.highlight(), Some(0));
+    assert_eq!(
+        asked.notes[0],
+        "astra at high effort, as for 1035632. Parallel jobs, then one fix job for the boxes that fail."
+    );
+    assert_eq!(asked.notes[3], "I translate it myself in this conversation.");
+    assert!(asked.notes[4].is_empty() && asked.notes[5].is_empty());
+    // The same question drawn with Unicode.
+    let unicode = panel(&recorded(ASK_SINGLE)).expect("a question");
+    assert!(unicode.question);
+    assert_eq!(unicode.title, "Which colour do you prefer?");
+    assert_eq!(unicode.notes[..3], ["A warm, energetic red.", "A calm, natural green.", "A cool, steady blue."]);
+    // Any other menu keeps its own title and has no descriptions.
+    let model = panel(&recorded(MENU_MODEL)).expect("the model picker");
+    assert!(!model.question && model.notes.is_empty());
+}
+
+#[test]
+fn a_form_page_drawn_without_unicode_reads_its_boxes_and_its_next_row() {
+    let screen = recorded(PLAIN_FORM);
+    let page = panel(&screen).expect("a form page as a menu");
+    assert!(page.question);
+    assert_eq!(page.title, "Which fruits do you like?");
+    let menu = page.menu.expect("its rows");
+    // As the arrow keys walk them: the unnumbered Next row comes after "Type something".
+    assert_eq!(menu.texts(), ["[√] Apple", "[ ] Pear", "[ ] Plum", "[ ] Type something", "Next", "Chat about this"]);
+    assert_eq!(checkbox(&menu.entries[0].text), Some((true, "Apple")));
+    assert_eq!(checkbox(&menu.entries[1].text), Some((false, "Pear")));
+    assert_eq!(menu.highlight(), Some(0));
+    let unicode = panel(&recorded(FORM_MULTI)).expect("the same page with Unicode").menu.unwrap();
+    assert_eq!(unicode.texts()[3..], ["[ ] Type something", "Next", "Chat about this"]);
+}
+
+#[test]
+fn prompts_drawn_without_unicode_are_still_permission_prompts_and_plan_menus() {
+    let bash = recorded(PLAIN_PERM_BASH);
+    assert!(crate::attention::screen_permission_prompt(&bash) && permission_like(&bash) && panel(&bash).is_none());
+    let prompt = permission(&bash).expect("the prompt");
+    assert_eq!(prompt.question, "Do you want to proceed?");
+    assert_eq!(prompt.menu.texts().len(), 4);
+    assert_eq!(prompt.menu.highlight(), Some(0));
+    let plan_screen = recorded(PLAIN_PLAN);
+    let menu = plan(&plan_screen).expect("the plan approval");
+    assert_eq!(menu.texts(), ["Yes, and use auto mode", "Yes, manually approve edits", "Tell Claude what to change"]);
+    assert!(permission_like(&plan_screen) && panel(&plan_screen).is_none());
+}
+
+#[test]
+fn a_footer_with_rows_under_it_still_marks_a_menu_unless_an_input_row_is_under_it() {
+    use crate::view::chat::submission::screen::clean_prompt;
+    // A rule and a notice under the question's footer (a redraw can leave rows there).
+    let rule = "─".repeat(100);
+    let mut screen = recorded(ASK_SINGLE);
+    screen.feed(format!("\x1b[25;1H{rule}\x1b[26;1H  1 MCP server failed · /mcp").as_bytes());
+    assert!(panel(&screen).is_some_and(|p| p.question) && !clean_prompt(&screen));
+    // The same words above the input box are the conversation.
+    let mut old = Screen::new(100, 40, 0);
+    old.feed(
+        format!("  1. Yes\r\n  2. No\r\n\r\nEnter to select · Esc to cancel\r\n\r\n● Done.\r\n{rule}\r\n> \r\n{rule}\x1b[8;3H")
+            .as_bytes(),
+    );
+    assert!(panel(&old).is_none() && clean_prompt(&old));
+}
+
+/// Prints what the gates make of every `.ansi` recording in the folder `CS_PROBE_DIR` names (the
+/// recorder's output): `cargo test probe_recordings -- --ignored --nocapture`.
+#[test]
+#[ignore = "a tool: reads recordings from CS_PROBE_DIR"]
+fn probe_recordings() {
+    use crate::view::chat::submission::screen;
+    let dir = std::env::var("CS_PROBE_DIR").expect("CS_PROBE_DIR");
+    let mut names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ansi"))
+        .collect();
+    names.sort();
+    for path in names {
+        let s = recorded(&std::fs::read_to_string(&path).unwrap());
+        println!(
+            "{:24} prompt={:?} menu={} working={} permission={} like={} panel={} mode={:?}",
+            path.file_stem().unwrap().to_string_lossy(),
+            screen::prompt(&s),
+            screen::menu(&s),
+            screen::working(&s),
+            crate::attention::screen_permission_prompt(&s),
+            permission_like(&s),
+            panel(&s).is_some(),
+            mode(&s),
+        );
+    }
 }

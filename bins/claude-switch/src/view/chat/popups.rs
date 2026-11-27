@@ -232,9 +232,10 @@ pub(super) fn next_prompt(screen: &Screen) -> Option<String> {
     }
     let cursor = screen.cursor();
     let cells = screen.line(cursor.row)?.cells();
-    let glyph = cells.iter().position(|c| c.ch == '❯')?;
+    let glyph = cells.iter().position(|c| super::submission::screen::prompt_mark(c.ch))?;
     let start = glyph + 2;
-    if cursor.col != start || cells.get(glyph + 1).is_none_or(|c| c.ch != ' ') {
+    // Claude Code 2.1.332 draws a no-break space after the mark.
+    if cursor.col != start || cells.get(glyph + 1).is_none_or(|c| !matches!(c.ch, ' ' | '\u{a0}')) {
         return None;
     }
     let rest = cells.get(start..)?;

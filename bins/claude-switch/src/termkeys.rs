@@ -44,7 +44,8 @@ pub fn claude_input_at_cursor(screen: &Screen) -> bool {
     if !below.clone().any(rule) {
         return false;
     }
-    let top = (0..cursor).rev().any(|row| rule(row) && text(row + 1).trim_start().starts_with('❯'));
+    // `>` where Claude Code draws without Unicode (no `TERM` on Windows).
+    let top = (0..cursor).rev().any(|row| rule(row) && text(row + 1).trim_start().starts_with(['❯', '>']));
     top || below.into_iter().any(|row| rule(row) && row + 1 < screen.rows() && footer(row + 1))
 }
 
