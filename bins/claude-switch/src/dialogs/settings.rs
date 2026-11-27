@@ -11,6 +11,8 @@ use mdshared_ui::settings::{Form, Outcome, Row, Value};
 
 mod appearance;
 mod pages;
+mod theme_editor;
+mod tiles;
 pub(crate) use pages::Settings;
 
 pub(crate) const TERMINAL: &str = "Terminal";
@@ -182,10 +184,18 @@ fn colour(id: u32, label: &str, saved: &Option<String>, fallback: mdshared_ui::g
 
 fn terminal(st: &AppState) -> Vec<Row> {
     let a = &st.config.appearance;
-    let auto = termtheme::scheme("auto", st.pal());
-    let scheme_names: Vec<_> = PRESETS.iter().map(|preset| preset.name).collect();
-    vec![
-        Row::choice(SET_TERM_COLOURS, "Terminal colours", &scheme_names, preset_index(&st.config.terminal_scheme)),
+    let auto = termtheme::terminal("auto", st.pal(), a, st.high_contrast).0;
+    let selected = preset_index(&st.config.terminal_scheme);
+    let mut rows: Vec<_> = PRESETS
+        .chunks(tiles::ACROSS)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let (id, label) = if i == 0 { (SET_TERM_COLOURS, "Terminal colours") } else { (tiles::MORE_TERMINAL, "") };
+            let names: Vec<_> = chunk.iter().map(|s| s.name).collect();
+            Row::choice(id, label, &names, if selected / tiles::ACROSS == i { selected % tiles::ACROSS } else { 0 })
+        })
+        .collect();
+    rows.extend([
         Row::number(
             SET_TERM_FONT,
             "Terminal font size",
@@ -211,7 +221,8 @@ fn terminal(st: &AppState) -> Vec<Row> {
             .help("Adjusted to at least 7:1 contrast."),
         colour(SET_TERM_ACCENT, "Terminal accent", &a.terminal_accent, st.pal().accent)
             .help("Tints the selection, cursor and active tab mark."),
-    ]
+    ]);
+    rows
 }
 
 fn sessions(st: &AppState) -> Vec<Row> {
@@ -409,6 +420,7 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
                 st.save_window();
             }
         }
+        Outcome::Action(id) if theme_editor::action(st, id) => {}
         Outcome::Changed { id: SET_RESTORE_TABS, value: Value::Choice(i) } => {
             if let Some(&mode) = crate::winfile::RestoreTabs::ALL.get(i) {
                 st.win_file.restore_tabs = mode;
@@ -529,9 +541,6 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
                 (SET_THEME, Value::Choice(i)) if i < WINDOW_THEMES.len() => {
                     st.config.window_theme = WINDOW_THEMES[i].0.into();
                 }
-                (SET_TERM_COLOURS, Value::Choice(i)) if i < PRESETS.len() => {
-                    st.config.terminal_scheme = PRESETS[i].id.into();
-                }
                 (SET_TERM_FONT, Value::Number(n)) => {
                     st.config.terminal_font_size =
                         n.clamp(i32::from(TERMINAL_FONT_MIN), i32::from(TERMINAL_FONT_MAX)) as u8;
@@ -626,9 +635,13 @@ mod tests {
                 SET_REDUCE_MOTION,
                 SET_CORNERS,
                 SET_SHADOWS,
+                theme_editor::EDIT_DARK,
+                theme_editor::EDIT_LIGHT,
+                theme_editor::IMPORT,
             ],
             &[
                 SET_TERM_COLOURS,
+                tiles::MORE_TERMINAL,
                 SET_TERM_FONT,
                 terminal_appearance::CURSOR,
                 SET_CURSOR_BLINK,

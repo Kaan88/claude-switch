@@ -465,15 +465,22 @@ impl Ui {
         self.hits.push((r, act));
     }
 
-    pub fn draw_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect, m: &Model, mouse: (f32, f32)) {
+    pub fn draw_overlay(
+        &mut self,
+        p: &mut Painter,
+        pal: &Palette,
+        window: Rect,
+        m: &Model,
+        mouse: (f32, f32),
+        radius: f32,
+    ) {
         let Some(overlay) = &mut self.overlay else { return };
         self.mouse = mouse;
         self.hits.clear();
-        p.fill_a(window, pal.title, 0.75);
         let bounds =
             Rect::new(window.x + window.w * 0.065, window.y + window.h * 0.07, window.w * 0.87, window.h * 0.86);
         overlay.bounds = bounds;
-        p.rbox(bounds, 10.0, pal.popup);
+        p.frame(bounds, radius, pal.popup, pal.popup_line);
         let frame = Rect::new(bounds.x + 14.0, bounds.y + 13.0, (bounds.w - 28.0).max(1.0), (bounds.h - 66.0).max(1.0));
         if let Some(image) = &overlay.image {
             paint_image(p, image, frame, 4.0, true);

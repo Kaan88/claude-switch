@@ -41,6 +41,7 @@ pub enum Msg {
     /// The folder chosen in the New session dialog's folder picker.
     FolderPicked(std::path::PathBuf),
     ArchiveReportSaved(crate::archive_report::ReportResult),
+    ThemeFile(Result<Option<Box<claude_switch_core::config::theme::NamedTheme>>, String>),
     Tray(crate::tray::Event),
     /// Another process of this user asked to open a handover tab (`handover_pipe`).
     Handover(Box<crate::compact_cli::Loaded>, std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>),
@@ -639,7 +640,11 @@ fn appearance(config: &Config, forced_dark: Option<bool>, high_contrast: bool) -
         let a = &config.appearance;
         let base = crate::termtheme::palettes::get(dark, if dark { &a.dark_theme } else { &a.light_theme });
         let mut tokens = Tokens::new(dark);
-        tokens.palette = crate::windowlook::palette(&base.palette, &look, platform::system_accent());
+        let system = platform::system_accent();
+        tokens.palette = match crate::termtheme::named::selected(a, dark) {
+            Some(t) => crate::termtheme::named::palette(t, a, system),
+            None => crate::windowlook::palette(&base.palette, &look, system),
+        };
         tokens
     };
     let terminal =

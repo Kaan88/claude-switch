@@ -11,8 +11,7 @@ use mdshared_ui::gfx::{Face, Painter, Rect, Wrap};
 use mdshared_ui::host::Cx;
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::overlay::{
-    DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_backdrop_presence, draw_dialog_button,
-    draw_dialog_card_with,
+    DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_dialog_button, draw_dialog_card_with,
 };
 use mdshared_ui::textfield::{FieldColors, FieldHit, TextField};
 use mdshared_ui::theme::Palette;
@@ -176,14 +175,15 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     let (w, h) = (window.w, window.h);
     let Some(mut dialog) = st.dialog.take() else { return };
     let look = st.appearance;
-    let shadow = if st.high_contrast { 0.0 } else { look.shadow };
+    let cards = crate::windowlook::Cards::for_frame(st, p);
+    let shadow = if st.high_contrast { 0.0 } else { cards.decoration(look.shadow) };
     if let Dialog::Settings(form) = &mut dialog {
         form.draw(p, st, window, t, cx.anim());
         st.dialog = Some(dialog);
         return;
     }
     let pal = *st.pal();
-    draw_backdrop_presence(p, &pal, w, h, t);
+    cards.dim(p, &pal, window, t);
     let usage = if matches!(dialog, Dialog::Accounts { .. }) && st.config.show_usage {
         let counts = st.config.accounts.iter().map(|a| st.running_for_usage(&a.slug)).collect::<Vec<_>>();
         let (usage, statuses, demo) = (&st.usage, &st.statuses, st.source.is_demo());
@@ -206,7 +206,14 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     } else {
         Vec::new()
     };
-    let mut d = Draw { hits: &mut st.hits, hover: st.hover, pressed: st.pressed, pal, radius: look.radius, shadow };
+    let mut d = Draw {
+        hits: &mut st.hits,
+        hover: st.hover,
+        pressed: st.pressed,
+        pal,
+        radius: cards.decoration(look.radius),
+        shadow,
+    };
     match &mut dialog {
         Dialog::Confirm { title, text, ok, then } => {
             let tw = 460.0 - 2.0 * DIALOG_PAD;

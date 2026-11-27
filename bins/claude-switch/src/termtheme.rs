@@ -9,11 +9,12 @@ use mdshared_ui::termview::Scheme;
 use mdshared_ui::theme::Palette;
 use mdshared_ui::tokens::legible;
 
+pub mod named;
 pub mod palettes;
 use palettes::{DARK_ANSI, DARK_TERMINAL, LIGHT_ANSI, LIGHT_TERMINAL, TermColours};
 
 pub const WINDOW_THEMES: [(&str, &str); 3] = [("system", "System"), ("light", "Light"), ("dark", "Dark")];
-pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Claude"), ("system", "System"), ("custom", "Custom")];
+pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Palette"), ("system", "System"), ("custom", "Custom")];
 pub const CUSTOM: &str = "custom";
 const BLACK: Rgb = rgb(0x000000);
 const WHITE: Rgb = rgb(0xffffff);
@@ -143,6 +144,19 @@ pub fn scheme(id: &str, pal: &Palette) -> Scheme {
 /// The scheme and its tab mark. The renderer consumes these cached values, not the form's text.
 pub fn terminal(id: &str, pal: &Palette, prefs: &AppearancePrefs, high_contrast: bool) -> (Scheme, Rgb) {
     let mut s = scheme(id, pal);
+    if !high_contrast
+        && (preset_index(id) == 0 || id == CUSTOM)
+        && let Some(theme) = named::selected(prefs, pal.dark)
+    {
+        s.background = theme.terminal_background.0;
+        s.foreground = theme.terminal_foreground.0;
+        s.ansi = theme.ansi.map(|c| c.0);
+        s.selection = theme.terminal_selection.0;
+        s.cursor = s.foreground;
+        s.cursor_text = s.background;
+        s.selection_text =
+            Some(if contrast(s.foreground, s.selection) >= 4.5 { s.foreground } else { opposing(s.selection) });
+    }
     let read = |v: &Option<String>, default| v.as_deref().and_then(parse_hex).unwrap_or(default);
     let mut accent = pal.accent;
     if id == CUSTOM {

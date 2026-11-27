@@ -59,15 +59,11 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
         st.hits.push((rects.1, Target::Splitter));
     }
 
-    let had_toasts = !st.toasts.is_empty();
     crate::resume_tabs::draw_toasts(st, cx, p, window);
-    if had_toasts && st.toasts.is_empty() && st.terminal_shown() && st.config.appearance.terminal_opacity < 100 {
-        // The final toast animation may have damaged only its own rectangle.
-        cx.request_redraw(term_area);
-    }
     list::draw_undo(st, p, window);
     if let Some(over) = st.tip.shown() {
-        Bubble::tip(p, &over.text, over.anchor, w, h).draw(p, &pal);
+        let tip = Bubble::tip(p, &over.text, over.anchor, w, h);
+        windowlook::Cards::for_frame(st, p).draw(p, tip.rect, pal.popup, |p| tip.draw(p, &pal));
     }
     st.draw_session_overlay(p, &pal, window);
     windowlook::draw_overlays(st, cx, p, window);

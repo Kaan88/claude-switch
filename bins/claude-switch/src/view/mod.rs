@@ -478,8 +478,9 @@ impl AppState {
 
     pub fn draw_session_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect) {
         let mouse = self.picture_pointer();
+        let radius = crate::windowlook::Cards::for_frame(self, p).decoration(10.0);
         if let Some(pane) = self.shown_pane(window.w) {
-            pane.ui.draw_overlay(p, pal, window, &pane.model, mouse);
+            pane.ui.draw_overlay(p, pal, window, &pane.model, mouse, radius);
         }
     }
 

@@ -673,8 +673,9 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 The Appearance page controls the window. The window theme is System, Light or Dark;
 `--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
-(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as a row of swatches beside
-its choice; a click on a swatch chooses it. Dark: Neutral (the toolkit's dark), Near black, Warm,
+(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as named swatches.
+A click on the preview or caption chooses it; Tab focuses a row and Left/Right or Home/End changes
+the choice. Terminal presets use the same control. Dark: Neutral (the toolkit's dark), Near black, Warm,
 Blue-grey and High contrast (the toolkit's); light: Paper, Warm, Cool (the toolkit's light, warm and
 cool) and High contrast. Every palette has its own terminal colours, which Automatic terminal colours
 follow; the table of palettes and their terminal colours is `termtheme/palettes.rs`, the one place
@@ -684,6 +685,22 @@ accent (Claude's clay by default on every palette, held to 7:1 on the high-contr
 or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
 Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
 compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
+
+Named palettes are stored by stable `user-` id under `appearance.themes`. The existing
+`darkTheme` and `lightTheme` keys select them as well as built-ins; no settings rewrite is
+needed to upgrade. The name is display text, never a path. Window surfaces and automatic
+terminal colours resolve by id, even when two palettes have identical window colours.
+Theme files are versioned JSON containing only a name, base palette and `#RRGGBB` colours.
+Import validates the whole file including all 16 ANSI colours; export creates a new file.
+
+The Appearance library opens the selected dark or light palette as a draft. A built-in is
+always copied; a user theme can be renamed, updated or saved under a new name. Generate shades
+rebuilds surfaces, text and terminal colours from the draft's page and accent. Edits stay in
+the form until Save. The editor reports the weakest text, dim text, selection, accent or terminal
+pair, or the focused ANSI colour against the terminal background. Contrast below 4.5:1 is
+flagged, not forbidden. The existing system/custom accent choice and Windows high contrast
+still take priority. Settings use switches for booleans and segmented controls for short plain
+choices. Session and folder context menus use the same switch drawing for pinned/hidden states.
 
 Automatic terminal colours use the chosen palette's terminal colours (Neutral is `#101010`).
 Match window uses the window bar background. Custom uses the background, text and accent picked on
@@ -1281,10 +1298,20 @@ respects an explicitly steady cursor, the system caret interval, focus, visibili
 
 Opacity defaults to 100% and steps down to 60% by 5%. It affects normal backgrounds and padding,
 not text, explicit terminal backgrounds, or selected cells. The toolkit can raise opacity for text
-contrast. Without an active Mica or Acrylic backdrop (including high contrast or loss of window
+contrast. On a translucent frame the grid requests grayscale glyph masks even for cells the
+toolkit promotes to opaque. Edges use source-over on premultiplied BGRA, not a second blend
+against black. On an opaque frame the font returns to the system's antialiasing. The pinned
+toolkit still raises opacity per ink colour, so dim text can have darker cell backgrounds.
+Without an active Mica or Acrylic backdrop (including high contrast or loss of window
 focus), the setting is disabled and the surface draws opaque. The scrollback thumb has a solid
-gutter and the end notice is drawn on solid rows. The Chat drawer header is solid. Window-level
-popups and dialogs temporarily use an opaque terminal frame beneath their edges and scrims.
+gutter and the end notice is drawn on solid rows. The Chat drawer header is solid.
+
+The terminal uses the same opacity and glyph masks whether an overlay is open or not. Over a
+translucent terminal, menus and dialogs use solid, square-edged cards without exterior shadows.
+Widgets with built-in shadows (such as toasts and tips) draw on a solid backing clipped to the
+card; entrance animations fade the finished card over the grid. Only modal dialogs dim the
+window: fading a black fill over the saved pixels blends premultiplied colour **and** alpha,
+including where marked chrome meets the grid. No separate compositor surface is needed.
 
 `--demo --demo-terminal bar,80,mica` previews this with a synthetic Chat drawer; a debug build
 can add `--shell cmd.exe` to preview it with an isolated command prompt instead.
