@@ -469,6 +469,18 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     otherwise (DESIGN.md: no generated permission answers). Also in the screenshot: the conversation
     above was empty in a fresh handover session (check that the Chat view attaches to the new
     transcript).
+    Forms done (2026-11-27): several questions and multi-select ones are answered from the card too
+    (DESIGN.md, "Forms"): picks in the card, then one Submit that drives the CLI's form key by key
+    and presses "Submit answers" only once the review matches. Checked: unit tests over screens
+    recorded from Claude Code 2.1.332 (a two-question form with a multi-select first, its typed
+    "Type something", the Next row, the second question and the review; one multi-select question
+    with its Submit row and review; two single-choice questions and their review) and over a scripted
+    terminal for the whole run and each way it stops. Not checked: the card has not been seen or
+    clicked in the running app; a form has not been driven end to end by the app against a live CLI
+    (the recorded screens were reached by hand-written key scripts); a typed answer on a
+    single-choice question inside a form (its row with text is not recorded, so only that the text
+    is on that row is checked); a multi-select as the last of several questions (its row is assumed
+    to read "Submit", "Next" is accepted too); a typed answer long enough to wrap.
 39. **A tab rename is a label only** (owner, 2026-11-26: renamed the toolkit session's tab to "toolkit"; search
     does not find it and other sessions cannot reach it by that name). "Rename tab…" (`tabcontrols.rs`, dialog in
     `dialogs.rs:549`) sets `Tab::rename` in memory only: it is not in `terminal-tabs.json` (lost on restart), not in
