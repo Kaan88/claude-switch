@@ -468,12 +468,28 @@ fn run_logged(mut command: Command, log: &Path, out: Option<&Path>, stop: &Atomi
     }
 }
 
+/// The API key goes to `claude` alone: never to cargo, the build scripts and proc macros it
+/// runs, or the check's test program.
+fn without_key(command: &mut Command, setup: &Setup) {
+    command.env_remove("ANTHROPIC_API_KEY");
+    if let Some(name) = &setup.options.api_key_env {
+        command.env_remove(name);
+    }
+}
+
+/// `cargo test --no-run` for the app, with the lock file as it is and without the API key.
+fn build_command(setup: &Setup) -> Command {
+    let mut command = Command::new("cargo");
+    command.arg("test").arg("--locked").arg("--manifest-path").arg(setup.options.repo.join("Cargo.toml"));
+    command.args(["-p", "claude-switch", "--no-run", "--message-format=json-render-diagnostics"]);
+    without_key(&mut command, setup);
+    command
+}
+
 /// Builds the app's tests and gives the test program: the check runs it directly, so each check
 /// takes a moment and a source file changed meanwhile cannot break a run half way.
 fn build_check(setup: &Setup, out: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
-    let mut command = Command::new("cargo");
-    command.arg("test").arg("--manifest-path").arg(setup.options.repo.join("Cargo.toml"));
-    command.args(["-p", "claude-switch", "--no-run", "--message-format=json-render-diagnostics"]);
+    let command = build_command(setup);
     let (log, messages) = (out.join("build.log"), out.join("build.json"));
     let failed = || format!("the check does not build (see {}):\n{}", log.display(), tail(&log, 8));
     if !run_logged(command, &log, Some(&messages), stop)? {
@@ -503,6 +519,7 @@ fn check(setup: &Setup, run: &Run, out: &Path, script: &str) -> Result<Vec<State
     let _ = std::fs::remove_file(&summary);
     let program = run.shared.lock().unwrap().check.clone().ok_or("the check was not built")?;
     let mut command = Command::new(program);
+    without_key(&mut command, setup);
     command.args(["cli_compat", "--ignored", "--nocapture"]);
     command.env("CS_COMPAT_RECORDINGS", out);
     command.env("CS_COMPAT_EXPECT", setup.options.repo.join("tools/screen-recorder/expect"));
@@ -967,6 +984,54 @@ mod tests {
         let deny = all.iter().find(|s| s.name == "deny").expect("deny");
         let settings = deny.args.last().expect("its settings file");
         assert!(Path::new(settings).is_file(), "{settings}");
+    }
+
+    fn api_setup(name: &str) -> Setup {
+        let mut options = options(&["--api-key-env".to_owned(), name.to_owned()]).unwrap();
+        options.repo = PathBuf::from("repo");
+        let none = PathBuf::new();
+        Setup { options, scratch: none.clone(), work: none.clone(), project: none.clone(), env: Vec::new(), base: none }
+    }
+
+    #[test]
+    fn the_api_key_never_reaches_cargo_or_the_check() {
+        let setup = api_setup("CS_RECORDER_TEST_KEY");
+        let removed = |command: &Command| -> Vec<String> {
+            let envs = command.get_envs().filter(|(_, value)| value.is_none());
+            envs.map(|(key, _)| key.to_string_lossy().to_ascii_uppercase()).collect()
+        };
+        let build = build_command(&setup);
+        let args: Vec<_> = build.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(args.contains(&"--locked".to_owned()), "{args:?}");
+        for wanted in ["ANTHROPIC_API_KEY", "CS_RECORDER_TEST_KEY"] {
+            assert!(removed(&build).contains(&wanted.to_owned()), "cargo keeps {wanted}");
+        }
+        let mut check = Command::new("check");
+        without_key(&mut check, &setup);
+        assert_eq!(removed(&check).len(), 2);
+    }
+
+    fn workflow() -> String {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/cli-compat.yml");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    #[test]
+    fn in_the_workflow_only_the_recording_step_has_the_key_and_the_check_is_built_before_it() {
+        let text = workflow();
+        let given: Vec<usize> =
+            text.match_indices("ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}").map(|m| m.0).collect();
+        assert_eq!(given.len(), 1, "one step has the key");
+        let built = text.find("cargo test --locked -p claude-switch --no-run").expect("a step that builds the check");
+        assert!(built < given[0], "the check is built before the key is there");
+        let recording = &text[given[0]..];
+        let step_end = recording
+            .find(
+                "
+      - ",
+            )
+            .unwrap_or(recording.len());
+        assert!(recording[..step_end].contains("recorder.exe compat"), "the key goes to the recording step");
     }
 
     #[test]

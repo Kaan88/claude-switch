@@ -97,6 +97,12 @@ jobs:
         run: claude --version
       - name: Build the recorder
         run: cargo build --locked --manifest-path tools/screen-recorder/Cargo.toml
+      # Built here, before the API key is in any step's environment: the recorder's own build of
+      # the check then finds it done, and runs no build script or proc macro (it also removes
+      # the key from cargo's and the check's environment).
+      - name: Build the check
+        run: cargo test --locked -p claude-switch --no-run
+      # The only step with the key.
       - name: Record every script and check the recordings
         id: run
         env:

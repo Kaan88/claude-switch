@@ -152,7 +152,9 @@ secret ANTHROPIC_API_KEY is not set". With a key there is no sign-in: the runner
 folder of its own that marks the first-run screens as done and the key as accepted (`.claude.json`:
 `hasCompletedOnboarding`, `customApiKeyResponses.approved` with the key's last 20 characters), and
 `start` answers the folder trust dialog. A snapshot never holds a key: what the CLI shows of one is
-starred out.
+starred out. Only the recording step has the key in its environment: the check is built in a step
+before it, and the recorder removes the key (`ANTHROPIC_API_KEY` and the `--api-key-env` name)
+from what cargo and the check's test program see, so no build script or proc macro can read it.
 
 ### What a run costs
 
