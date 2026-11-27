@@ -604,6 +604,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Claude Code 2.1.332 leaves out of it). A rewind that stops with its list on screen closes it with one checked Esc
     and says so, or says the rewind screen is still open (its choices are on screen, or no key could go). A question,
     permission prompt or CLI menu takes the card from a stopped rewind, whose notice comes back afterwards.
+    Re-review (2026-11-27): a rewind that stopped with its screen still open keeps its card (why it stopped, and
+    that the screen is open) over the generic panel card while that screen shows, and goes once it is gone.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).

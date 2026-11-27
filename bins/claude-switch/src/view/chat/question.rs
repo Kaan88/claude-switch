@@ -965,12 +965,21 @@ impl Chat {
             Kind::Tool(_) => shown.as_ref().is_some_and(|s| s.matched),
         });
         let answerable = answerable.map(|p| p.item.offset);
+        // A rewind that stopped and left its screen open keeps its card (its reason and that the
+        // screen is still open) while that screen shows, and goes once it is gone.
+        let rewind_screen = screens::rewind_list(screen).is_some() || screens::rewind_actions(screen).is_some();
+        let left_open = self.question.rewind.as_ref().is_some_and(|r| r.failed() && r.note == Some(rewind::LEFT_OPEN));
+        if left_open && !rewind_screen {
+            self.question.rewind = None;
+            changed = true;
+        }
+        let rewind_holds = self.question.rewind.as_ref().is_some_and(|r| !r.failed() || (left_open && rewind_screen));
         // Any other menu the screen shows, unless a question or prompt card already covers it.
-        // A Stop agent or a rewind drives the CLI's list itself (a stopped rewind no longer does).
+        // A Stop agent or a rewind drives the CLI's list itself; so does a stopped one left open.
         let menu = (!self.menus_off
             && shown.is_none()
             && self.question.agent_step.is_none()
-            && self.question.rewind.as_ref().is_none_or(rewind::Rewind::failed)
+            && !rewind_holds
             && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
         .then(|| menu_shown(screen))
         .flatten();

@@ -2203,3 +2203,31 @@ fn hover_and_wheel_reports_leave_a_card_key_sequence_alone_but_a_click_stops_it(
     assert!(f.chat().question.agent_step.is_none(), "a click may pick something in the CLI");
     assert_eq!(f.chat().question.error, Some(INTERRUPTED));
 }
+
+#[test]
+fn a_rewind_left_open_keeps_its_card_over_the_list_until_the_list_is_gone() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    for screen in [REWIND_OPEN, REWIND_UP1, REWIND_UP2] {
+        f.show(screen, now);
+        advance(f.tab(), now, true);
+    }
+    // Ambiguous; the closing Esc did not close the list.
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now + STEP, true);
+    let r = f.rewind().unwrap();
+    assert_eq!((r.error, r.note), (Some(rewind::AMBIGUOUS), Some(rewind::LEFT_OPEN)));
+    f.sync();
+    assert!(f.chat().question.menu.is_none(), "the list is not offered as a panel card");
+    let pane = f.tab().pane.as_mut().unwrap();
+    assert!(rewind_shown(&pane.chat.question, &pane.model), "the rewind's card says why");
+    // The user closes it in the terminal: the card goes with it.
+    f.show(REWIND_CLOSED, now);
+    f.sync();
+    assert!(f.rewind().is_none());
+}

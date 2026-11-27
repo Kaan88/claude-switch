@@ -1244,7 +1244,10 @@ click moves the highlight one row at a time and Enter goes on the choice only wi
 on screen; it is done when neither rewind screen shows and the input is back (Claude Code then puts
 the prompt back on its input after a conversation restore). Cancel writes Esc (back to the list),
 then Esc (back to the prompt). Each step has a two second deadline (eight for the last Enter); any
-mismatch stops, says why in the card (Open terminal, Close) and opens the drawer. The rewind writes
+mismatch stops, says why in the card (Open terminal, Close) and opens the drawer. A rewind that
+stops with its list on screen closes it with one Esc, checked on the next screen, and says so; when
+its choices are on screen or no key can go, the card says the rewind screen is still open, keeps its
+place over the panel card while that screen shows, and goes once it is gone. The rewind writes
 nothing to the transcript, and the reader follows the file as written, so the Chat view still shows
 the turns after the chosen prompt. Recorded from Claude Code 2.1.332 (`rewind_*`).
 
