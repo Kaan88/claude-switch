@@ -18,8 +18,10 @@
 use super::screens::{RewindActions, RewindList};
 use super::*;
 
-/// How long after the first Esc the second one goes; the CLI takes two within about a second.
+/// How long after the first Esc the second one goes; the CLI takes two within about a second, so
+/// a second Esc that cannot go within `ESC_LATEST` of the first stops the rewind instead.
 const ESC_GAP: Duration = Duration::from_millis(150);
+const ESC_LATEST: Duration = Duration::from_millis(600);
 
 pub(super) const NOT_IDLE: &str =
     "Claude Code is not at an idle, empty prompt, so nothing was sent. Rewind once the turn has ended.";
@@ -36,6 +38,8 @@ pub(super) const ACTIONS_CHANGED: &str =
     "The rewind's choices or the prompt they are for changed in the terminal. Check the terminal.";
 pub(super) const MISPLACED: &str = "The terminal's rewind list does not show the prompts after this one as the \
     transcript has them, so nothing was chosen. Rewind in the terminal.";
+pub(super) const HELD_BACK: &str = "Chat could not send the rewind's next key in time (something was open over the \
+    window), so it stopped. Check the terminal.";
 pub(super) const NOT_DONE: &str = "The terminal did not finish the rewind. Check the terminal.";
 pub(super) const NOT_CANCELLED: &str = "The terminal did not close its rewind list. Check the terminal.";
 pub(super) const REWOUND: &str = "Rewound in Claude Code. The conversation here still shows the later turns: Switch reads the transcript as written.";
@@ -90,6 +94,11 @@ impl Rewind {
 
     pub(super) fn choosing(&self) -> bool {
         self.stage == Stage::Choosing
+    }
+
+    /// Stops it before its next key, saying why.
+    pub(super) fn interrupt(&mut self, why: &'static str) {
+        fail(self, why);
     }
 }
 
@@ -271,9 +280,15 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let Some(mut rewind) = chat.question.rewind.clone().filter(Rewind::in_flight) else { return false };
     let epoch = chat.output_epoch;
     let next = if ready(tab) { look(tab, now, &rewind) } else { Next::Fail(BLOCKED) };
-    let deadline = rewind.due.is_some_and(|due| now >= due) && rewind.stage != Stage::FirstEsc;
+    // A key that may not be written now waits like any other, and its deadline still holds: a
+    // dialog over the window must not keep the composer locked and resume the keys much later.
+    let held = matches!(next, Next::Key(..)) && !may_write;
+    let next = if held { Next::Wait } else { next };
+    let deadline = match rewind.stage {
+        Stage::FirstEsc => rewind.due.is_some_and(|due| now >= due + ESC_LATEST),
+        _ => rewind.due.is_some_and(|due| now >= due),
+    };
     match next {
-        Next::Key(..) if !may_write => return false,
         Next::Key(key, stage) => match write(tab, &key) {
             Ok(()) => {
                 let wait = if stage == Stage::Confirming { RESULT } else { STEP };
@@ -300,7 +315,8 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         Next::Fail(why) => fail(&mut rewind, why),
         Next::Wait if deadline => {
             let why = match rewind.stage {
-                Stage::Opening => NOT_OPENED,
+                _ if held => HELD_BACK,
+                Stage::FirstEsc | Stage::Opening => NOT_OPENED,
                 Stage::Up(_) => NOT_LISTED,
                 Stage::Entering => NO_ACTIONS,
                 Stage::Moving { .. } => NOT_MOVED,

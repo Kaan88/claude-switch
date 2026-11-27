@@ -108,6 +108,7 @@ impl Chat {
     }
 
     pub(super) fn interrupt_submission(&mut self) {
+        self.interrupt_card();
         if let Some(wait) = self.image_wait.take() {
             self.staging.recovery = Some(Recovery::Picture(Stamp { epoch: self.output_epoch, ..wait.stamp }));
             self.error = Some(IMAGE_INTERRUPTED);

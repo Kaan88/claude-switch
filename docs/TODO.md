@@ -598,6 +598,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
     prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list
     that leaves a prompt out stops instead of taking an earlier prompt worded alike.
+    A key held back (a dialog over the window) no longer waits forever: the step's deadline still holds, and a second
+    Esc that cannot go within about 0.75 s of the first stops the rewind rather than going late.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).
@@ -617,6 +619,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     row reads (not offered); offering a second stop while the hint row reads "↓ to resume subagent" (not offered);
     the sidecar `.meta.json` of 2.1.332 has no `finished` field (it has `stoppedByUser`), so the transcript never
     knows an agent finished and the screen decides.
+    Review fix (2026-11-27): terminal input, Cancel, or switching the tab to the terminal stops any card key sequence
+    in flight (an answer, a form, Ctrl+B, Stop agent, a rewind) before its next key, with a notice, instead of letting
+    it resume later from a screen it no longer knows.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·

@@ -52,6 +52,9 @@ const HELD: &str = "Your text for Claude goes to the message box once it is empt
 const DIGIT_FIRST: &str =
     "Start the answer with a word, not a digit (digits pick a choice), or answer in the terminal.";
 const BLOCKED: &str = "Chat cannot answer now. Check the terminal.";
+/// Card keys in flight stop when the terminal gets other input, Cancel is pressed or Chat is left.
+pub(super) const INTERRUPTED: &str =
+    "Chat stopped sending keys: the terminal got other input, or Chat was left or cancelled. Check the terminal.";
 pub(super) const WAITING: &str = "Sending your answer to the terminal…";
 const ASKING: &str = "Waiting for your answer";
 const APPROVING: &str = "Waiting for your approval";
@@ -849,6 +852,19 @@ fn tool_prompt(kind: &ItemKind, alone: bool, cwd: &Path, screen: &Screen) -> Opt
 }
 
 impl Chat {
+    /// Terminal input, Cancel, or a switch away from Chat: every card key sequence in flight
+    /// stops before its next key and says so, instead of going on later from a screen it no
+    /// longer knows. True when one did.
+    pub(in crate::view::chat) fn interrupt_card(&mut self) -> bool {
+        let card = &mut self.question;
+        let rewind = card.rewind.as_mut().filter(|r| r.in_flight()).map(|r| r.interrupt(INTERRUPTED)).is_some();
+        let keys = card.step.is_some() || card.background_step.take().is_some() || card.agent_step.take().is_some();
+        if keys || rewind {
+            self.question_failed(INTERRUPTED);
+        }
+        keys || rewind
+    }
+
     fn question_failed(&mut self, error: &'static str) {
         if let Some(step) = self.question.step.take()
             && step.stage == Stage::Sent
