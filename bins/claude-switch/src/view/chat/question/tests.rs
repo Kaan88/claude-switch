@@ -2168,3 +2168,38 @@ fn an_interrupted_side_step_leaves_a_notice_not_a_stuck_card() {
     assert!(f.chat().question.menu.is_some());
     assert_eq!(f.chat().question.error, None);
 }
+
+#[test]
+fn hover_and_wheel_reports_leave_a_card_key_sequence_alone_but_a_click_stops_it() {
+    use mdshared_ui::host::Button;
+    use screens::recorded::*;
+    let now = Instant::now();
+    let start = |f: &mut Fixture| {
+        f.agent("First pinger");
+        f.agent("Second pinger");
+        f.show(AGENTS_IDLE, now);
+        f.sync();
+        press(f.tab(), now, Hit::StopAgent(1));
+        f.writes();
+        // The program asks for every mouse move, as Claude Code's full-screen view does.
+        f.tab().term.feed(b"\x1b[?1003h\x1b[?1006h");
+        let area = mdshared_ui::gfx::Rect::new(0.0, 0.0, 800.0, 400.0);
+        f.app.layout_terminals(area, area, 1.0);
+    };
+    let plain = Mods::default();
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.app.term_move(20.0, 20.0, plain);
+    f.app.term_move(60.0, 40.0, plain);
+    assert!(f.tab().term.last_cell.is_some(), "the moves were reported to the program");
+    f.app.mouse = (60.0, 40.0);
+    f.app.term_wheel(-120.0, plain);
+    assert!(f.chat().question.agent_step.is_some(), "hover and wheel reports go to the program only");
+    assert_eq!(f.chat().question.error, None);
+
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.app.term_press(20.0, 20.0, Button::Left, 1, plain);
+    assert!(f.chat().question.agent_step.is_none(), "a click may pick something in the CLI");
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+}

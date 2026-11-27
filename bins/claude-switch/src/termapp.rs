@@ -464,7 +464,11 @@ impl AppState {
             let ev =
                 MouseEvent { kind: MouseKind::Move, button: t.reported, col, row, mods: termkeys::term_mods(mods) };
             if let Some(bytes) = input::encode_mouse(ev, &modes) {
-                if let Some(pane) = &mut tab.pane {
+                // A drag belongs to its press, which counted as input; a hover is no input at
+                // all: it must not stop a send or a card's keys halfway.
+                if t.reported.is_some()
+                    && let Some(pane) = &mut tab.pane
+                {
                     pane.note_terminal_input();
                 }
                 t.write(&bytes);
@@ -529,8 +533,9 @@ impl AppState {
             }
             Wheel::Report => {
                 let Some(m) = metrics else { return };
+                // The program scrolls; card keys go on, each checking the screen first.
                 if let Some(pane) = &mut tab.pane {
-                    pane.note_terminal_input();
+                    pane.note_terminal_wheel();
                 }
                 let (row, col) = m.cell_clamped(area, x, y, t.screen.cols(), t.screen.rows());
                 let button = if lines > 0 { MouseButton::WheelUp } else { MouseButton::WheelDown };

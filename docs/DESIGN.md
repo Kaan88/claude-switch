@@ -1250,6 +1250,15 @@ says so instead of writing, and it ends (or fails) in a hidden tab too. A menu t
 Enter (a toggle) is done as soon as newer output shows the chosen row changed; one that shows no
 change at all by the deadline still stops with a notice.
 
+Terminal input stops a card's key sequence in flight (an answer, a form, Ctrl+B, Stop agent, a rewind)
+before its next key, as do Cancel and switching the tab to the terminal. Keys, pastes, mouse clicks
+(with their drags and releases) and wheel notches sent as arrow keys count; a mouse move without a
+button counts as no input at all, and a wheel report to a program that asked for the mouse leaves
+card sequences going (each still checks the screen before its key) while still counting as input
+for a send. Only an answer stopped before its Enter leaves its prompt to the terminal; an answer
+whose Enter went ends quietly, a Ctrl+B or Stop agent leaves a notice that goes with its card, and a
+rewind says so on its own card.
+
 Every screen pattern lives in `view/chat/question/screens.rs`.
 
 **Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›

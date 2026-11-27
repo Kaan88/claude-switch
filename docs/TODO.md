@@ -629,7 +629,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Re-review (2026-11-27): only an answer stopped before its Enter marks its prompt as one for the terminal; an
     interrupted Ctrl+B or Stop agent leaves a notice only (it goes when the card shows something else, so a later
     permission prompt is still answered from the card), an answer whose Enter went ends quietly, and an interrupted
-    rewind keeps its notice on its own card.
+    rewind keeps its notice on its own card. Mouse moves without a button no longer count as terminal input (they stopped a
+    rewind or form when the pointer crossed the drawer with mouse tracking on), and wheel reports no longer stop card
+    key sequences; clicks still do, since they can pick a row in the CLI.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·

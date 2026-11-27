@@ -232,6 +232,13 @@ impl Chat {
         self.watermark_input(info, end);
     }
 
+    /// As [`Chat::invalidate_input`], for a mouse report that cannot type or pick anything by
+    /// itself: card key sequences in flight go on, each re-checking the screen before its key.
+    pub(super) fn invalidate_pointer_input(&mut self, info: &ChatInfo, end: Option<u64>) {
+        self.interrupt_staging();
+        self.watermark_input(info, end);
+    }
+
     pub(super) fn watermark_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.invalidate(info);
         self.input_floor = Some(end.unwrap_or(u64::MAX));
