@@ -28,6 +28,8 @@ pub struct ChatInfo {
     pub model_report: Option<(u64, String)>,
     usage_at: Option<u64>,
     compacted_at: Option<u64>,
+    /// A slash command typed while the CLI was at rest: its record's offset, until its output.
+    command_at: Option<u64>,
 }
 
 impl ChatInfo {
@@ -38,6 +40,26 @@ impl ChatInfo {
     pub(super) fn observe(&mut self, at: u64, phase: Phase) {
         if self.latest.is_none_or(|(old, _)| at >= old) {
             self.latest = Some((at, phase));
+        }
+    }
+
+    /// A slash command's record (`<command-name>`), seen before it counts as a prompt. Typed at
+    /// rest, it may run in the CLI alone and only print (`/model`, `/effort`): its output ends it
+    /// ([`command_done`](Self::command_done)). Typed during a turn it changes nothing.
+    pub(super) fn command_started(&mut self, at: u64) {
+        let at_rest = self.latest.is_none_or(|(_, phase)| phase == Phase::EndTurn);
+        self.command_at = at_rest.then_some(at);
+    }
+
+    /// A local command's output (`<local-command-stdout>`): a command typed at rest that nothing
+    /// followed but this is over, and the CLI is at rest again. Without it the command's record
+    /// stayed the newest prompt, so the turn read as running until the next answer, and Chat
+    /// refused every slash command after `/model`.
+    pub(super) fn command_done(&mut self, at: u64) {
+        if let Some(start) = self.command_at.take()
+            && self.latest == Some((start, Phase::Active))
+        {
+            self.observe(at, Phase::EndTurn);
         }
     }
 
@@ -328,6 +350,69 @@ mod tests {
             Some(ToolCard::Shell { command, result }) if command == "Get-ChildItem" && result.is_empty()));
         assert_eq!(result_lines(&json!([{"type":"image"},{"type":"text","text":"one\ntwo"}])), ["one", "two"]);
         assert_eq!(result_lines(&json!("line\n".repeat(50))).len(), 10);
+    }
+
+    #[test]
+    fn a_command_typed_at_rest_ends_with_its_output_and_one_typed_mid_turn_changes_nothing() {
+        use super::super::Reader;
+        let dir = crate::util::testing::TempDir::new("chat-command");
+        let path = dir.0.join("chat.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        let mut write = |rows: &[Value]| {
+            for row in rows {
+                writeln!(file, "{row}").unwrap();
+            }
+        };
+        let phase = |reader: &Reader| reader.chat().latest.map(|(_, phase)| phase);
+        // As Claude Code 2.1.332 writes `/model opus` typed after a finished turn.
+        let command = [
+            json!({"type":"user","isMeta":true,"message":{"content":"<local-command-caveat>Caveat</local-command-caveat>"}}),
+            json!({"type":"user","message":{"content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>opus</command-args>"}}),
+        ];
+        let output = json!({"type":"user","message":{"content":"<local-command-stdout>Set model to \u{1b}[1mOpus 5.5\u{1b}[22m and saved as your default for new sessions</local-command-stdout>"}});
+        write(&[
+            json!({"type":"user","message":{"content":"Hello"}}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Hi."}],"stop_reason":"end_turn"}}),
+        ]);
+        write(&command);
+        let mut reader = Reader::open(&path, 8192).unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active), "the command still runs");
+        write(std::slice::from_ref(&output));
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::EndTurn), "its output ends it");
+        assert_eq!(
+            reader.chat().model_report.map(|(_, line)| line).as_deref(),
+            Some("Set model to Opus 5.5 and saved as your default for new sessions")
+        );
+
+        // `/effort` right after it: the same.
+        write(&[
+            json!({"type":"user","message":{"content":"<command-name>/effort</command-name>\n<command-args>high</command-args>"}}),
+            json!({"type":"user","message":{"content":"<local-command-stdout>Set effort level to high</local-command-stdout>"}}),
+        ]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::EndTurn));
+
+        // During a turn a command's output ends nothing.
+        write(&[
+            json!({"type":"user","message":{"content":"Run the tests"}}),
+            json!({"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"cargo test"}}]}}),
+        ]);
+        write(&command);
+        write(&[output]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active), "the turn goes on");
+
+        // A command that becomes a prompt for the model (no output of its own) stays a turn.
+        write(&[
+            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Done."}],"stop_reason":"end_turn"}}),
+            json!({"type":"user","message":{"content":"<command-name>/review</command-name>"}}),
+            json!({"type":"user","isMeta":true,"message":{"content":"Review the open changes."}}),
+        ]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active));
+        assert_eq!(reader.chat().pending, None);
     }
 
     #[test]

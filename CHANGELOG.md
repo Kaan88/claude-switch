@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Chat: after `/model` (or another command that only prints, such as `/effort`), the session no
+  longer reads as a running turn. Chat refused the next command, so the effort could not be changed
+  after the model, and said Claude Code might be waiting for an answer.
+
 ## 0.1.3 (2026-11-27)
 
 - Development: a check against new Claude Code versions (`tools/screen-recorder`, `tools/cli-compat.ps1`,

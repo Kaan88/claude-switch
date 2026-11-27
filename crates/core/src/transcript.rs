@@ -443,8 +443,18 @@ impl View {
                     .chain(blocks(c).filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()))
             });
             let texts: Vec<&str> = texts.collect();
+            let mut output = false;
             for text in texts.iter().filter(|t| t.contains("<local-command-stdout>")) {
                 self.chat.local_output(offset, text);
+                output = true;
+            }
+            if output {
+                self.chat.command_done(offset);
+            } else if kind == LineKind::User
+                && !flag(&value, "isMeta")
+                && texts.iter().any(|t| t.trim_start().starts_with("<command-name>"))
+            {
+                self.chat.command_started(offset);
             }
             if self.local_record(offset, timestamp, &texts, changes) {
                 return;
