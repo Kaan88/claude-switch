@@ -206,7 +206,7 @@ pub fn draw_undo(st: &mut AppState, p: &mut Painter, window: Rect) {
     let Some(undo) = &st.undo_hide else { return };
     let pal = *st.pal();
     let r = Rect::new(window.cx() - 111.0, window.bottom() - 54.0, 222.0, 38.0);
-    p.frame(r, 8.0, pal.bar, pal.line);
+    p.frame(r, crate::windowlook::Cards::for_frame(st, p).decoration(8.0), pal.bar, pal.line);
     p.text(
         Face::Ui,
         13.0,

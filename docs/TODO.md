@@ -669,3 +669,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Shift+Enter gives Claude Code a new line; in Switch's terminal it reaches the CLI as a plain Enter. Send what
     Claude Code reads as Shift+Enter (check the key encoding it accepts: the win32 input mode or kitty keyboard
     sequence it asks for, or ESC CR), and check the same for the Chat composer's paste of line breaks (item 46).
+70. **Any popup turns the terminal's transparency off** (owner, 2026-11-27; screenshot: the ⋯ menu
+    over a transparent terminal). **Done.** The grid and margins keep their set opacity under
+    menus, dialogs, tooltips, toasts, pictures and the undo bar. The overlay has its own solid
+    card; only modal dialogs dim the rest of the window with a translucent scrim. A bitmap test
+    opens the ⋯ menu over normal and dim glyphs, checks the entrance and settled card, and checks
+    tooltip bounds and modal dimming over black and white. The separate per-cell contrast issue
+    in item 62 still needs its toolkit change. Not checked on the owner's live desktop.

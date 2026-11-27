@@ -1255,8 +1255,14 @@ against black. On an opaque frame the font returns to the system's antialiasing.
 toolkit still raises opacity per ink colour, so dim text can have darker cell backgrounds.
 Without an active Mica or Acrylic backdrop (including high contrast or loss of window
 focus), the setting is disabled and the surface draws opaque. The scrollback thumb has a solid
-gutter and the end notice is drawn on solid rows. The Chat drawer header is solid. Window-level
-popups and dialogs temporarily use an opaque terminal frame beneath their edges and scrims.
+gutter and the end notice is drawn on solid rows. The Chat drawer header is solid.
+
+The terminal uses the same opacity and glyph masks whether an overlay is open or not. Over a
+translucent terminal, menus and dialogs use solid, square-edged cards without exterior shadows.
+Widgets with built-in shadows (such as toasts and tips) draw on a solid backing clipped to the
+card; entrance animations fade the finished card over the grid. Only modal dialogs dim the
+window: fading a black fill over the saved pixels blends premultiplied colour **and** alpha,
+including where marked chrome meets the grid. No separate compositor surface is needed.
 
 `--demo --demo-terminal bar,80,mica` previews this with a synthetic Chat drawer; a debug build
 can add `--shell cmd.exe` to preview it with an isolated command prompt instead.

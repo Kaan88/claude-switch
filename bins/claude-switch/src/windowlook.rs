@@ -12,6 +12,8 @@ use mdshared_ui::tokens::{ACCENT_CONTRAST, accented, legible};
 
 use crate::dialogs;
 use crate::state::{AppState, Msg};
+mod overlay;
+pub(crate) use overlay::Cards;
 
 /// `base` (one of `termtheme::palettes`) with Claude's clay as its own accent, then the accent
 /// the appearance asks for put in: clay stays available on every palette.
@@ -39,8 +41,9 @@ fn popup<T: Clone + PartialEq>(
     (id, switches): (impl AsId, &[(T, bool)]),
 ) {
     let id = Id::new(id);
-    menu.set_look(style.0);
-    menu.set_high_contrast(style.1);
+    let (look, hc) = style;
+    menu.set_look(look);
+    menu.set_high_contrast(hc);
     let t = cx.anim().value_from(id, 0.0_f32, 1.0, document::MENU.enter);
     if t < 1.0 {
         menu.draw_entering_with(p, window, t, mdshared_ui::menu::Entrance::Drop, |p, m| {
@@ -89,7 +92,8 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
     let mut look = st.appearance.menu_look();
     look.soft_shadow = !st.high_contrast;
     look.shadow &= !st.high_contrast;
-    let style = (look, st.high_contrast);
+    let cards = Cards::for_frame(st, p);
+    let style = (cards.menu(look), st.high_contrast);
     if let Some(menu) = st.accounts_dd.menu_mut() {
         popup(cx, p, window, &pal, menu, style, ("accounts-menu", &[]));
     }
@@ -112,7 +116,10 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
     }
     if let Some(palette) = &mut st.palette {
         let t = cx.anim().value_from("palette-enter", 0.0_f32, 1.0, document::MENU.enter);
-        palette.draw_presence(p, &pal, window, TITLE_H, true, t);
+        let r = palette.layout(window, TITLE_H);
+        mdshared_ui::anim::pop(p, r.inset(-18.0), t, (0.0, -mdshared_ui::menu::MENU_DROP), |p| {
+            cards.draw(p, r, pal.popup_line, |p| palette.draw(p, &pal, window, TITLE_H, true));
+        });
         if t < 1.0 {
             cx.animating(palette.presence_bounds());
         }

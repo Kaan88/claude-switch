@@ -64,6 +64,7 @@ fn height(p: &mut Painter, text: &str, window: Rect) -> f32 {
 
 pub fn draw_toasts(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Rect) {
     let pal = *st.pal();
+    let cards = crate::windowlook::Cards::for_frame(st, p);
     let frames = {
         // The toolkit asks for a pure height callback; the painter caches text shaping.
         let measure = RefCell::new(&mut *p);
@@ -75,26 +76,30 @@ pub fn draw_toasts(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, win
         if shown.item.starts_with(TOAST_PREFIX) {
             let h = height(p, shown.item, window);
             b.rect = Rect::new(window.x + 16.0, b.rect.bottom() - h, window.w - 32.0, h);
-            pop(p, b.bounds(), shown.t, (0.0, TOAST_RISE), |p| {
-                let r = b.rect;
-                p.shadow(r, 8.0, pal.dark);
-                p.frame(r, 8.0, pal.popup, pal.popup_line);
-                let inset = p.clip(r.inset(8.0));
-                p.paragraph_wrapped(
-                    Face::Ui,
-                    13.0,
-                    r.x + 18.0,
-                    r.y + 10.0,
-                    r.w - 36.0,
-                    shown.item,
-                    pal.text,
-                    Wrap::Anywhere,
-                );
-                p.restore(inset);
-            });
-        } else {
-            b.draw_presence(p, &pal, shown.t);
         }
+        pop(p, b.bounds(), shown.t, (0.0, TOAST_RISE), |p| {
+            cards.draw(p, b.rect, pal.popup, |p| {
+                if shown.item.starts_with(TOAST_PREFIX) {
+                    let r = b.rect;
+                    p.shadow(r, 8.0, pal.dark);
+                    p.frame(r, 8.0, pal.popup, pal.popup_line);
+                    let inset = p.clip(r.inset(8.0));
+                    p.paragraph_wrapped(
+                        Face::Ui,
+                        13.0,
+                        r.x + 18.0,
+                        r.y + 10.0,
+                        r.w - 36.0,
+                        shown.item,
+                        pal.text,
+                        Wrap::Anywhere,
+                    );
+                    p.restore(inset);
+                } else {
+                    b.draw(p, &pal);
+                }
+            })
+        });
         cx.animating(b.presence_bounds().inset(-8.0));
     }
 }

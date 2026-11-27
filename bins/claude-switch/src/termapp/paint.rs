@@ -35,6 +35,24 @@ fn visible_notice(t: &Term, view: View) -> Range<usize> {
 impl AppState {
     /// Draws the shown tab, including the scrollback and the app-owned end notice.
     pub fn draw_terminal(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect) {
+        self.paint_terminal(p, area, |screen, view, blink, row| {
+            let shown = termview::cursor_blinks_on(cx.anim(), CURSOR, blink, screen, view);
+            if blink.is_some()
+                && cx.anim().animates()
+                && let Some(row) = row
+            {
+                cx.animating(row);
+            }
+            shown
+        });
+    }
+
+    fn paint_terminal(
+        &mut self,
+        p: &mut Painter,
+        area: Rect,
+        cursor: impl FnOnce(&Screen, View, Option<std::time::Duration>, Option<Rect>) -> bool,
+    ) {
         let pal = *self.pal();
         let scheme = self.terminal_scheme();
         let (Some(metrics), Some(tab)) = (self.metrics, self.tabs.shown()) else {
@@ -46,24 +64,11 @@ impl AppState {
         let prefs = &self.config.appearance;
         let view = t.view(self.terminal_focused()).cursor_preference(default_shape(prefs), prefs.cursor_blink);
         let blink = self.blink.filter(|_| cursor_can_blink(&t.screen, view, prefs.cursor_blink));
-        let show_cursor = termview::cursor_blinks_on(cx.anim(), CURSOR, blink, &t.screen, view);
-        if blink.is_some()
-            && cx.anim().animates()
-            && let Some(row) = view.cursor_row(&t.screen)
-        {
-            cx.animating(metrics.row_rect(inner, row));
-        }
+        let show_cursor =
+            cursor(&t.screen, view, blink, view.cursor_row(&t.screen).map(|row| metrics.row_rect(inner, row)));
         let view = view.cursor_shown(show_cursor);
-        // Window-level overlays include shadows, rounded edges and modal scrims,
-        // which use the opaque painter too. Back them with the solid terminal frame.
-        let clear = self.nothing_over()
-            && !self.picture_overlay()
-            && self.tip.shown().is_none()
-            && self.toasts.is_empty()
-            && self.undo_hide.is_none();
-        let percent = if clear { prefs.terminal_opacity } else { 100 };
         let surface = Surface { area, inner, metrics, scheme, pal };
-        surface.draw(p, &mut self.cell_font, t, view, percent);
+        surface.draw(p, &mut self.cell_font, t, view, prefs.terminal_opacity);
         self.hits.push((area, Target::Terminal));
     }
 }
@@ -178,6 +183,70 @@ mod tests {
     fn pixel(b: &Bitmap, x: usize, y: usize) -> [u8; 4] {
         let i = (y * b.width as usize + x) * 4;
         b.pixels[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn opening_the_more_menu_keeps_the_grid_and_gray_glyphs_translucent() {
+        use crate::{source::Source, tabs::NewTab, windowlook::Cards};
+        use mdshared_ui::{menu::Entrance, overlay::Bubble};
+        let mut st = AppState::new(Source::Demo, Some(true), Default::default());
+        st.config.appearance.terminal_opacity = 80;
+        let mut t = Term::empty((50, 12));
+        t.feed(b"\x1b[?25l\x1b[38;2;185;185;185mGrey \x1b[2mdim");
+        st.tabs.open(NewTab { label: "Preview".into(), color: [0; 3], session: None, account: None }, t);
+        let window = Rect::new(0.0, 0.0, 480.0, 240.0);
+        st.layout_terminals(window, window, 1.0);
+        let mut bmp = Bitmap::new(480, 240);
+        let mut gfx = Gfx::new();
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        p.set_frost_key(Some(Key::new(DARK.page, 217)));
+        st.paint_terminal(&mut p, window, |_, _, _, _| false);
+        let base = p.bmp.pixels.clone();
+        let ground = pixel(p.bmp, 0, 0);
+        assert!(ground[3] < 255);
+        st.main_menu(Rect::new(446.0, 8.0, 24.0, 24.0));
+        st.paint_terminal(&mut p, window, |_, _, _, _| false);
+        assert_eq!(p.bmp.pixels.as_slice(), base.as_slice(), "opening a menu repainted the grid differently");
+        let cards = Cards::for_frame(&st, &p);
+        let pal = *st.pal();
+        let look = cards.menu(st.appearance.menu_look());
+        let (_, menu) = st.menu.as_mut().unwrap();
+        menu.set_look(look);
+        for t in [0.5, 1.0] {
+            p.bmp.pixels.copy_from_slice(&base);
+            menu.draw_entering_with(&mut p, window, t, Entrance::Drop, |p, m| m.draw_in(p, &pal, window));
+            let r = menu.rect();
+            let a = pixel(p.bmp, r.cx() as usize, r.cy() as usize)[3];
+            if t < 1.0 {
+                assert!((ground[3] + 1..255).contains(&a));
+            } else {
+                assert_eq!(a, 255);
+            }
+            for y in 0..240 {
+                for x in 0..r.x as usize {
+                    let i = (y * 480 + x) * 4;
+                    assert_eq!(pixel(p.bmp, x, y), base[i..i + 4], "fringe or dimming outside the menu");
+                }
+            }
+        }
+        // A tooltip with a toolkit-owned shadow is clipped to its own backing.
+        p.bmp.pixels.copy_from_slice(&base);
+        let tip = Bubble::tip(&mut p, "Preview", Rect::new(152.0, 80.0, 32.0, 24.0), window.w, window.h);
+        cards.draw(&mut p, tip.rect, pal.popup, |p| tip.draw(p, &pal));
+        assert_eq!(pixel(p.bmp, tip.rect.x as usize, tip.rect.y as usize)[3], 255);
+        let x = tip.rect.x as usize - 1;
+        let y = tip.rect.cy() as usize;
+        let i = (y * 480 + x) * 4;
+        assert_eq!(pixel(p.bmp, x, y), base[i..i + 4]);
+
+        p.bmp.pixels.copy_from_slice(&base);
+        cards.dim(&mut p, &pal, window, 1.0);
+        let dim = pixel(p.bmp, 0, 0);
+        assert!((ground[3] + 1..255).contains(&dim[3]));
+        for desktop in [0.0, 255.0] {
+            let visible = |px: [u8; 4]| f32::from(px[0]) + desktop * (1.0 - f32::from(px[3]) / 255.0);
+            assert!((visible(dim) - visible(ground) * 0.55).abs() < 1.5, "scrim over {desktop}");
+        }
     }
 
     #[test]
