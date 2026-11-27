@@ -63,7 +63,8 @@
   one column grid, custom themes wrap to a further line, and nothing runs into the next setting.
 - Handover: **Compact and open…** writes the handover in the background. The dialog closes when you
   press Make handover, and the Review handover window opens by itself when it is ready (after any
-  dialog or menu you have open, and ignoring keys already on their way). The Sessions column shows
+  dialog or menu you have open, once you have stopped typing for a moment, and ignoring keys
+  already on their way; click in its text or press Tab to edit). The Sessions column shows
   handovers being written (with Cancel), failed ones (with the reason and Retry) and reviews closed
   without acting on them (Review). Closing the window asks first while one is being written or
   waiting to be opened.

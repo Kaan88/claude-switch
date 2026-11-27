@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 /// A review that opened by itself ignores keys, and clicks on what acts, for this long, so a key
 /// typed into the composer or a terminal just before it opened cannot press one of its buttons.
 pub const SETTLE: Duration = Duration::from_millis(300);
+/// A written handover's review waits to open by itself while the keyboard was used anywhere in
+/// the app this recently: someone typing a sentence into the composer or a terminal goes on
+/// typing there.
+pub const TYPING_HOLD: Duration = Duration::from_millis(1500);
 /// [`Target::Info`] ids at and above this retry the background handover `id - INFO_RETRY`.
 pub const INFO_RETRY: u32 = 0x4800_0000;
 /// One line of the strip.
@@ -58,6 +62,8 @@ pub struct Jobs {
     pub open: bool,
     /// What finished since the window last flashed for it.
     pub(crate) flash: Option<String>,
+    /// When a key was last pressed or text typed anywhere in the app.
+    pub(crate) typed: Option<Instant>,
 }
 
 impl Background {
@@ -143,15 +149,23 @@ impl AppState {
     }
 
     /// Opens the review of the first written handover when nothing modal is open (a dialog,
-    /// Settings, a menu, the palette, the accounts list or the usage pop-up). True when it did.
+    /// Settings, a menu, the palette, the accounts list or the usage pop-up) and the keyboard has
+    /// rested for [`TYPING_HOLD`]. True when it did.
     pub fn open_finished_handover(&mut self, now: Instant) -> bool {
-        if !self.nothing_over() || self.usage.popup.open || self.quit {
+        if !self.nothing_over() || self.usage.popup.open || self.quit || self.handover_held(now).is_some() {
             return false;
         }
         let Some(i) = self.compact.jobs.list.iter().position(|j| j.state == State::Finished) else { return false };
         let job = self.compact.jobs.list.remove(i);
         self.show_review(job.dialog, Some(now));
         true
+    }
+
+    /// Until when a written handover waits for the keyboard to rest, while it does.
+    pub(crate) fn handover_held(&self, now: Instant) -> Option<Instant> {
+        let until = self.compact.jobs.typed? + TYPING_HOLD;
+        let waiting = self.compact.jobs.list.iter().any(|j| j.state == State::Finished);
+        (waiting && until > now).then_some(until)
     }
 
     fn show_review(&mut self, mut dialog: Box<Compact>, settle_from: Option<Instant>) {

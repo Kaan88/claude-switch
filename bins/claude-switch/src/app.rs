@@ -60,6 +60,7 @@ impl AppState {
             self.usage.popup.due,
             self.usage.cache_retry_at().filter(|_| self.config.show_usage),
             self.field_deadline(),
+            self.handover_held(cx.now()),
         ]
         .into_iter()
         .flatten()

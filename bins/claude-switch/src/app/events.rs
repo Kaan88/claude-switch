@@ -30,6 +30,9 @@ impl App for AppState {
     }
 
     fn event(&mut self, cx: &mut Cx<'_, Msg>, event: Event) {
+        if matches!(event, Event::Key(_) | Event::Text(_)) {
+            self.compact.jobs.typed = Some(cx.now());
+        }
         match self.peek_event(&event) {
             PeekInput::Swallow => return,
             PeekInput::Redraw => {
@@ -172,6 +175,10 @@ impl App for AppState {
                 }
                 self.terminal_drop_due(cx, now);
                 self.session_tick(cx, false);
+                // A written handover held while the keyboard was in use.
+                if self.open_finished_handover(now) {
+                    cx.request_redraw_all();
+                }
                 if let Some(at) = self.typed_due(now) {
                     cx.wake_at(at);
                 }

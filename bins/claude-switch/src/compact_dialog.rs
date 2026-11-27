@@ -129,6 +129,9 @@ pub struct Compact {
     acted: bool,
     /// A review that opened by itself ignores keys, and clicks that act, until then.
     settle_until: Option<Instant>,
+    /// A review that opened by itself has the dialog focused, not its editor or name field:
+    /// typing edits nothing until a click in one of them, or Tab.
+    unfocused: bool,
 }
 
 impl Drop for Compact {
@@ -390,6 +393,7 @@ impl Compact {
             generating: false,
             acted: false,
             settle_until: None,
+            unfocused: false,
         };
         this.reset_agents();
         this.check_in_place(st);
@@ -637,6 +641,7 @@ impl Compact {
     pub(crate) fn focus_name(&mut self) {
         if self.name_editable() {
             self.name_focused = true;
+            self.unfocused = false;
         }
     }
 
@@ -672,6 +677,7 @@ impl Compact {
             BACK if matches!(self.phase, Phase::Consent | Phase::Preview) => {
                 self.phase = Phase::Setup;
                 self.name_focused = false;
+                self.unfocused = false;
                 self.message = None;
             }
             COPY if self.phase == Phase::Preview => {
@@ -698,9 +704,11 @@ impl Compact {
             AGENT if self.phase == Phase::Preview => self.pick(Choice::Agent, st),
             NAME_FIELD if self.phase == Phase::Preview && self.choice.is_none() => {
                 self.name_focused = true;
+                self.unfocused = false;
             }
             EDITOR => {
                 self.name_focused = false;
+                self.unfocused = false;
                 let px = self.edit_area.x;
                 let py = self.edit_area.y;
                 let col = ((x - px) / self.cell_width).round().max(0.0) as usize;
@@ -753,10 +761,14 @@ impl Compact {
         } else if self.phase == Phase::Preview && matches!(k, KeyName::Char('d' | 'D')) && mods.alt && !mods.ctrl {
             return Some(DELETE_ORIGINAL);
         } else if self.phase == Phase::Preview && *k == KeyName::Tab && !mods.ctrl && !mods.alt {
-            self.name_focused = !self.name_focused;
+            // From the dialog itself, Tab goes to the name field first.
+            self.name_focused = !self.name_focused || self.unfocused;
+            self.unfocused = false;
             if self.name_focused {
                 self.new_name.select_all();
             }
+        } else if self.phase == Phase::Preview && self.unfocused {
+            // Keys for the dialog itself (Esc, Alt+A, Alt+D) are above; nothing is typed.
         } else if self.phase == Phase::Preview && self.name_focused {
             if *k == KeyName::Enter {
                 self.name_focused = false;
@@ -772,7 +784,7 @@ impl Compact {
     }
 
     pub fn text_input(&mut self, text: &str) {
-        if self.settling(Instant::now()) {
+        if self.settling(Instant::now()) || self.unfocused {
             return;
         }
         if self.choice.is_none() && (self.phase == Phase::Preview || (self.phase == Phase::Setup && self.job.is_none()))
@@ -866,6 +878,16 @@ impl Compact {
         self.delete_original = false;
         self.choice = None;
         self.settle_until = settle_from.map(|at| at + crate::handover_jobs::SETTLE);
+        self.unfocused = settle_from.is_some();
+        if self.unfocused {
+            self.name_focused = false;
+        }
+    }
+
+    /// Whether typing goes into the editor or the name field.
+    #[cfg(test)]
+    pub(crate) fn editor_focused(&self) -> bool {
+        !self.unfocused
     }
 
     /// A failed background handover shown again: the setup step with the reason.

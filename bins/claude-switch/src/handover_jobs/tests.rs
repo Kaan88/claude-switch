@@ -125,8 +125,47 @@ fn a_review_that_opened_by_itself_ignores_keys_in_flight_then_answers_them() {
     if let Some(Dialog::Compact(d)) = &mut st.dialog {
         d.settle_now();
     }
+    // Settled, it has the dialog focused, not its editor: what follows of a sentence typed
+    // elsewhere edits nothing.
     crate::dialogs::text_input(&mut st, "y");
-    assert!(review(&st).preview_text().contains('y'), "after it settles, typing edits");
+    crate::dialogs::key(&mut st, Instant::now(), &KeyName::Char('z'), none, Some("z"));
+    assert_eq!(review(&st).preview_text(), "## Goal\n\nKeep.");
+    assert!(st.dialog.is_some(), "and it stays open");
+    // A click in the editor, and typing edits.
+    crate::dialogs::click(&mut st, Instant::now(), crate::compact_dialog::EDITOR, 0.0);
+    crate::dialogs::text_input(&mut st, "y");
+    assert!(review(&st).preview_text().contains('y'), "after a click in it, typing edits");
+}
+
+#[test]
+fn a_written_handover_waits_while_the_keyboard_is_in_use_and_opens_without_its_editor_focused() {
+    let mut st = app();
+    ask(&mut st, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    make(&mut st, rx);
+    tx.send(Ok("## Goal\n\nWait.".into())).unwrap();
+    settle(&mut st);
+    let now = Instant::now();
+    // Typing in the composer a moment ago, anywhere in the app.
+    st.compact.jobs.typed = Some(now - Duration::from_millis(200));
+    assert!(!st.open_finished_handover(now), "not under someone typing");
+    let until = st.handover_held(now).expect("a wake for when the keyboard rests");
+    assert_eq!(until, now - Duration::from_millis(200) + TYPING_HOLD);
+    // Still typing: the hold moves on.
+    st.compact.jobs.typed = Some(now + Duration::from_millis(1000));
+    assert!(!st.open_finished_handover(until));
+    let rested = now + Duration::from_millis(1000) + TYPING_HOLD;
+    assert!(st.handover_held(rested).is_none());
+    assert!(st.open_finished_handover(rested));
+    assert!(st.handover_held(rested).is_none(), "nothing waits once it is open");
+    let Some(Dialog::Compact(d)) = &mut st.dialog else { panic!("the review") };
+    assert!(!d.editor_focused());
+    d.settle_now();
+    // Tab moves into the name field: from there typing names the session.
+    crate::dialogs::key(&mut st, Instant::now(), &KeyName::Tab, Mods::default(), None);
+    let Some(Dialog::Compact(d)) = &st.dialog else { panic!("the review") };
+    assert!(d.editor_focused());
+    assert_eq!(review(&st).preview_text(), "## Goal\n\nWait.");
 }
 
 #[test]

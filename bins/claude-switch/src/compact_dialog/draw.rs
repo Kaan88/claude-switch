@@ -301,6 +301,8 @@ impl Compact {
         let cell = p.measure(Face::Mono, FONT, "M").max(1.0);
         self.edit_area = inner;
         self.cell_width = cell;
+        // A review that opened by itself shows no caret until the editor is clicked.
+        let caret = !self.unfocused;
         let editor = self.editor();
         editor.visible = ((inner.h / LINE).floor() as usize).max(1);
         editor.wrap(((inner.w / cell) as usize).max(1));
@@ -330,7 +332,7 @@ impl Compact {
             let text = &editor.text[row.clone()];
             let colour = if preview && text.starts_with("## ") { d.pal.accent } else { d.pal.text };
             p.text(Face::Mono, FONT, inner.x, y + LINE / 2.0, text, colour, inner.w);
-            if i == caret_row {
+            if i == caret_row && caret {
                 let x = inner.x + prefix_w(p, editor.caret.min(row.end));
                 p.fill(Rect::new(x, y + 2.0, p.px().max(1.0), LINE - 4.0), d.pal.accent);
             }

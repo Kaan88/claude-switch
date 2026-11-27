@@ -678,10 +678,13 @@ so, and one that is written or failed opens instead.
 
 When it is written, the same **Review handover** window opens by itself with the result, as soon as
 nothing modal is open (a dialog, Settings, a confirmation, a menu, the palette, the accounts list or
-the usage pop-up); several open one after another, in the order they finished. It opens over the
-Chat composer or a terminal, but for its first 300 ms it ignores keys and typed text, and clicks on
-Open in CLI, In OpenCode and the delete box, so a key already on its way (an Enter half-typed into
-the composer) cannot act in it. The delete box starts off and where it continues (in place or a
+the usage pop-up) and the keyboard has not been used anywhere in the app for 1.5 seconds, so
+someone typing a sentence goes on typing where they are; several open one after another, in the
+order they finished. It opens over the Chat composer or a terminal with the dialog focused, not its
+editor or name field: typing edits nothing until a click in one of them, or Tab (to the name
+field). For its first 300 ms it also ignores keys and typed text, and clicks on Open in CLI, In
+OpenCode and the delete box, so a key already on its way (an Enter half-typed into the composer)
+cannot act in it. The delete box starts off and where it continues (in place or a
 new tab) is checked again, as each time the review opens. When the window is not in front, its
 taskbar button flashes (and, when it is hidden in the notification area, a notice says the handover
 is ready); it never takes the focus from another program.
