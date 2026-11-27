@@ -19,6 +19,17 @@ fn entries(prefs: &AppearancePrefs, dark: bool) -> impl Iterator<Item = (&str, &
         .chain(prefs.themes.iter().filter(move |(_, t)| t.dark() == dark).map(|(id, t)| (id.as_str(), t.name.as_str())))
 }
 
+pub(super) fn selected_index(config: &claude_switch_core::Config, family: tiles::Family) -> usize {
+    match family {
+        tiles::Family::Terminal => super::preset_index(&config.terminal_scheme),
+        tiles::Family::Window(dark) => {
+            let a = &config.appearance;
+            let saved = if dark { &a.dark_theme } else { &a.light_theme };
+            entries(a, dark).position(|(id, _)| id == saved).unwrap_or(0)
+        }
+    }
+}
+
 pub(super) fn rows(st: &AppState) -> Vec<Row> {
     let themes = WINDOW_THEMES.map(|(_, name)| name);
     let theme = WINDOW_THEMES.iter().position(|(id, _)| *id == st.config.window_theme).unwrap_or(0);
@@ -58,7 +69,7 @@ pub(super) fn rows(st: &AppState) -> Vec<Row> {
         )
         .help("Windows 11 22H2 or later. Terminal opacity is set separately."),
         Row::choice(SET_ACCENT, "Accent source", &ACCENT_SOURCES.map(|(_, name)| name), accent)
-            .help("Palette uses its own accent."),
+            .help("Default: clay for built-ins; saved accent for named themes."),
         colour(SET_ACCENT_COLOUR, "Window accent", &a.accent_colour, st.pal().accent)
             .help("Used when Accent source is Custom."),
         Row::toggle(SET_REDUCE_MOTION, "Reduce motion", a.reduce_motion)
@@ -88,6 +99,8 @@ pub(super) fn choose(st: &mut AppState, id: u32, index: usize) -> bool {
 
 pub(super) fn draw(p: &mut Painter, st: &AppState, form: &Form, hover: Option<(u32, usize)>, focus: bool) {
     let a = &st.config.appearance;
+    let dark_index = selected_index(&st.config, tiles::Family::Window(true));
+    let light_index = selected_index(&st.config, tiles::Family::Window(false));
     tiles::draw(p, st.pal(), form, hover, focus, |family, index| {
         let tiles::Family::Window(dark) = family else {
             let preset = super::PRESETS.get(index)?;
@@ -103,7 +116,6 @@ pub(super) fn draw(p: &mut Painter, st: &AppState, form: &Form, hover: Option<(u
             });
         };
         let (id, _) = entries(a, dark).nth(index)?;
-        let saved = if dark { &a.dark_theme } else { &a.light_theme };
         let system = (a.accent_source == "system").then_some(st.pal().accent);
         let (pal, terminal, ink) = if let Some(t) = a.themes.get(id) {
             (named::palette(t, a, system), t.terminal_background.0, t.terminal_foreground.0)
@@ -115,7 +127,7 @@ pub(super) fn draw(p: &mut Painter, st: &AppState, form: &Form, hover: Option<(u
                 rgb(t.terminal.foreground),
             )
         };
-        let selected = id == saved || index == 0 && entries(a, dark).all(|(id, _)| id != saved);
+        let selected = index == if dark { dark_index } else { light_index };
         Some(tiles::Sample {
             page: pal.page,
             text: pal.text,
@@ -177,7 +189,7 @@ mod tests {
                     matches!(page.release(x,r.cy()),super::super::SettingsEvent::Form(Outcome::Changed{id:found,value:Value::Choice(n)}) if found==id&&n==k)
                 );
                 assert!(
-                    matches!(page.key(&KeyName::Home,Mods::default(),None),super::super::SettingsEvent::Form(Outcome::Changed{id:found,value:Value::Choice(0)}) if found==id)
+                    matches!(page.key(&st.config,&KeyName::Home,Mods::default(),None),super::super::SettingsEvent::Form(Outcome::Changed{id:found,value:Value::Choice(0)}) if found==id)
                 );
             }
         }

@@ -558,7 +558,7 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
     let Some(mut dialog) = st.dialog.take() else { return false };
     match &mut dialog {
         Dialog::Settings(form) => {
-            let o = form.key(k, mods, text);
+            let o = form.key(&st.config, k, mods, text);
             st.dialog = Some(dialog);
             settings_event(st, o);
             return true;

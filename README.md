@@ -408,6 +408,7 @@ terminal foreground and background, and 16 ANSI colours. **Automatic** terminal 
 follow the selected palette; choosing a specific terminal scheme still overrides it.
 
 In **Settings → Appearance**, click a named swatch to choose a dark or light palette.
+With **Accent source → Default**, built-ins use Claude’s clay and named themes use their saved accent.
 Under **Theme library**, choose **Customize…**, give the draft a name, and edit its colours.
 **Generate shades** uses the draft's window background and accent as a starting point.
 The contrast readout updates as you edit. **Save and use** applies the draft; **Save as new**

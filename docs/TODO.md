@@ -672,6 +672,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     use the Settings switch. Tests cover draft isolation, window and ANSI colours, bitmap rendering,
     pointer and keyboard selection, file round trips and migration with stale writers and unknown
     settings. Native file picker interaction and the owner's live desktop were not checked.
+    **Known mixed-version limit:** If two Switch versions share a settings file, a version from
+    before named themes replaces the whole `appearance` object when it saves appearance changes.
+    This drops `appearance.themes`. A `darkTheme` such as `user-1` survives, but without its
+    palette definition Switch falls back to a built-in.
 64. **A scrollbar that fades, and page width options** (owner, 2026-11-27). Scrollbars show while scrolling or
     under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
     the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide). **Done:** the Chat

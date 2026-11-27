@@ -64,15 +64,18 @@ pub(super) fn hit(form: &Form, x: f32, y: f32) -> Option<(u32, usize)> {
     })
 }
 
-pub(super) fn key(form: &mut Form, key: &KeyName) -> Option<Outcome> {
+pub(super) fn key(form: &mut Form, config: &claude_switch_core::Config, key: &KeyName) -> Option<Outcome> {
     let id = form.focus_id()?;
-    group(id)?;
+    let (family, group) = group(id)?;
     let row = form.rows().iter().find(|r| r.id() == Some(id))?;
-    let Row::Choice { options, value, .. } = row else { return None };
+    let Row::Choice { options, .. } = row else { return None };
     let n = options.len();
+    // A Form choice has a value even on a row that doesn't contain the selected palette.
+    let selected = super::appearance::selected_index(config, family).checked_sub(group * ACROSS).filter(|&i| i < n);
     let next = match key {
-        KeyName::Right | KeyName::Enter | KeyName::Space => (value + 1) % n,
-        KeyName::Left => (value + n - 1) % n,
+        KeyName::Enter | KeyName::Space if selected.is_none() => return Some(Outcome::Redraw),
+        KeyName::Right | KeyName::Enter | KeyName::Space => selected.map_or(0, |i| (i + 1) % n),
+        KeyName::Left => selected.map_or(n - 1, |i| (i + n - 1) % n),
         KeyName::Home => 0,
         KeyName::End => n - 1,
         _ => return None,

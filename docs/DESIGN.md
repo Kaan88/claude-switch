@@ -686,14 +686,17 @@ The Appearance page controls the window. The window theme is System, Light or Da
 `--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
 (saved as `darkTheme` and `lightTheme` under `appearance`), each shown as named swatches.
 A click on the preview or caption chooses it; Tab focuses a row and Left/Right or Home/End changes
-the choice. Terminal presets use the same control. Dark: Neutral (the toolkit's dark), Near black, Warm,
+the choice. On a row without the current selection, Right starts at the first swatch, Left at the
+last, and Enter or Space leaves the selection alone. Terminal presets use the same control.
+Dark: Neutral (the toolkit's dark), Near black, Warm,
 Blue-grey and High contrast (the toolkit's); light: Paper, Warm, Cool (the toolkit's light, warm and
 cool) and High contrast. Every palette has its own terminal colours, which Automatic terminal colours
 follow; the table of palettes and their terminal colours is `termtheme/palettes.rs`, the one place
 to change them. An unknown saved id (from a newer version) is kept and shown as the first palette.
 Windows high contrast takes priority over all of them. The toolkit's appearance model supplies the
-accent (Claude's clay by default on every palette, held to 7:1 on the high-contrast ones, or system
-or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
+accent options (Default, System or Custom), dialog and menu corners, optional soft shadows, and
+the system-aware motion policy. Default uses Claude's clay on built-ins (held to 7:1 on the
+high-contrast ones) and the saved accent on named themes.
 Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
 compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
 
