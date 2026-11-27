@@ -48,6 +48,7 @@ try {
 $reviewedGit = @(
     'git+https://github.com/Kaan88/markdown-shared-rs?rev=137121c6a0006ad524cffc40ef4d29410dcb332f#137121c6a0006ad524cffc40ef4d29410dcb332f'
     'git+https://github.com/Kaan88/markdown-shared-rs?rev=48eb3cefb17f5025f3ac418f7a01b31b7a914779#48eb3cefb17f5025f3ac418f7a01b31b7a914779'
+    'git+https://github.com/Kaan88/markdown-shared-rs?rev=48eedb886610709fa7b6732fdeb5c2197de55d31#48eedb886610709fa7b6732fdeb5c2197de55d31'
     'git+https://github.com/Kaan88/markdown-viewer-rs?rev=01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99#01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99'
 )
 $packages = @(
