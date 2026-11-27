@@ -233,14 +233,23 @@ impl AppState {
     /// The window is asked to close: true when it can at once; otherwise the question is open.
     pub fn ask_quit(&mut self) -> bool {
         let n = self.tabs.running();
-        if n == 0 {
+        let handovers = self.handover_close_note();
+        if n == 0 && handovers.is_none() {
             return true;
         }
-        let text = if n == 1 {
-            "A terminal tab is still running. Its program ends.".to_string()
-        } else {
-            format!("{n} terminal tabs are still running. Their programs end.")
+        // The confirmation replaces the dialog: an open review waits in the strip if you stay.
+        self.park_open_review(std::time::Instant::now());
+        let mut text = match n {
+            0 => String::new(),
+            1 => "A terminal tab is still running. Its program ends.".to_string(),
+            n => format!("{n} terminal tabs are still running. Their programs end."),
         };
+        if let Some(note) = handovers {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&note);
+        }
         self.dialog =
             Some(Dialog::Confirm { title: "Close the window?".into(), text, ok: "Close".into(), then: Pending::Quit });
         false

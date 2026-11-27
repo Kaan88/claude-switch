@@ -220,6 +220,8 @@ impl App for AppState {
             return;
         }
         self.restore_tabs_if_always(cx.now());
+        // A written handover waits for whatever modal thing this event may have closed.
+        self.open_finished_handover(cx.now());
         self.attention_tick(cx);
         self.usage_warning_tick(cx.now());
         windowlook::apply(self, cx);
@@ -253,7 +255,10 @@ impl App for AppState {
                     | self.take_usage_jobs(cx.now())
                     | self.take_desktop_job(cx.now())
                     | self.take_compact_jobs()
+                    | self.take_background_handovers()
                     | self.take_opencode_job(cx.now());
+                let changed = changed | self.open_finished_handover(cx.now());
+                self.handover_attention(cx);
                 let changed = changed | self.restore_tabs_if_always(cx.now());
                 self.attention_tick(cx);
                 self.auto_handover_tick(cx);

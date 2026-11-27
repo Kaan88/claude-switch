@@ -9,7 +9,8 @@ const FONT: f32 = 12.5;
 
 pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y: f32, w: f32, area: Rect) -> f32 {
     let pal = *st.pal();
-    let files = st.compact.history.as_ref().filter(|(sid, _)| sid == id).map(|(_, files)| files.as_slice());
+    let files = st.compact.history.as_ref().filter(|(sid, _)| sid == id).map(|(_, files)| files.clone());
+    let files = files.as_deref();
     let label =
         files.filter(|f| !f.is_empty()).map_or_else(|| "Handovers…".into(), |f| format!("Handovers ({})…", f.len()));
     let r = Rect::new(x, y - 13.0, 132.0, 27.0);
@@ -25,6 +26,9 @@ pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y:
     );
     if r.bottom() <= area.bottom() {
         st.hits.push((r, target));
+        // A handover of this session being written, written or failed in the background.
+        let line = (w - r.w - 12.0).max(0.0);
+        crate::handover_jobs::draw_details_line(st, p, id, r.right() + 12.0, r.cy(), line, Instant::now());
     }
     if let Some(latest) = files.and_then(|f| f.first()).and_then(|p| p.file_name()).and_then(|p| p.to_str()) {
         p.text(Face::Mono, 11.0, x, y + 29.0, latest, pal.muted, w);
@@ -36,8 +40,9 @@ pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y:
 
 impl Compact {
     pub fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, w: f32, h: f32) {
-        let height = if self.phase == Phase::Preview { 480.0_f32 } else { 410.0_f32 };
-        let card = dialog_card(660.0_f32.min(w - 28.0), height.min(h - 24.0), w, h);
+        // The review is wider when the window has room, so its six footer actions fit in a row.
+        let (width, height) = if self.phase == Phase::Preview { (760.0_f32, 480.0_f32) } else { (660.0, 410.0) };
+        let card = dialog_card(width.min(w - 28.0), height.min(h - 24.0), w, h);
         let footer = d.card(p, card);
         let body = Rect::new(card.x + DIALOG_PAD, card.y + 51.0, card.w - DIALOG_PAD * 2.0, footer.y - card.y - 51.0);
         d.title(
@@ -213,7 +218,9 @@ impl Compact {
         }
         self.draw_editor(d, p, Rect::new(body.x, body.y + editor_y, body.w, (body.h - 60.0 - editor_y).max(0.0)), true);
         self.draw_delete_box(d, p, Rect::new(body.x, footer.y - 50.0, body.w, 20.0));
-        d.footer(
+        // Copy and Save as… keep the text without acting on it: their own group on the left,
+        // folded into “More ▾” when the card is too narrow for both groups.
+        self.more_at = d.footer_split(
             p,
             footer,
             &[
@@ -221,9 +228,9 @@ impl Compact {
                 ("In OpenCode", false, OPENCODE),
                 ("Cancel", false, CANCEL),
                 ("Back", false, BACK),
-                ("Save as…", false, SAVE),
-                ("Copy", false, COPY),
             ],
+            &[("Copy", false, COPY), ("Save as…", false, SAVE)],
+            MORE,
         );
     }
 

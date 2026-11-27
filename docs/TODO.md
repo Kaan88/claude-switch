@@ -941,3 +941,35 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     re-checks, mark and summary cleanup, copy and in-place deletion. Not checked: the real Recycle Bin call
     (`SHFileOperationW`) has not been run by a test or by hand, and the copy-written condition assumes Claude Code
     writes the copied conversation into the new transcript with its first message (not verified on a live fork).
+73. **Compact and open… still blocks the app while the model writes** (owner, 2026-11-27: "It still blocks the
+    usage of the app. Was it not done?"; then "put it behind like I asked and have it pop up the same window when
+    it finishes"). Item 61 covered `/switch-compact` and automatic handover, not the dialog. **Done.** Make
+    handover closes the dialog and the worker runs behind; the same Review handover window opens by itself when
+    it is written, after any modal thing closes, one at a time, ignoring keys and acting clicks for 300 ms; the
+    taskbar flashes when the window is not in front. A strip between the Sessions filter chips and the list
+    shows ones being written (elapsed time, spinner, Cancel), failures (reason, Retry) and reviews closed without
+    acting (Review, ✕), folding above two; the details pane has the same entry, and a failure with a terminal
+    shown also gets the error bar with Retry. Closing the window asks first and says a running one is canceled
+    and an unopened written one is lost (previewing never saved a handover, so none is kept across a restart).
+    Consent, in-place rules, the delete box (off each time the review opens) and the name are unchanged.
+    Checked: tests for start, finish and auto-open, waiting for a dialog and a menu, two at once opening in turn,
+    keys in flight, Cancel/Esc parking and Review, Dismiss, Cancel stopping the worker, failure and Retry through
+    consent, a second ask for the same session, the close confirmation and exit cancelling, the strip's folding;
+    the Sessions column drawn with the strip in each state (light and dark) and looked at. Not checked: the
+    real OpenCode run, the taskbar flash and tray notice, and the timing of a real keystroke against the 300 ms
+    guard, since nothing was run in the live app.
+74. **The Review handover dialog's footer buttons overflow** (owner, 2026-11-27, screenshot: Copy sticks
+    out past the dialog's left edge). **Done.** The review card is up to 760 px wide (660 before), with
+    Copy and Save as… in their own group on the left and Back, Cancel, In OpenCode and Open in CLI (or
+    Continue here) on the right; when a card has no room for both groups, the left group folds into
+    **More ▾**, a menu with Copy and Save as…. Every dialog footer now narrows its buttons toward their
+    labels' width instead of running past the card's left edge (no other dialog has more than three
+    buttons, which already fit). A test draws the review at 620 (narrower than the window can be),
+    760, 900 and 1400 px wide at 100, 125, 150 and 200 % and checks every button is inside the card's
+    padding and none overlap; another checks the narrowing. Looked at the 620, 760 and 1400 px pictures.
+75. **The handover text editor wraps in the middle of words** (owner, 2026-11-27: "plu s", "back t o").
+    **Done.** Rows break after the spaces before a word that does not fit (the spaces hang past the edge)
+    and inside a word only when the word alone is longer than a row, as the Chat composer wraps. End,
+    Up/Down and a click past a row's end stay on that row (before the space it broke at); Home, Right
+    and selection cross soft breaks as before. Tests cover wrapping, long words, multi-byte characters,
+    caret movement, selection across a soft break and reflow while typing.

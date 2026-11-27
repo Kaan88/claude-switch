@@ -43,6 +43,16 @@
   is shortened, with the full name on hover. The chosen card has an accent border and a check, the
   hovered one a lighter fill, and the keyboard's ring sits outside the card. Dark and light share
   one column grid, custom themes wrap to a further line, and nothing runs into the next setting.
+- Handover: **Compact and open…** writes the handover in the background. The dialog closes when you
+  press Make handover, and the Review handover window opens by itself when it is ready (after any
+  dialog or menu you have open, and ignoring keys already on their way). The Sessions column shows
+  handovers being written (with Cancel), failed ones (with the reason and Retry) and reviews closed
+  without acting on them (Review). Closing the window asks first while one is being written or
+  waiting to be opened.
+
+- Handover: the review's text wraps at word boundaries instead of in the middle of words.
+- Handover: the Review handover dialog's buttons always fit; Copy and Save as… sit on the left, or
+  under **More ▾** when the dialog is narrow.
 
 ## 0.1.2 (2026-11-27)
 

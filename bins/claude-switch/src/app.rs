@@ -175,6 +175,12 @@ impl AppState {
             Target::UndoHide => self.undo_hidden(now),
             Target::InfoClose => self.info = None,
             Target::Info(topbar::RESET_SETTINGS) => self.reset_settings(now),
+            Target::Info(id) if id >= crate::handover_jobs::INFO_RETRY => {
+                self.info = None;
+                let job = u64::from(id - crate::handover_jobs::INFO_RETRY);
+                self.handover_act(job, crate::handover_jobs::Act::Retry, now);
+            }
+            Target::HandoverJob(id, act) => self.handover_act(id, act, now),
             Target::Dialog(id) => dialogs::click(self, now, id, x),
             _ => {}
         }
@@ -228,6 +234,7 @@ impl AppState {
                 MenuKind::Chat(tab, mode) => return self.chat_menu_chosen(cx, tab, mode, id),
                 MenuKind::Field(field) => return self.field_menu_chosen(field, id),
                 MenuKind::Conversation(tab) => return self.conversation_menu_chosen(cx, tab, id),
+                MenuKind::HandoverMore => return dialogs::click(self, cx.now(), id, 0.0),
             };
             self.command(cx.now(), id, anchor);
         }

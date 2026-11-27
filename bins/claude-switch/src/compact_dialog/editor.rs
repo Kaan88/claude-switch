@@ -56,7 +56,21 @@ impl Editor {
 
     pub fn row_byte(&self, line: usize, col: usize) -> usize {
         let Some(row) = self.rows.get(line) else { return self.text.len() };
-        self.text[row.clone()].char_indices().nth(col).map_or(row.end, |(i, _)| row.start + i)
+        let byte = self.text[row.clone()].char_indices().nth(col).map_or(row.end, |(i, _)| row.start + i);
+        byte.min(self.row_end(line))
+    }
+
+    /// The last caret position shown on a row. A soft-wrapped row's end is the next row's
+    /// start, where the caret is drawn on the next row, so it stops one character before: on
+    /// the space a word wrap broke at, or before the last character of a word cut in two.
+    pub fn row_end(&self, line: usize) -> usize {
+        let Some(row) = self.rows.get(line) else { return self.text.len() };
+        let soft = self.rows.get(line + 1).is_some_and(|next| next.start == row.end);
+        if soft {
+            self.text[row.clone()].char_indices().next_back().map_or(row.end, |(i, _)| row.start + i)
+        } else {
+            row.end
+        }
     }
 
     pub fn wrap(&mut self, columns: usize) {
@@ -73,22 +87,38 @@ impl Editor {
         self.scroll = self.scroll.min(self.rows.len().saturating_sub(self.visible));
     }
 
+    /// Wraps at word boundaries, as the Chat composer does: a row breaks after the spaces before
+    /// the word that would not fit (they hang past the edge, unseen), and inside a word only when
+    /// that word alone is longer than a row. Rows are contiguous byte ranges; a hard line break
+    /// is the one byte between two rows.
     fn reflow(&mut self, columns: usize) {
         self.rows.clear();
-        let (mut start, mut count) = (0, 0);
+        // `count` is the characters of the row so far; `space` is where the word after the last
+        // whitespace starts, and how many characters precede it.
+        let (mut start, mut count, mut space) = (0, 0, None::<(usize, usize)>);
         for (i, c) in self.text.char_indices() {
             if c == '\n' {
                 self.rows.push(start..i);
-                start = i + 1;
-                count = 0;
+                (start, count, space) = (i + 1, 0, None);
                 continue;
             }
-            if count == columns {
-                self.rows.push(start..i);
-                start = i;
-                count = 0;
+            if count >= columns && !c.is_whitespace() {
+                match space.take() {
+                    Some((at, before)) if at > start => {
+                        self.rows.push(start..at);
+                        start = at;
+                        count -= before;
+                    }
+                    _ => {
+                        self.rows.push(start..i);
+                        (start, count) = (i, 0);
+                    }
+                }
             }
             count += 1;
+            if c.is_whitespace() {
+                space = Some((i + c.len_utf8(), count));
+            }
         }
         self.rows.push(start..self.text.len());
     }
@@ -152,7 +182,7 @@ impl Editor {
                 if mods.ctrl {
                     self.text.len()
                 } else {
-                    self.rows.get(row).map_or(self.text.len(), |r| r.end)
+                    self.row_end(row)
                 }
             }
             KeyName::Up | KeyName::Down | KeyName::PageUp | KeyName::PageDown => {
@@ -335,9 +365,76 @@ mod tests {
         e.set("ab🐈d\n\nz".into());
         e.wrap(3);
         assert_eq!(e.rows.iter().map(|r| &e.text[r.clone()]).collect::<Vec<_>>(), ["ab🐈", "d", "", "z"]);
-        e.move_to(e.row_byte(0, 3), false);
+        assert_eq!(e.row_byte(0, 3), 2, "past a cut row's end stays on that row");
+        e.move_to(e.row_byte(1, 0), false);
         e.key(&KeyName::Backspace, Mods::default(), None);
         e.insert("é\r\n");
         assert_eq!(e.text, "abé\nd\n\nz");
+    }
+
+    fn rows(e: &Editor) -> Vec<&str> {
+        e.rows.iter().map(|r| &e.text[r.clone()]).collect()
+    }
+
+    #[test]
+    fn wraps_at_word_boundaries_and_cuts_only_a_word_longer_than_the_row() {
+        let mut e = Editor::default();
+        e.set("German audio plus back to back support\nabcdefghijkl xy".into());
+        e.wrap(12);
+        assert_eq!(
+            rows(&e),
+            ["German audio ", "plus back to ", "back support", "abcdefghijkl ", "xy"],
+            "no word is split; a word exactly one row long stays whole"
+        );
+        e.wrap(5);
+        assert!(rows(&e).contains(&"abcde") && rows(&e).contains(&"fghij"), "{:?}", rows(&e));
+        assert!(rows(&e).contains(&"back ") && rows(&e).contains(&"plus "), "{:?}", rows(&e));
+        // Spaces hang past the edge rather than starting the next row.
+        e.set("ab     cd".into());
+        e.wrap(4);
+        assert_eq!(rows(&e), ["ab     ", "cd"]);
+        // Wide and multi-byte characters keep their bytes whole.
+        e.set("é🐈 ŝ🐈é ab".into());
+        e.wrap(3);
+        assert_eq!(rows(&e), ["é🐈 ", "ŝ🐈é ", "ab"]);
+    }
+
+    #[test]
+    fn caret_moves_and_selects_across_word_wrapped_rows() {
+        let mut e = Editor::default();
+        e.set("one two three four".into());
+        e.visible = 10;
+        e.wrap(9);
+        assert_eq!(rows(&e), ["one two ", "three ", "four"]);
+        let none = Mods::default();
+        let shift = Mods { shift: true, ..Mods::default() };
+        // End stays on the row: before the space the row broke at.
+        e.key(&KeyName::End, none, None);
+        assert_eq!((e.caret, e.row_at(e.caret)), (7, 0));
+        // Down keeps the column, capped to what the shorter row shows.
+        e.key(&KeyName::Down, none, None);
+        assert_eq!((e.caret, e.row_at(e.caret)), (13, 1), "after “three”");
+        e.key(&KeyName::Down, none, None);
+        assert_eq!((e.caret, e.row_at(e.caret)), (18, 2), "end of the last row");
+        e.key(&KeyName::Home, none, None);
+        assert_eq!(e.caret, 14);
+        e.key(&KeyName::Up, none, None);
+        assert_eq!((e.caret, e.row_at(e.caret)), (8, 1), "start of “three”");
+        // Right from the row's last position crosses to the next row's start.
+        e.move_to(7, false);
+        e.key(&KeyName::Right, none, None);
+        assert_eq!((e.caret, e.row_at(e.caret)), (8, 1));
+        // Shift+Down selects across the soft break.
+        e.move_to(4, false);
+        e.key(&KeyName::Down, shift, None);
+        assert_eq!(&e.text[e.selection()], "two thre");
+        // Clicking past a row's end lands on that row.
+        assert_eq!(e.row_byte(1, 40), 13);
+        assert_eq!(e.row_byte(2, 40), 18);
+        // Typing reflows: the caret follows its word to the next row.
+        e.move_to(7, false);
+        e.insert("sss");
+        assert_eq!(rows(&e), ["one ", "twosss ", "three ", "four"]);
+        assert_eq!(e.row_at(e.caret), 1);
     }
 }

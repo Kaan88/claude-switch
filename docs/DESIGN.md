@@ -483,7 +483,12 @@ process on Cancel or after 120 seconds per request. Provider consent and the sel
 `config.json`. A CLI invocation without prior provider consent refuses before reading the transcript.
 Both routes recheck persisted consent before sending each part or merge.
 
-The preview is editable, with characters and approximate tokens (characters / 4). Previewing or
+The preview is editable, with characters and approximate tokens (characters / 4). Its text wraps at word
+boundaries (a word is cut only when it alone is longer than a row); End, Up/Down and a click past a
+row's end stay on that row. The review card is up to 760 px wide. Its footer has Back, Cancel, In
+OpenCode and Open in CLI (or Continue here) on the right and Copy and Save as… in a group on the left,
+which folds into **More ▾** (a menu with both) when the card is too narrow for the two groups. Any
+dialog's footer narrows its buttons toward their labels' width rather than run past the card. Previewing or
 canceling does not save a handover. Only an explicit Save As or Open writes the edited text.
 Local Markdown files live in `handover/<session-id>-<time>.md` beside config; the newest 20
 are kept per session. An opened edited handover is kept as a new revision. Save As never
@@ -629,6 +634,41 @@ Setup checks for intervening edits before writing; Windows does not provide an a
 compare-and-swap for this value. An interruption after append but before recording ownership can
 leave an untracked entry rather than let uninstall claim an entry it cannot prove it added.
 The plugin retains its fallback to the default per-user installation.
+
+### Writing in the background
+
+**Compact and open…** (session menu, palette, details pane, tab menu, the usage pop-up's offer and
+Automatic handover's **Ask first**, which all open the same dialog) keeps its setup step: model,
+account, focus and provider consent, all checked as before. **Make handover** (or **Allow and make
+handover**) starts the worker and closes the dialog at once; the dialog itself, with every choice
+made in it, waits while the model writes, so the app can be used meanwhile. Several handovers can
+be written at once, one a session: asking again for a session whose handover is being written says
+so, and one that is written or failed opens instead.
+
+When it is written, the same **Review handover** window opens by itself with the result, as soon as
+nothing modal is open (a dialog, Settings, a confirmation, a menu, the palette, the accounts list or
+the usage pop-up); several open one after another, in the order they finished. It opens over the
+Chat composer or a terminal, but for its first 300 ms it ignores keys and typed text, and clicks on
+Open in CLI, In OpenCode and the delete box, so a key already on its way (an Enter half-typed into
+the composer) cannot act in it. The delete box starts off and where it continues (in place or a
+new tab) is checked again, as each time the review opens. When the window is not in front, its
+taskbar button flashes (and, when it is hidden in the notification area, a notice says the handover
+is ready); it never takes the focus from another program.
+
+The Sessions column shows a strip between its filter chips and the list, taking no room when empty:
+**Writing handover · 0:42 · <session>** with a spinner and **Cancel** (which stops the worker), a
+failure in the danger colour with its reason on a second line and **Retry** (which starts again with
+the same choices, through the consent check; when consent is needed again the dialog opens), and
+**Handover ready · <session>** with **Review** and ✕ for a review closed with Cancel or Esc without
+acting on it (✕ discards it). More than two fold into one line ("3 handovers · 1 being written ·
+1 ready · 1 failed") with **Show**/**Hide**. The session's details pane has the same entry beside
+**Handovers…**. A failure while a terminal tab is shown also puts up the error bar with **Retry**.
+
+Closing the window while a handover is being written or a written one has not been opened asks
+first (with the terminal tabs' line when tabs run) and says what happens: one being written is
+canceled, and a written one that was not opened is lost, since previewing does not save a handover
+(only Open, In OpenCode and Save as… write the file). An open review is moved to the strip before
+the confirmation, so it is still there when you stay. Nothing about them survives a restart.
 
 ### Automatic handover instead of compaction
 

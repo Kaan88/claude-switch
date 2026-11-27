@@ -107,6 +107,8 @@ pub enum Target {
     Handovers,
     Info(u32),
     InfoClose,
+    /// A button of a background handover in the Sessions strip or the details pane, by its id.
+    HandoverJob(u64, crate::handover_jobs::Act),
     /// A control of the open dialog, by the dialog's own number.
     Dialog(u32),
     /// A tab of the strip, by its id ([`crate::tabs::SESSIONS`] for the list), and its close button.
@@ -135,6 +137,8 @@ pub enum MenuKind {
     Field(crate::fieldmouse::FieldId),
     /// Copy, Select all, Copy message, Copy as Markdown on the conversation of a tab.
     Conversation(u64),
+    /// Copy and Save as… from the Review handover dialog's “More ▾”.
+    HandoverMore,
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.

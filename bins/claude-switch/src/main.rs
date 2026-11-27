@@ -35,6 +35,7 @@ mod dialogs;
 mod fieldmouse;
 mod folder_defaults;
 mod handover_in_place;
+mod handover_jobs;
 mod handover_pipe;
 mod list;
 mod meaning;
