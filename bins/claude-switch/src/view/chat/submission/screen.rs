@@ -53,10 +53,32 @@ pub(in crate::view) fn menu(screen: &Screen) -> bool {
         || crate::view::chat::question::screens::live_footer(screen).is_some()
 }
 
-/// A row that is only a horizontal rule, as the CLI draws above and below its input.
+/// A row that is only a horizontal rule, as the CLI draws above and below its input, or the
+/// rule above it with the session's name ([`named_rule`]).
 fn rule(cells: &[Cell]) -> bool {
-    let mut chars = cells.iter().map(|c| c.ch).filter(|&c| c != ' ').peekable();
-    chars.peek().is_some() && chars.all(|c| matches!(c, '─' | '━' | '═'))
+    let text: String = cells.iter().filter(|c| !c.is_spacer()).map(|c| c.ch).collect();
+    let mut chars = text.chars().filter(|&c| c != ' ').peekable();
+    chars.peek().is_some() && chars.all(solid) || named_rule(&text)
+}
+
+fn solid(c: char) -> bool {
+    matches!(c, '─' | '━' | '═')
+}
+
+/// The rule over the input of a named session: Claude Code writes the name into it near its
+/// right end, `──────── Fix the flaky tile cache test ─` (2.1.332; a session is named by
+/// `/rename` or `--name`, as this app names its sessions). A run of rule characters, the name
+/// between spaces, and the rule again.
+pub(in crate::view) fn named_rule(text: &str) -> bool {
+    let text = text.trim();
+    let lead = text.chars().take_while(|&c| solid(c)).count();
+    let tail = text.chars().rev().take_while(|&c| solid(c)).count();
+    let total = text.chars().count();
+    if lead < 4 || tail == 0 || lead + tail >= total {
+        return false;
+    }
+    let name: String = text.chars().skip(lead).take(total - lead - tail).collect();
+    name.starts_with(' ') && name.ends_with(' ') && !name.trim().is_empty()
 }
 
 fn frame(cells: &[Cell], left: usize, right: usize, top: bool) -> bool {

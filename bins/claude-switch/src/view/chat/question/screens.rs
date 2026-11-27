@@ -172,7 +172,8 @@ pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> boo
     let Some(bottom) = (row.saturating_sub(8)..row).rev().find(|&r| solid_rule(&text(r))) else {
         return false;
     };
-    let Some(top) = (bottom.saturating_sub(12)..bottom).rev().find(|&r| solid_rule(&text(r))) else {
+    let top_rule = |r: usize| solid_rule(&text(r)) || crate::view::chat::submission::screen::named_rule(&text(r));
+    let Some(top) = (bottom.saturating_sub(12)..bottom).rev().find(|&r| top_rule(r)) else {
         return false;
     };
     let first = text(top + 1);
@@ -648,9 +649,12 @@ pub(super) fn blocked(screen: &Screen) -> Option<Blocked> {
 /// without the cursor, which the CLI parks in its agent list while that has the keys.
 pub(super) fn input_row(screen: &Screen) -> Option<usize> {
     let text = |r: usize| screen.row_text(r).trim().to_owned();
-    (1..screen.rows().saturating_sub(1))
-        .rev()
-        .find(|&r| text(r).starts_with(prompt_mark) && solid_rule(&text(r - 1)) && solid_rule(&text(r + 1)))
+    (1..screen.rows().saturating_sub(1)).rev().find(|&r| {
+        let top = text(r - 1);
+        text(r).starts_with(prompt_mark)
+            && (solid_rule(&top) || crate::view::chat::submission::screen::named_rule(&top))
+            && solid_rule(&text(r + 1))
+    })
 }
 
 /// The row that opens a tool call's block, `Tool(summary)`, with or without its bullet (it blinks

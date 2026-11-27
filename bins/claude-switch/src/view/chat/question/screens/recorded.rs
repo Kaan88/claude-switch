@@ -92,6 +92,8 @@ pub(in crate::view::chat) const REWIND_DONE: &str = include_str!("../fixtures/re
 pub(in crate::view::chat) const REWIND_CUT_UP1: &str = include_str!("../fixtures/rewind_cut_up1.txt");
 pub(in crate::view::chat) const REWIND_CUT_UP2: &str = include_str!("../fixtures/rewind_cut_up2.txt");
 pub(in crate::view::chat) const PLAIN_IDLE: &str = include_str!("../fixtures/plain_idle.ansi");
+/// A named session's idle input: the name sits in the rule above it (150 x 40, auto mode).
+pub(in crate::view::chat) const PLAIN_NAMED: &str = include_str!("../fixtures/plain_named.ansi");
 pub(in crate::view::chat) const PLAIN_START: &str = include_str!("../fixtures/plain_start.ansi");
 pub(in crate::view::chat) const PLAIN_TYPED: &str = include_str!("../fixtures/plain_typed.ansi");
 pub(in crate::view::chat) const PLAIN_QUESTION: &str = include_str!("../fixtures/plain_question.ansi");

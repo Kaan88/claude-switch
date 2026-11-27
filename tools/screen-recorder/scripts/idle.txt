@@ -1,5 +1,6 @@
 # The idle input at the start and after a turn, text typed on it, the rewind list (Esc Esc)
-# and the input after /clear. One model request.
+# the input after /clear, and a named session's input (the name sits in the rule over it).
+# One model request.
 #: args --permission-mode default
 #: seconds 20
 start
@@ -27,3 +28,9 @@ send \r
 sleep 2500
 quiet 1000 15000
 snap cleared
+send /rename A named session
+sleep 800
+send \r
+sleep 2000
+quiet 1000 15000
+snap named

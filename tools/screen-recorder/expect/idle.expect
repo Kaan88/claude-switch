@@ -35,3 +35,10 @@ kind = idle
 input =
 send = yes
 working = no
+
+# Claude Code writes the name into the rule over the input (2.1.332).
+[named]
+kind = idle
+input =
+send = yes
+working = no

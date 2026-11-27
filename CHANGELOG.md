@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Chat: in a named session (every session this app names) Claude Code writes the name into the
+  rule over its input, and Chat took the row for earlier text: it never saw an empty, idle input.
+  Messages stayed queued, Send now said the input was not visibly empty, and Chat could say Claude
+  Code might be waiting for an answer. Chat now reads that rule as the input's border.
+
 ## 0.1.4 (2026-11-27)
 
 - Chat: after `/model` (or another command that only prints, such as `/effort`), the session no

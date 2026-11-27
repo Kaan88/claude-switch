@@ -11,8 +11,8 @@ use crate::view::chat::question::screens::recorded::{
     ASK_OTHER, ASK_OTHER_FIRST, ASK_OTHER_LONG, ASK_OTHER_TYPED, FORM_OTHER, FORM_OTHER_FIRST, FORM_OTHER_TYPED,
 };
 use crate::view::chat::question::screens::recorded::{
-    PLAIN_EMPTIED, PLAIN_IDLE, PLAIN_INTERRUPTED, PLAIN_QUESTION, PLAIN_RESTORED, PLAIN_TYPED, PLAIN_WORKING_TYPED,
-    WORKING_TOOL, recorded,
+    PLAIN_EMPTIED, PLAIN_IDLE, PLAIN_INTERRUPTED, PLAIN_NAMED, PLAIN_QUESTION, PLAIN_RESTORED, PLAIN_TYPED,
+    PLAIN_WORKING_TYPED, WORKING_TOOL, recorded,
 };
 use crate::view::chat::question::{self, Hit};
 use std::ops::Not;
@@ -105,6 +105,36 @@ fn a_resumed_session_sends_once_its_idle_input_has_been_quiet() {
     assert_eq!(f.pass(QUIET).0, Gate::Check, "its own keys are on their way");
     assert_eq!(f.writes(), message("hello"));
     assert!(f.chat().queue.is_none() && f.chat().editor.text.is_empty());
+}
+
+#[test]
+fn a_named_sessions_idle_input_is_ready_and_a_message_goes_at_once() {
+    // Claude Code writes a named session's name into the rule over its input (2.1.332). Read as
+    // earlier text, it hid the input: every message was held and never went (owner, 2026-11-27).
+    let screen = recorded(PLAIN_NAMED);
+    assert_eq!(screen::prompt(&screen).as_deref(), Some(""));
+    assert!(!screen::menu(&screen) && !screen::working(&screen));
+    let mut f = Live::new();
+    f.show(PLAIN_NAMED);
+    assert_eq!(f.pass(SECOND), (Gate::Ready, None));
+    f.send("hello");
+    assert_eq!(f.writes(), message("hello"));
+}
+
+#[test]
+fn only_a_rule_with_a_name_between_spaces_is_the_named_rule() {
+    assert!(screen::named_rule("──────────────── Fix the flaky tile cache test ─"));
+    assert!(screen::named_rule("  ━━━━━━━━ notes ━━  "));
+    for other in [
+        "────────────────────────",
+        "──────── Fix the flaky tile cache test",
+        "Fix the flaky tile cache test ─",
+        "── a ─",
+        "────────Fix─",
+        "────────  ─",
+    ] {
+        assert!(!screen::named_rule(other), "{other}");
+    }
 }
 
 #[test]
