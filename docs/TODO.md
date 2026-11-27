@@ -931,3 +931,11 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     re-checks, mark and summary cleanup, copy and in-place deletion. Not checked: the real Recycle Bin call
     (`SHFileOperationW`) has not been run by a test or by hand, and the copy-written condition assumes Claude Code
     writes the copied conversation into the new transcript with its first message (not verified on a live fork).
+
+80. **Later: `/fork` breaks Chat's continuation** (owner, 2026-11-27: "fork broke chat continuation, I
+    think. not a big deal right now. note it."; screenshot). After `/fork` typed in a Claude tab,
+    Claude Code goes on in the forked session (Chat shows the `/fork` row, "session waiting for a
+    prompt · <title> · continued · <id>"), while Chat keeps showing the old conversation and does not
+    pick up the new turns the terminal shows. Chat follows a tab to a new session after `/clear`,
+    compaction and `/resume`; `/fork` probably needs the same (find the forked session's transcript
+    and switch the tab to it, as for `/resume`). Not looked into yet.
