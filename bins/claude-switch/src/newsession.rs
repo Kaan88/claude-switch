@@ -43,6 +43,9 @@ pub struct NewSession {
     error: Option<&'static str>,
     /// "New OpenCode tab": the folder only; OpenCode has no Claude account or app.
     opencode: bool,
+    /// Start found this folder missing and offered to create it: Start again with the same text
+    /// creates it. Any edit of the field withdraws the offer.
+    create: Option<PathBuf>,
 }
 
 impl AppState {
@@ -120,10 +123,19 @@ fn folder_from_text(text: &str, is_dir: impl FnOnce(&Path) -> bool) -> Result<Pa
     if path.as_os_str().is_empty() {
         Err("Enter a folder.")
     } else if !is_dir(&path) {
-        Err("That folder does not exist or is not accessible.")
+        Err(MISSING)
     } else {
         Ok(path)
     }
+}
+
+const MISSING: &str = "That folder does not exist or is not accessible.";
+const OFFER: &str = "That folder does not exist. Press Start again to create it.";
+
+/// Whether a missing `path` may be created: a full path (a drive or a share) that names no file,
+/// under a folder that exists, however deep the missing part goes.
+fn creatable(path: &Path) -> bool {
+    path.is_absolute() && !path.exists() && path.ancestors().skip(1).find(|a| a.exists()).is_some_and(|a| a.is_dir())
 }
 
 impl NewSession {
@@ -144,6 +156,7 @@ impl NewSession {
             focus: 0,
             error: None,
             opencode: false,
+            create: None,
         };
         picker.sync_defaults(st);
         picker
@@ -237,6 +250,14 @@ impl NewSession {
         match id {
             CANCEL => return false,
             OK => {
+                let text = PathBuf::from(self.field.text().trim());
+                if self.create.as_ref() == Some(&text) && !st.source.is_demo() {
+                    self.create = None;
+                    if let Err(e) = std::fs::create_dir_all(&text) {
+                        st.error("Could not create the folder", format!("{}: {e}", text.display()));
+                        return true;
+                    }
+                }
                 match folder_from_text(self.field.text(), |path| {
                     if st.source.is_demo() {
                         path == st.source.home() || st.all_groups.iter().any(|g| g.cwd == path)
@@ -255,6 +276,11 @@ impl NewSession {
                             st.new_session_now(now, self.app, slug, &cwd);
                         }
                         return false;
+                    }
+                    Err(MISSING) if !st.source.is_demo() && creatable(&text) => {
+                        self.create = Some(text);
+                        self.error = Some(OFFER);
+                        self.focus = FOLDER;
                     }
                     Err(error) => {
                         self.error = Some(error);
@@ -287,6 +313,7 @@ impl NewSession {
         self.field.set_text(&path);
         self.list.highlight = None;
         self.error = None;
+        self.create = None;
         self.focus = FOLDER;
         self.sync_defaults(st);
     }
@@ -294,6 +321,7 @@ impl NewSession {
     /// The field's text was edited: it filters the list.
     fn typed(&mut self, st: &AppState) {
         self.error = None;
+        self.create = None;
         self.focus = FOLDER;
         self.list.filter(self.field.text());
         self.sync_defaults(st);
@@ -358,6 +386,7 @@ impl NewSession {
         self.field.select_all();
         self.list.highlight = None;
         self.error = None;
+        self.create = None;
         self.focus = FOLDER;
         self.sync_defaults(st);
     }
