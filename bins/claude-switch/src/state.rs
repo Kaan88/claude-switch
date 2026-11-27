@@ -119,6 +119,8 @@ pub enum Target {
     Chat(crate::view::chat::Control),
     RestoreTabs,
     DismissTabs,
+    /// The Settings dialog's Peek button, for its tooltip (Settings hits it itself).
+    SettingsPeek,
 }
 
 /// Which popup menu is open.

@@ -8,7 +8,7 @@
 //! setting and high contrast all make the switch instant.
 
 use super::{
-    AppState, Form, PAGES, SettingsEvent, appearance, page_form, terminal_appearance, theme_editor::Editor, tiles,
+    AppState, Form, PAGES, SettingsEvent, appearance, page_form, peek, terminal_appearance, theme_editor::Editor, tiles,
 };
 use crate::windowlook::Cards;
 use mdshared_ui::anim::{Animator, PageEffect, PageTransition, fluent};
@@ -101,6 +101,7 @@ pub struct Settings {
     /// The page being left, until the next frame draws it once more for the switch.
     leaving: Option<(usize, Form)>,
     switch: PageTransition,
+    pub(super) peek: peek::Peek,
 }
 
 impl Settings {
@@ -118,6 +119,7 @@ impl Settings {
             layout: Layout::default(),
             leaving: None,
             switch: PageTransition::new("settings-page").with_timing(SWITCH, fluent::DECELERATE),
+            peek: peek::Peek::default(),
         }
     }
 
@@ -245,6 +247,67 @@ impl Settings {
         // After the page and before anything over it: the menus and pickers are the form's own
         // and are drawn inside it, so only the blend is left.
         self.switch.apply(anim, p, region);
+        self.peek.button = peek::draw_button(p, pal, self.form.rect(), &self.peek);
+    }
+
+    /// The dim and the dialog, faded by how far a peek has taken them away, then the peek's
+    /// pill. Without a peek this is [`Self::draw`]. True while the fade is moving.
+    pub(in super::super) fn draw_layer(
+        &mut self,
+        p: &mut Painter,
+        st: &AppState,
+        window: Rect,
+        presence: f32,
+        anim: &mut Animator,
+    ) -> bool {
+        let shown = anim.toggle(peek::SHOWN, !self.peeking(), peek::MOTION);
+        if shown >= 1.0 {
+            self.draw(p, st, window, presence, anim);
+        } else if shown > 0.0 {
+            let under = p.snapshot(window);
+            self.draw(p, st, window, presence, anim);
+            p.fade(&under, shown);
+        }
+        peek::draw_pill(p, st, window, 1.0 - shown);
+        !anim.settled(peek::SHOWN)
+    }
+
+    /// Whether a peek is holding Settings out of sight.
+    pub(crate) fn peeking(&self) -> bool {
+        self.peek.by.is_some()
+    }
+
+    /// Ends the peek `by` started; another peek, or none, stays as it is. True if it ended.
+    pub(crate) fn end_peek(&mut self, by: peek::By) -> bool {
+        self.peek.by.take_if(|b| *b == by).is_some()
+    }
+
+    /// Ends any peek: the window lost the keyboard. True if one ended.
+    pub(crate) fn cancel_peek(&mut self) -> bool {
+        self.peek.by.take().is_some()
+    }
+
+    /// The Peek button while the pointer rests on it, for its tooltip.
+    pub(crate) fn peek_tip(&self) -> Option<Rect> {
+        (self.peek.hover && !self.peeking()).then_some(self.peek.button)
+    }
+
+    /// Space peeks only when what has the keyboard does nothing with it: the category list, no
+    /// control, or a number. A text box, switch, choice, palette card, button or an open
+    /// dropdown or picker keeps its Space.
+    fn space_peeks(&self) -> bool {
+        use mdshared_ui::settings::Row;
+        if self.form.popup_open() {
+            return false;
+        }
+        if self.rail_focus {
+            return true;
+        }
+        if self.form.focus_on_close() {
+            return false;
+        }
+        let Some(id) = self.form.focus_id() else { return true };
+        matches!(self.form.rows().iter().find(|r| r.id() == Some(id)), Some(Row::Number { .. }) | None)
     }
 
     fn swatch_at(&self, x: f32, y: f32) -> Option<(u32, usize)> {
@@ -261,6 +324,13 @@ impl Settings {
         mods: Mods,
         text: Option<&str>,
     ) -> SettingsEvent {
+        if self.peeking() {
+            return SettingsEvent::Form(Outcome::None);
+        }
+        if *key == KeyName::Space && !(mods.ctrl || mods.alt || mods.shift) && self.space_peeks() {
+            self.peek.by = Some(peek::By::Space);
+            return SettingsEvent::Form(Outcome::Redraw);
+        }
         self.key_used = true;
         if self.rail_focus {
             let next = match key {
@@ -281,12 +351,17 @@ impl Settings {
             && self.form.colour_open().is_none()
             && let Some(outcome) = tiles::key(&mut self.form, config, key)
         {
+            tiles::reveal(&mut self.form);
             return SettingsEvent::Form(outcome);
         }
         let first = self.first_row();
         let was_first = self.form.focus_id() == first;
         let was_close = self.form.focus_on_close();
+        let was = self.form.focus_id();
         let outcome = self.form.key(key, mods, text);
+        if self.has_palettes() && self.form.focus_id() != was {
+            tiles::reveal(&mut self.form);
+        }
         // Insert the rail between Close and the first control in the form's Tab ring.
         // A first Tab that only reveals focus or dismisses a popup hasn't moved focus.
         if *key == KeyName::Tab
@@ -349,6 +424,13 @@ impl Settings {
     }
 
     fn press_with(&mut self, x: f32, y: f32, press: impl FnOnce(&mut Form) -> Outcome) -> SettingsEvent {
+        if self.peeking() {
+            return SettingsEvent::Form(Outcome::None);
+        }
+        if !self.form.popup_open() && self.peek.button.contains(x, y) {
+            self.peek.by = Some(peek::By::Mouse);
+            return SettingsEvent::Form(Outcome::Redraw);
+        }
         self.pressed = None;
         self.key_used = false;
         self.swatch_pressed = self.swatch_at(x, y);
@@ -356,6 +438,10 @@ impl Settings {
             self.rail_focus = false;
             self.form.focus_row(id);
             return SettingsEvent::Form(Outcome::Redraw);
+        }
+        if self.has_palettes() && tiles::covers(&self.form, x, y) {
+            // Between the cards: the grid row's own dropdown is under them and stays shut.
+            return SettingsEvent::Form(Outcome::None);
         }
         let outcome = press(&mut self.form);
         if self.layout.rail.contains(x, y) && outcome == Outcome::Closed {
@@ -373,6 +459,12 @@ impl Settings {
     }
 
     pub(crate) fn release(&mut self, x: f32, y: f32) -> SettingsEvent {
+        if self.end_peek(peek::By::Mouse) {
+            return SettingsEvent::Form(Outcome::Redraw);
+        }
+        if self.peeking() {
+            return SettingsEvent::Form(Outcome::None);
+        }
         if let Some((id, k)) = self.swatch_pressed.take()
             && self.swatch_at(x, y) == Some((id, k))
         {
@@ -389,11 +481,16 @@ impl Settings {
     }
 
     pub(crate) fn pointer_move(&mut self, x: f32, y: f32) -> bool {
+        if self.peeking() {
+            return false;
+        }
+        let over = self.peek.button.contains(x, y);
+        let peek_changed = std::mem::replace(&mut self.peek.hover, over) != over;
         let hover = self.layout.hit(x, y);
         let swatch = self.swatch_at(x, y);
         let swatch_changed = std::mem::replace(&mut self.swatch_hover, swatch) != swatch;
         let changed = (std::mem::replace(&mut self.hover, hover) != hover) | swatch_changed;
-        self.form.pointer_move(x, y) || changed
+        self.form.pointer_move(x, y) || changed || peek_changed
     }
 
     /// Whether a colour row's picker is open.
@@ -404,7 +501,10 @@ impl Settings {
     /// The text row under the pointer, for the I-beam and the edit menu. The toolkit decides:
     /// only an uncovered, editable text area counts, never one under an open dropdown or picker.
     pub(crate) fn text_row_at(&self, x: f32, y: f32) -> Option<u32> {
-        if self.layout.rail.contains(x, y) || !matches!(self.form.pointer_cursor_at(x, y), Some(Cursor::Text)) {
+        if self.peeking()
+            || self.layout.rail.contains(x, y)
+            || !matches!(self.form.pointer_cursor_at(x, y), Some(Cursor::Text))
+        {
             return None;
         }
         self.form.rows().iter().enumerate().find_map(|(i, row)| match row {
@@ -452,7 +552,7 @@ impl Settings {
     }
 
     pub(in super::super) fn wheel(&mut self, x: f32, y: f32, dy: f32) {
-        if !self.layout.rail.contains(x, y) {
+        if !self.peeking() && !self.layout.rail.contains(x, y) {
             self.form.wheel(x, y, dy);
         }
     }
@@ -535,6 +635,8 @@ mod tests {
 
         let swatch_index =
             settings.form.rows().iter().position(|r| r.id() == Some(super::super::SET_ACCENT_COLOUR)).unwrap();
+        // Below the palette cards at this size: scroll it into view as Tab would.
+        settings.form.focus_row(super::super::SET_ACCENT_COLOUR);
         let swatch = settings.form.swatch_rect(swatch_index);
         settings.press(swatch.cx(), swatch.cy(), mods, 1);
         settings.release(swatch.cx(), swatch.cy());
@@ -565,6 +667,8 @@ mod tests {
         let id = super::super::SET_ACCENT_COLOUR;
         let before = settings.form.colour(id);
         let index = settings.form.rows().iter().position(|r| r.id() == Some(id)).unwrap();
+        // Below the palette cards at this size: scroll it into view as Tab would.
+        settings.form.focus_row(id);
         let open = |settings: &mut Settings, p: &mut Painter| {
             let opened = settings.form.colour(id);
             let swatch = settings.form.swatch_rect(index);
@@ -718,5 +822,309 @@ mod tests {
         assert!(settings.form.popup_open(), "a dropdown on the page opened");
         assert_eq!(settings.text_row_at(x, y), None);
         assert!(settings.text_menu(x, y).is_none());
+    }
+
+    // ---- Peek ---------------------------------------------------------------------------------
+
+    const PEEK_WINDOW: Rect = Rect::new(0.0, 0.0, 1000.0, 700.0);
+
+    /// The demo's sessions, for a window that looks like one.
+    fn peek_state(dark: bool) -> AppState {
+        let mut st = AppState::new(Source::Demo, Some(dark), Default::default());
+        st.apply_scan(crate::demo::scan(&st.config));
+        st
+    }
+
+    /// The window under Settings: its page, title bar, session list and details.
+    fn window_under(st: &mut AppState, p: &mut Painter) {
+        use mdshared_ui::splitter::Axis;
+        let pal = *st.pal();
+        if st.config.appearance.backdrop != "off" {
+            // Mica or Acrylic: the key colour is where the compositor's material shows.
+            let key = mdshared_ui::frost::key_colour(&pal);
+            p.set_frost_key(Some(mdshared_ui::frost::Key::new(key, 217)));
+        }
+        p.fill(PEEK_WINDOW, pal.page);
+        crate::topbar::draw(st, p, PEEK_WINDOW.w, false, false, false);
+        let top = mdshared_ui::chrome::TITLE_H;
+        let area = Rect::new(0.0, top, PEEK_WINDOW.w, PEEK_WINDOW.h - top);
+        let rects = st.splitter.rects(area, Axis::Horizontal);
+        crate::list::draw_in(st, &mut Animator::new(), p, rects.0);
+        crate::details::draw(st, p, rects.2);
+        mdshared_ui::splitter::draw(p, &pal, rects, Axis::Horizontal, false);
+    }
+
+    /// One frame: the window, then Settings (or what a peek leaves of it). True while the
+    /// peek's fade moves.
+    fn peek_frame(st: &mut AppState, s: &mut Settings, anim: &mut Animator, at: Instant, scale: f32) -> (Bitmap, bool) {
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new((PEEK_WINDOW.w * scale) as u32, (PEEK_WINDOW.h * scale) as u32);
+        let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+        anim.begin_frame(at);
+        window_under(st, &mut p);
+        let moving = s.draw_layer(&mut p, st, PEEK_WINDOW, 1.0, anim);
+        anim.end_frame();
+        (bmp, moving)
+    }
+
+    fn base_frame(st: &mut AppState, scale: f32) -> Bitmap {
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new((PEEK_WINDOW.w * scale) as u32, (PEEK_WINDOW.h * scale) as u32);
+        let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+        window_under(st, &mut p);
+        bmp
+    }
+
+    fn pill_at(scale: f32) -> Rect {
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(8, 8);
+        peek::pill_rect(&mut Painter::new(&mut bmp, &mut gfx, scale), PEEK_WINDOW)
+    }
+
+    /// Pixels that differ between two frames, outside `except` (logical px).
+    fn differing(a: &Bitmap, b: &Bitmap, except: Rect, scale: f32) -> usize {
+        let e = Rect::new(except.x * scale, except.y * scale, except.w * scale, except.h * scale);
+        let mut n = 0;
+        for y in 0..a.height {
+            for x in 0..a.width {
+                if e.contains(x as f32 + 0.5, y as f32 + 0.5) {
+                    continue;
+                }
+                let i = ((y * a.width + x) * 4) as usize;
+                n += usize::from(a.pixels[i..i + 3] != b.pixels[i..i + 3]);
+            }
+        }
+        n
+    }
+
+    fn shot(bmp: &Bitmap, name: &str) {
+        if let Some(dir) = std::env::var_os("CS_PEEK_SHOTS") {
+            bmp.write_png(&std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();
+        }
+    }
+
+    #[test]
+    fn holding_peek_shows_the_window_exactly_and_letting_go_brings_settings_back_as_it_was() {
+        use std::time::Duration;
+        for (dark, name) in [(true, "dark"), (false, "light")] {
+            let mut st = peek_state(dark);
+            for scale in [1.0, 1.5] {
+                let mut s = Settings::new(&st, 0);
+                let mut anim = Animator::new();
+                let t0 = Instant::now();
+                let (open, _) = peek_frame(&mut st, &mut s, &mut anim, t0, scale);
+                let base = base_frame(&mut st, scale);
+                if scale == 1.0 {
+                    shot(&open, &format!("peek-{name}-1-settings-open"));
+                }
+                assert!(differing(&open, &base, Rect::default(), scale) > 10_000, "Settings and its dim are drawn");
+
+                // The button: at the card's top right, on the title's line, above the rows.
+                let card = s.form.rect();
+                let b = s.peek.button;
+                assert!(b.right() <= card.right() - 20.0 && b.x > card.cx() && b.y > card.y);
+                assert!(b.bottom() < s.form.body_rect().y);
+
+                // Some state to keep: a scroll, keyboard focus on a row.
+                s.form.wheel(card.cx(), card.cy(), 60.0);
+                s.form.focus_row(super::super::SET_CORNERS);
+                s.rail_focus = false;
+                let kept = (s.index, s.form.scroll(), s.form.focus_id(), s.rail_focus);
+
+                assert!(s.pointer_move(b.cx(), b.cy()));
+                assert_eq!(s.peek_tip(), Some(b));
+                assert!(matches!(s.press(b.cx(), b.cy(), Mods::default(), 1), SettingsEvent::Form(Outcome::Redraw)));
+                assert!(s.peeking() && s.peek_tip().is_none());
+
+                // Halfway both the window and Settings show; then the window alone and the pill.
+                let (_, moving) = peek_frame(&mut st, &mut s, &mut anim, t0 + Duration::from_millis(16), scale);
+                assert!(moving);
+                let (half, moving) = peek_frame(&mut st, &mut s, &mut anim, t0 + Duration::from_millis(60), scale);
+                assert!(moving, "the fade takes about 120 ms");
+                assert!(differing(&half, &open, Rect::default(), scale) > 1_000);
+                assert!(differing(&half, &base, Rect::default(), scale) > 1_000);
+                let mut at = t0 + Duration::from_millis(60);
+                let mut peeking = None;
+                while at < t0 + Duration::from_millis(200) {
+                    at += Duration::from_millis(16);
+                    peeking = Some(peek_frame(&mut st, &mut s, &mut anim, at, scale));
+                }
+                let (peeking, moving) = peeking.unwrap();
+                assert!(!moving);
+                let pill = pill_at(scale);
+                assert_eq!(
+                    differing(&peeking, &base, peek::pill_bounds(pill), scale),
+                    0,
+                    "exactly the window, but the pill"
+                );
+                assert!(differing(&peeking, &base, Rect::default(), scale) > 0, "the pill shows");
+                if scale == 1.0 {
+                    shot(&half, &format!("peek-{name}-2-fading"));
+                    shot(&peeking, &format!("peek-{name}-3-peeking"));
+                }
+
+                // Nothing else does anything while peeking.
+                let second = s.layout.category(1);
+                let mods = Mods::default();
+                assert!(matches!(s.press(second.cx(), second.cy(), mods, 1), SettingsEvent::Form(Outcome::None)));
+                for key in [KeyName::Tab, KeyName::Down, KeyName::Escape, KeyName::Space, KeyName::Right] {
+                    assert!(matches!(s.key(&st.config, &key, mods, None), SettingsEvent::Form(Outcome::None)));
+                }
+                s.wheel(card.cx(), card.cy(), 200.0);
+                assert!(!s.pointer_move(card.cx(), card.cy()));
+                assert_eq!(s.text_row_at(card.cx(), card.cy()), None);
+
+                // Let go anywhere, outside the window too: Settings comes back as it was.
+                assert!(matches!(s.release(-40.0, -40.0), SettingsEvent::Form(Outcome::Redraw)));
+                assert!(!s.peeking());
+                assert_eq!((s.index, s.form.scroll(), s.form.focus_id(), s.rail_focus), kept);
+                let (_, moving) = peek_frame(&mut st, &mut s, &mut anim, t0 + Duration::from_millis(232), scale);
+                assert!(moving, "it fades back in");
+                let mut at = t0 + Duration::from_millis(232);
+                let mut back = None;
+                while at < t0 + Duration::from_millis(400) {
+                    at += Duration::from_millis(16);
+                    back = Some(peek_frame(&mut st, &mut s, &mut anim, at, scale));
+                }
+                let (back, moving) = back.unwrap();
+                assert!(!moving);
+                assert!(differing(&back, &base, Rect::default(), scale) > 10_000);
+            }
+        }
+    }
+
+    #[test]
+    fn reduce_motion_and_the_systems_reduced_motion_snap_the_peek() {
+        use mdshared_ui::anim::Policy;
+        let mut st = peek_state(true);
+        for (policy, reduced) in [(Some(Policy::Never), false), (None, true)] {
+            let mut anim = Animator::new();
+            if let Some(policy) = policy {
+                anim.set_policy(policy);
+            }
+            anim.set_system_reduced(reduced);
+            let mut s = Settings::new(&st, 0);
+            let t0 = Instant::now();
+            peek_frame(&mut st, &mut s, &mut anim, t0, 1.0);
+            let b = s.peek.button;
+            s.press(b.cx(), b.cy(), Mods::default(), 1);
+            let (peeking, moving) = peek_frame(&mut st, &mut s, &mut anim, t0, 1.0);
+            assert!(!moving);
+            let base = base_frame(&mut st, 1.0);
+            assert_eq!(differing(&peeking, &base, peek::pill_bounds(pill_at(1.0)), 1.0), 0);
+            s.release(b.cx(), b.cy());
+            let (_, moving) = peek_frame(&mut st, &mut s, &mut anim, t0, 1.0);
+            assert!(!moving);
+        }
+    }
+
+    #[test]
+    fn space_peeks_only_when_what_has_the_keyboard_does_not_use_space() {
+        let st = AppState::new(Source::Demo, Some(true), Default::default());
+        let mut gfx = Gfx::new();
+        let mut bitmap = Bitmap::new(1000, 700);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        let mut s = Settings::new(&st, 0);
+        let mut anim = Animator::new();
+        anim.begin_frame(Instant::now());
+        s.draw(&mut p, &st, PEEK_WINDOW, 1.0, &mut anim);
+        let mods = Mods::default();
+        let space = |s: &mut Settings, mods: Mods| s.key(&st.config, &KeyName::Space, mods, Some(" "));
+
+        // The category list does nothing with Space: it peeks, repeats do nothing, release ends.
+        assert!(s.rail_focus);
+        assert!(matches!(space(&mut s, mods), SettingsEvent::Form(Outcome::Redraw)));
+        assert_eq!(s.peek.by, Some(peek::By::Space));
+        assert!(matches!(space(&mut s, mods), SettingsEvent::Form(Outcome::None)));
+        assert!(!s.end_peek(peek::By::Mouse), "the mouse's release doesn't end Space's peek");
+        assert!(s.end_peek(peek::By::Space) && !s.peeking());
+        // With a modifier it is someone else's shortcut.
+        for m in [Mods { ctrl: true, ..mods }, Mods { alt: true, ..mods }, Mods { shift: true, ..mods }] {
+            space(&mut s, m);
+            assert!(!s.peeking());
+        }
+
+        // A switch, a segmented choice and a palette card keep their Space.
+        s.rail_focus = false;
+        for id in [super::super::SET_REDUCE_MOTION, super::super::SET_THEME, tiles::DARK] {
+            s.form.focus_row(id);
+            let o = space(&mut s, mods);
+            assert!(matches!(o, SettingsEvent::Form(Outcome::Changed { id: c, .. }) if c == id), "{id}");
+            assert!(!s.peeking(), "{id}");
+        }
+        // A colour row's text box keeps it too.
+        s.form.focus_row(super::super::SET_ACCENT_COLOUR);
+        space(&mut s, mods);
+        assert!(!s.peeking());
+        s.form.key(&KeyName::Escape, mods, None);
+        // A number does nothing with Space: it peeks.
+        s.form.focus_row(super::super::SET_CORNERS);
+        assert!(matches!(space(&mut s, mods), SettingsEvent::Form(Outcome::Redraw)));
+        assert!(s.peeking());
+        assert!(s.cancel_peek());
+        // The Close button keeps it.
+        s.form.focus_row(super::super::SET_CORNERS);
+        while !s.form.focus_on_close() {
+            s.form.key(&KeyName::Tab, mods, None);
+        }
+        space(&mut s, mods);
+        assert!(!s.peeking());
+    }
+
+    /// Pixels of the frost key colour: where Mica or Acrylic shows through.
+    fn see_through(bmp: &Bitmap, key: mdshared_ui::gfx::Rgb) -> usize {
+        bmp.pixels.as_chunks::<4>().0.iter().filter(|px| [px[2], px[1], px[0]] == key).count()
+    }
+
+    #[test]
+    fn with_mica_or_acrylic_a_peek_leaves_the_material_showing_as_without_settings() {
+        use std::time::Duration;
+        for (dark, backdrop) in [(true, "mica"), (false, "acrylic")] {
+            let mut st = peek_state(dark);
+            st.config.appearance.backdrop = backdrop.into();
+            let key = mdshared_ui::frost::key_colour(st.pal());
+            let mut s = Settings::new(&st, 0);
+            let mut anim = Animator::new();
+            let t0 = Instant::now();
+            let (open, _) = peek_frame(&mut st, &mut s, &mut anim, t0, 1.0);
+            let base = base_frame(&mut st, 1.0);
+            assert!(see_through(&base, key) > 10_000, "{backdrop}: the window has material showing");
+            assert!(see_through(&open, key) < see_through(&base, key) / 4, "{backdrop}: the dim covers it");
+            let b = s.peek.button;
+            s.press(b.cx(), b.cy(), Mods::default(), 1);
+            let mut at = t0;
+            let mut last = None;
+            while at < t0 + Duration::from_millis(200) {
+                at += Duration::from_millis(16);
+                last = Some(peek_frame(&mut st, &mut s, &mut anim, at, 1.0));
+            }
+            let (peeking, moving) = last.unwrap();
+            assert!(!moving);
+            assert_eq!(differing(&peeking, &base, peek::pill_bounds(pill_at(1.0)), 1.0), 0, "{backdrop}");
+            let pill = peek::pill_bounds(pill_at(1.0));
+            let pill_area = (pill.w * pill.h) as usize;
+            assert!(see_through(&peeking, key) + pill_area >= see_through(&base, key), "{backdrop}: no dim left");
+        }
+    }
+
+    #[test]
+    fn every_page_has_peek_at_the_same_place_and_it_peeks_there() {
+        let mut st = peek_state(true);
+        let mut place = None;
+        for (index, (name, _)) in PAGES.iter().enumerate() {
+            let mut s = Settings::new(&st, index);
+            let mut anim = Animator::new();
+            peek_frame(&mut st, &mut s, &mut anim, Instant::now(), 1.0);
+            let b = s.peek.button;
+            let card = s.form.rect();
+            assert!(b.w > 0.0 && b.y > card.y && b.bottom() < s.form.body_rect().y, "{name}");
+            // Short pages have a shorter card; its top and right edge, and so the button, stay.
+            assert_eq!(*place.get_or_insert(b), b, "{name}: the same place on every page");
+            assert!(b.right() <= card.right() - 20.0, "{name}");
+            s.press(b.cx(), b.cy(), Mods::default(), 1);
+            assert!(s.peeking(), "{name}");
+            s.release(b.cx(), b.cy());
+            assert!(!s.peeking() && s.index == index, "{name}");
+        }
     }
 }

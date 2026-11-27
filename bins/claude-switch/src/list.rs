@@ -55,6 +55,19 @@ pub fn ago_at(now_ms: u64, then_ms: u64, offset: i32) -> String {
 }
 
 pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut Painter, area: Rect) {
+    for r in draw_in(st, cx.anim(), p, area) {
+        cx.animating(r);
+    }
+}
+
+/// [`draw`] with the animator alone: what it gives back is still moving.
+pub(crate) fn draw_in(
+    st: &mut AppState,
+    anim: &mut mdshared_ui::anim::Animator,
+    p: &mut Painter,
+    area: Rect,
+) -> Vec<Rect> {
+    let mut moving = Vec::new();
     let pal = *st.pal();
     p.fill(area, pal.pane);
     controls(st, p, area);
@@ -65,7 +78,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
     st.sections.scroll = st.sections.clamp_scroll(st.sections.scroll);
     st.hits.push((area, Target::ListBlank));
     if st.groups.is_empty() && st.conversation_search.on {
-        return;
+        return moving;
     }
     if st.groups.is_empty() {
         let text = if !st.scanned {
@@ -76,7 +89,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
             "No sessions match this view."
         };
         p.text_center(Face::Ui, 13.0, Rect::new(area.x, area.y + 40.0, area.w, 24.0), text, pal.muted);
-        return;
+        return moving;
     }
     let old = p.clip(area);
     let now = now_ms();
@@ -87,7 +100,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
         let r = st.sections.rect(area, i);
         match st.sections.entry(i) {
             Some(Entry::Heading(g)) => heading(st, p, r, g, i, (now, offset)),
-            Some(Entry::Row { .. }) if row(st, cx.anim(), p, r, i, cursor == Some(i), (now, offset)) => cx.animating(r),
+            Some(Entry::Row { .. }) if row(st, anim, p, r, i, cursor == Some(i), (now, offset)) => moving.push(r),
             _ => {}
         }
     }
@@ -106,6 +119,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
         st.list_scroll_track = Some(track);
     }
     p.restore(old);
+    moving
 }
 
 fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {

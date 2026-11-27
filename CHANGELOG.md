@@ -32,6 +32,17 @@
 - Chat and the handover editor: Ctrl+Left and Ctrl+Right move by word, and Ctrl+Shift+Left/Right
   select by word, as in Windows text boxes. Before, they moved one character. Ctrl+Backspace and
   Ctrl+Delete remove a word, one undo step each in the message box.
+- Settings: **Peek** at the top right of every page. Hold it with the mouse, or hold Space when
+  nothing focused uses Space, and the dim and the dialog fade away (instantly with Reduce motion)
+  to show the window as it is with the changes already applied, Mica or Acrylic included; a pill at
+  the top says how to come back. Let go and Settings returns on the same page, scroll and focus.
+  Clicks and keys do nothing while peeking, and switching away from the window ends it.
+- Settings › Appearance: the dark and light palettes (and the Terminal page's colour presets) are a
+  grid of equal cards, five across, each a small window in that palette: title bar, side pane, text,
+  accent button and a terminal with its colours. Names sit whole inside the card; a long custom name
+  is shortened, with the full name on hover. The chosen card has an accent border and a check, the
+  hovered one a lighter fill, and the keyboard's ring sits outside the card. Dark and light share
+  one column grid, custom themes wrap to a further line, and nothing runs into the next setting.
 
 ## 0.1.2 (2026-11-27)
 

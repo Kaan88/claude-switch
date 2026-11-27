@@ -725,8 +725,15 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 The Appearance page controls the window. The window theme is System, Light or Dark;
 `--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
-(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as named swatches.
-A click on the preview or caption chooses it; Tab focuses a row and Left/Right or Home/End changes
+(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as a grid of equal cards,
+five across at every Settings width: a small window drawn in the palette (title bar, side pane,
+text, accent button, and a terminal with five of its ANSI colours) above the whole name. A custom
+name too long for its card is elided, with the full name in a tooltip on hover. The chosen card has
+an accent border and a check; hover lightens a card; the keyboard ring is the toolkit's, outside the
+card (or round the whole line when its choice is on another line). Each line of cards is one form
+choice row plus empty spacer rows (`tiles::line`), so the next setting starts below the cards; a
+press between cards does nothing, and keyboard focus scrolls the whole line into view.
+A click on the card chooses it; Tab focuses a row and Left/Right or Home/End changes
 the choice. On a row without the current selection, Right starts at the first swatch, Left at the
 last, and Enter or Space leaves the selection alone. Terminal presets use the same control.
 Dark: Neutral (the toolkit's dark), Near black, Warm,
@@ -791,6 +798,24 @@ both windows changed differently is refused, with a notice naming it; the other 
 kept and this window reloads the current settings, without asking for a restart. It never republishes
 the separately persisted usage opt-in or handover consent; the tab-restore preference still uses
 `window.ini`. Switching categories does not write settings.
+
+**Peek.** Settings dims the window, so a palette, the backdrop, terminal colours or the Chat
+reading width can't be judged under it. The **Peek** button (an eye, at the top right of the page's
+card on its title's line; Close stays in the footer; tooltip "Hold to see the window without
+Settings") hides the dim and the dialog while the left button is held on it, and Space does the
+same while held when Settings has the keyboard and what has focus does nothing with Space: the
+category list, no control, or a number. A text box, switch, segmented choice, palette card, button,
+Close or an open dropdown or picker keeps its Space, and Space with Ctrl, Alt or Shift does not
+peek. Both fade the layer (a snapshot of the window under it, blended) over 120 ms each way, instant
+with Reduce motion, Windows' reduced motion or high contrast; when settled nothing of Settings is
+drawn, so Mica or Acrylic shows exactly as without it. A pill at the top centre, under the title
+bar ("Peeking · let go to return to Settings", an eye, accent border on the popup surface) says
+what is happening. Settings keeps its page, scroll and focus, and nothing is saved by a peek.
+While peeking the app swallows every press, key, wheel, text and pointer move (`AppState::
+peek_event`), so nothing reaches the window under it; only the release of what started the peek
+ends it: the left button anywhere (the press captured the mouse, so a release outside the window
+arrives too), or Space's key release, which the host does not reduce and the app reads in its raw
+winit hook. Losing the keyboard (Alt+Tab, a click in another window) ends any peek.
 
 ## Recent sessions and local marks
 

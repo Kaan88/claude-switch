@@ -13,6 +13,7 @@ mod appearance;
 mod chat_page;
 mod meaning;
 mod pages;
+pub(crate) mod peek;
 mod theme_editor;
 mod tiles;
 pub(crate) use chat_page::CHAT;
@@ -195,10 +196,10 @@ fn terminal(st: &AppState) -> Vec<Row> {
     let mut rows: Vec<_> = PRESETS
         .chunks(tiles::ACROSS)
         .enumerate()
-        .map(|(i, chunk)| {
+        .flat_map(|(i, chunk)| {
             let (id, label) = if i == 0 { (SET_TERM_COLOURS, "Terminal colours") } else { (tiles::MORE_TERMINAL, "") };
             let names: Vec<_> = chunk.iter().map(|s| s.name).collect();
-            Row::choice(id, label, &names, if selected / tiles::ACROSS == i { selected % tiles::ACROSS } else { 0 })
+            tiles::line(id, label, &names, if selected / tiles::ACROSS == i { selected % tiles::ACROSS } else { 0 })
         })
         .collect();
     rows.extend([

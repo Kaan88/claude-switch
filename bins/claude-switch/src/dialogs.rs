@@ -26,6 +26,7 @@ mod opencode_rows;
 mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
+pub(crate) use settings::peek::{PEEK_TIP, PeekInput};
 pub(crate) use settings::{OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
 
 pub const OK: u32 = 1;
@@ -195,7 +196,9 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     let cards = crate::windowlook::Cards::for_frame(st, p);
     let shadow = if st.high_contrast { 0.0 } else { cards.decoration(look.shadow) };
     if let Dialog::Settings(form) = &mut dialog {
-        form.draw(p, st, window, t, cx.anim());
+        if form.draw_layer(p, st, window, t, cx.anim()) {
+            cx.animating(window);
+        }
         st.dialog = Some(dialog);
         return;
     }

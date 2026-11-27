@@ -1,4 +1,5 @@
 use super::*;
+use crate::dialogs::PeekInput;
 use crate::tabs::SESSIONS;
 use crate::windowlook;
 use mdshared_ui::gfx::Painter;
@@ -29,6 +30,15 @@ impl App for AppState {
     }
 
     fn event(&mut self, cx: &mut Cx<'_, Msg>, event: Event) {
+        match self.peek_event(&event) {
+            PeekInput::Swallow => return,
+            PeekInput::Redraw => {
+                self.refresh_pointer(cx);
+                cx.request_redraw_all();
+                return;
+            }
+            PeekInput::Pass => {}
+        }
         match event {
             Event::PointerMove { x, y } => {
                 if self.moved(cx, x, y) {
@@ -218,6 +228,16 @@ impl App for AppState {
     }
 
     fn raw(&mut self, cx: &mut Cx<'_, Msg>, event: &winit::event::WindowEvent) {
+        // The host reduces only key presses; a held Space's peek ends on its release.
+        if let winit::event::WindowEvent::KeyboardInput { event, .. } = event
+            && event.state == winit::event::ElementState::Released
+            && (event.physical_key == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Space)
+                || event.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space))
+            && self.space_released()
+        {
+            self.refresh_pointer(cx);
+            cx.request_redraw_all();
+        }
         if matches!(event, winit::event::WindowEvent::Moved(_)) {
             self.capture_window(cx);
         }
