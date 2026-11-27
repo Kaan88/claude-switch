@@ -1025,7 +1025,16 @@ Any menu whose footer (an "Esc to …"/"Enter to …" hint, or arrows with navig
 last row by the input shows as a card when no question or permission card covers it: its title row
 and its numbered choices as buttons, answered like a question (arrows, then Enter once the screen
 shows the highlight on that row with the same title and choices); the step ends as soon as that
-menu is gone. A menu without numbered rows shows its rows read-only with Open terminal. While a
+menu is gone. A menu without numbered rows is a "Claude Code panel", read from its own top: under the
+nearest full-width solid rule above its footer, without the settings dialog's tab row ("Settings
+Status Config Usage Stats"), whose selected (inverse) tab becomes the card's title. A panel taller
+than the terminal has no rule on screen; it is then read from the top of the screen, unless the rows
+above its footer show conversation (a `❯`, `●` or `⎿` row), when only its last 14 rows are. The card
+grows to fit, up to its usual cap, and names the rows it has no room for. Its rows are read-only (a usage row,
+block characters then "N% used", drawn as a bar in the theme's colours; a row starting with a spinner
+glyph keeps it in the working line's fixed slot, as every copied CLI row does), with Close (Esc) when
+its footer offers Esc and Open terminal otherwise; while it is up the composer says "Close Claude
+Code's panel above to send." instead of notices about the terminal's prompt. While a
 card shows a menu, sends are refused with "Choose in Claude Code's menu above" and the drawer stays
 closed; a slash command no longer opens the drawer by itself. A menu that may be a permission
 prompt never shows as a menu card: within 24 rows of its footer a "Do you want to"/"Would you like
@@ -1036,8 +1045,8 @@ above do not count; with no rule in those 24 rows, all of them do. Unless a ques
 prompt left to the terminal (drawer, notice).
 
 **Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
-the call's input (header, question, options with descriptions), never from the screen. Chat answers
-only one single-choice question: before any key it requires the live screen to show a menu footer,
+the call's input (header, question, options with descriptions), never from the screen. A lone
+single-choice question is answered by one click: before any key it requires the live screen to show a menu footer,
 the question text, and every option as `n. label` in order, followed only by "Type something" and
 "Chat about this", and not to look like a permission question. It moves the `❯` highlight with arrow
 keys, and writes Enter only after newer output shows the highlight on the chosen row. A typed answer
@@ -1049,9 +1058,37 @@ text is kept (the composer's notice says so) until the composer is empty and not
 whether the call resolves, the prompt closes or the step stops; it never replaces a draft. Only a
 question or permission card has a field: when none shows, the card's field gives the keyboard back. Every step has a two
 second deadline; a mismatch, timeout or a question still open eight seconds after Enter stops, says
-why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
-stay terminal-only. While the card can answer, sends are refused with "Answer Claude's question
+why, and opens the drawer. While the card can answer, sends are refused with "Answer Claude's question
 above" and the drawer does not open by itself; the working line reads "Waiting for your answer".
+
+**Forms.** Several questions, or a multi-select one, are a form (decided 2026-11-27: it was the main
+reason to open the terminal). The card shows one question at a time ("Size · 1 of 2", Back, Next);
+a click picks a choice (single choice) or ticks a box (multi-select), and the field holds that
+question's "Type something" text; Enter in it turns to the next question, and on the last one submits, as the Submit button does. Nothing reaches the terminal before Submit, and nothing is picked
+for the user. Submit first checks the card: every question answered, a single choice by one choice
+or one text, texts short, without control characters and not starting with a digit; otherwise it
+shows the question and says why. Then Chat drives the CLI's form one key at a time, each written only
+while the screen shows exactly what the key before should have led to, with a two second deadline
+per key. A form question is read only as its own screen: right under the rule, the tab row ("←  ☐
+Size  ☐ Speed  ✔ Submit  →") naming the form's headers in order, then that question's text and
+nothing else, then every option in order (as `n. [✔] label` or `n. [ ] label` for a multi-select),
+"Type something", for a multi-select an unnumbered Submit row ("Next" while another question
+follows), a rule, "Chat about this" and a menu footer. Two questions worded alike stay
+terminal-only. For each question in order: a multi-select ticks or clears each box that differs
+from the card (arrows to the row, Enter, and the next key only once that box alone changed), types
+the text on its "Type something" row (only while that row holds no text; Claude Code ticks it by
+itself) and checks that it shows `[✔] text`, then moves to Submit or Next and presses Enter; a single
+choice moves to its choice (or types on "Type something") and presses Enter. Each Enter must lead to
+the next question's own screen. After the last question the CLI shows a review with no footer:
+"Review your answers" under the tab row, a "● question" and "→ answer" pair per question (a
+multi-select's answer is its labels in option order, then the text, joined by ", "), then "1. Submit
+answers" and "2. Cancel" as the last rows drawn. Enter goes on "Submit answers" only once every pair
+reads the question and the answer the card holds; any difference, a box that did not change, text
+that did not appear, the wrong question, or text the user had already typed in the terminal stops
+the run before the next key, says why and leaves the rest to the terminal. "Chat about this" and
+Esc act on the form question the screen shows. Recorded from Claude Code 2.1.332 (the `ask_*`,
+`form_*` and `multi_*` fixtures): a lone single-choice question has no tab row and no review; a lone
+multi-select question has both. A call whose input cannot be read stays terminal-only.
 
 **Permission prompts.** These used to be answered only in the terminal. The owner gave that rule up
 (2026-11-27): "give that up, otherwise all I see is that chat has stopped. convenience trumps". The

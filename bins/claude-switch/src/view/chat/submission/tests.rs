@@ -4,6 +4,17 @@ use crate::view::chat::QUIET;
 use mdshared_term::Screen;
 
 #[test]
+fn a_draft_with_a_no_break_space_reads_back_exactly() {
+    let mut screen = Screen::new(40, 6, 0);
+    let rule = "─".repeat(40);
+    screen.feed(format!("{rule}\r\n❯ 50\u{a0}%\r\n{rule}\x1b[2;7H").as_bytes());
+    assert_eq!(prompt(&screen).as_deref(), Some("50\u{a0}%"));
+    let mut empty = Screen::new(40, 6, 0);
+    empty.feed(format!("{rule}\r\n❯\u{a0}\r\n{rule}\x1b[2;3H").as_bytes());
+    assert_eq!(prompt(&empty).as_deref(), Some(""));
+}
+
+#[test]
 fn image_confirmation_requires_the_cursor_prompt_and_a_whole_numeric_marker() {
     let mut screen = Screen::new(80, 12, 0);
     screen.feed("❯ [Image #7]\r\nAssistant says [Image #9]\r\n❯ ".as_bytes());

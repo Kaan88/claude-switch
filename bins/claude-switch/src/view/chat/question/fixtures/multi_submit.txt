@@ -1,0 +1,38 @@
+cursor 36 77
+
+
+
+
+
+❯ Use the AskUserQuestion tool now (no other tools) with two questions at once: first header
+  "Fruits", question "Which fruits do you like?", options Apple, Pear, Plum, multiSelect true;
+  second header "Size", question "Which size?", options Small, Large, multiSelect false.
+
+● Answered Claude's questions:
+  ⎿  · Which fruits do you like? → Apple, Plum, Kiwi
+     · Which size? → Large
+
+● You answered Apple, Plum and Kiwi for fruits, and Large for size. Kiwi wasn't one of the listed
+  options, so it came through as a custom entry.
+
+✻ Baked for 4s · done 11:52 AM
+
+❯ Now use AskUserQuestion again with one question: header "Fruits", question "Which fruits do you
+  like?", options Apple, Pear, Plum, multiSelect true.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruits  ✔ Submit  →
+
+Which fruits do you like?
+
+  1. [ ] Apple
+         Apple
+  2. [✔] Pear
+         Pear
+  3. [ ] Plum
+         Plum
+  4. [ ] Type something
+❯    Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Notepad · Esc to cancel

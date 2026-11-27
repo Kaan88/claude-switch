@@ -1,0 +1,40 @@
+cursor 39 99
+  Current week (all models)
+  █████████████████████████████████████████████████▌ 99% used
+  Resets Dec 2, 3am (UTC)
+
+  Current week (Fable)
+  ████████████████████████████████                   64% used
+  Resets Dec 2, 3am (UTC)
+
+  What's contributing to your usage?
+  Approximate · sessions on this computer only
+
+  Last 24h · shares overlap
+
+  74%  Start fresh when you switch tasks · run /clear
+  68%  Run fewer sessions at once · up to 10 at once
+  29%  Review sessions active over many hours · whole sessions with requests in 8
+       or more separate hours
+  22%  Check which model "general-purpose" subagents use
+  15%  Trim ~\Desktop\project\CLAUDE.md · 10k tokens per request
+
+  Skills                  % of usage
+  /some-plugin:some-skill…    2%
+  /another-skill-name-here…    2%
+
+  Subagents               % of usage
+  general-purpose                22%
+
+  Plugins                 % of usage
+  anthropic-skills                2%
+
+  MCP servers             % of usage
+  opencode                       10%
+  claude-in-chrome                4%
+  ccd_turn                        3%
+
+  Usage credits
+  You're out of usage credits · /usage-credits to buy more
+
+  ←/→ to switch · f to fix 2 of 5 · d to show day · w to show week · Esc to close

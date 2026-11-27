@@ -20,6 +20,8 @@ const IMAGE_TIMEOUT: Duration = Duration::from_secs(4);
 const ECHO_TIMEOUT: Duration = Duration::from_secs(2);
 const IMAGE_KEY: &[u8] = b"\x1bv";
 pub(super) const CHECK: &str = "Open the terminal to check";
+pub(super) const NO_QUIET_PROMPT: &str = "No quiet, empty Claude Code prompt is visible. Check the terminal.";
+pub(super) const NOT_EMPTY: &str = "The CLI input line is not visibly empty. Wait or use the terminal.";
 pub(super) const BAD_TEXT: &str = "The draft has unsupported control characters.";
 pub(super) const CHANGED_CLIPBOARD: &str = "The clipboard changed. Paste the picture into Chat again.";
 const IMAGE_TIMEOUT_NOTICE: &str = "No image marker yet. The CLI may hold a picture; check the terminal. Draft kept.";
@@ -204,18 +206,14 @@ fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'static str> {
         Intent::Draft if gate != Gate::Ready => Some(CHECK),
         Intent::Override | Intent::Now if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
         Intent::Override if gate == Gate::Running => Some("A turn is running. Use Queue to send after it ends."),
-        Intent::Now if !chat.demo && !clean_prompt(&tab.term.screen) => {
-            Some("The CLI input line is not visibly empty. Wait or use the terminal.")
-        }
+        Intent::Now if !chat.demo && !clean_prompt(&tab.term.screen) => Some(NOT_EMPTY),
         Intent::Slash if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
         Intent::Slash
             if gate == Gate::Running || pane.model.chat.latest.is_some_and(|(_, p)| p == ChatPhase::Active) =>
         {
             Some(BUSY_CMD)
         }
-        Intent::Slash if !chat.demo && !idle_slash_prompt(&tab.term.screen, chat.quiet(now)) => {
-            Some("No quiet, empty Claude Code prompt is visible. Check the terminal.")
-        }
+        Intent::Slash if !chat.demo && !idle_slash_prompt(&tab.term.screen, chat.quiet(now)) => Some(NO_QUIET_PROMPT),
         _ => None,
     }
 }

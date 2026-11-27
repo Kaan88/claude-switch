@@ -151,6 +151,15 @@ fn pieces<'a>(label: &'a str, measure: &mut dyn FnMut(&str) -> f32) -> (Vec<Piec
     (out, x)
 }
 
+/// A copied CLI row that starts with a spinner glyph and a space ("✻ Scanning local sessions…"):
+/// drawn with `draw_line`, so the glyph's animation does not move the text after it.
+pub(super) fn spinner_row(row: &str) -> bool {
+    let mut chars = row.chars();
+    let glyph =
+        chars.next().is_some_and(|g| GLYPHS.iter().any(|s| s.starts_with(g)) || ('\u{2801}'..='\u{28ff}').contains(&g));
+    glyph && chars.next() == Some(' ')
+}
+
 /// Draws the working line from `x`; past `max` it is shown elided as plain text.
 pub(super) fn draw_line(p: &mut Painter, size: f32, x: f32, cy: f32, label: &str, color: Rgb, max: f32) {
     let (pieces, width) = pieces(label, &mut |t| p.measure(Face::Ui, size, t));
