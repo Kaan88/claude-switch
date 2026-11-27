@@ -48,12 +48,34 @@ impl AppState {
     }
 
     pub fn draw_chat(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect, pal: &Palette) {
-        let Some(tab_id) = self.tabs.active else { return };
+        let (now, motion, focused) = (cx.now(), cx.anim().animates(), cx.focused());
+        let (deadline, moving) = self.draw_chat_with(p, area, pal, now, motion, focused);
+        if let Some(deadline) = deadline {
+            cx.wake_at(deadline);
+        }
+        if let Some(r) = moving {
+            cx.animating(r);
+        }
+    }
+
+    /// [`draw_chat`](Self::draw_chat) without a window, at `now`, in a window that has the
+    /// keyboard when `window_focused`: the transcript's next scroll deadline, and what moves.
+    pub fn draw_chat_with(
+        &mut self,
+        p: &mut Painter,
+        area: Rect,
+        pal: &Palette,
+        now: std::time::Instant,
+        motion: bool,
+        window_focused: bool,
+    ) -> (Option<std::time::Instant>, Option<Rect>) {
+        let mut frame = (None, None);
+        let Some(tab_id) = self.tabs.active else { return frame };
         let details_active = self.nothing_over() && !self.picture_overlay() && !self.usage.popup.open;
         let hover = self.hover;
         let mouse = self.background_pointer();
-        let focused = cx.focused() && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
-        let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return };
+        let focused = window_focused && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
+        let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
         // The box grows with the draft: wrap it at the box's width, then lay out for its rows.
         let before = chat.editor.rows.len();
@@ -61,22 +83,18 @@ impl AppState {
         if chat.editor.rows.len() != before {
             self.layout_chat(area);
         }
-        let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return };
+        let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
         let l = chat.layout;
         let suggestions = chat.suggestion_plan(&self.win_file.chat_pins);
         let popup = if suggestions.is_none() { chat.popup_plan(&pane.model) } else { None };
         let transcript_mouse = suggestions.as_ref().map_or(mouse, |popup| popup.pointer_behind(mouse));
         let transcript_mouse = popup.as_ref().map_or(transcript_mouse, |popup| popup.pointer_behind(transcript_mouse));
-        let now = cx.now();
-        let motion = cx.anim().animates();
         pane.ui.set_chat_reading(crate::view::Reading::from_key(&self.win_file.chat_reading));
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
-        if let Some(deadline) = pane.ui.scroll_deadline() {
-            cx.wake_at(deadline);
-        }
+        frame.0 = pane.ui.scroll_deadline();
         if pane.ui.animating() && motion {
-            cx.animating(l.conversation);
+            frame.1 = Some(l.conversation);
         }
         let mut hit = |p: &mut Painter, r, label: &str, control, selected| {
             let target = Target::Chat(control);
@@ -177,6 +195,7 @@ impl AppState {
             own: &self.config.chat.commands,
         }
         .composer(p, chat, &pane.model.chat, suggestions, popup);
+        frame
     }
 }
 

@@ -14,7 +14,7 @@ fn project_rows_include_the_worktree_and_pins_but_the_folder_option_splits_them(
     let key = format!("project:{}", st.project(6).unwrap().key);
     st.rebuild_view();
     let group = st.groups.iter().find(|g| g.key == key).unwrap();
-    assert_eq!(group.name, "kweb-mail");
+    assert_eq!(group.name, "trail-planner");
     assert!(group.rows.contains(&0) && group.rows.contains(&3) && group.rows.contains(&6));
     assert!(group.rows.windows(2).all(|w| st.sessions[w[0]].last_active_ms >= st.sessions[w[1]].last_active_ms));
     assert!(st.grouping.project_summary[&key].contains("1 running · 0 waiting"));

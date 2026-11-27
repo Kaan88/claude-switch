@@ -10,6 +10,8 @@ mod layout;
 mod paint;
 mod popups;
 pub(super) mod question;
+#[cfg(test)]
+mod readme_shots;
 mod recall;
 mod rename;
 mod shortcuts;

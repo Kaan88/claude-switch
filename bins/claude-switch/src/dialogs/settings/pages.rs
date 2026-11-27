@@ -272,6 +272,12 @@ impl Settings {
         !anim.settled(peek::SHOWN)
     }
 
+    /// The Peek button as last drawn.
+    #[cfg(test)]
+    pub(crate) fn peek_button(&self) -> Rect {
+        self.peek.button
+    }
+
     /// Whether a peek is holding Settings out of sight.
     pub(crate) fn peeking(&self) -> bool {
         self.peek.by.is_some()

@@ -47,6 +47,12 @@ impl AppState {
         });
     }
 
+    /// [`draw_terminal`](Self::draw_terminal) without a window, the cursor shown when it is.
+    #[cfg(test)]
+    pub fn draw_terminal_still(&mut self, p: &mut Painter, area: Rect) {
+        self.paint_terminal(p, area, |_, _, _, _| true);
+    }
+
     fn paint_terminal(
         &mut self,
         p: &mut Painter,

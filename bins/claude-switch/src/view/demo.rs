@@ -32,18 +32,42 @@ impl Transcript {
         Self::open(true, true)
     }
 
-    fn open(chat: bool, details: bool) -> io::Result<Self> {
+    /// A finished coding turn in a made-up project, for the README's pictures of Chat. `then`
+    /// starts another turn: its prompt, the start of the answer and, unless empty, a command
+    /// still waiting to run.
+    #[cfg(test)]
+    pub fn new_showcase(then: Option<(&str, &str, &str)>) -> io::Result<Self> {
+        let cwd = Self::folder()?;
+        let path = cwd.join("tile-cache.jsonl");
+        let demo = Self { cwd, path, stop: None, writer: None };
+        let mut file = File::create(&demo.path)?;
+        seed_showcase(&mut file, &demo.cwd)?;
+        if let Some((prompt, answer, command)) = then {
+            record(&mut file, 10, "user", json!(prompt))?;
+            record(&mut file, 11, "assistant", json!(answer))?;
+            if !command.is_empty() {
+                record(&mut file, 12, "assistant", json!([tool("next", "Bash", json!({ "command": command }))]))?;
+            }
+        }
+        Ok(demo)
+    }
+
+    fn folder() -> io::Result<PathBuf> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
-        let cwd = loop {
+        loop {
             let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
             let name = format!("claude-switch-demo-{}-{serial}", std::process::id());
             let dir = std::env::temp_dir().join(name);
             match fs::create_dir(&dir) {
-                Ok(()) => break dir,
+                Ok(()) => return Ok(dir),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(e) => return Err(e),
             }
-        };
+        }
+    }
+
+    fn open(chat: bool, details: bool) -> io::Result<Self> {
+        let cwd = Self::folder()?;
         // Own the directory before the first fallible write, so partial setup is cleaned too.
         let path = cwd.join("field-guide.jsonl");
         let mut demo = Self { cwd, path, stop: None, writer: None };
@@ -238,6 +262,109 @@ fn seed_chat(file: &mut File, cwd: &Path) -> io::Result<()> {
     )
 }
 
+/// A made-up Rust project: a flaky cache test found, fixed and checked, with quiet tool rows, a
+/// failed run, a task list and a code block.
+#[cfg(test)]
+fn seed_showcase(file: &mut File, cwd: &Path) -> io::Result<()> {
+    let src = cwd.join("src").join("tiles");
+    fs::create_dir_all(&src)?;
+    fs::write(src.join("cache.rs"), "// Tile cache\n")?;
+    record(
+        file,
+        0,
+        "user",
+        json!(
+            "The tile cache test fails about one run in five on Windows. Find out why and fix it, \
+             without slowing the cache down."
+        ),
+    )?;
+    record(file, 1, "assistant", json!("I’ll reproduce it first, then read the eviction code."))?;
+    record(
+        file,
+        2,
+        "assistant",
+        json!([
+            tool(
+                "plan",
+                "TodoWrite",
+                json!({"todos":[
+                    {"content":"Reproduce the failing cache test","status":"completed"},
+                    {"content":"Find why eviction order changes","status":"completed"},
+                    {"content":"Fix the order and run the suite","status":"in_progress"}
+                ]})
+            ),
+            tool("run1", "Bash", json!({"command":"cargo test -p tiles cache_evicts_oldest -- --exact"})),
+        ]),
+    )?;
+    record(
+        file,
+        3,
+        "user",
+        json!([
+            result("plan", json!("Saved.")),
+            {"type":"tool_result", "tool_use_id":"run1", "is_error":true,
+             "content":"test cache::tests::cache_evicts_oldest ... FAILED\nassertion failed: evicted == [a]"}
+        ]),
+    )?;
+    let reads = ["src/tiles/cache.rs", "src/tiles/disk.rs", "src/tiles/mod.rs"];
+    let mut calls: Vec<Value> = reads
+        .iter()
+        .enumerate()
+        .map(|(i, path)| tool(&format!("read{i}"), "Read", json!({"file_path":path})))
+        .collect();
+    calls.push(tool("grep", "Grep", json!({"pattern":"modified()", "path":"src/tiles"})));
+    record(file, 4, "assistant", json!(calls))?;
+    let mut results: Vec<Value> =
+        (0..reads.len()).map(|i| result(&format!("read{i}"), json!("Read 120 lines."))).collect();
+    results.push(result("grep", json!("src/tiles/cache.rs:88")));
+    record(file, 5, "user", json!(results))?;
+    record(
+        file,
+        6,
+        "assistant",
+        json!(
+            "Found it. Eviction picks the tile with the oldest **file time**, and on Windows two tiles \
+             written in the same tick get the same time, so the order is left to the file system. \
+             A use counter in memory makes the order exact and costs nothing:\n\n\
+             ```rust\nfn touch(&mut self, id: TileId) {\n    self.clock += 1;\n    \
+             if let Some(entry) = self.entries.get_mut(&id) {\n        entry.used = self.clock;\n    }\n}\n```"
+        ),
+    )?;
+    record(
+        file,
+        7,
+        "assistant",
+        json!([
+            tool(
+                "edit",
+                "Edit",
+                json!({"file_path":"src/tiles/cache.rs", "old_string":"modified()", "new_string":"self.clock"})
+            ),
+            tool("run2", "Bash", json!({"command":"cargo test -p tiles"})),
+        ]),
+    )?;
+    record(
+        file,
+        8,
+        "user",
+        json!([
+            result("edit", json!("The file has been updated.")),
+            result("run2", json!("test result: ok. 48 passed; 0 failed"))
+        ]),
+    )?;
+    writeln!(
+        file,
+        "{}",
+        json!({"timestamp": stamp(9), "type":"assistant", "message":{"role":"assistant",
+            "model":"claude-opus-5-5", "stop_reason":"end_turn",
+            "usage":{"input_tokens":2140, "output_tokens":612, "cache_read_input_tokens":41_800},
+            "content":[{"type":"text", "text":
+                "**Fixed.** The cache now evicts by a use counter instead of file times.\n\n\
+                 - `cache.rs`: `touch` bumps the counter, and eviction takes the lowest.\n\
+                 - The test passed 50 runs in a row, and the whole suite passes (48 tests)."}]}})
+    )
+}
+
 impl Drop for Transcript {
     fn drop(&mut self) {
         self.stop_writer();
@@ -246,14 +373,19 @@ impl Drop for Transcript {
 }
 
 fn record(file: &mut File, sec: u8, role: &str, content: Value) -> io::Result<()> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
-    let at = now - 40 + i64::from(sec);
-    let minute = mdshared_app::fmt::date_time(at, 0).replace(' ', "T");
     let line = json!({
-        "timestamp":format!("{minute}:{:02}Z", at.rem_euclid(60)), "type":role,
+        "timestamp":stamp(sec), "type":role,
         "message":{"role":role, "content":content}
     });
     writeln!(file, "{line}")
+}
+
+/// A record's time: `sec` seconds after 40 seconds ago.
+fn stamp(sec: u8) -> String {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let at = now - 40 + i64::from(sec);
+    let minute = mdshared_app::fmt::date_time(at, 0).replace(' ', "T");
+    format!("{minute}:{:02}Z", at.rem_euclid(60))
 }
 
 fn tool(id: &str, name: &str, input: Value) -> Value {

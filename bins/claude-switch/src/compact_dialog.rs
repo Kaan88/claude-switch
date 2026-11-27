@@ -973,8 +973,8 @@ fn demo_text(name: &str) -> String {
          ## Open items\n\n> Repeat the timing after disabling the optional feature.\n\n\
          ## Not verified\n\n> Timing on a second machine.\n\n\
          ## Files\n\n- docs/build-notes.md (2)\n\n\
-         ## Source session\n\nName: {name}\nID: demo\nFolder: C:\\demo\\mdplay\nBranch: main\n\
-         Transcript: C:\\demo\\mdplay.jsonl\n\nLook up further details in the original transcript.\n\n\
+         ## Source session\n\nName: {name}\nID: demo\nFolder: C:\\demo\\trail-planner\nBranch: main\n\
+         Transcript: C:\\demo\\trail-planner.jsonl\n\nLook up further details in the original transcript.\n\n\
          ## Latest task list\n\nPossibly stale: as the session last wrote it.\n\n- [pending] Repeat the feature comparison\n\n\
          ## Last 15 shell commands\n\n    cargo build --release --timings\n\n\
          ## User prompts (verbatim)\n\n### 2026-11-26T09:00:00Z\n\n```\nCompare a clean build with an incremental build and report the timings.\n```\n\n\

@@ -17,7 +17,7 @@ while the CLI keeps running underneath.
 [Guide](https://github.com/Kaan88/claude-switch/wiki) ·
 [What's new](CHANGELOG.md)
 
-<img src="docs/screenshots/sessions.png" width="820" alt="The session list with folders, running sessions and the details of the selected session">
+<img src="docs/screenshots/hero.png" width="820" alt="A Claude Code session in the Chat view: the prompt, Claude's answers, quiet tool rows, a code block, the task list and the composer">
 
 </div>
 
@@ -49,10 +49,20 @@ the Recycle Bin. Anything that sends your text to a model asks first, and there 
 Terminal mouse behaviour, Shift+Enter for new lines, your own themes, Mica and Acrylic
 transparency, and tabs that reopen after a restart.
 
-<div align="center">
-<img src="docs/screenshots/terminal.png" width="49%" alt="A Claude Code session running in a terminal tab">
-<img src="docs/screenshots/compact-preview-dark.png" width="49%" alt="Reviewing a handover before it opens a new session">
-</div>
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/sessions.png" alt="The session list with running, waiting and unseen sessions, a handover being written, and the selected session's details"><br>
+<sub><b>Sessions.</b> What runs, what waits for you, and how sessions follow on from each other.</sub></td>
+<td width="50%"><img src="docs/screenshots/chat-question.png" alt="A question from Claude answered from a card in the Chat view"><br>
+<sub><b>Questions as cards.</b> Pick an answer or type your own; Chat sends the keys to the CLI.</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/handover.png" alt="Reviewing a handover before it opens a new session"><br>
+<sub><b>Handover.</b> Read and edit it, then open it as any account, or in OpenCode.</sub></td>
+<td width="50%"><img src="docs/screenshots/settings-appearance.png" alt="Settings, Appearance: the dark and light palettes"><br>
+<sub><b>Appearance.</b> Dark and light palettes, Mica and Acrylic, your own accent.</sub></td>
+</tr>
+</table>
 
 ## Get started
 

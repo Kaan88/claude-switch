@@ -293,17 +293,30 @@ pub(crate) fn fit(sizes: &[(f32, f32)], room: f32, gap: f32) -> Vec<f32> {
 }
 
 pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Rect, t: f32) {
+    let now = cx.now();
+    if draw_with(st, cx.anim(), now, p, window, t) {
+        cx.animating(window);
+    }
+}
+
+/// [`draw`] without a window, at `now`: true while Settings is in motion.
+pub fn draw_with(
+    st: &mut AppState,
+    anim: &mut mdshared_ui::anim::Animator,
+    now: std::time::Instant,
+    p: &mut Painter,
+    window: Rect,
+    t: f32,
+) -> bool {
     let (w, h) = (window.w, window.h);
-    let Some(mut dialog) = st.dialog.take() else { return };
+    let Some(mut dialog) = st.dialog.take() else { return false };
     let look = st.appearance;
     let cards = crate::windowlook::Cards::for_frame(st, p);
     let shadow = if st.high_contrast { 0.0 } else { cards.decoration(look.shadow) };
     if let Dialog::Settings(form) = &mut dialog {
-        if form.draw_layer(p, st, window, t, cx.anim()) {
-            cx.animating(window);
-        }
+        let moving = form.draw_layer(p, st, window, t, anim);
         st.dialog = Some(dialog);
-        return;
+        return moving;
     }
     let pal = *st.pal();
     cards.dim(p, &pal, window, t);
@@ -322,7 +335,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
                     attempt: usage.attempt(&a.slug),
                     signed_in: status.map(|s| s.cli_logged_in),
                     running,
-                    refresh: !demo && usage.can_refresh(&a.slug, cx.now()),
+                    refresh: !demo && usage.can_refresh(&a.slug, now),
                 }
             })
             .collect()
@@ -407,6 +420,7 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
         Dialog::Settings(_) => {}
     }
     st.dialog = Some(dialog);
+    false
 }
 
 type StView<'a> = (

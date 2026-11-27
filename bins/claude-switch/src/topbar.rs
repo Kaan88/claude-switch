@@ -176,7 +176,22 @@ fn icon_button(st: &mut AppState, p: &mut Painter, r: Rect, icon: &str, t: Targe
 
 /// Draw the optional tab strip and info bar; return the top of the content below them.
 pub fn draw_below_title(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut Painter, w: f32) -> f32 {
+    let (top, strip) = draw_below_title_with(st, cx.anim(), p, w);
+    if let Some(strip) = strip {
+        cx.animating(strip);
+    }
+    top
+}
+
+/// [`draw_below_title`] without a window: also the tab strip when it is in motion.
+pub fn draw_below_title_with(
+    st: &mut AppState,
+    anim: &mut mdshared_ui::anim::Animator,
+    p: &mut Painter,
+    w: f32,
+) -> (f32, Option<Rect>) {
     let pal = *st.pal();
+    let mut moving = None;
     let terminal = st.terminal_shown().then(|| st.terminal_scheme());
     let mut top = TITLE_H;
     if !st.tabs.is_empty() {
@@ -193,8 +208,8 @@ pub fn draw_below_title(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Ms
             chat: st.tabs.shown().and_then(|t| t.pane.as_ref()).map(|pane| pane.chat.enabled),
         };
         let strip = tabs::strip_rect(top, w);
-        if tabs::draw(p, &pal, cx.anim(), (&st.tabs, &st.marks), strip, &look, &mut st.hits) {
-            cx.animating(strip);
+        if tabs::draw(p, &pal, anim, (&st.tabs, &st.marks), strip, &look, &mut st.hits) {
+            moving = Some(strip);
         }
         top += tabs::STRIP_H;
     }
@@ -235,7 +250,7 @@ pub fn draw_below_title(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Ms
         }
         top = r.bottom() + 8.0;
     }
-    top
+    (top, moving)
 }
 
 /// The tooltip text of a control of the bar, if it has one.
