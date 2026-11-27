@@ -673,3 +673,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     line's own indentation (or offer "Wrap: off" with horizontal scrolling), and show line numbers in a gutter.
     Markdown files keep their rendered view; their fenced code blocks should get the same highlighting if they do
     not already.
+70. **Any popup turns the terminal's transparency off** (owner, 2026-11-27, screenshot: the ⋯ menu open over a
+    transparent terminal, which went opaque). Deliberate today: `termapp/paint.rs` paints the terminal at 100 %
+    whenever anything is over it (menu, dialog, tooltip, toast, picture, undo bar), because those overlays'
+    shadows, rounded edges and scrims use the opaque painter. Keep the terminal at its set opacity under a popup:
+    draw overlay shadows and edges so they blend over the frosted backdrop (or give the overlay its own opaque
+    card while the terminal behind stays translucent), and dim with a translucent scrim only for modal dialogs.
+    Same area as item 62 (glyph blending over transparency); check both together.
