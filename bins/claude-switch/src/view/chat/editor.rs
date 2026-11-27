@@ -5,6 +5,7 @@ use std::ops::{Deref, DerefMut, Range};
 use mdshared_ui::gfx::{Face, Painter};
 use mdshared_ui::keys::{KeyName, Mods};
 
+use super::undo::{History, Kind, Snapshot};
 use crate::compact_dialog::editor::Editor;
 
 pub(super) const LINE: f32 = 17.0;
@@ -16,6 +17,8 @@ pub(super) struct ComposerEditor {
     stops: Vec<(Range<usize>, Vec<f32>)>,
     metrics: Option<(f32, f32, usize)>,
     row_hint: Option<usize>,
+    /// Undo and redo; it outlives `set`, which replaces the rest.
+    pub history: History,
 }
 
 impl Deref for ComposerEditor {
@@ -78,14 +81,77 @@ impl ComposerEditor {
             .collect();
     }
 
+    /// Replaces the draft (a completion, a recalled prompt, a filled chip): one undo step.
     pub fn set(&mut self, text: String) {
-        *self = Self::default();
-        self.inner.set(text);
+        let before = self.snapshot();
+        self.replace(Snapshot { caret: 0, anchor: 0, text });
+        self.record(before, Kind::Other, "");
+    }
+
+    /// The draft with its caret and selection, as undo keeps it.
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot { text: self.inner.text.clone(), caret: self.inner.caret, anchor: self.inner.anchor() }
+    }
+
+    /// Puts `draft` back as one undo step (a recalled prompt's draft when browsing ends).
+    pub fn restore_draft(&mut self, draft: Snapshot) {
+        let before = self.snapshot();
+        self.replace(draft);
+        self.record(before, Kind::Other, "");
+    }
+
+    /// Shows `draft` with its caret and selection; the history is kept and not written.
+    fn replace(&mut self, draft: Snapshot) {
+        let history = std::mem::take(&mut self.history);
+        *self = Self { history, ..Self::default() };
+        let len = draft.text.len();
+        self.inner.set(draft.text);
+        self.inner.move_to(draft.anchor.min(len), false);
+        self.inner.move_to(draft.caret.min(len), true);
+    }
+
+    fn record(&mut self, before: Snapshot, kind: Kind, typed: &str) {
+        let after = self.snapshot();
+        self.history.record(before, &after, kind, typed);
+    }
+
+    /// Ctrl+Z. Returns whether the draft changed.
+    pub fn undo(&mut self) -> bool {
+        let Some(previous) = self.history.undo(self.snapshot()) else { return false };
+        self.replace(previous);
+        true
+    }
+
+    /// Ctrl+Y or Ctrl+Shift+Z. Returns whether the draft changed.
+    pub fn redo(&mut self) -> bool {
+        let Some(next) = self.history.redo(self.snapshot()) else { return false };
+        self.replace(next);
+        true
+    }
+
+    /// A message was sent: the next draft starts a new history.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
+    /// Pasted text: one undo step, never joined to typing.
+    pub fn paste(&mut self, text: &str) {
+        let before = self.snapshot();
+        self.put(text);
+        self.record(before, Kind::Other, "");
+        self.history.close_step();
     }
 
     /// Inserts typed or pasted text without control characters: Escape and other keys carry one as
     /// their text, which would show as a box. Line breaks become `\n`; tabs stay.
+    /// Typed text; typing one word is one undo step.
     pub fn insert(&mut self, text: &str) {
+        let before = self.snapshot();
+        self.put(text);
+        self.record(before, Kind::Typing, text);
+    }
+
+    fn put(&mut self, text: &str) {
         let text = typed(text);
         if text.is_empty() {
             return;
@@ -95,7 +161,22 @@ impl ComposerEditor {
         self.metrics = None;
     }
 
+    /// Removes the selected text (Cut). `insert` ignores an empty string, so it cannot do this.
+    /// Returns whether text was removed.
+    pub fn delete_selection(&mut self) -> bool {
+        if self.selection().is_empty() {
+            return false;
+        }
+        let before = self.snapshot();
+        self.inner.insert("");
+        self.row_hint = None;
+        self.metrics = None;
+        self.record(before, Kind::Other, "");
+        true
+    }
+
     pub fn move_to(&mut self, byte: usize, select: bool) {
+        self.history.close_step();
         self.row_hint = None;
         self.inner.move_to(byte, select);
     }
@@ -114,15 +195,23 @@ impl ComposerEditor {
                 }
             }
             KeyName::Left | KeyName::Right | KeyName::Home | KeyName::End | KeyName::PageUp | KeyName::PageDown => {
+                self.history.close_step();
                 self.row_hint = None;
                 self.inner.key(k, mods, None);
             }
             KeyName::Backspace | KeyName::Delete | KeyName::Enter => {
-                let before = self.text.len();
+                let before = self.snapshot();
                 self.row_hint = None;
                 self.inner.key(k, mods, None);
                 self.metrics = None;
-                return self.text.len() != before;
+                // A word removed with Ctrl is a step of its own; plain deleting runs on.
+                let (kind, typed) = match k {
+                    KeyName::Enter => (Kind::Typing, "\n"),
+                    _ if mods.ctrl => (Kind::Other, ""),
+                    _ => (Kind::Deleting, ""),
+                };
+                self.record(before.clone(), kind, typed);
+                return self.text != before.text;
             }
             _ if !mods.ctrl
                 && !mods.alt
@@ -209,6 +298,7 @@ impl ComposerEditor {
     }
 
     fn place(&mut self, at: usize, row: usize, select: bool) {
+        self.history.close_step();
         self.inner.move_to(at, select);
         self.row_hint = (row != self.inner.row_at(at)).then_some(row);
     }
@@ -226,6 +316,7 @@ impl ComposerEditor {
     }
 
     pub fn select_all(&mut self) {
+        self.history.close_step();
         self.row_hint = None;
         self.inner.move_to(0, false);
         self.inner.move_to(self.inner.text.len(), true);

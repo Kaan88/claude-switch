@@ -551,3 +551,202 @@ fn compact_and_clear_only_write_after_confirmation() {
 }
 
 mod review;
+
+#[test]
+fn cut_removes_the_selection_once_the_clipboard_took_it() {
+    let mut app = demo();
+    let chat = &mut app.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+    chat.editor.insert("hello world");
+    chat.editor.move_to(6, false);
+    chat.editor.move_to(11, true);
+    // The right-click menu offers Cut for the selection and keeps it.
+    app.chat_editor_menu(0.0, 0.0);
+    let (_, menu) = app.menu.as_ref().expect("the editor menu");
+    let cut = menu.items.iter().find(|item| item.label == "Cut").unwrap();
+    assert!(cut.enabled, "Cut is offered for a selection");
+    let chat = &mut app.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+    assert_eq!(chat.editor.selection(), 6..11, "opening the menu keeps the selection");
+
+    let mut copied = String::new();
+    assert!(!chat.editor_copy_to(true, |_| false), "a refused clipboard keeps the text");
+    assert_eq!(chat.editor.text, "hello world");
+    assert!(!chat.editor_copy_to(false, |s| {
+        copied = s.to_owned();
+        true
+    }));
+    assert_eq!((copied.as_str(), chat.editor.text.as_str()), ("world", "hello world"), "Copy leaves the draft");
+    assert!(chat.editor_copy_to(true, |s| {
+        copied = s.to_owned();
+        true
+    }));
+    assert_eq!((copied.as_str(), chat.editor.text.as_str()), ("world", "hello "), "Cut removes what it copied");
+    assert_eq!((chat.editor.caret, chat.editor.selection()), (6, 6..6));
+    assert!(!chat.editor_copy_to(true, |_| true), "nothing selected, nothing cut");
+}
+
+#[test]
+fn undo_and_redo_walk_every_kind_of_draft_edit_with_its_caret_and_selection() {
+    use claude_switch_core::transcript::{Item, ItemId, ItemKind};
+    use mdshared_ui::keys::{KeyName, Mods};
+    let mut chat = Chat::default();
+    chat.editor.history.clock = Some(Instant::now());
+    let none = Mods::default();
+    let snapshot = |chat: &Chat| (chat.editor.text.clone(), chat.editor.caret, chat.editor.selection());
+    // Typing, two words: two steps.
+    for c in "hello world".chars() {
+        assert!(chat.edit_key(&KeyName::Char(c), none, Some(&c.to_string())));
+    }
+    // A paste, then a cut of "world".
+    chat.paste_from(false, || Some(" PASTE".into()), || None);
+    assert_eq!(chat.editor.text, "hello world PASTE");
+    chat.editor.move_to(6, false);
+    chat.editor.move_to(11, true);
+    assert!(chat.editor_copy_to(true, |_| true));
+    assert_eq!(chat.editor.text, "hello  PASTE");
+    // Two Backspaces at the end: one step.
+    chat.editor.move_to(chat.editor.text.len(), false);
+    assert!(chat.edit_key(&KeyName::Backspace, none, None));
+    assert!(chat.edit_key(&KeyName::Backspace, none, None));
+    assert_eq!(chat.editor.text, "hello  PAS");
+    // A completion or a chip fill replaces the draft: one step.
+    chat.editor.set("/model".into());
+    chat.editor.move_to(6, false);
+    // A recalled prompt is a step too, and so is leaving it.
+    let mut model =
+        crate::view::model::Model::new(crate::view::model::Source::File(Default::default()), Default::default(), || {});
+    let kind = ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false };
+    model.items.insert(ItemId { offset: 1, block: 0 }, Item { timestamp: None, kind });
+    assert!(chat.recall_key(&model, &KeyName::Up));
+    assert_eq!(chat.editor.text, "an earlier prompt");
+
+    let mut seen = vec![snapshot(&chat)];
+    while chat.undo_or_redo(false) {
+        seen.push(snapshot(&chat));
+    }
+    let texts = seen.iter().map(|(text, ..)| text.as_str()).collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        ["an earlier prompt", "/model", "hello  PAS", "hello  PASTE", "hello world PASTE", "hello world", "hello ", ""]
+    );
+    // The cut comes back selected, as it was cut.
+    assert_eq!(seen[4], ("hello world PASTE".into(), 11, 6..11));
+    // The recalled prompt's draft came back where its caret was.
+    assert_eq!(seen[1].1, 6);
+    // Redo walks forward to the end, then stops.
+    let mut forward = Vec::new();
+    while chat.undo_or_redo(true) {
+        forward.push(chat.editor.text.clone());
+    }
+    assert_eq!(forward.len(), texts.len() - 1);
+    assert_eq!(chat.editor.text, "an earlier prompt");
+    // A new edit after an undo drops the redo steps.
+    assert!(chat.undo_or_redo(false));
+    assert!(chat.edit_key(&KeyName::Char('!'), none, Some("!")));
+    assert!(!chat.undo_or_redo(true));
+}
+
+#[test]
+fn the_menu_offers_undo_and_redo_and_a_sent_message_clears_the_history() {
+    use crate::state::AppState;
+    let mut app = demo();
+    let chat = &mut app.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+    assert!(!chat.editor.history.can_undo());
+    chat.insert_text("one line");
+    // The right-click menu offers Undo (Redo not yet), before the clipboard items.
+    app.chat_editor_menu(0.0, 0.0);
+    let (_, menu) = app.menu.as_ref().unwrap();
+    let labels = menu.items.iter().map(|i| (i.label.as_str(), i.enabled)).collect::<Vec<_>>();
+    assert_eq!(
+        labels,
+        [("Undo", true), ("Redo", false), ("Cut", false), ("Copy", false), ("Paste", true), ("Select all", true)]
+    );
+    let tab = app.tabs.shown_mut().unwrap();
+    let now = Instant::now();
+    AppState::chat_send(tab, now, true);
+    AppState::advance_submission(tab, now, true);
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    assert!(chat.editor.text.is_empty(), "sent");
+    assert!(!chat.editor.history.can_undo(), "a sent message is not brought back by Ctrl+Z");
+}
+
+#[test]
+fn caret_keys_move_and_select_by_character_word_line_and_draft_like_a_windows_text_box() {
+    use claude_switch_core::transcript::{Item, ItemId, ItemKind};
+    use mdshared_ui::keys::{KeyName, Mods};
+    let plain = Mods::default();
+    let shift = Mods { shift: true, ..plain };
+    let ctrl = Mods { ctrl: true, ..plain };
+    let both = Mods { ctrl: true, shift: true, ..plain };
+    let mut model = model::Model::new(model::Source::File(Default::default()), Default::default(), || {});
+    let kind = ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false };
+    model.items.insert(ItemId { offset: 1, block: 0 }, Item { timestamp: None, kind });
+    let mut chat = Chat::default();
+    chat.editor.history.clock = Some(Instant::now());
+    let press = |chat: &mut Chat, key: KeyName, mods: Mods| {
+        chat.editor_key(&model, Some(&key), mods, None);
+        (chat.editor.caret, chat.editor.selection())
+    };
+    chat.editor.insert("Fix the bug, then ship");
+    let end = chat.editor.text.len();
+
+    // Ctrl+Left and Ctrl+Right jump to word starts; punctuation is a stop of its own.
+    assert_eq!(press(&mut chat, KeyName::Left, ctrl), (18, 18..18), "the start of “ship”");
+    assert_eq!(press(&mut chat, KeyName::Left, ctrl), (13, 13..13), "“then”");
+    assert_eq!(press(&mut chat, KeyName::Left, ctrl), (11, 11..11), "the comma");
+    assert_eq!(press(&mut chat, KeyName::Right, ctrl), (13, 13..13));
+    // Ctrl+Shift extends by a word, Shift by a character.
+    assert_eq!(press(&mut chat, KeyName::Right, both), (18, 13..18));
+    assert_eq!(press(&mut chat, KeyName::Right, shift), (19, 13..19));
+    assert_eq!(press(&mut chat, KeyName::Left, shift), (18, 13..18));
+    assert_eq!(press(&mut chat, KeyName::Left, both), (13, 13..13), "back to where it began");
+    assert_eq!(press(&mut chat, KeyName::Left, both), (11, 11..13));
+    // A plain arrow collapses the selection to its side.
+    assert_eq!(press(&mut chat, KeyName::Right, plain), (13, 13..13));
+    // Ctrl+Home and Ctrl+End, selecting with Shift.
+    assert_eq!(press(&mut chat, KeyName::Home, both), (0, 0..13));
+    assert_eq!(press(&mut chat, KeyName::End, ctrl), (end, end..end));
+    assert_eq!(press(&mut chat, KeyName::Home, ctrl), (0, 0..0));
+    assert_eq!(press(&mut chat, KeyName::End, both), (end, 0..end));
+    // Ctrl+A selects the whole draft.
+    chat.editor.move_to(3, false);
+    let ctrl_a = chat.editor_key(&model, Some(&KeyName::Char('a')), ctrl, Some("\u{1}"));
+    assert!(!ctrl_a && chat.editor.selection() == (0..end) && chat.editor.text == "Fix the bug, then ship");
+
+    // Ctrl+Backspace and Ctrl+Delete remove a word each, one undo step each.
+    chat.editor.move_to(end, false);
+    assert!(chat.editor_key(&model, Some(&KeyName::Backspace), ctrl, None));
+    assert!(chat.editor_key(&model, Some(&KeyName::Backspace), ctrl, None));
+    assert_eq!(chat.editor.text, "Fix the bug, ");
+    chat.editor.move_to(0, false);
+    assert!(chat.editor_key(&model, Some(&KeyName::Delete), ctrl, None));
+    assert_eq!(chat.editor.text, "the bug, ");
+    assert!(chat.undo_or_redo(false));
+    assert_eq!(chat.editor.text, "Fix the bug, ");
+    assert!(chat.undo_or_redo(false));
+    assert_eq!(chat.editor.text, "Fix the bug, then ");
+    assert!(chat.undo_or_redo(false));
+    assert_eq!(chat.editor.text, "Fix the bug, then ship");
+
+    // Home and End stop at the wrapped line first, with Shift selecting.
+    chat.editor.set("alpha beta gamma".into());
+    chat.editor.rows = vec![0..6, 6..11, 11..16];
+    chat.editor.move_to(8, false);
+    assert_eq!(press(&mut chat, KeyName::Home, shift), (6, 6..8), "to the start of the wrapped line");
+    assert_eq!(press(&mut chat, KeyName::End, plain), (11, 11..11));
+    assert_eq!(chat.editor.caret_row(), 1, "the end of the wrapped line, not the start of the next");
+    assert_eq!(press(&mut chat, KeyName::Home, plain), (6, 6..6));
+
+    // Shift+Up and Shift+Down select lines and never recall; plain Up on the first line recalls.
+    chat.editor.set("one\ntwo".into());
+    chat.editor.move_to(7, false);
+    assert_eq!(press(&mut chat, KeyName::Up, shift), (3, 3..7));
+    assert_eq!(chat.editor.text, "one\ntwo");
+    assert_eq!(press(&mut chat, KeyName::Up, shift), (3, 3..7), "Shift+Up on the first line does not recall");
+    assert_eq!(chat.editor.text, "one\ntwo");
+    assert_eq!(press(&mut chat, KeyName::Down, shift), (7, 7..7));
+    chat.editor.move_to(1, false);
+    press(&mut chat, KeyName::Up, plain);
+    assert_eq!(chat.editor.text, "an earlier prompt", "plain Up on the first line recalls as before");
+    press(&mut chat, KeyName::Escape, plain);
+    assert_eq!(chat.editor.text, "one\ntwo");
+}

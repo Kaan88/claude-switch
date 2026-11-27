@@ -406,6 +406,8 @@ with its default association. Ctrl+click on an inline file link instead reveals 
 in answers still open in the browser; transcript attachments still use the picture pipeline.
 Chat's conversation has its own Narrow, Medium, Wide or Full reading width in Settings → Sessions,
 stored per window in `window.ini` (`chat_reading`); it uses the same column sizes as the viewer.
+The lines above and below the conversation (a read error, Load earlier, the working or waiting line
+with Stop and Jump to latest, the terminal-answer hint) share the column's left edge and width.
 The composer stays centred and capped independently. Conversation and Markdown scrollbars appear
 on scrolling or hover, hold briefly, then fade; with reduced motion they disappear without a fade.
 Their tracks remain interactive even when hidden.
@@ -1469,7 +1471,21 @@ view share the Shells and Outputs Details rendering.
 Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
-overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+overlong words, and uses the toolkit context menu for Undo, Redo, Cut, Copy, Paste and Select all.
+The composer has undo (Ctrl+Z) and redo (Ctrl+Y, Ctrl+Shift+Z) in `view/chat/undo.rs`, recorded
+inside the composer's editor, so every way the draft changes is covered. Typing is one step per
+word or after a one-second pause, a run of Backspace or Delete is one step, and a paste, a cut, a
+completion, a recalled prompt (and leaving it) or a filled chip is a step of its own. A step brings
+back the text with its caret and selection. At most 100 steps are kept; sending a message clears
+them. Neither the toolkit's single-line `TextField` (search box, dialog fields, Settings) nor the
+handover dialog's editor has undo.
+Caret keys follow a Windows text box. Shift extends the selection. Ctrl+Left and Ctrl+Right go to
+the start of the previous or next word, where a run of punctuation is a word of its own and a line
+break a stop. Ctrl+Backspace and Ctrl+Delete remove a word, one undo step each. Home and End go to
+the wrapped line's ends; with Ctrl, to the draft's ends. Ctrl+A selects all. Up and Down recall
+earlier prompts only without modifiers, so Shift+Up and Shift+Down always select. The word rules
+live in the editor the composer shares with the handover dialog (`compact_dialog/editor.rs`); the
+toolkit's `TextField` has its own word movement.
 The composer toolbar separates session values, actions and panels by their surfaces. Fixed-width
 value controls keep their neighbours still as values change; effort is a five-dot scale and
 context remains a token count, not a filled bar, because the transcript supplies no verified limit.

@@ -21,6 +21,17 @@
 - Stop before Claude answers: Claude Code puts the message back on its own input, which blocked
   the next send. Chat now clears it there and puts the text back in the message box.
 - More time for a pasted picture to show (20 s) and for a pasted message to appear (5 s).
+- Chat: the working line ("✶ Sprouting… (40s · ↓ 3.2k tokens)"), "Waiting for your answer/approval",
+  the terminal-answer hint, a read error and Load earlier line up with the conversation's reading
+  column instead of the window's left edge.
+- Chat: Cut in the message box (right-click › Cut and Ctrl+X) removes the selected text after copying
+  it; before, it only copied.
+- Chat: undo and redo in the message box: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Undo and Redo in its
+  right-click menu. Typing undoes a word at a time; a paste, a cut, a run of deletions, a completion,
+  a recalled prompt or a filled chip is one step each. Sending a message clears the history.
+- Chat and the handover editor: Ctrl+Left and Ctrl+Right move by word, and Ctrl+Shift+Left/Right
+  select by word, as in Windows text boxes. Before, they moved one character. Ctrl+Backspace and
+  Ctrl+Delete remove a word, one undo step each in the message box.
 
 ## 0.1.2 (2026-11-27)
 
