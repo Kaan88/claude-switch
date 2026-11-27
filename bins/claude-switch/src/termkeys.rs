@@ -21,19 +21,31 @@ fn input_rule(text: &str) -> bool {
     text.chars().count() >= 20 && text.chars().all(|c| c == '─')
 }
 
-/// The cursor is in Claude Code's input box: under a solid rule whose next row starts with `❯`,
-/// over another solid rule, with no rule between. Its classic and its full-screen view draw the box
-/// alike; the full-screen view does so on the alternate screen (Claude Code 2.1.332).
+/// Hints Claude Code shows in the row under its input box (its mode line), lower case.
+const FOOTER_HINTS: [&str; 3] = ["shift+tab to cycle", "? for shortcuts", "esc to interrupt"];
+
+/// The cursor is in Claude Code's input box. Its classic and its full-screen view draw the box
+/// alike, the full-screen view on the alternate screen (Claude Code 2.1.332): a solid rule, a row
+/// starting with `❯`, the draft's rows, another solid rule. A draft may hold rule lines of its own
+/// (box art, a table border) and the cursor may sit on one, so the box's top is the nearest rule
+/// with a `❯` row under it at or above the cursor, and any rule below the cursor may close it.
+/// When the draft is taller than the screen its top is gone; the box is then known by Claude
+/// Code's mode line under a rule below the cursor. In doubt inside such a box this says yes:
+/// Shift+Enter then starts a line, where a plain Return would submit the unfinished draft.
 pub fn claude_input_at_cursor(screen: &Screen) -> bool {
-    const ROWS: usize = 40;
     let cursor = screen.cursor().row;
-    let rule = |row: usize| input_rule(&screen.row_text(row));
-    if rule(cursor) {
+    let text = |row: usize| screen.row_text(row);
+    let rule = |row: usize| input_rule(&text(row));
+    let footer = |row: usize| {
+        let row = text(row).to_lowercase();
+        FOOTER_HINTS.iter().any(|hint| row.contains(hint))
+    };
+    let below = cursor + 1..screen.rows();
+    if !below.clone().any(rule) {
         return false;
     }
-    let Some(top) = (cursor.saturating_sub(ROWS)..cursor).rev().find(|&row| rule(row)) else { return false };
-    let closed = (cursor + 1..(cursor + ROWS).min(screen.rows())).any(rule);
-    closed && screen.row_text(top + 1).trim_start().starts_with('❯')
+    let top = (0..cursor).rev().any(|row| rule(row) && text(row + 1).trim_start().starts_with('❯'));
+    top || below.into_iter().any(|row| rule(row) && row + 1 < screen.rows() && footer(row + 1))
 }
 
 /// The conventions a key is encoded with now. A Claude tab keeps Claude Code's (Shift+Enter as
@@ -358,6 +370,24 @@ mod tests {
         assert!(keyboard_now(Claude, &classic) == Claude);
         assert_eq!(enter(&classic), send(b"\x1b[13;2u"));
         assert!(keyboard_now(Classic, &input) == Classic);
+    }
+
+    #[test]
+    fn a_draft_with_rule_lines_or_taller_than_the_screen_keeps_claudes_shift_enter() {
+        let rule = "─".repeat(100);
+        let footer = "  ⏵⏵ auto mode on (shift+tab to cycle)";
+        // A pasted table border inside the draft, the cursor under it and on it.
+        let draft = [&rule, "❯ | a | b |", &rule, "  | 1 | 2 |", &rule, footer];
+        assert!(claude_input_at_cursor(&screen_of(true, &draft, (3, 5))));
+        assert!(claude_input_at_cursor(&screen_of(true, &draft, (2, 3))), "the cursor on the draft's own rule");
+        // A draft taller than the screen: its top scrolled away, the mode line under the box.
+        let tall = ["  line 50 of the draft", "  line 51", &rule, footer];
+        assert!(claude_input_at_cursor(&screen_of(true, &tall, (1, 9))));
+        // Not Claude Code: rule lines without its `❯` row or its mode line.
+        let other = ["  a report", &rule, "  total 3", &rule, "  press q to quit"];
+        assert!(!claude_input_at_cursor(&screen_of(true, &other, (2, 4))));
+        // Below the box (a menu under it): nothing closes a box under the cursor.
+        assert!(!claude_input_at_cursor(&screen_of(true, &[&rule, "❯ hi", &rule, "  1. Yes"], (3, 2))));
     }
 
     #[test]

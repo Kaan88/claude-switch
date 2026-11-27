@@ -248,7 +248,10 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   Switch launched Claude Code in the tab, identified by the executable's filename, not its title
   or transcript, and only while Claude Code is what the screen shows: on the main screen (its
   classic view), or on the alternate screen while the cursor is in its input box (a `❯` row between
-  solid rules, which its full-screen view draws there too). Any other program on the alternate
+  solid rules, which its full-screen view draws there too). The box's top is the nearest rule with a
+  `❯` row under it, so rule lines in a draft do not end it; a draft taller than the screen is known
+  by Claude Code's mode line under a rule below the cursor. In doubt inside such a box Shift+Enter
+  stays Claude Code's, since a plain Return would submit the unfinished draft. Any other program on the alternate
   screen, such as an editor Claude Code opened, gets the classic Return. Shells and other programs
   keep the classic Return encoding; this is not full kitty keyboard negotiation. A middle click on a tab closes it.
 - **Mouse**: the terminal uses the arrow pointer. Drag selects (double click a word, triple click a

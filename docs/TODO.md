@@ -856,6 +856,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     input box, and `CSI 13;2u` started a second input line there. Not checked: a terminal editor opened with Ctrl+G
     (Claude Code offers Notepad on this computer, a window of its own, so none was opened); a program that draws such a box on the alternate screen would get
     Claude Code's Shift+Enter.
+    Re-review (2026-11-27): a draft holding a rule line, the cursor on one, or a draft taller than the screen turned
+    Shift+Enter into a plain Return that would submit the draft. The box's top is now the nearest rule with a `❯` row
+    under it, and a draft whose top scrolled away is known by the mode line under the box ("shift+tab to cycle",
+    "? for shortcuts" or "esc to interrupt"; only the first was seen in a recording).
 68. **The `/usage` card loses the terminal's bars, and its spinner line jumps** (owner, 2026-11-27, screenshot of the
     read-only menu card for /usage). The card copies the panel's rows as plain text, so the usage bars the terminal
     draws (coloured cells or block characters) are missing; copy each cell's colours and draw the rows as the
