@@ -1858,3 +1858,66 @@ fn with_menus_off_menus_and_permission_prompts_stay_in_the_terminal() {
     f.sync();
     assert!(f.chat().question.approval, "on again: the card is back");
 }
+
+/// A recorded screen with one text replaced, as the CLI would draw another prompt's choices.
+fn recorded_with(fixture: &str, from: &str, to: &str) -> Screen {
+    assert!(fixture.contains(from));
+    screens::recorded::recorded(&fixture.replace(from, to))
+}
+
+#[test]
+fn a_rewind_choice_needs_the_choices_for_the_chosen_prompt_on_every_key() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    // The terminal moved to alpha's choices, which read the same: no Enter.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    f.tab().term.screen = recorded_with(REWIND_ACTIONS, BRAVO, ALPHA);
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::ACTIONS_CHANGED));
+
+    // The same while the highlight moves: the arrow went, Enter does not.
+    let write = "Use the Write tool to create the file note.txt containing the word one.";
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(write));
+    f.show(REWIND_ACTIONS_CODE, now);
+    advance(f.tab(), now, true);
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)]);
+    f.tab().term.screen = recorded_with(REWIND_ACTIONS_CODE_DOWN, write, "Use the Write tool to create other.txt");
+    f.chat().output(now, true, false);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::ACTIONS_CHANGED));
+}
+
+#[test]
+fn the_rows_under_the_chosen_prompt_must_be_the_later_prompts() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let walk = |prompts: &[&str], chosen: usize| {
+        let mut f = Fixture::idle();
+        let ids = f.prompts(prompts);
+        f.show(REWIND_IDLE, now);
+        rewind::start(f.tab(), now + QUIET, ids[chosen]);
+        advance(f.tab(), now + QUIET + STEP / 10, true);
+        for screen in [REWIND_OPEN, REWIND_UP1, REWIND_UP2] {
+            f.show(screen, now);
+            advance(f.tab(), now, true);
+        }
+        f
+    };
+    // A later prompt the list leaves out: the bravo row may be another, earlier bravo.
+    let mut f = walk(&[ALPHA, BRAVO, "Reply with just the word delta.", CHARLIE], 1);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec(), up(), up()], "no Enter");
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::MISPLACED));
+    // A slash command between them is not in the list and does not count.
+    let mut f = walk(&[ALPHA, BRAVO, "/context", CHARLIE], 1);
+    assert_eq!(f.writes().last(), Some(&b"\r".to_vec()));
+    assert!(f.rewind().is_some_and(|r| r.error.is_none()));
+    assert!(!rewind::listed("/context") && !rewind::listed("<command-name>/x</command-name>"));
+    assert!(rewind::listed(BRAVO));
+}

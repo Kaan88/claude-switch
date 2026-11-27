@@ -594,6 +594,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
     text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
     a rewind and the reader does not follow `parentUuid` branches.
+    Review fixes (2026-11-27): every key on the choices needs them to quote the chosen prompt (the CLI could have
+    been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
+    prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list
+    that leaves a prompt out stops instead of taking an earlier prompt worded alike.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).

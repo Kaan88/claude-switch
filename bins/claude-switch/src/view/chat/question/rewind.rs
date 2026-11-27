@@ -32,7 +32,10 @@ pub(super) const AMBIGUOUS: &str =
     "The terminal's rewind list shows a later prompt the same way, so nothing was chosen. Rewind in the terminal.";
 pub(super) const NO_ACTIONS: &str =
     "The terminal did not show the rewind's choices for this prompt, so nothing more was sent. Check the terminal.";
-pub(super) const ACTIONS_CHANGED: &str = "The rewind's choices changed in the terminal. Check the terminal.";
+pub(super) const ACTIONS_CHANGED: &str =
+    "The rewind's choices or the prompt they are for changed in the terminal. Check the terminal.";
+pub(super) const MISPLACED: &str = "The terminal's rewind list does not show the prompts after this one as the \
+    transcript has them, so nothing was chosen. Rewind in the terminal.";
 pub(super) const NOT_DONE: &str = "The terminal did not finish the rewind. Check the terminal.";
 pub(super) const NOT_CANCELLED: &str = "The terminal did not close its rewind list. Check the terminal.";
 pub(super) const REWOUND: &str = "Rewound in Claude Code. The conversation here still shows the later turns: Switch reads the transcript as written.";
@@ -101,6 +104,13 @@ fn idle(tab: &Tab, now: Instant) -> bool {
         && ready(tab)
 }
 
+/// The rewind list shows this prompt: it lists what the user typed, never a slash command
+/// (`/context` recorded from Claude Code 2.1.332, which the reader shows as its `/` name).
+pub(in crate::view) fn listed(prompt: &str) -> bool {
+    let prompt = prompt.trim_start();
+    !prompt.is_empty() && !prompt.starts_with(['/', '<'])
+}
+
 /// "Rewind to here…" on the prompt at `item`: the first Esc, at a verified idle prompt.
 pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
     let pane = tab.pane.as_ref().expect("Chat pane");
@@ -113,6 +123,7 @@ pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
     let later: Vec<String> = items
         .range(ItemId { offset: item.offset.saturating_add(1), block: 0 }..)
         .filter_map(|(_, item)| crate::view::chat::recall::prompt_text(item))
+        .filter(|text| listed(text))
         .map(str::to_owned)
         .collect();
     let epoch = pane.chat.output_epoch;
@@ -176,15 +187,13 @@ fn look(tab: &Tab, now: Instant, rewind: &Rewind) -> Next {
             _ => Next::Wait,
         },
         Stage::Entering => match screens::rewind_actions(screen) {
-            Some(actions) if screens::rewind_row_is(&actions.quoted, &rewind.prompt) || quoted(&actions, rewind) => {
-                Next::Choose(actions)
-            }
+            Some(actions) if for_prompt(&actions, rewind) => Next::Choose(actions),
             Some(_) => Next::Fail(NO_ACTIONS),
             None => Next::Wait,
         },
         Stage::Moving { target, from } => {
             let Some(actions) = screens::rewind_actions(screen) else { return Next::Wait };
-            let same = rewind.actions.as_ref().is_some_and(|a| a.choices == actions.choices);
+            let same = same_actions(&actions, rewind);
             let step = if target > from { from + 1 } else { from.saturating_sub(1) };
             match actions.highlight {
                 _ if !same => Next::Fail(ACTIONS_CHANGED),
@@ -210,9 +219,15 @@ fn toward(from: usize, target: usize, screen: &Screen) -> Vec<u8> {
     moves(from, if target > from { from + 1 } else { from.saturating_sub(1) }, screen)
 }
 
-/// The quote is the whole prompt, wrapped onto several rows.
-fn quoted(actions: &RewindActions, rewind: &Rewind) -> bool {
-    squash(&actions.quoted) == squash(&rewind.prompt)
+/// The choices quote the chosen prompt: as the list cuts it, or whole, wrapped onto several rows.
+fn for_prompt(actions: &RewindActions, rewind: &Rewind) -> bool {
+    screens::rewind_row_is(&actions.quoted, &rewind.prompt) || squash(&actions.quoted) == squash(&rewind.prompt)
+}
+
+/// The screen still shows the choices the card offers, for the chosen prompt: the CLI may have
+/// been moved to another prompt whose choices read the same.
+fn same_actions(shown: &RewindActions, rewind: &Rewind) -> bool {
+    rewind.actions.as_ref().is_some_and(|a| a.choices == shown.choices) && for_prompt(shown, rewind)
 }
 
 /// One Up from `before` led to `after`: the highlight one entry higher in the same list, or the
@@ -229,13 +244,21 @@ fn moved_up(before: &RewindList, after: &RewindList) -> bool {
         && after.entries[1..] == before.entries[..n - 1]
 }
 
-/// On the chosen prompt's row: Enter (unless a later prompt could read the same). Else Up.
+/// On the chosen prompt's row: Enter, unless a later prompt could read the same or the rows under
+/// it are not the later prompts, one for one (an earlier prompt worded alike would be taken for it
+/// when the list leaves the chosen one out). Else Up.
 fn pick_or_up(screen: &Screen, rewind: &Rewind, list: RewindList) -> Next {
     let row = &list.entries[list.highlight];
     let current = list.highlight + 1 == list.entries.len();
     if !current && screens::rewind_row_is(row, &rewind.prompt) {
         if rewind.later.iter().any(|later| screens::rewind_row_is(row, later)) {
             return Next::Fail(AMBIGUOUS);
+        }
+        let below = &list.entries[list.highlight + 1..list.entries.len() - 1];
+        let fits = below.len() == rewind.later.len()
+            && below.iter().zip(&rewind.later).all(|(row, later)| screens::rewind_row_is(row, later));
+        if !fits {
+            return Next::Fail(MISPLACED);
         }
         return Next::Key(b"\r".to_vec(), Stage::Entering);
     }
@@ -322,7 +345,7 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     }
     let screen = &tab.term.screen;
     let shown = screens::rewind_actions(screen);
-    let same = shown.as_ref().zip(rewind.actions.as_ref()).is_some_and(|(s, a)| s.choices == a.choices);
+    let same = shown.as_ref().is_some_and(|shown| same_actions(shown, &rewind));
     let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
     let key = match (hit, shown) {
         _ if !ready(tab) => Err(BLOCKED),
