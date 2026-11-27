@@ -8,8 +8,10 @@ use mdshared_ui::keys::{KeyName, Mods};
 use super::undo::{History, Kind, Snapshot};
 use crate::compact_dialog::editor::Editor;
 
-pub(super) const LINE: f32 = 17.0;
-pub(super) const TEXT_SIZE: f32 = 13.0;
+pub(super) const LINE: f32 = 21.0;
+pub(super) const TEXT_SIZE: f32 = 15.0;
+/// The draft is set in the interface face, as the messages are.
+pub(super) const FACE: Face = Face::Ui;
 
 #[derive(Default)]
 pub(super) struct ComposerEditor {
@@ -38,7 +40,7 @@ impl DerefMut for ComposerEditor {
 impl ComposerEditor {
     pub fn flow(&mut self, p: &mut Painter, width: f32, height: f32) {
         let visible = ((height - 4.0) / LINE).max(1.0) as usize;
-        let hyphen = p.measure(Face::Mono, TEXT_SIZE, "-");
+        let hyphen = p.measure(FACE, TEXT_SIZE, "-");
         let width = width.max(2.0 * hyphen);
         let changed_width = self.metrics.is_none_or(|(w, hy, _)| (w, hy) != (width, hyphen));
         if self.inner.rows.is_empty() || changed_width {
@@ -46,7 +48,7 @@ impl ComposerEditor {
             self.inner.rows = wrap(&self.inner.text, width, hyphen, |c| {
                 *advances.entry(c).or_insert_with(|| {
                     let mut utf8 = [0; 4];
-                    p.measure(Face::Mono, TEXT_SIZE, if c == '\t' { " " } else { c.encode_utf8(&mut utf8) })
+                    p.measure(FACE, TEXT_SIZE, if c == '\t' { " " } else { c.encode_utf8(&mut utf8) })
                 })
             });
             self.row_hint = None;
@@ -77,7 +79,7 @@ impl ComposerEditor {
             .iter()
             .skip(self.inner.scroll)
             .take(self.inner.visible)
-            .map(|row| (row.clone(), p.caret_stops(Face::Mono, TEXT_SIZE, &self.inner.text[row.clone()])))
+            .map(|row| (row.clone(), p.caret_stops(FACE, TEXT_SIZE, &self.inner.text[row.clone()])))
             .collect();
     }
 
@@ -467,7 +469,7 @@ mod tests {
         e.stops = vec![(0..2, vec![0., 10., 20.]), (2..3, vec![0., 10.])];
         e.point(21., 7., false);
         assert_eq!((e.caret, e.caret_row()), (2, 0));
-        e.point(0., 24., false);
+        e.point(0., 4.0 + LINE + 3.0, false);
         assert_eq!((e.caret, e.caret_row()), (2, 1));
     }
 }

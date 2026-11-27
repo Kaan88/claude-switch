@@ -46,9 +46,11 @@ const THUMB_GAP: f32 = 8.0;
 pub(super) const PIC: f32 = THUMB_H + 30.0;
 pub(super) const CHIP_H: f32 = 26.0;
 const INSET: f32 = 12.0;
+/// A prompt bubble's padding: its text sits this far inside it.
+const BUBBLE_PAD: f32 = 14.0;
+const BUBBLE_TOP: f32 = 10.0;
 const AFTER_TOOLS: f32 = 8.0;
 const TUCK_UNDER_ANSWER: f32 = 6.0;
-const TOOL_INDENT: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Geometry {
@@ -61,17 +63,17 @@ pub(super) struct Geometry {
 
 impl Geometry {
     fn new(style: Style, w: f32, prompt_w: f32) -> Self {
-        let answer = 25.0_f32.min(w * 0.14);
-        let tucked = answer + TOOL_INDENT.min(w * 0.08);
+        // One column: answers, tool lines and chips start at its left edge; only the user's
+        // bubble is set apart, on the right.
         let (x, width, pad, ty) = match style {
             Style::Prompt => {
                 let width = prompt_w.clamp(1.0, Self::prompt_max(w));
-                (w - width, width, INSET, 8.0)
+                (w - width, width, BUBBLE_PAD, BUBBLE_TOP)
             }
-            Style::Answer => (answer, w - answer, 0.0, 0.0),
-            Style::Tool => (tucked, w - tucked, 8.0, TOOL_H + 6.0),
-            Style::Group => (tucked, w - tucked, 8.0, TOOL_H),
-            Style::Files => (answer, w - answer, 0.0, 0.0),
+            Style::Answer => (0.0, w, 0.0, 0.0),
+            Style::Tool => (0.0, w, 8.0, TOOL_H + 6.0),
+            Style::Group => (0.0, w, 8.0, TOOL_H),
+            Style::Files => (0.0, w, 0.0, 0.0),
             Style::Card => (0.0, w, INSET, HEAD),
         };
         let pad = pad.min(width * 0.20);
@@ -79,7 +81,7 @@ impl Geometry {
     }
 
     fn prompt_max(w: f32) -> f32 {
-        (w * 0.82).max(1.0)
+        (w * 0.80).max(1.0)
     }
 }
 
@@ -167,6 +169,8 @@ pub(super) struct Body {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BodyKind {
     Plain,
+    /// The user's message, in its bubble.
+    Prompt,
     Markdown,
     Mono,
     Shell,
@@ -275,7 +279,11 @@ impl Rows<'_> {
         {
             return body;
         }
-        let size = if self.chat { 16.0 } else { 14.0 };
+        let size = match kind {
+            BodyKind::Prompt if self.chat => 15.0,
+            _ if self.chat => 16.0,
+            _ => 14.0,
+        };
         let empty = Files::new();
         // Tool details (diffs, command output) are read on demand: muted, like their row.
         let quiet = Palette { text: self.pal.muted, ..*self.pal };
@@ -339,13 +347,13 @@ impl Rows<'_> {
         row.top = self.end;
         let pictures = row.pictures.len();
         if row.style == Style::Prompt {
-            let room = Geometry::prompt_max(self.width) - 2.0 * INSET;
+            let room = Geometry::prompt_max(self.width) - 2.0 * BUBBLE_PAD;
             let used = row.body.as_ref().map_or(0.0, Body::used_width).max(thumbs_width(room, pictures));
-            row.geo = Geometry::new(row.style, self.width, (used + 2.0 * INSET + 1.0).max(34.0));
+            row.geo = Geometry::new(row.style, self.width, (used + 2.0 * BUBBLE_PAD + 1.0).max(40.0));
         }
         let content = row.body.as_ref().map_or(0.0, Body::height) + thumbs_height(row.geo.tw, pictures);
         let (h, gap) = match row.style {
-            Style::Prompt => (row.geo.ty + content + 8.0, 15.0),
+            Style::Prompt => (row.geo.ty + content + BUBBLE_TOP, 18.0),
             Style::Answer => (content.max(19.0), 7.0),
             Style::Tool if row.open => {
                 (row.geo.ty + content + 6.0 + if row.agent.is_some() { CHIP_H } else { 0.0 }, 4.0)
@@ -452,7 +460,7 @@ impl Rows<'_> {
         let row = match &item.kind {
             ItemKind::Prompt { text, pictures, .. } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
-                row.body = (!text.is_empty()).then(|| self.shape(&row.id, text, row.geo.tw, BodyKind::Plain, files));
+                row.body = (!text.is_empty()).then(|| self.shape(&row.id, text, row.geo.tw, BodyKind::Prompt, files));
                 let count = pictures.len();
                 row.pictures.extend(thumbs(id, count, move |i| {
                     if count > 1 { format!("Pasted picture {}", i + 1) } else { "Pasted picture".into() }

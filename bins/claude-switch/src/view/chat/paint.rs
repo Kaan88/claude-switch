@@ -26,6 +26,7 @@ pub fn strip_button(
 
 impl AppState {
     pub fn layout_chat(&mut self, area: Rect) -> Rect {
+        let reading = crate::view::Reading::from_key(&self.win_file.chat_reading);
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return Rect::default() };
         let chat = &mut pane.chat;
         chat.shell_count = pane.model.running_shells();
@@ -40,8 +41,23 @@ impl AppState {
         // The draft's wrapped rows as last flowed; `draw_chat` flows again first and re-lays.
         let lines = chat.editor.rows.len().max(1);
         let left = composer::left_group(&composer::chips_of(&self.config.chat));
-        chat.layout =
-            Layout::with_shells(area, panel, drawer, chat.drawer_height, chips, notice, running, reveal, lines, left);
+        // The composer and the cards go on the conversation's reading column.
+        pane.ui.set_chat_reading(reading);
+        let main_w = (area.w - Layout::panel_width(area, panel, reveal)).max(0.0);
+        let column = Some(pane.ui.column_for(area.x, main_w));
+        chat.layout = Layout::with_shells(
+            area,
+            panel,
+            drawer,
+            chat.drawer_height,
+            chips,
+            notice,
+            running,
+            reveal,
+            lines,
+            left,
+            column,
+        );
         super::question::place(chat, &pane.model);
         self.session_view.pane_area = chat.layout.conversation;
         chat.layout.drawer

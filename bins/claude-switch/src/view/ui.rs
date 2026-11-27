@@ -113,6 +113,8 @@ pub struct Ui {
     /// The left edge and width of the conversation's text in the last frame (Chat's reading
     /// column), which the lines above and below the conversation follow.
     column: (f32, f32),
+    /// The newest message there was while the view last followed the latest.
+    seen: Option<ItemId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -125,7 +127,24 @@ pub(super) enum Release {
 }
 
 const PAD: f32 = 12.0;
+/// Chat's side padding: the composer's box and the cards reach `look::INSET` past the reading
+/// column on each side and still keep the window's margin.
+const CHAT_PAD: f32 = PAD + super::look::INSET;
+/// The round "jump to latest" button.
+const JUMP: f32 = 34.0;
+
 impl Ui {
+    fn pad(&self) -> f32 {
+        if self.chat { CHAT_PAD } else { PAD }
+    }
+
+    /// Where the conversation's text goes in a Chat conversation area at `x`, `width` wide:
+    /// `(left, width)`. The composer and the cards are laid out on it before the frame is drawn.
+    pub(super) fn column_for(&self, x: f32, width: f32) -> (f32, f32) {
+        let pad = self.pad();
+        self.text_column(x + pad, (width - 2.0 * pad).max(1.0))
+    }
+
     pub(super) fn detail_side(&self) -> Option<super::chat::Side> {
         if let Page::Details(side) = self.page { Some(side) } else { None }
     }
@@ -184,11 +203,12 @@ impl Ui {
     }
 
     pub(super) fn footer_height(&self, width: f32, main: bool) -> f32 {
-        let width = if self.chat && self.column.1 > 0.0 { self.column.1 } else { width - 2.0 * PAD };
-        if self.page == Page::Conversation && main && self.working.is_some() && width < 440.0 {
+        if self.chat {
+            // Chat has no strip: only the working line keeps a row under the conversation.
+            return if self.page == Page::Conversation && main && self.working.is_some() { 25.0 } else { 0.0 };
+        }
+        if self.page == Page::Conversation && main && self.working.is_some() && width - 2.0 * PAD < 440.0 {
             49.0
-        } else if self.chat {
-            25.0
         } else {
             40.0
         }
@@ -222,8 +242,9 @@ impl Ui {
         self.hits.clear();
         let clip = p.clip(area);
         p.fill(area, pal.page);
-        let x = area.x + PAD;
-        let width = (area.w - 2.0 * PAD).max(1.0);
+        let pad = self.pad();
+        let x = area.x + pad;
+        let width = (area.w - 2.0 * pad).max(1.0);
         if !self.chat {
             p.text(Face::Semibold, 17.0, x, area.y + 22.0, "Session view", pal.text, (width - 116.0).max(1.0));
             self.button(
@@ -339,7 +360,12 @@ impl Ui {
         } else {
             self.markdown_visibility = Visibility::default();
         }
-        p.fill(Rect::new(x, footer, width, p.px()), pal.line);
+        if !self.chat {
+            p.fill(Rect::new(x, footer, width, p.px()), pal.line);
+        }
+        if self.page == Page::Conversation && self.chat {
+            self.jump_button(p, pal, m, visible);
+        }
         if self.page == Page::Conversation {
             self.conversation_footer(
                 p,
@@ -447,6 +473,39 @@ impl Ui {
         self.selection = None;
         self.follow.pause();
         true
+    }
+
+    /// Chat's "jump to latest": a round button over the foot of the conversation, only while the
+    /// view does not follow; a dot on it once newer messages arrived.
+    fn jump_button(&mut self, p: &mut Painter, pal: &Palette, m: &Model, visible: bool) {
+        let newest = m.items.keys().next_back().copied();
+        if self.follow.active() || !visible {
+            self.seen = newest;
+            return;
+        }
+        let body = self.body;
+        if body.h < JUMP + 24.0 {
+            return;
+        }
+        let r = Rect::new((body.cx() - JUMP / 2.0).round(), body.bottom() - JUMP - 10.0, JUMP, JUMP);
+        let hot = r.contains(self.mouse.0, self.mouse.1);
+        let pressed = hot && self.pressed == Some(Action::Latest);
+        let fill = if pressed {
+            pal.press
+        } else if hot {
+            pal.hover
+        } else {
+            super::look::raised(pal)
+        };
+        p.shadow_with(r, JUMP / 2.0, pal.dark, 0.9);
+        p.frame(r, JUMP / 2.0, fill, super::look::edge(pal));
+        p.icon(mdshared_ui::glyph::DOWN, 15.0, r.cx(), r.cy() + 0.5, pal.text);
+        if newest > self.seen {
+            let dot = Rect::new(r.right() - 10.0, r.y + 1.0, 9.0, 9.0);
+            p.rbox(dot, 4.5, pal.page);
+            p.rbox(dot.inset(1.5), 3.0, pal.accent);
+        }
+        self.hits.push((r, Action::Latest));
     }
 
     fn button(&mut self, p: &mut Painter, pal: &Palette, r: Rect, label: &str, act: Action, selected: bool) {

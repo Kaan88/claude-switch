@@ -4,6 +4,7 @@ use mdshared_ui::theme::Palette;
 
 use super::{Chat, Chip, Control, Drawer, Gate, commands, editor, paint::button, popups, submission};
 use crate::state::Target;
+use crate::view::look;
 
 pub(super) struct Draw<'a> {
     pub pal: &'a Palette,
@@ -63,6 +64,10 @@ pub(super) fn left_group(chips: &[Control]) -> f32 {
     if fixed.is_empty() { 0.0 } else { fixed.iter().sum::<f32>() + 4.0 * (fixed.len() - 1) as f32 + 1.0 }
 }
 
+/// The centre of the editor's first row, from its top.
+const FIRST_ROW: f32 = 15.0;
+/// The round Send button.
+const SEND: f32 = 32.0;
 const PICKER_HEADER: f32 = 22.0;
 const PICKER_ROW: f32 = 25.0;
 const PILL_FONT: f32 = 11.5;
@@ -175,8 +180,8 @@ impl Draw<'_> {
     ) {
         let l = chat.layout;
         let clip = p.clip(l.composer);
-        p.rbox(l.box_frame, 11.0, if self.focused { self.pal.accent } else { self.pal.line });
-        p.rbox(l.box_frame.inset(1.0), 10.0, self.pal.field);
+        // A raised box: with the keyboard its border is a little stronger, not the accent.
+        look::raised_box(p, self.pal, l.box_frame, self.focused);
         self.attachments(p, chat);
         self.editor(p, chat);
         self.shell_chip(p, l.shell_chip, chat.shell_count);
@@ -335,11 +340,11 @@ impl Draw<'_> {
         let selection = ed.selection();
         let caret_row = ed.caret_row();
         if ed.text.is_empty() {
-            p.text(Face::Ui, 13.0, x, e.y + 14.0, "Message Claude Code…", self.pal.muted, width);
+            p.text(editor::FACE, editor::TEXT_SIZE, x, e.y + FIRST_ROW, "Message Claude Code…", self.pal.muted, width);
             if let Some(next) = next_chip.as_deref() {
                 let label = format!("↳ {}  ·  Tab", short(next, 80));
                 let w = (p.measure(Face::Ui, PILL_FONT, &label) + 18.0).min(width);
-                let r = Rect::new(x - 2.0, e.y + 13.0 + editor::LINE - 10.0, w, 20.0);
+                let r = Rect::new(x - 2.0, e.y + FIRST_ROW + editor::LINE - 10.0, w, 20.0);
                 let target = Target::Chat(Control::NextPrompt);
                 p.rbox(r, 10.0, if self.hover == Some(target) { self.pal.hover } else { self.pal.bar });
                 p.text(Face::Ui, PILL_FONT, r.x + 9.0, r.cy(), &label, self.pal.text, r.w - 14.0);
@@ -347,15 +352,15 @@ impl Draw<'_> {
             }
         }
         for (i, row) in ed.rows.iter().enumerate().skip(ed.scroll).take(ed.visible) {
-            let y = e.y + 13.0 + (i - ed.scroll) as f32 * editor::LINE;
+            let y = e.y + FIRST_ROW + (i - ed.scroll) as f32 * editor::LINE;
             let span = &ed.text[row.clone()];
-            let mut before = |at| p.measure(Face::Mono, editor::TEXT_SIZE, &ed.text[row.start..at]);
+            let mut before = |at| p.measure(editor::FACE, editor::TEXT_SIZE, &ed.text[row.start..at]);
             let start = selection.start.max(row.start);
             let end = selection.end.min(row.end);
             let selected = (end > start).then(|| (before(start), before(end)));
             let caret = (self.focused && i == caret_row).then(|| before(ed.caret.min(row.end)));
             if let Some((a, b)) = selected {
-                p.fill(Rect::new(x + a, y - 8.0, b - a, 16.0), self.pal.on);
+                p.fill(Rect::new(x + a, y - 10.0, b - a, 20.0), self.pal.on);
             }
             let painted;
             let span = if editor::hyphen(&ed.text, row) {
@@ -365,10 +370,11 @@ impl Draw<'_> {
                 span
             };
             if !span.is_empty() {
-                p.text(Face::Mono, editor::TEXT_SIZE, x, y, span, self.pal.text, width);
+                // Rows are wrapped by summed advances; shaping the row whole may differ by a hair.
+                p.text(editor::FACE, editor::TEXT_SIZE, x, y, span, self.pal.text, width + 8.0);
             }
             if let Some(at) = caret {
-                p.fill(Rect::new(x + at, y - 7.0, p.px(), 15.0), self.pal.accent);
+                p.fill(Rect::new(x + at, y - 9.0, p.px(), 18.0), self.pal.accent);
             }
         }
         p.restore(c);
@@ -410,6 +416,8 @@ impl Draw<'_> {
         let l = chat.layout;
         let r = l.toolbar;
         let mut x = r.x + 1.0;
+        // A line of the toolbar is as high as Send; the chips sit in its middle.
+        let top = r.y + (SEND - 24.0) / 2.0;
         let model = chat.cli_report.model.as_deref().or(info.model.as_deref()).unwrap_or("Model");
         let model = model_label(p, model);
         let effort = chat.effort_label(info);
@@ -441,7 +449,7 @@ impl Draw<'_> {
                 _ => "/ …",
             };
             let w = chip_width(control);
-            let chip = Rect::new(x, r.y + 1.0, w, 24.0);
+            let chip = Rect::new(x, top, w, 24.0);
             if control == Control::Effort {
                 self.effort_pill(p, chip, &effort, level);
             } else {
@@ -465,25 +473,15 @@ impl Draw<'_> {
             if x + w > end {
                 break;
             }
-            self.toolbar_pill(p, Rect::new(x, r.y + 1.0, w, 24.0), label, Control::Own(n), false, !chat.locked());
+            self.toolbar_pill(p, Rect::new(x, top, w, 24.0), label, Control::Own(n), false, !chat.locked());
             x += w + 4.0;
         }
-        let y = r.y + if l.stacked { 28.0 } else { 1.0 };
-        let rsend = Rect::new(r.right() - 63.0, y, 61.0, 24.0);
-        let armed = !chat.locked()
-            && chat.recovery_notice().is_none()
-            && matches!(chat.last_gate, Some(Gate::Ready | Gate::Running));
-        let label = if chat.waiting().is_some() || chat.enter_only() {
-            "Waiting"
-        } else if chat.queue.is_some() {
-            "Queued"
-        } else if chat.last_gate == Some(Gate::Running) {
-            "Queue"
-        } else {
-            "Send"
-        };
-        self.pill(p, rsend, label, Control::Send, armed, !chat.locked());
-        let mut x = rsend.x - 4.0;
+        let row = r.y + if l.stacked { SEND - 2.0 } else { 0.0 };
+        let rsend = Rect::new(r.right() - SEND - 1.0, row, SEND, SEND);
+        self.send(p, chat, rsend);
+        let y = row + (SEND - 24.0) / 2.0;
+        // The slot left of Send is kept for the small Stop, so nothing moves when it shows.
+        let mut x = rsend.x - STOP_SLOT - 4.0;
         if self.wide {
             x -= 58.0;
             self.toolbar_pill(p, Rect::new(x, y, 58.0, 24.0), "Details", Control::Panel, !chat.side_hidden, true);
@@ -501,6 +499,28 @@ impl Draw<'_> {
         x -= 63.0;
         let attach = Rect::new(x, y, 59.0, 24.0);
         self.toolbar_pill(p, attach, "Attach…", Control::Attach, false, !chat.locked());
+    }
+
+    /// Send: a round button, the accent with an up arrow when there is something to send and the
+    /// gate allows it, grey when not.
+    fn send(&mut self, p: &mut Painter, chat: &Chat, r: Rect) {
+        let pal = self.pal;
+        let target = Target::Chat(Control::Send);
+        let enabled = !chat.locked();
+        let armed =
+            enabled && chat.recovery_notice().is_none() && matches!(chat.last_gate, Some(Gate::Ready | Gate::Running));
+        let something = !chat.editor.text.trim().is_empty() || !chat.chips.is_empty();
+        let hot = enabled && self.hover == Some(target);
+        let ground = look::raised(pal);
+        let (fill, ink) = if armed && something {
+            (if hot { mdshared_ui::gfx::mix(pal.accent, pal.on_accent, 0.12) } else { pal.accent }, pal.on_accent)
+        } else {
+            (if hot { pal.hover } else { look::quiet_fill(pal, ground) }, if enabled { pal.muted } else { pal.faint })
+        };
+        look::round_icon(p, r, fill, look::ARROW_UP, 16.0, ink);
+        if enabled {
+            self.hits.push((r, target));
+        }
     }
 
     fn effort_pill(&mut self, p: &mut Painter, r: Rect, label: &str, level: &str) {
@@ -660,8 +680,11 @@ fn compact_model(model: &str) -> String {
 }
 
 const MODEL_W: f32 = 104.0;
-/// The right-hand group on the toolbar's line: Attach, Terminal and Send with their gaps.
-const TOOLBAR_RIGHT: f32 = 216.0;
+/// The room kept left of Send for the small Stop button.
+const STOP_SLOT: f32 = 26.0;
+/// The right-hand group on the toolbar's line: Attach, Terminal, the Stop slot and Send with
+/// their gaps.
+const TOOLBAR_RIGHT: f32 = 59.0 + 4.0 + 82.0 + 4.0 + STOP_SLOT + 4.0 + SEND + 1.0;
 /// The Details chip and its gap, when the right group has it.
 const DETAILS_W: f32 = 62.0;
 /// The widest short Effort chip ("Effort medium ▾") and Context chip ("Context 999.9k"):
@@ -797,7 +820,7 @@ mod tests {
         let area = Rect::new(0.0, 0.0, 1100.0, 480.0);
         let left = left_group(&chips);
         assert!(left < left_group(&DEFAULT_CHIPS));
-        let layout = Layout::with_shells(area, true, false, None, false, false, false, false, 1, left);
+        let layout = Layout::with_shells(area, true, false, None, false, false, false, false, 1, left, None);
         assert!(!layout.stacked);
         let chat = Chat { layout, ..Default::default() };
         let mut hits = Vec::new();
@@ -835,6 +858,7 @@ mod tests {
             false,
             1,
             left_group(&DEFAULT_CHIPS),
+            None,
         );
         let chat = Chat { layout: narrow, ..Default::default() };
         let mut hits = Vec::new();

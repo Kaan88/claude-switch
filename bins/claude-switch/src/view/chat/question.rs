@@ -1830,7 +1830,8 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     // A permission prompt read from the screen is shown whole: it may take more of the
     // conversation's room than the other cards, and wraps its rows at the card's width.
     let screen_prompt = chat.question.prompt.is_some() && !rewind_shown(&chat.question, model);
-    let card_w = (chat.layout.conversation.w - 24.0).clamp(0.0, 760.0);
+    // On the column's edges, as the composer's box is.
+    let card_w = chat.layout.box_frame.w;
     let wanted = match pending(model).map(|p| p.kind) {
         _ if rewind_shown(&chat.question, model) => chat.question.rewind.as_ref().map(rewind::height),
         _ if screen_prompt => Some(prompt::height(&mut chat.question, card_w - 2.0 * PAD)),
@@ -1874,8 +1875,7 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     let share = if screen_prompt { 0.85 } else { 0.6 };
     let h = wanted.min((conversation.h * share).floor()).max(0.0);
     let w = card_w;
-    chat.question.rect =
-        Rect::new(conversation.x + ((conversation.w - w) / 2.0).round(), conversation.bottom() - h - 8.0, w, h);
+    chat.question.rect = Rect::new(chat.layout.box_frame.x, conversation.bottom() - h - 8.0, w, h);
     conversation.h = (conversation.h - h - 16.0).max(0.0);
     prompt::fit(&mut chat.question);
 }

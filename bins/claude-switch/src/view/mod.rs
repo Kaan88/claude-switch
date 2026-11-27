@@ -5,6 +5,7 @@ pub mod chat;
 mod discovery;
 mod documents;
 mod links;
+pub(crate) mod look;
 pub(crate) mod model;
 mod outputs;
 mod pictures;

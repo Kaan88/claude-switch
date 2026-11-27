@@ -16,6 +16,8 @@ mod recall;
 mod rename;
 mod screen_report;
 mod shortcuts;
+#[cfg(test)]
+mod shots;
 pub(super) mod side;
 pub(super) mod submission;
 mod undo;

@@ -52,6 +52,16 @@ impl Transcript {
         Ok(demo)
     }
 
+    /// A new session: its transcript holds nothing yet.
+    #[cfg(test)]
+    pub fn new_empty() -> io::Result<Self> {
+        let cwd = Self::folder()?;
+        let path = cwd.join("new-session.jsonl");
+        let demo = Self { cwd, path, stop: None, writer: None };
+        File::create(&demo.path)?;
+        Ok(demo)
+    }
+
     fn folder() -> io::Result<PathBuf> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         loop {
@@ -338,7 +348,10 @@ fn seed_showcase(file: &mut File, cwd: &Path) -> io::Result<()> {
             tool(
                 "edit",
                 "Edit",
-                json!({"file_path":"src/tiles/cache.rs", "old_string":"modified()", "new_string":"self.clock"})
+                json!({"file_path":"src/tiles/cache.rs",
+                    "old_string":"            entry.used = SystemTime::now();",
+                    "new_string":"            self.clock += 1;
+            entry.used = self.clock;"})
             ),
             tool("run2", "Bash", json!({"command":"cargo test -p tiles"})),
         ]),

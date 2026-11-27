@@ -25,14 +25,20 @@ use crate::tabs::NewTab;
 use crate::term::Term;
 use crate::view::model;
 
-const W: f32 = 1400.0;
-const H: f32 = 880.0;
-const SCALE: f32 = 2.0;
-const WINDOW: Rect = Rect::new(0.0, 0.0, W, H);
+/// A window's size and display scale for a drawn frame.
+#[derive(Clone, Copy)]
+pub(super) struct Size {
+    pub w: f32,
+    pub h: f32,
+    pub scale: f32,
+}
+
+/// The README's frames.
+const README: Size = Size { w: 1400.0, h: 880.0, scale: 2.0 };
 
 /// The demo window: its accounts, sessions and marks, the first session selected and its
 /// details read.
-fn window(dark: bool) -> AppState {
+pub(super) fn window(dark: bool) -> AppState {
     let mut st = AppState::new(Source::Demo, Some(dark), Default::default());
     st.apply_scan(crate::demo::scan(&st.config));
     st.select_first();
@@ -52,22 +58,29 @@ fn read_details(st: &mut AppState) {
 
 /// One frame of the whole window at `now`, composed back to front as `app_draw::draw` does it.
 fn frame(st: &mut AppState, anim: &mut Animator, now: Instant) -> Bitmap {
+    frame_at(st, anim, now, README)
+}
+
+/// [`frame`] for a window of another size.
+pub(super) fn frame_at(st: &mut AppState, anim: &mut Animator, now: Instant, size: Size) -> Bitmap {
+    let Size { w, h, scale } = size;
+    let window = Rect::new(0.0, 0.0, w, h);
     let mut gfx = Gfx::new();
-    let mut bmp = Bitmap::new((W * SCALE) as u32, (H * SCALE) as u32);
-    let mut p = Painter::new(&mut bmp, &mut gfx, SCALE);
+    let mut bmp = Bitmap::new((w * scale) as u32, (h * scale) as u32);
+    let mut p = Painter::new(&mut bmp, &mut gfx, scale);
     anim.begin_frame(now);
     let pal = *st.pal();
     st.hits.clear();
-    p.fill(WINDOW, pal.page);
-    crate::topbar::draw(st, &mut p, W, false, false, false);
-    let (top, _) = crate::topbar::draw_below_title_with(st, anim, &mut p, W);
-    let top = st.draw_tab_restore(&mut p, top, W);
+    p.fill(window, pal.page);
+    crate::topbar::draw(st, &mut p, w, false, false, false);
+    let (top, _) = crate::topbar::draw_below_title_with(st, anim, &mut p, w);
+    let top = st.draw_tab_restore(&mut p, top, w);
     st.main_top = top;
-    let area = Rect::new(0.0, top, W, H - top);
+    let area = Rect::new(0.0, top, w, h - top);
     st.session_view.area = area;
     let term_area = if st.chat_active() { st.layout_chat(area) } else { area };
     if !st.tabs.is_empty() {
-        st.layout_terminals(term_area, area, SCALE);
+        st.layout_terminals(term_area, area, scale);
     }
     if st.terminal_shown() {
         if st.chat_active() {
@@ -84,18 +97,23 @@ fn frame(st: &mut AppState, anim: &mut Animator, now: Instant) -> Bitmap {
         crate::details::draw(st, &mut p, rects.2);
         splitter::draw(&mut p, &pal, rects, Axis::Horizontal, false);
     }
-    dialogs::draw_with(st, anim, now, &mut p, WINDOW, 1.0);
+    dialogs::draw_with(st, anim, now, &mut p, window, 1.0);
     anim.end_frame();
     bmp
 }
 
 /// A frame after the window's animations (tab marks, fades) have settled.
 fn settled(st: &mut AppState, now: Instant) -> Bitmap {
+    settled_at(st, now, README)
+}
+
+/// [`settled`] for a window of another size.
+pub(super) fn settled_at(st: &mut AppState, now: Instant, size: Size) -> Bitmap {
     let mut anim = Animator::new();
     for k in 0..15 {
-        frame(st, &mut anim, now + Duration::from_millis(16 * k));
+        frame_at(st, &mut anim, now + Duration::from_millis(16 * k), size);
     }
-    frame(st, &mut anim, now + Duration::from_secs(1))
+    frame_at(st, &mut anim, now + Duration::from_secs(1), size)
 }
 
 /// A terminal tab beside the shown one, labelled like a session's.
@@ -112,7 +130,7 @@ fn background_tab(st: &mut AppState, label: &str, account: &str, waiting: bool) 
 }
 
 /// The shown tab, for a Claude session, with two tabs beside it.
-fn claude_tab(st: &mut AppState, beside: &str) -> u64 {
+pub(super) fn claude_tab(st: &mut AppState, beside: &str) -> u64 {
     let account = st.current().slug.clone();
     let color = st.account_color(&account);
     let id = st.tabs.open(
@@ -126,7 +144,7 @@ fn claude_tab(st: &mut AppState, beside: &str) -> u64 {
 }
 
 /// A Claude tab in Chat on the showcase conversation, shown.
-fn chat_window(dark: bool, demo: &crate::demo::Transcript) -> (AppState, u64) {
+pub(super) fn chat_window(dark: bool, demo: &crate::demo::Transcript) -> (AppState, u64) {
     let mut st = window(dark);
     let id = claude_tab(&mut st, "Move the map tiles to a worker thread");
     let mut pane = st.new_session_pane(model::Source::File(demo.path().into()), demo.cwd().into());
@@ -145,12 +163,12 @@ fn chat_window(dark: bool, demo: &crate::demo::Transcript) -> (AppState, u64) {
     (st, id)
 }
 
-fn tab(st: &mut AppState, id: u64) -> &mut crate::tabs::Tab {
+pub(super) fn tab(st: &mut AppState, id: u64) -> &mut crate::tabs::Tab {
     st.tabs.get_mut(id).unwrap()
 }
 
 /// The CLI shows `screen` and is then quiet: Chat reads it as a ready prompt or a card.
-fn show(st: &mut AppState, id: u64, screen: &str, now: Instant) -> Instant {
+pub(super) fn show(st: &mut AppState, id: u64, screen: &str, now: Instant) -> Instant {
     tab(st, id).term.screen = recorded(screen);
     tab(st, id).pane.as_mut().unwrap().chat.output(now, true, false);
     let later = now + QUIET + Duration::from_millis(100);
@@ -160,7 +178,7 @@ fn show(st: &mut AppState, id: u64, screen: &str, now: Instant) -> Instant {
 
 /// A turn the transcript shows running: a newer prompt and an unfinished answer, and the line
 /// under the conversation that says what it waits for.
-fn running(st: &mut AppState, id: u64, waiting: &str) {
+pub(super) fn running(st: &mut AppState, id: u64, waiting: &str) {
     let pane = tab(st, id).pane.as_mut().unwrap();
     pane.ui.set_working(Some(crate::view::working::Footer { label: waiting.into(), stop: None }));
     let at = pane.model.chat.prompt.unwrap_or(0) + 100;
@@ -170,7 +188,7 @@ fn running(st: &mut AppState, id: u64, waiting: &str) {
 }
 
 /// Claude Code's input at rest under the conversation.
-const IDLE: &str = "cursor 33 2
+pub(super) const IDLE: &str = "cursor 33 2
 @size 100 40
 
 
@@ -186,7 +204,7 @@ const IDLE: &str = "cursor 33 2
   ? for shortcuts
 ";
 
-const QUESTION: &str = "cursor 30 49
+pub(super) const QUESTION: &str = "cursor 30 49
 @size 100 40
 
 
@@ -210,7 +228,7 @@ Where should the elevation tiles be cached?
 Enter to select · ↑/↓ to navigate · Esc to cancel
 ";
 
-const PERMISSION: &str = "cursor 31 29
+pub(super) const PERMISSION: &str = "cursor 31 29
 @size 100 40
 
 

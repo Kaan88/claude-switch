@@ -526,7 +526,8 @@ mod tests {
                     Instant::now(),
                     false,
                 );
-                let available = width - 2.0 * PAD - GUTTER;
+                // Chat keeps room beside the column for the composer's box, which is wider.
+                let available = width - 2.0 * CHAT_PAD - GUTTER;
                 let expected = match reading {
                     Reading::Narrow => available.min(560.0),
                     Reading::Medium => available.min(720.0),

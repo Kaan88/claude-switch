@@ -49,7 +49,7 @@ fn tool_only_outputs_follow_the_next_answer_and_repeated_links_use_its_label() {
 }
 
 #[test]
-fn geometry_right_aligns_bubbles_and_indents_tools_at_session_and_chat_widths() {
+fn geometry_right_aligns_bubbles_and_starts_the_rest_at_the_columns_edge() {
     for width in [240.0, 330.0, 660.0, 780.0] {
         let bubble = Geometry::new(Style::Prompt, width, 105.0);
         let long = Geometry::new(Style::Prompt, width, 999.0);
@@ -58,9 +58,10 @@ fn geometry_right_aligns_bubbles_and_indents_tools_at_session_and_chat_widths() 
         let chips = Geometry::new(Style::Files, width, 0.0);
         assert_eq!(bubble.w, 105.0);
         assert!((long.x + long.w - width).abs() < 0.001);
-        assert!(long.x > answer.x && long.w < width && bubble.x > long.x);
-        assert_eq!(answer.tx, answer.x);
-        assert!(tool.x > answer.tx && tool.tx + tool.tw <= width);
+        assert!(long.x > answer.x && long.w <= width * 0.8 && bubble.x > long.x);
+        // One column: no mark before an answer and no indent before a tool line.
+        assert_eq!((answer.x, answer.tx, answer.w), (0.0, 0.0, width));
+        assert!(tool.x == answer.x && chips.x == answer.x && tool.tx + tool.tw <= width);
         assert_eq!(tool.ty, TOOL_H + 6.0);
         assert!((0..32).all(|i| chip_rect(chips, i).right() <= width));
     }

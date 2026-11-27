@@ -21,6 +21,8 @@ impl Ui {
                 p.text_center(Face::Ui, 12.0, stop, "Stop", pal.muted);
             }
         }
+        // Chat shows a round button over the conversation instead (`Ui::jump_button`).
+        let visible = visible && !self.chat;
         if visible {
             if self.follow.active() {
                 p.text_center(Face::Ui, 12.0, latest, "Following latest", pal.muted);
@@ -58,11 +60,9 @@ impl Ui {
                 hit.contains(mouse.0, mouse.1)
             };
             match row.style {
-                Style::Prompt => p.rbox(frame, 11.0, mix(pal.page, pal.accent, if pal.dark { 0.17 } else { 0.11 })),
-                Style::Answer => {
-                    let glyph = Rect::new(body.x, y, geo.x - 3.0, if self.chat { 22.0 } else { 19.0 });
-                    p.text_center(Face::Semibold, if self.chat { 18.0 } else { 16.0 }, glyph, "✳︎", pal.accent);
-                }
+                // A neutral bubble; answers have no mark and no bubble.
+                Style::Prompt => p.rbox(frame, 16.0_f32.min(frame.h / 2.0), crate::view::look::bubble(pal)),
+                Style::Answer => {}
                 Style::Tool | Style::Group => {
                     let action = match &row.id {
                         Id::Tool(id) => Action::Tool(*id),

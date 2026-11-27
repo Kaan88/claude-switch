@@ -277,15 +277,20 @@ fn direct_input_discards_unsampled_old_prompt_and_stop_cannot_reuse_a_turn() {
 }
 
 #[test]
-fn layout_keeps_composer_and_drawer_disjoint_and_centers_the_reading_measure() {
+fn layout_keeps_composer_and_drawer_disjoint_and_puts_the_box_on_the_reading_column() {
     for (w, h, panel) in [(760.0, 480.0, false), (1100.0, 720.0, true), (1920.0, 1080.0, true)] {
         let area = Rect::new(0.0, 80.0, w, h - 80.0);
         for chips in [false, true] {
             let l = Layout::new(area, true, true, None, chips, false);
-            assert!(l.conversation.h >= 80.0 && l.composer.w <= 770.0);
+            // The box is the medium reading column (720 px at most) and 16 px on each side,
+            // centred where the conversation's text is (beside its scrollbar's gutter).
+            // With attachments in the smallest window the conversation keeps the layout's floor.
+            assert!(l.conversation.h >= 70.0 && l.box_frame.w <= 752.0);
             assert_eq!(l.side.w > 0.0, panel);
             assert_eq!(l.conversation.w + l.side.w, w);
-            assert_eq!(l.composer.x * 2.0 + l.composer.w + l.side.w, w);
+            assert_eq!((l.composer.x, l.composer.w), (l.conversation.x, l.conversation.w));
+            assert!(l.box_frame.x >= 12.0 && l.box_frame.right() <= l.conversation.right());
+            assert!((l.box_frame.cx() - (l.conversation.w - 13.0) / 2.0).abs() <= 1.0, "{:?}", l.box_frame);
             assert_eq!(l.conversation.bottom(), l.composer.y);
             assert_eq!(l.composer.bottom(), l.grip.y);
             assert_eq!(l.grip.bottom(), l.drawer.y);

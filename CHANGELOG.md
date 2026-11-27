@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Chat: one column. Claude's answers start at the column's left edge, without the ✳ mark or an
+  indent; your messages are in a neutral grey bubble on the right; the message box and the cards
+  are as wide as the column, so the draft, a card's text and the answers share a left edge. The
+  reading width setting still sets the column; at Full the box stops at 900 px. The Session view
+  beside a terminal drops the mark and the indent too.
+- Chat: the message box is a raised, rounded box with a soft shadow, and its border no longer
+  turns to the accent colour with the keyboard. The draft is in the interface font at 15 px, not
+  the monospace one. Send is a round button with an up arrow: in the accent colour when there is
+  something to send, grey when not.
+- Chat: "Jump to latest" is a round button with a down arrow over the foot of the conversation,
+  shown only after you scroll up, with a dot once newer messages arrived. "Following latest" is
+  gone.
+
 ## 0.1.4 (2026-11-27)
 
 - Chat: in a named session (every session this app names) Claude Code writes the name into the
