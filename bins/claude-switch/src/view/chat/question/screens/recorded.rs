@@ -136,6 +136,9 @@ pub(in crate::view::chat) const PERM_AGENT_GONE: &str = include_str!("../fixture
 pub(in crate::view::chat) const PERM_AGENT_WRITE: &str = include_str!("../fixtures/perm_agent_write.ansi");
 pub(in crate::view::chat) const PERM_TWO_FIRST: &str = include_str!("../fixtures/perm_two_first.ansi");
 pub(in crate::view::chat) const PERM_TWO_SECOND: &str = include_str!("../fixtures/perm_two_second.ansi");
+// The second of two prompts again (100 x 40), with the hidden cursor where the CLI left it: on the
+// first call's output row, fifteen rows above the prompt's footer.
+pub(in crate::view::chat) const PERM_TWO_AFTER: &str = include_str!("../fixtures/perm_two_after.ansi");
 // A call auto mode's classifier blocked (110 x 46, auto mode), and /permissions after it: the idle
 // input with the CLI's notice under it, the command typed, the "Recently blocked" tab with one call
 // (not marked, marked to approve, marked to retry), after Esc applied an approval and a retry, the
@@ -567,6 +570,37 @@ fn two_calls_of_one_message_ask_one_after_the_other_and_each_prompt_names_its_ow
     assert_eq!((first[0].as_str(), first[4].as_str()), ("Bash command", "mkdir par_a"));
     assert_eq!((second[0].as_str(), second[4].as_str()), ("Bash command", "mkdir par_b"));
     assert_ne!(first, second);
+}
+
+#[test]
+fn a_prompt_is_known_by_its_place_at_the_bottom_not_by_the_cursor() {
+    // After the first of two prompts was approved, the cursor stays on the first call's output.
+    let screen = recorded(PERM_TWO_AFTER);
+    let prompt = permission(&screen).expect("the second call's prompt");
+    assert!(prompt.menu.footer > screen.cursor().row + 8, "the cursor is far above the footer");
+    assert!(crate::attention::screen_permission_prompt(&screen) && panel(&screen).is_none());
+    let rows = permission_rows(&screen, &prompt).expect("whole");
+    assert_eq!((rows[0].as_str(), rows[4].as_str()), ("Bash command", "mkdir par_b"));
+    assert_eq!(
+        prompt.menu.texts()[1],
+        "Yes, and always allow access to C:\\Users\\user\\work\\scratch from this project"
+    );
+    assert_eq!(prompt.menu.highlight(), Some(0));
+    // Wherever the cursor is parked, the same prompt reads the same.
+    for (row, col) in [(1, 1), (40, 1), (25, 30)] {
+        let mut moved = recorded(PERM_TWO_AFTER);
+        moved.feed(format!("\x1b[{row};{col}H").as_bytes());
+        assert!(crate::attention::screen_permission_prompt(&moved), "cursor at {row}");
+    }
+    // The same rows left in the conversation, with the live input box under them, are no prompt,
+    // with the cursor on the input or still up on the old footer.
+    let rule = "─".repeat(100);
+    for cursor in ["\x1b[30;3H", "\x1b[25;29H"] {
+        let mut old = recorded(PERM_TWO_AFTER);
+        old.feed(format!("\x1b[28;1H{rule}\x1b[29;1H❯ \x1b[30;1H{rule}\x1b[31;1H  ? for shortcuts{cursor}").as_bytes());
+        assert!(!crate::attention::screen_permission_prompt(&old) && permission(&old).is_none());
+        assert!(!permission_like(&old));
+    }
 }
 
 #[test]

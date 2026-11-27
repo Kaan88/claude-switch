@@ -101,17 +101,19 @@ const PROMPT_ROWS: usize = 24;
 const CHOICE_WRAP: usize = 4;
 
 pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
-    // Anchor at the last visible text near the input cursor, not arbitrary output or scrollback.
-    let cursor = screen.cursor().row;
-    // The footer is the last row with text; a rule or two under it (left by a redraw) are passed
-    // over.
+    // The footer is the last row with text on the screen; a rule or two under it (left by a
+    // redraw) are passed over. A prompt takes the input box's place, so nothing is under its
+    // footer: prompt text left in the conversation has the input row and its status rows below
+    // it, and is not the last text. The cursor is no guide. Claude Code hides it and leaves it
+    // where it last wrote: at the second prompt of two calls made in one message it sat fifteen
+    // rows up, on the first call's output row (2.1.332, the `perm_two_after` fixture).
     let rule = |text: &str| text.trim().chars().all(|c| matches!(c, '─' | '━' | '═'));
     let bottom = (0..screen.rows()).rev().find_map(|row| {
         let text = screen.row_text(row);
         (!text.trim().is_empty() && !rule(&text)).then_some((row, text))
     });
     let Some((footer, text)) = bottom else { return false };
-    if !text.trim_start().starts_with("Esc to cancel") || cursor > footer + 4 || footer > cursor + 8 {
+    if !text.trim_start().starts_with("Esc to cancel") {
         return false;
     }
     let rows: Vec<_> = (footer.saturating_sub(PROMPT_ROWS)..footer)

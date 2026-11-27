@@ -1351,7 +1351,11 @@ general-purpose agent", "Create file · from the general-purpose agent"), its fo
 ctrl+k twice to stop background agents" and drops "Tab to amend" while the highlight is on a
 choice that takes no comment; the main transcript holds no pending call then, and may show the turn
 as ended. Two calls of one message are asked one after the other, each prompt for one call with no
-source in its header, and at the first prompt the transcript holds neither call. So the transcript
+source in its header, and at the first prompt the transcript holds neither call. At the second
+prompt Claude Code leaves its hidden cursor on the first call's output row, fifteen rows above the
+prompt's footer (`perm_two_after`), so a prompt is known by its place and not by the cursor: its
+"Esc to cancel" footer is the last text on the screen, which prompt text left in the conversation
+never is (the input box and its status rows are under it). So the transcript
 cannot say what such a prompt is for, and the card is built from the screen alone
 (`question/prompt.rs`): every row from the prompt's own top rule down to its question (what is asked
 for and by whom, the tip, the description, the command or the file's content between its dashed

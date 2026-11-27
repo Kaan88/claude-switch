@@ -3,8 +3,8 @@
 //! pending call then) and the two prompts of two calls made in one message.
 use super::*;
 use crate::view::chat::question::screens::recorded::{
-    PERM_AGENT_BASH, PERM_AGENT_BASH_DOWN, PERM_AGENT_BASH_NO, PERM_AGENT_GONE, PERM_AGENT_WRITE, PERM_TWO_FIRST,
-    PERM_TWO_SECOND, PLAN, recorded,
+    PERM_AGENT_BASH, PERM_AGENT_BASH_DOWN, PERM_AGENT_BASH_NO, PERM_AGENT_GONE, PERM_AGENT_WRITE, PERM_TWO_AFTER,
+    PERM_TWO_FIRST, PERM_TWO_SECOND, PLAN, recorded,
 };
 use crate::view::chat::submission::ready_tests::{Live, downs};
 use crate::view::chat::{Gate, QUIET, Reason};
@@ -164,6 +164,20 @@ fn two_calls_of_one_message_are_answered_one_prompt_at_a_time() {
     f.pass(SEEN);
     assert!(f.click(Hit::Option(0)));
     assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+#[test]
+fn the_second_prompt_is_answered_with_the_cursor_left_far_above_it() {
+    // Claude Code 2.1.332 leaves its hidden cursor on the first call's output row.
+    let mut f = Live::new();
+    f.turn();
+    f.show(PERM_TWO_AFTER);
+    assert_eq!(f.pass(QUIET), (Gate::Check, Some(Reason::Approval)));
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+    assert_eq!(f.card().prompt.as_ref().unwrap().rows[4], "mkdir par_b");
+    f.read_card();
+    assert!(f.click(Hit::Option(3)));
+    assert_eq!(f.writes(), [downs(3)]);
 }
 
 #[test]

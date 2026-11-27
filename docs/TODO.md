@@ -990,7 +990,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     app; a prompt with a diff (Edit) was not recorded, only Bash and Write; a prompt taller than the
     terminal was built by hand, not recorded. Still the terminal's: a prompt whose top is above the
     terminal's screen, a row wider than the card, and a decline with text (the comment field's drawing
-    is not recorded).
+    is not recorded). Fixed afterwards: the second of two prompts was not recognised when Claude Code
+    left its hidden cursor on the first call's output row (found by the update check's recording, now
+    the `perm_two_after` fixture); a prompt is now known by its footer being the last text on the
+    screen, not by the cursor.
 77. **A warning about denied permissions, with a way to approve** (owner, 2026-11-27: when a permission
     was denied by auto mode, by a rule or by the user's own No, show it prominently, say what and why,
     and offer what Claude Code offers). **Done.** The transcript reader carries the denial on the tool
