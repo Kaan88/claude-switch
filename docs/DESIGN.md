@@ -1184,9 +1184,9 @@ with Ctrl+U (one line a key, each after the screen showed the one before, two se
 keys at most) and puts the text back in the message box; a picture has to be pasted again. Once
 the input reads empty the text comes back when the screen goes quiet, or at the key's deadline
 if output keeps coming. The take-back starts only when the message box is empty, with no
-attachments and no held draft: otherwise the message stays on the CLI input, with a notice, and a
-held draft follows once the user sends or clears it there. Text the user typed in the terminal is
-never cleared, and no text is cleared without a place to go.
+attachments and no held draft: otherwise the message stays on the CLI input, with a notice to send
+or clear it in the terminal (which lets a held draft go, back to the box) and then send the draft.
+Text the user typed in the terminal is never cleared, and no text is cleared without a place to go.
 A minimized window, an open dialog or another blocking window overlay pauses automatic writes in
 every tab; stage deadlines still run. **Cancel** unlocks a held draft without sending. No path
 overrides a recognized permission question, a pending tool or a menu. Direct terminal input cancels a queued or staged send, and samples a

@@ -34,7 +34,8 @@ const TAKEN_BACK_PICTURE: &str =
     "Stopped before Claude answered. Your message is back in the box; paste its picture again.";
 const TAKEBACK_FAILED: &str =
     "Claude Code put your last message back on its input and Chat could not clear it. Clear it in the terminal.";
-const TAKEBACK_HELD: &str = "Claude Code put your last message back on its input. Chat left it there, as the message      box holds a draft: send or clear it in the terminal, and the draft follows.";
+const TAKEBACK_HELD: &str = "Claude Code put your last message back on its input. Chat left it there, as the message \
+     box holds a draft: send or clear it in the terminal, then send the draft.";
 const IMAGE_KEY: &[u8] = b"\x1bv";
 pub(super) const CHECK: &str = "Open the terminal to check";
 pub(super) const NO_QUIET_PROMPT: &str = "No quiet, empty Claude Code prompt is visible. Check the terminal.";
@@ -625,8 +626,8 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             let epoch = chat.output_epoch.wrapping_sub(1);
             chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP });
         } else {
-            // The message stays where the user can see it: a draft waits behind it, and sends
-            // once the CLI input is empty again.
+            // The message stays where the user can see it, and the box keeps its draft (a held
+            // one is let go when the user types in the terminal, and stays in the box).
             chat.staging.sent = None;
             chat.refused(TAKEBACK_HELD, None);
         }
@@ -646,12 +647,7 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         chat.queue = None;
         let text = match chat.editor.text.trim().is_empty() {
             true => sent.text,
-            false => format!(
-                "{}
-
-{}",
-                sent.text, chat.editor.text
-            ),
+            false => format!("{}\n\n{}", sent.text, chat.editor.text),
         };
         chat.editor.set(text);
         chat.error = Some(if sent.picture { TAKEN_BACK_PICTURE } else { TAKEN_BACK });

@@ -1120,12 +1120,7 @@ mod tests {
         let built = text.find("cargo test --locked -p claude-switch --no-run").expect("a step that builds the check");
         assert!(built < given[0], "the check is built before the key is there");
         let recording = &text[given[0]..];
-        let step_end = recording
-            .find(
-                "
-      - ",
-            )
-            .unwrap_or(recording.len());
+        let step_end = recording.find("\n      - ").unwrap_or(recording.len());
         assert!(recording[..step_end].contains("recorder.exe compat"), "the key goes to the recording step");
     }
 

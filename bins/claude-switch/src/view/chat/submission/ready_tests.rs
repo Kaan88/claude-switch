@@ -259,7 +259,7 @@ fn a_put_back_message_stays_on_the_cli_input_while_the_message_box_holds_a_draft
     assert!(f.chat().queue.is_some() && f.writes().is_empty());
     let now = f.now;
     AppState::chat_stop(f.tab(), now);
-    assert_eq!(f.writes(), [b"".to_vec()]);
+    assert_eq!(f.writes(), [b"\x1b".to_vec()]);
     f.show(PLAIN_RESTORED);
     for _ in 0..4 {
         f.pass(SECOND);
@@ -304,7 +304,7 @@ fn a_take_back_ends_at_its_deadline_while_output_keeps_coming() {
     f.show(PLAIN_RESTORED);
     f.pass(SECOND);
     f.pass(SECOND / 10);
-    assert_eq!(f.writes(), [b"".to_vec()]);
+    assert_eq!(f.writes(), [b"\x15".to_vec()]);
     // The input is empty, but the screen never goes quiet.
     let mut ticks = 0;
     while f.chat().staging.takeback.is_some() {

@@ -184,14 +184,7 @@ fn ask_claude_to_retry_keeps_a_held_answer_and_adds_its_sentence_after_it() {
     f.chat().editor.set(String::new());
     f.pass(TICK);
     let sentence = "Please try again what was denied before, I allow it now: Write: notes.txt";
-    assert_eq!(
-        f.chat().editor.text,
-        format!(
-            "What I meant about the question
-
-{sentence}"
-        )
-    );
+    assert_eq!(f.chat().editor.text, format!("What I meant about the question\n\n{sentence}"));
     assert!(f.chat().question.held.is_none() && f.writes().is_empty());
 }
 

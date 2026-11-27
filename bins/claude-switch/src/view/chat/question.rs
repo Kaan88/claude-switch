@@ -989,19 +989,9 @@ impl Chat {
     /// same text twice is kept once), and lands once the box is empty.
     fn hold_text(&mut self, text: String) {
         match &mut self.question.held {
-            Some(held)
-                if *held == text
-                    || held.ends_with(&format!(
-                        "
-
-{text}"
-                    )) => {}
+            Some(held) if *held == text || held.ends_with(&format!("\n\n{text}")) => {}
             Some(held) => {
-                held.push_str(
-                    "
-
-",
-                );
+                held.push_str("\n\n");
                 held.push_str(&text);
             }
             None => self.question.held = Some(text),
