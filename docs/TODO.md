@@ -469,6 +469,18 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     otherwise (DESIGN.md: no generated permission answers). Also in the screenshot: the conversation
     above was empty in a fresh handover session (check that the Chat view attaches to the new
     transcript).
+    Forms done (2026-11-27): several questions and multi-select ones are answered from the card too
+    (DESIGN.md, "Forms"): picks in the card, then one Submit that drives the CLI's form key by key
+    and presses "Submit answers" only once the review matches. Checked: unit tests over screens
+    recorded from Claude Code 2.1.332 (a two-question form with a multi-select first, its typed
+    "Type something", the Next row, the second question and the review; one multi-select question
+    with its Submit row and review; two single-choice questions and their review) and over a scripted
+    terminal for the whole run and each way it stops. Not checked: the card has not been seen or
+    clicked in the running app; a form has not been driven end to end by the app against a live CLI
+    (the recorded screens were reached by hand-written key scripts); a typed answer on a
+    single-choice question inside a form (its row with text is not recorded, so only that the text
+    is on that row is checked); a multi-select as the last of several questions (its row is assumed
+    to read "Submit", "Next" is accepted too); a typed answer long enough to wrap.
 39. **A tab rename is a label only** (owner, 2026-11-26: renamed the toolkit session's tab to "toolkit"; search
     does not find it and other sessions cannot reach it by that name). "Rename tab…" (`tabcontrols.rs`, dialog in
     `dialogs.rs:549`) sets `Tab::rename` in memory only: it is not in `terminal-tabs.json` (lost on restart), not in
@@ -683,7 +695,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     control. Both scrollbars show on movement or hover and fade, or snap away with reduced motion.
     Rendering and timing tests cover the layouts; visual inspection in a running app has not been checked.
 65. **Done: Windows Terminal mouse gestures for terminal tabs and the Chat drawer.** Arrow pointer, drag to
-    select, and right-click to copy and clear the selection or paste safely. Unmodified clicks and drags go to
+    select, and right-click to copy and clear the selection or paste safely. A blank selection clears without
+    reading or writing the clipboard (covered by a test). Unmodified clicks and drags go to
     a program that asks for mouse reports; Shift keeps the gestures local. Checked against Windows Terminal 1.25
     source and with tests for pointer choice, selection, reporting and paste safety. Native clipboard gestures
     and Claude Code's own fullscreen auto-copy were not checked interactively. Switch does not handle clipboard
@@ -700,8 +713,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     from Claude Code, should it be used for a context bar? Unknown model names that do not fit show
     "Model" rather than a cut label. Composer rendering and layout tests, workspace Clippy and tests
     passed; visual inspection in a running app has not been checked.
-67. **Done: Shift+Enter starts a line in the terminal without sending.** Switch sends `CSI 13;2u` for Shift+Enter
-    alone, not a bare Enter. A scratch ConPTY run with Claude Code 2.1.332 showed two prompt rows with this
+67. **Done: Shift+Enter starts a line in the Claude Code terminal without sending.** Switch sends `CSI 13;2u`
+    for Shift+Enter alone in a tab launched as Claude Code. Shells and other programs retain classic Return
+    (covered by tests). A scratch ConPTY run with Claude Code 2.1.332 showed two prompt rows with this
     sequence even without kitty negotiation. The same run showed line breaks from the Chat composer's bracketed
     paste encoding (item 46); the composer test checks that Enter waits for the echo. No prompt was submitted.
     The desktop key path, other CLI versions and other programs were not checked interactively.
@@ -714,6 +728,16 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     the terminal" for a panel that only shows information; say "Claude Code panel" and offer Close (Esc) only. With
     the card up, the composer's notice "No quiet, empty Claude Code prompt is visible" is noise: the card already
     says what is on screen.
+    Done (2026-11-27): a usage row (block characters, none at 0%, then "N% used") is drawn as a real bar in the
+    theme's colours with its percentage; rows starting with a spinner glyph (in the panel card, the permission
+    card's copied rows and a menu's title) keep the glyph in item 55's fixed slot; a menu without choices is a
+    "Claude Code panel" card with Close (Esc), or Open terminal when its footer offers no Esc; while a menu or panel
+    card is up, the composer's prompt notices are replaced by "Close Claude Code's panel above to send." (or the
+    menu's own notice). Checked: unit tests over the recorded /usage rows and a scripted panel. Not checked: the
+    card has not been seen in the running app; the "Scanning local sessions…" row is not recorded (its glyph is
+    assumed to be one of the working line's). The card reads a panel from its own top (see DESIGN.md), so the bars
+    at the top of a tall /usage panel are in it; the selected settings tab as the card's title is tested only on a
+    scripted screen, since the recorded screens keep no styles.
 69. **Syntax highlighting, wrapping and line numbers in the code viewer** (owner, 2026-11-27).
     **Done:** literal code files use extension-based `mdshared-highlight` colours adjusted for palette
     contrast, source line numbers, and boundary-aware wrapping with hanging indentation. Unknown
