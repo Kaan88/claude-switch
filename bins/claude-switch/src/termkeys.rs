@@ -98,6 +98,9 @@ pub fn key(name: Option<&KeyName>, mods: Mods, text: Option<&str>, modes: &Modes
     }
     let tm = term_mods(mods);
     match name {
+        // The classic encoder drops Shift on Return. Use the distinct CSI-u key rather
+        // than sending a carriage return that would submit Claude Code's prompt.
+        KeyName::Enter if tm.shift && !tm.ctrl && !tm.alt => KeyAction::Send(b"\x1b[13;2u".to_vec()),
         KeyName::Char(c) => {
             // AltGr is Ctrl+Alt on Windows: a key that typed a character with both held typed
             // that character (`@`, `€`, `{` on many layouts).
@@ -250,6 +253,7 @@ mod tests {
     #[test]
     fn named_keys_follow_the_modes() {
         assert_eq!(k(KeyName::Enter, NONE, Some("\r")), send(b"\r"));
+        assert_eq!(k(KeyName::Enter, ALT, None), send(b"\x1b\r"));
         assert_eq!(k(KeyName::Backspace, NONE, Some("\u{8}")), send(b"\x7f"));
         assert_eq!(k(KeyName::Tab, NONE, Some("\t")), send(b"\t"));
         assert_eq!(k(KeyName::Tab, SHIFT, None), send(b"\x1b[Z"));
@@ -260,7 +264,19 @@ mod tests {
         assert_eq!(k(KeyName::Delete, NONE, None), send(b"\x1b[3~"));
         let app = Modes { app_cursor: true, ..Modes::default() };
         assert_eq!(key(Some(&KeyName::Up), NONE, None, &app, false), send(b"\x1bOA"));
+        let newline = Modes { newline: true, ..Modes::default() };
+        assert_eq!(key(Some(&KeyName::Enter), NONE, None, &newline, false), send(b"\r\n"));
         assert_eq!(k(KeyName::F(30), NONE, None), KeyAction::None);
+    }
+
+    #[test]
+    fn shift_enter_is_distinct_from_submit_in_both_return_modes() {
+        for newline in [false, true] {
+            let modes = Modes { newline, ..Modes::default() };
+            assert_eq!(key(Some(&KeyName::Enter), SHIFT, Some("\r"), &modes, false), send(b"\x1b[13;2u"));
+        }
+        assert_eq!(k(KeyName::Enter, CTRL_SHIFT, None), k(KeyName::Enter, CTRL, None));
+        assert_eq!(k(KeyName::Enter, Mods { shift: true, ..ALT }, None), k(KeyName::Enter, ALT, None));
     }
 
     #[test]

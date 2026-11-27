@@ -244,7 +244,9 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   Ctrl+Tab and Ctrl+Shift+Tab (next and previous tab), Ctrl+Shift+W (close the tab), Ctrl+Shift+T (a
   plain shell in the selected session's folder), Ctrl+Shift+K (the command palette; Ctrl+K is the
   program's), Ctrl+Shift+C and Ctrl+V / Ctrl+Shift+V (copy, paste; Ctrl+C copies only while something is
-  selected) and Shift+Page Up/Down (scroll back). A middle click on a tab closes it.
+  selected) and Shift+Page Up/Down (scroll back). Shift+Enter alone sends `CSI 13;2u` so Claude
+  Code can distinguish it from Enter. Other keys keep the classic encoding; this is not full kitty
+  keyboard negotiation. A middle click on a tab closes it.
 - **Mouse**: the wheel scrolls the scrollback 3 lines a notch, is reported to a program that asked for
   the mouse, and is arrow keys on the alternate screen of one that did not. Drag selects (double click a
   word, triple click a line, Alt a block); with mouse reporting on, Shift+drag selects. The drag requests

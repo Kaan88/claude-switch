@@ -61,6 +61,7 @@ Claude Switch checks its tabs and the running-session records across accounts be
 | Ctrl+Shift+K | Open the command palette |
 | Ctrl+Shift+C / Ctrl+V or Ctrl+Shift+V | Copy / paste |
 | Ctrl+C | Copy if text is selected; otherwise send Ctrl+C to the program |
+| Shift+Enter | Add a line to the Claude Code prompt without sending |
 | Shift+Page Up / Shift+Page Down | Scroll back / forward |
 | Enter in an ended tab | Close the tab |
 
