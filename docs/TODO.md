@@ -635,6 +635,32 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     handover text as its first prompt, e.g. when a Claude account hits its limit. Codex CLI support was considered
     and not chosen: every layer of the app is Claude Code specific (accounts, transcripts, live records, the send
     gate's screen rules). Not started; decide before building.
+    **Design proposal (2026-11-27, not built).**
+    - *New OpenCode tab*: a palette and New-menu entry that opens the existing New session folder picker without
+      the account choice, then starts a tab like "New shell tab" does: `launch::shell`'s sanitized environment
+      (Claude Code variables stripped) with `opencode_cli::find_program()` as the program and the folder as cwd.
+      No `OPENCODE_CONFIG_CONTENT`, `OPENCODE_DISABLE_CLAUDE_CODE` or project-config override, so the owner's normal
+      config, plugins and Magic Context apply; label "OpenCode · <folder>"; ended tabs show "(ended)" as shells do.
+    - *What a non-Claude tab must skip* (most of it already does for shell tabs, which have no session id):
+      accounts (no account picker, colour, usage or "Open as"; OpenCode has its own providers); transcripts and
+      the session index (OpenCode keeps sessions in its own store, so the tab is never a row in Recent, Threads,
+      Related or search, and cannot be resumed, copied or archived); live records and `running.rs` (no
+      already-running safeguard; closing the tab is the only stop); the send gate and the Chat view (both read
+      Claude Code's screen and transcript; the tab is terminal-only, the Chat/Session view toggle disabled);
+      handover, auto-handover and the Details panel's Tasks/Files/Agents. Tab restore would reopen only "OpenCode in
+      <folder>" (a fresh start, not the conversation) or nothing; the latter is simpler. The work is one tab-kind
+      flag checked where tabs with a session id are assumed today, not a new abstraction layer.
+    - *Continue in OpenCode*: a third choice beside This tab / A new tab in the handover preview. It needs the TUI's
+      first-prompt flag (`opencode <folder> --prompt <text>`, to be confirmed with `opencode --help` on this
+      computer before building), the same long-text rule as Claude (above ~15,000 UTF-16 units pass a short prompt
+      that names the saved handover file), and optionally `--model` from a picker. No provenance in `marks.json`
+      (there is no Claude session to link), and the Claude source session is left as is.
+    - *Effort*: the tab about a day (launch, menu entry, guarding Chat view/Details/restore against the new kind,
+      tests); Continue in OpenCode another half day once the prompt flag is verified. Risk is low because shell
+      tabs already prove the non-Claude path; the main cost is auditing every `session`-assuming code path.
+    - *Recommendation*: build the plain OpenCode tab first, terminal-only, no restore, as the owner's fallback when a
+      Claude account hits its limit; add Continue in OpenCode only after the prompt flag is confirmed, and do not
+      try to index or chat-view OpenCode sessions (that would be the Codex-sized rewrite already rejected).
 60. **Clearer names for the two archives** (owner, 2026-11-27: yes). Settings › Sessions "Show archived sessions"
     becomes "Show sessions archived in the desktop app" (help: "Claude Desktop's own archive. Switch's Archive is
     separate."); the Archived chip becomes "Archived here"; the details row "Archived: yes, in the desktop app"
