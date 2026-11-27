@@ -1,0 +1,38 @@
+cursor 21 1
+
+
+
+
+
+❯ Run exactly this command with the Bash tool and nothing else: mkdir probe_dir_one
+
+● Bash(mkdir probe_dir_one)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Create a file named probe_note.txt containing the word hello, with the Write tool.
+
+● Write(probe_note.txt)
+  ⎿  Rejected write to probe_note.txt
+      1 hello
+
+❯ Fetch https://example.com with the WebFetch tool and tell me its title.
+
+● WebFetch isn't available in this session, so I'll use the web-fetch agent, which is the stand-in
+  for it.
+
+● Fetch(https://example.com)
+  ⎿  Fetching…
+     (ctrl+b to run in background)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Fetch · from the web-fetch agent
+ Claude wants to fetch content from example.com
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ url: https://example.com/
+ │ prompt: Return the exact text content of the page's <title> element, verbatim, with nothing
+ │ else.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to allow Claude to fetch this content?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for example.com
+   3. No, and tell Claude what to do differently (esc)

@@ -4,7 +4,7 @@
 use mdshared_term::Screen;
 
 /// Footer hints under a CLI menu, picker or dialog (the last non-empty row), lower case.
-const MENU_FOOTERS: [&str; 8] = [
+const MENU_FOOTERS: [&str; 9] = [
     "esc to cancel",
     "escape to cancel",
     "esc to close",
@@ -13,6 +13,8 @@ const MENU_FOOTERS: [&str; 8] = [
     "enter to select",
     "enter to confirm",
     "enter to continue",
+    // The plan approval's only hint; it wraps onto the plan file's path (Claude Code 2.1.332).
+    "ctrl+g to edit",
 ];
 /// The hint the CLI shows under a running shell command that can move to the background, lower case.
 const BACKGROUND_HINT: &str = "ctrl+b to run in background";
@@ -48,8 +50,9 @@ const PERMISSION_LOOKS: [&str; 5] =
 const LOOK_ROWS: usize = 24;
 /// The plan approval question shown for `ExitPlanMode`.
 pub(super) const PLAN_ASKS: &str = "Would you like to proceed?";
-/// The plan approval choice that declines (keeps planning).
-pub(super) const PLAN_KEEP: &str = "keep planning";
+/// The plan approval choice that declines (keeps planning), in older and newer wording
+/// ("Tell Claude what to change" in Claude Code 2.1.332).
+pub(super) const PLAN_KEEP: [&str; 2] = ["keep planning", "Tell Claude what to change"];
 /// The permission mode indicators under the input box, lower case, with the chip's names.
 const MODES: [(&str, &str); 6] = [
     ("accept edits on", "Accept edits"),
@@ -81,10 +84,30 @@ pub(super) fn clean(row: &str) -> (bool, String) {
     (highlighted, collapse(row.trim_start_matches(['❯', '>'])))
 }
 
-/// A box's top or bottom edge, or a rule: never part of a prompt's text.
+/// A box's top or bottom edge, or a rule (dashed ones frame a command or diff inside a prompt):
+/// never part of a prompt's text.
 fn rule(text: &str) -> bool {
     !text.is_empty()
-        && text.chars().all(|c| matches!(c, '─' | '━' | '═' | '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘'))
+        && text
+            .chars()
+            .all(|c| matches!(c, '─' | '━' | '═' | '╌' | '┄' | '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘'))
+}
+
+/// The solid rule the CLI draws over a prompt or menu: above it is the conversation.
+fn solid_rule(text: &str) -> bool {
+    text.chars().count() >= 20 && text.chars().all(|c| matches!(c, '─' | '━' | '═'))
+}
+
+/// The footer of whatever the CLI draws at the bottom: the last non-empty row, or the row right
+/// above it when the footer wrapped (it then ends with its `·` separator). `rows` are the screen's
+/// cleaned rows; the last row is found on the screen itself, where an empty input (`❯`) counts.
+fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
+    let last = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty())?;
+    if menu_footer(&rows[last]) {
+        return Some(last);
+    }
+    let prev = last.checked_sub(1)?;
+    (menu_footer(&rows[prev]) && rows[prev].ends_with('·')).then_some(prev)
 }
 
 fn numbered(text: &str) -> Option<(usize, &str)> {
@@ -119,6 +142,16 @@ impl Menu {
 
     pub fn texts(&self) -> Vec<String> {
         self.entries.iter().map(|e| e.text.clone()).collect()
+    }
+
+    /// Non-empty rows above the first entry, nearest last, without box rules, from the prompt's
+    /// own top rule down: never the conversation above it.
+    pub fn above_box(&self, rows: usize) -> Vec<&str> {
+        let first = self.entries.first().map_or(0, |e| e.row);
+        let start = first.saturating_sub(rows);
+        let lines = self.lines.get(start..first).unwrap_or_default();
+        let top = lines.iter().rposition(|text| solid_rule(text)).map_or(0, |at| at + 1);
+        lines[top..].iter().map(String::as_str).filter(|text| !text.is_empty() && !rule(text)).collect()
     }
 
     /// Non-empty rows above the first entry, nearest last, without box rules.
@@ -159,10 +192,8 @@ impl Menu {
 
 pub(super) fn menu(screen: &Screen) -> Option<Menu> {
     let rows: Vec<_> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
-    let footer = rows.iter().rposition(|(_, text)| !text.is_empty())?;
-    if !menu_footer(&rows[footer].1) {
-        return None;
-    }
+    let texts: Vec<String> = rows.iter().map(|(_, text)| text.clone()).collect();
+    let footer = footer_row(screen, &texts)?;
     let mut entries: Vec<Entry> = Vec::new();
     for (row, (highlighted, text)) in rows.iter().enumerate().take(footer).skip(footer.saturating_sub(MENU_ROWS)) {
         let Some((n, rest)) = numbered(text) else { continue };
@@ -193,13 +224,28 @@ pub(super) fn permission(screen: &Screen) -> Option<Permission> {
     if !crate::attention::screen_permission_prompt(screen) {
         return None;
     }
-    let menu = menu(screen)?;
-    let above = menu.above(BODY_ROWS);
+    let mut menu = menu(screen)?;
+    let above = menu.above_box(BODY_ROWS);
     let (&question, body) = above.split_last()?;
     PERMISSION_ASKS.iter().any(|ask| question.starts_with(ask)).then_some(())?;
-    let tell = menu.entries.iter().position(|e| e.text.contains(TELL_CLAUDE));
+    let question = question.to_owned();
     let body = body.iter().map(|s| (*s).to_owned()).collect();
-    Some(Permission { question: question.to_owned(), body, tell, menu })
+    // A long choice wraps onto the rows under it ("Yes, and always allow access to <path> from
+    // this project"); a permission choice has no description rows, so they are its text.
+    for i in 0..menu.entries.len() {
+        let end = menu.entries.get(i + 1).map_or(menu.footer, |e| e.row);
+        let rest: Vec<&str> = menu.lines[menu.entries[i].row + 1..end]
+            .iter()
+            .map(String::as_str)
+            .filter(|text| !text.is_empty() && !rule(text))
+            .collect();
+        if !rest.is_empty() {
+            let text = collapse(&format!("{} {}", menu.entries[i].text, rest.join(" ")));
+            menu.entries[i].text = text;
+        }
+    }
+    let tell = menu.entries.iter().position(|e| e.text.contains(TELL_CLAUDE));
+    Some(Permission { question, body, tell, menu })
 }
 
 /// The permission mode the indicator under the input row names, if any.
@@ -230,14 +276,11 @@ pub(in crate::view::chat) fn permission_like(screen: &Screen) -> bool {
     }
     let lines: Vec<String> =
         (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1.to_lowercase().replace('’', "'")).collect();
-    // The last row with anything on it, a prompt mark included, by the input.
-    let Some(footer) = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty()) else {
+    // The footer at the bottom of what the CLI draws. The cursor is no guide: with a menu open the
+    // CLI parks it below the menu or in its corner (Claude Code 2.1.332).
+    let Some(footer) = footer_row(screen, &lines) else {
         return false;
     };
-    let cursor = screen.cursor().row;
-    if !menu_footer(&lines[footer]) || footer + 2 < cursor || footer > cursor + 9 {
-        return false;
-    }
     // The CLI draws a prompt or menu under a rule: rows above the nearest one are the conversation,
     // whose words say nothing about the menu. Without a rule every row near the footer counts.
     let first = footer.saturating_sub(LOOK_ROWS);
@@ -258,12 +301,9 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
         return None;
     }
     let lines: Vec<String> = (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1).collect();
-    let footer = lines.iter().rposition(|text| !text.is_empty())?;
-    let cursor = screen.cursor().row;
-    // Only a footer by the input: not an old menu left in the output above.
-    if !menu_footer(&lines[footer]) || footer + 1 < cursor || footer > cursor + 9 {
-        return None;
-    }
+    // Only a footer at the bottom of what the CLI draws: an old menu left in the output above has
+    // the input and its status rows under it. The cursor is no guide (see `permission_like`).
+    let footer = footer_row(screen, &lines)?;
     let esc = lines[footer].to_lowercase().contains("esc");
     let menu = menu(screen);
     let title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
@@ -285,9 +325,17 @@ pub(super) fn background_hint(screen: &Screen) -> bool {
 /// The plan approval menu: its question right above the choices, one of which keeps planning.
 pub(super) fn plan(screen: &Screen) -> Option<Menu> {
     let menu = menu(screen)?;
-    let asks = menu.above(4).last().is_some_and(|q| *q == PLAN_ASKS);
-    (asks && menu.entries.iter().any(|e| e.text.contains(PLAN_KEEP))).then_some(menu)
+    let asks = menu.above_box(4).last().is_some_and(|q| q.ends_with(PLAN_ASKS));
+    (asks && plan_keep(&menu).is_some()).then_some(menu)
 }
+
+/// The plan approval's choice that keeps planning.
+pub(super) fn plan_keep(menu: &Menu) -> Option<usize> {
+    menu.entries.iter().position(|e| PLAN_KEEP.iter().any(|keep| e.text.contains(keep)))
+}
+
+#[cfg(test)]
+pub(in crate::view::chat) mod recorded;
 
 #[cfg(test)]
 mod tests {

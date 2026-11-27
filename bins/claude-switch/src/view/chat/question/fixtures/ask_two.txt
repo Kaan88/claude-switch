@@ -1,0 +1,34 @@
+cursor 32 60
+
+
+
+
+
+❯ Use the AskUserQuestion tool now (no other tools) with one question: header "Colour", question
+  "Which colour do you prefer?", options Red (warm), Green (calm), Blue (cool). multiSelect false.
+
+● Declined to answer Claude's questions:
+  ⎿  · Which colour do you prefer? (Red (warm) / Green (calm) / Blue (cool))
+
+❯ Now use AskUserQuestion again with one question: header "Fruits", question "Which fruits do you
+  like?", options Apple, Pear, Plum, multiSelect true.
+
+● Declined to answer Claude's questions:
+  ⎿  · Which fruits do you like? (Apple / Pear / Plum)
+
+❯ Use AskUserQuestion with two questions at once: header "Size" question "Which size?" options
+  Small, Large; header "Speed" question "Which speed?" options Slow, Fast. multiSelect false.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Size  ☐ Speed  ✔ Submit  →
+
+Which size?
+
+❯ 1. Small
+     The smaller option.
+  2. Large
+     The larger option.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

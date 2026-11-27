@@ -468,7 +468,7 @@ fn tool_prompt(kind: &ItemKind, alone: bool, cwd: &Path, screen: &Screen) -> Opt
             question: screens::PLAN_ASKS.to_owned(),
             body: Vec::new(),
             choices: menu.texts(),
-            deny: menu.entries.iter().position(|e| e.text.contains(screens::PLAN_KEEP)),
+            deny: screens::plan_keep(&menu),
             amend,
         });
     }

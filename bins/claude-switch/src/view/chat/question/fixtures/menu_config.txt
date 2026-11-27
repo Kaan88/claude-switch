@@ -1,0 +1,40 @@
+cursor 13 6
+
+❯ /effort
+  ⎿  Cancelled
+
+❯ /usage
+  ⎿  Settings dialog dismissed
+
+❯ /config
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Settings  Status   Config   Usage   Stats
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search settings…                                                                           │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ Auto-compact                                on
+    Idle compaction                             on
+    Continue automatically at usage limit       on
+    Switch models when a message is flagged     Not asked yet ›
+    Show tips                                   on
+    Claude-drafted feedback                     notify
+    Reduce motion                               off
+    Thinking mode                               on
+    Thinking can't be turned off for Haiku 5.5
+    Fast mode (Opus 5.5)                        off
+    Prompt suggestions                          on
+    Session recap                               on
+    Rewind code (checkpoints)                   on
+    Dynamic workflows                           on
+    Ultracode keyword trigger                   on
+    Dynamic workflow size                       medium (default)
+    Artifacts                                   on
+    Verbose output                              off
+    Terminal progress bar                       on
+    Show turn duration                          on
+    Precompute compaction                       on
+    ↓ 26 more
+
+  ↓ to navigate · ↑ to switch tabs · Esc to go back

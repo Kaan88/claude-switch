@@ -11,17 +11,22 @@ fn faint(cell: &Cell) -> bool {
 }
 
 fn blank(cell: &Cell) -> bool {
-    cell.is_spacer() || cell.ch == ' ' || faint(cell)
+    // Claude Code 2.1.332 draws an empty input as the mark and a no-break space.
+    cell.is_spacer() || cell.ch == ' ' || cell.ch == '\u{a0}' || faint(cell)
 }
 
 fn footer(line: &str) -> bool {
     crate::view::chat::question::screens::menu_footer(line)
 }
 
-pub(super) fn menu(screen: &Screen) -> bool {
+pub(in crate::view) fn menu(screen: &Screen) -> bool {
     let cursor = screen.cursor().row;
     // Local menu footers are below or adjacent to the input; don't classify old transcript output.
+    // With a menu open the CLI may park the cursor below it or in its corner, so a footer as the
+    // last row with anything on it counts too.
+    let last = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty());
     (cursor.saturating_sub(1)..(cursor + 9).min(screen.rows())).any(|row| footer(&screen.row_text(row)))
+        || last.is_some_and(|row| footer(&screen.row_text(row)))
 }
 
 /// A row that is only a horizontal rule, as the CLI draws above and below its input.
@@ -93,7 +98,7 @@ pub(super) fn prompt(screen: &Screen) -> Option<String> {
     if content.first().is_some_and(|c| !blank(c)) {
         return None;
     }
-    let text: String = content.iter().filter(|c| !c.is_spacer()).map(|c| if faint(c) { ' ' } else { c.ch }).collect();
+    let text: String = content.iter().filter(|c| !c.is_spacer()).map(|c| if blank(c) { ' ' } else { c.ch }).collect();
     Some(text.trim().to_owned())
 }
 
