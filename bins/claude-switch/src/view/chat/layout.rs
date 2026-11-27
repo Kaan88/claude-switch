@@ -94,7 +94,7 @@ impl Layout {
         let editor = Rect::new(inner.x, attachments.bottom(), inner.w, (shell_chip.y - attachments.bottom()).max(0.0));
         let popup_h = (conversation_h - 4.0).clamp(0.0, 224.0);
         Self {
-            conversation: Rect::new(x, area.y, measure, conversation_h),
+            conversation: Rect::new(area.x, area.y, main_w, conversation_h),
             composer,
             box_frame,
             editor,

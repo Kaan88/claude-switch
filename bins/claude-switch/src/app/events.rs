@@ -147,6 +147,9 @@ impl App for AppState {
                 self.retheme();
             }
             Event::Wake(now) => {
+                if self.scroll_wake_due(now) {
+                    cx.request_redraw_all();
+                }
                 if self.sync_usage_setting() {
                     cx.request_redraw_all();
                 }

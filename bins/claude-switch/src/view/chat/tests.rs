@@ -276,9 +276,10 @@ fn layout_keeps_composer_and_drawer_disjoint_and_centers_the_reading_measure() {
         let area = Rect::new(0.0, 80.0, w, h - 80.0);
         for chips in [false, true] {
             let l = Layout::new(area, true, true, None, chips, false);
-            assert!(l.conversation.h >= 80.0 && l.conversation.w <= 770.0);
+            assert!(l.conversation.h >= 80.0 && l.composer.w <= 770.0);
             assert_eq!(l.side.w > 0.0, panel);
-            assert_eq!(l.conversation.x * 2.0 + l.conversation.w + l.side.w, w);
+            assert_eq!(l.conversation.w + l.side.w, w);
+            assert_eq!(l.composer.x * 2.0 + l.composer.w + l.side.w, w);
             assert_eq!(l.conversation.bottom(), l.composer.y);
             assert_eq!(l.composer.bottom(), l.grip.y);
             assert_eq!(l.grip.bottom(), l.drawer.y);

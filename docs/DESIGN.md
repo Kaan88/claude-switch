@@ -363,6 +363,17 @@ does not follow links in the document; images and optional math/diagram engine j
 in both renderer surfaces. **Open in editor** rechecks the named file and asks the OS to open it
 with its default association. Ctrl+click on an inline file link instead reveals it. HTTP(S) links
 in answers still open in the browser; transcript attachments still use the picture pipeline.
+Chat's conversation has its own Narrow, Medium, Wide or Full reading width in Settings → Sessions,
+stored per window in `window.ini` (`chat_reading`); it uses the same column sizes as the viewer.
+The composer stays centred and capped independently. Conversation and Markdown scrollbars appear
+on scrolling or hover, hold briefly, then fade; with reduced motion they disappear without a fade.
+Their tracks remain interactive even when hidden.
+Named UTF-8 code files in the viewer use extension-based syntax highlighting, with token colours
+adjusted for contrast against the current page palette. Line numbers mark source lines; wrapped
+continuations prefer whitespace or operator boundaries and hang under the original indentation.
+An overlong token must split at a UTF-8 character boundary. Highlighting is cached, and unknown
+languages and files over 256 KiB remain plain; file previews still stop at the existing 1 MiB limit.
+Rendered Markdown retains the renderer's existing fenced-code syntax highlighting.
 
 Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
 picture work run off the window thread; worker results wake the window rather than making it redraw
@@ -1178,6 +1189,10 @@ Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+The composer toolbar separates session values, actions and panels by their surfaces. Fixed-width
+value controls keep their neighbours still as values change; effort is a five-dot scale and
+context remains a token count, not a filled bar, because the transcript supplies no verified limit.
+An unknown model name too long for the control is shown as Model rather than a cut-off name.
 **Composer conveniences**, all local (`view/chat/popups.rs`). `@` at the caret opens a list of
 the session folder's files and folders, read once per tab on a worker: breadth first, at most 8
 deep and 5000 entries, without hidden folders, `node_modules`, `target` and other build folders,
