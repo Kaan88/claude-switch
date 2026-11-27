@@ -663,3 +663,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Shift+Enter gives Claude Code a new line; in Switch's terminal it reaches the CLI as a plain Enter. Send what
     Claude Code reads as Shift+Enter (check the key encoding it accepts: the win32 input mode or kitty keyboard
     sequence it asks for, or ESC CR), and check the same for the Chat composer's paste of line breaks (item 46).
+69. **Syntax highlighting, wrapping and line numbers in the code viewer** (owner, 2026-11-27).
+    **Done:** literal code files use extension-based `mdshared-highlight` colours adjusted for palette
+    contrast, source line numbers, and boundary-aware wrapping with hanging indentation. Unknown
+    languages and files above 256 KiB stay plain; a token wider than the panel splits at a character.
+    Markdown stays rendered, with the existing fenced-code highlighting. Rendering, wrapping,
+    contrast and language tests cover the viewer; visual inspection in a running app was not checked.

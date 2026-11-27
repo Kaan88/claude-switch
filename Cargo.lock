@@ -435,6 +435,7 @@ dependencies = [
  "claude-switch-core",
  "getrandom 0.3.4",
  "mdshared-app 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=e951766dd9468c9a0fbd1591dff276b51efdac09)",
+ "mdshared-highlight 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=e951766dd9468c9a0fbd1591dff276b51efdac09)",
  "mdshared-pty",
  "mdshared-term",
  "mdshared-text 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=e951766dd9468c9a0fbd1591dff276b51efdac09)",
@@ -1367,6 +1368,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mdshared-highlight"
+version = "0.1.0"
+source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=e951766dd9468c9a0fbd1591dff276b51efdac09#e951766dd9468c9a0fbd1591dff276b51efdac09"
+dependencies = [
+ "syntect",
+]
+
+[[package]]
 name = "mdshared-pty"
 version = "0.1.0"
 source = "git+https://github.com/Kaan88/markdown-shared-rs?rev=e951766dd9468c9a0fbd1591dff276b51efdac09#e951766dd9468c9a0fbd1591dff276b51efdac09"
@@ -1457,7 +1466,7 @@ source = "git+https://github.com/Kaan88/markdown-viewer-rs?rev=01f67b2aba1a89e0e
 dependencies = [
  "gif",
  "image-webp",
- "mdshared-highlight",
+ "mdshared-highlight 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=48eb3cefb17f5025f3ac418f7a01b31b7a914779)",
  "mdshared-text 0.1.0 (git+https://github.com/Kaan88/markdown-shared-rs?rev=48eb3cefb17f5025f3ac418f7a01b31b7a914779)",
  "mdview-core",
  "mdview-engine-proto",

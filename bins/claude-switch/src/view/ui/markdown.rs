@@ -1,4 +1,5 @@
 use std::io;
+use std::ops::Range;
 
 use super::super::documents::Document;
 use super::super::preview::Preview;
@@ -13,7 +14,9 @@ pub(super) struct Markdown {
     /// The file's full path, or where the text came from.
     subtitle: String,
     source: Option<io::Result<Document>>,
-    text_lines: (usize, Vec<usize>),
+    text_lines: (usize, Vec<CodeLine>),
+    line_count: usize,
+    highlight: Option<(bool, Option<Vec<mdshared_highlight::Token>>)>,
     layout: Option<(f32, f32, Palette, Preview)>,
     error: Option<&'static str>,
     pub bounds: Rect,
@@ -41,6 +44,8 @@ impl Markdown {
             subtitle,
             source,
             text_lines: (0, Vec::new()),
+            line_count: 1,
+            highlight: None,
             layout: None,
             error: None,
             bounds: Rect::default(),
@@ -263,6 +268,11 @@ impl Ui {
         // A file read for an earlier pane never replaces text the transcript holds.
         if let Some(result) = m.take_markdown().filter(|_| pane.file.is_some()) {
             pane.text_lines = (0, Vec::new());
+            pane.highlight = None;
+            pane.line_count = match &result {
+                Ok(Document::Text(text)) => text.bytes().filter(|b| *b == b'\n').count().saturating_add(1),
+                _ => 1,
+            };
             pane.source = Some(result);
             pane.layout = None;
         }
@@ -338,26 +348,42 @@ impl Ui {
                 Some(Ok(Document::Text(text))) if !text.is_empty() => {
                     let body = self.panel.reading.place(body);
                     let lh = 17.0;
-                    let cols = (body.w / p.measure(Face::Mono, 12.0, "M").max(1.0)).floor().max(1.0) as usize;
+                    let cell = p.measure(Face::Mono, 12.0, "M").max(1.0);
+                    let digits = pane.line_count.to_string().len();
+                    let gutter = (digits as f32 * cell + 14.0).min((body.w - cell).max(0.0));
+                    let cols = ((body.w - gutter) / cell).floor().max(1.0) as usize;
                     if pane.text_lines.0 != cols {
                         pane.text_lines = (cols, text_lines(text, cols));
                     }
-                    let starts = &pane.text_lines.1;
-                    pane.max = (starts.len() as f32 * lh - body.h).max(0.0);
+                    if pane.highlight.as_ref().is_none_or(|(dark, _)| *dark != pal.dark) {
+                        let language = pane.file.as_ref().and_then(|file| language(file.path()));
+                        pane.highlight = Some((pal.dark, mdshared_highlight::tokens(text, language, pal.dark)));
+                    }
+                    let lines = &pane.text_lines.1;
+                    pane.max = (lines.len() as f32 * lh - body.h).max(0.0);
                     pane.offset = pane.offset.clamp(0.0, pane.max);
                     let clip = p.clip(body);
                     let from = (pane.offset / lh) as usize;
-                    for (i, &start) in starts.iter().enumerate().skip(from).take((body.h / lh) as usize + 2) {
-                        let end = starts.get(i + 1).copied().unwrap_or(text.len());
-                        let line = text[start..end].trim_end_matches(['\r', '\n']);
-                        p.text(
-                            Face::Mono,
-                            12.0,
-                            body.x,
-                            body.y + (i as f32 + 0.5) * lh - pane.offset,
-                            line,
-                            pal.text,
-                            body.w,
+                    for (i, line) in lines.iter().enumerate().skip(from).take((body.h / lh) as usize + 2) {
+                        let y = body.y + (i as f32 + 0.5) * lh - pane.offset;
+                        if let Some(number) = line.number {
+                            p.text_center(
+                                Face::Mono,
+                                11.0,
+                                Rect::new(body.x, y - lh / 2.0, gutter - 4.0, lh),
+                                &number.to_string(),
+                                pal.muted,
+                            );
+                        }
+                        let x = body.x + gutter + line.indent as f32 * cell;
+                        let available = (body.right() - x).max(0.0);
+                        paint_code(
+                            p,
+                            pal,
+                            text,
+                            line.range.clone(),
+                            pane.highlight.as_ref().and_then(|(_, spans)| spans.as_deref()),
+                            Rect::new(x, y - lh / 2.0, available, lh),
                         );
                     }
                     p.restore(clip);
@@ -393,30 +419,106 @@ impl Ui {
     }
 }
 
-fn text_lines(text: &str, columns: usize) -> Vec<usize> {
-    let mut lines = vec![0];
-    let mut width = 0;
-    for (at, c) in text.char_indices() {
-        if c == '\n' {
-            lines.push(at + 1);
-            width = 0;
-        } else if c != '\r' {
-            // Approximate fallback glyphs conservatively; only visible lines are shaped.
-            let cells = if c == '\t' {
-                4
-            } else if c.is_ascii() {
-                1
-            } else {
-                2
-            };
-            if width > 0 && width + cells > columns {
-                lines.push(at);
-                width = 0;
+struct CodeLine {
+    range: Range<usize>,
+    number: Option<usize>,
+    indent: usize,
+}
+
+fn cells(c: char) -> usize {
+    if c == '\t' {
+        4
+    } else if c.is_ascii() {
+        1
+    } else {
+        2
+    }
+}
+
+fn language(path: &std::path::Path) -> Option<&str> {
+    let name = path.file_name()?.to_str()?;
+    if name.eq_ignore_ascii_case("dockerfile") { Some("dockerfile") } else { path.extension()?.to_str() }
+}
+
+/// Keep complete source ranges, preferring a whitespace or operator boundary. A token longer than
+/// the available row must still split, at a UTF-8 character boundary. Continuations are indented
+/// beneath the original indentation, capped so there is room for code even in a narrow panel.
+fn text_lines(text: &str, columns: usize) -> Vec<CodeLine> {
+    let columns = columns.max(1);
+    let mut rows = Vec::new();
+    let mut start = 0;
+    for (number, raw) in text.split('\n').enumerate() {
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
+        let indent = line.chars().take_while(|c| matches!(c, ' ' | '\t')).map(cells).sum::<usize>();
+        let hanging = (indent + 2).min(columns.saturating_sub(1) / 2);
+        let mut at = 0;
+        let mut first = true;
+        loop {
+            let available = columns.saturating_sub(if first { 0 } else { hanging }).max(1);
+            let mut width = 0;
+            let mut end = at;
+            let mut boundary = None;
+            for (rel, c) in line[at..].char_indices() {
+                let next = at + rel + c.len_utf8();
+                let w = cells(c);
+                if width > 0 && width + w > available {
+                    break;
+                }
+                width += w;
+                end = next;
+                if c.is_whitespace() || matches!(c, ',' | ';' | '=' | '+' | '*' | '/' | '%' | '&' | '|' | ':') {
+                    boundary = Some(next);
+                }
             }
-            width += cells;
+            if end < line.len() {
+                end = boundary.filter(|&b| b > at).unwrap_or(end);
+            }
+            rows.push(CodeLine {
+                range: start + at..start + end,
+                number: first.then_some(number + 1),
+                indent: if first { 0 } else { hanging },
+            });
+            if end == line.len() {
+                break;
+            }
+            at = end;
+            first = false;
+        }
+        start += raw.len() + 1;
+    }
+    rows
+}
+
+fn paint_code(
+    p: &mut Painter,
+    pal: &Palette,
+    text: &str,
+    range: Range<usize>,
+    tokens: Option<&[mdshared_highlight::Token]>,
+    area: Rect,
+) {
+    let mut x = area.x;
+    let right = area.right();
+    let mut at = range.start;
+    let mut index = tokens.map_or(0, |tokens| tokens.partition_point(|t| t.range.end <= at));
+    while at < range.end {
+        let token = tokens.and_then(|tokens| tokens.get(index));
+        let (end, color) = match token {
+            Some(token) if token.range.start <= at && token.range.end > at => {
+                (token.range.end.min(range.end), mdshared_ui::tokens::legible(token.color, pal.page, 4.5))
+            }
+            Some(token) if token.range.start > at => (token.range.start.min(range.end), pal.text),
+            _ => (range.end, pal.text),
+        };
+        let shown = text[at..end].replace('\t', "    ");
+        let measured = p.measure(Face::Mono, 12.0, &shown);
+        p.text(Face::Mono, 12.0, x, area.cy(), &shown, color, (right - x).max(0.0));
+        x += measured;
+        at = end;
+        if token.is_some_and(|t| t.range.end <= at) {
+            index += 1;
         }
     }
-    lines
 }
 
 #[cfg(test)]
@@ -425,14 +527,66 @@ mod tests {
 
     #[test]
     fn literal_text_wraps_without_dropping_long_lines_or_splitting_utf8() {
-        let text = "12345éX\n<img src=x>\n";
-        let starts = text_lines(text, 5);
-        let actual = starts
-            .iter()
-            .enumerate()
-            .map(|(i, &start)| &text[start..starts.get(i + 1).copied().unwrap_or(text.len())])
-            .collect::<Vec<_>>();
-        assert_eq!(actual, ["12345", "éX\n", "<img ", "src=x", ">\n", ""]);
+        let text = "    x = g[-1] + café_value\nlongunbreakabletoken\n";
+        let lines = text_lines(text, 14);
+        let first = lines.iter().take_while(|row| row.number != Some(2)).collect::<Vec<_>>();
+        assert!(first.iter().any(|row| text[row.range.clone()].contains("g[-1]")));
+        assert!(first.iter().skip(1).all(|row| row.indent > 0 && row.number.is_none()));
+        let joined = first.iter().map(|row| &text[row.range.clone()]).collect::<String>();
+        assert_eq!(joined, "    x = g[-1] + café_value");
+        assert_eq!(lines.last().unwrap().number, Some(3));
+        assert!(lines.iter().all(|row| text.is_char_boundary(row.range.start) && text.is_char_boundary(row.range.end)));
+    }
+
+    #[test]
+    fn syntax_ranges_languages_limits_and_contrast() {
+        use mdshared_ui::cover::contrast;
+        let source = "def example(value):\n    return value + 1 # comment\n";
+        for theme in crate::termtheme::palettes::DARK_THEMES.iter().chain(crate::termtheme::palettes::LIGHT_THEMES) {
+            let pal = &theme.palette;
+            let spans =
+                mdshared_highlight::tokens(source, language(std::path::Path::new("example.py")), pal.dark).unwrap();
+            assert!(spans.windows(2).any(|pair| pair[0].color != pair[1].color));
+            for span in spans {
+                assert!(source.is_char_boundary(span.range.start) && source.is_char_boundary(span.range.end));
+                let color = mdshared_ui::tokens::legible(span.color, pal.page, 4.5);
+                assert!(contrast(color, pal.page) >= 4.5, "{}", theme.id);
+            }
+        }
+        for name in ["file.toml", "file.kt", "file.swift", "file.ps1", "Dockerfile"] {
+            assert!(
+                mdshared_highlight::tokens("value = 1\n", language(std::path::Path::new(name)), true).is_some(),
+                "{name}"
+            );
+        }
+        assert!(mdshared_highlight::tokens(source, Some("unknown-extension"), true).is_none());
+        assert!(mdshared_highlight::tokens(&"x".repeat(256 * 1024 + 1), Some("py"), true).is_none());
+    }
+
+    #[test]
+    fn literal_code_view_rasterizes_numbered_wrapped_highlighted_lines() {
+        use mdshared_text::Bitmap;
+        use mdshared_ui::gfx::Gfx;
+        let source = "def compute(value):\n    return value + other_values[-1] + 42 # comment\n";
+        let demo = crate::demo::Transcript::new().unwrap();
+        let mut model = Model::new(crate::view::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+        let mut pane =
+            Markdown::with(None, "example.py".into(), "fixture".into(), Some(Ok(Document::Text(source.into()))));
+        pane.highlight = Some((true, mdshared_highlight::tokens(source, Some("py"), true)));
+        pane.line_count = 3;
+        let mut ui = Ui { markdown: Some(pane), ..Default::default() };
+        let mut bitmap = Bitmap::new(420, 300);
+        let mut gfx = Gfx::new();
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        ui.draw_markdown(&mut p, &mdshared_ui::theme::DARK, Rect::new(0.0, 0.0, 220.0, 280.0), &mut model);
+        let pane = ui.markdown.as_ref().unwrap();
+        assert!(pane.text_lines.1.iter().any(|line| line.number.is_none() && line.indent > 0));
+        assert_eq!(pane.text_lines.1.iter().filter_map(|line| line.number).collect::<Vec<_>>(), [1, 2, 3]);
+        let colors = bitmap.pixels.as_chunks::<4>().0.iter().collect::<std::collections::HashSet<_>>();
+        assert!(colors.len() > 10);
+        if let Some(path) = std::env::var_os("CS_CODE_SHOT") {
+            bitmap.write_png(std::path::Path::new(&path)).unwrap();
+        }
     }
 
     #[test]

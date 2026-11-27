@@ -360,6 +360,12 @@ stored per window in `window.ini` (`chat_reading`); it uses the same column size
 The composer stays centred and capped independently. Conversation and Markdown scrollbars appear
 on scrolling or hover, hold briefly, then fade; with reduced motion they disappear without a fade.
 Their tracks remain interactive even when hidden.
+Named UTF-8 code files in the viewer use extension-based syntax highlighting, with token colours
+adjusted for contrast against the current page palette. Line numbers mark source lines; wrapped
+continuations prefer whitespace or operator boundaries and hang under the original indentation.
+An overlong token must split at a UTF-8 character boundary. Highlighting is cached, and unknown
+languages and files over 256 KiB remain plain; file previews still stop at the existing 1 MiB limit.
+Rendered Markdown retains the renderer's existing fenced-code syntax highlighting.
 
 Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
 picture work run off the window thread; worker results wake the window rather than making it redraw
