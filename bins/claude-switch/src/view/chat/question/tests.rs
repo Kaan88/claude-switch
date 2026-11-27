@@ -272,21 +272,22 @@ fn a_card_that_goes_away_gives_the_keyboard_back() {
 }
 
 #[test]
-fn several_questions_or_answers_stay_in_the_terminal_and_the_drawer_opens_as_before() {
-    for questions in [vec![question(true)], vec![question(false), question(false)]] {
-        let mut f = Fixture::new(questions);
-        let now = Instant::now();
-        f.screen(&menu(0, None), now);
-        press(f.tab(), now, Hit::Option(0));
-        assert!(f.writes().is_empty());
-        assert_eq!(f.chat().question.error, Some(TERMINAL_ONLY));
-    }
+fn questions_worded_alike_stay_in_the_terminal_and_the_drawer_opens_as_before() {
+    let mut f = Fixture::new(vec![question(false), question(false)]);
+    let now = Instant::now();
+    f.screen(&menu(0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None, "the screen could not tell them apart");
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(TERMINAL_ONLY));
 }
 
 #[test]
 fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
     for answerable in [true, false] {
-        let mut f = Fixture::new(vec![question(!answerable)]);
+        let questions = if answerable { vec![question(true)] } else { vec![question(false), question(false)] };
+        let mut f = Fixture::new(questions);
         let now = Instant::now();
         f.screen(&menu(0, None), now - QUIET);
         let tab = f.tab();
@@ -1036,4 +1037,352 @@ fn a_question_worded_like_a_permission_prompt_never_opens_the_drawer_for_a_tick(
     assert_ne!(f.chat().reason, Some(Reason::Permission));
     assert!(press(f.tab(), now, Hit::Option(0)));
     assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+fn fruits() -> Question {
+    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    Question {
+        header: "Fruits".into(),
+        question: "Which fruits do you like?".into(),
+        options: vec![option("Apple"), option("Pear"), option("Plum")],
+        multi_select: true,
+    }
+}
+
+fn size() -> Question {
+    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    Question {
+        header: "Size".into(),
+        question: "Which size?".into(),
+        options: vec![option("Small"), option("Large")],
+        multi_select: false,
+    }
+}
+
+fn speed() -> Question {
+    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let options = vec![option("Slow"), option("Fast")];
+    Question { header: "Speed".into(), question: "Which speed?".into(), options, multi_select: false }
+}
+
+/// Question `at` of a form as Claude Code 2.1.332 draws it (see the recorded `form_*` screens):
+/// the tab row, the question, its entries with boxes for a multi-select, the unnumbered Next or
+/// Submit row, a rule, "Chat about this". `cursor` counts the rows the arrow keys walk.
+fn form_screen(questions: &[Question], at: usize, cursor: usize, marks: &[bool], typed: Option<&str>) -> String {
+    let q = &questions[at];
+    let rule = "─".repeat(40);
+    let tabs: Vec<String> = questions.iter().map(|q| format!("☐ {}", q.header)).collect();
+    let mut rows = vec![format!("\x1b[2J\x1b[H\x1b[?2004h{rule}"), format!("←  {}  ✔ Submit  →", tabs.join("  "))];
+    rows.extend([String::new(), q.question.clone(), String::new()]);
+    let mark = |i: usize| if i == cursor { "❯" } else { " " };
+    let n = q.options.len();
+    for (i, option) in q.options.iter().enumerate() {
+        let tick = if q.multi_select { if marks[i] { "[✔] " } else { "[ ] " } } else { "" };
+        rows.push(format!("{} {}. {tick}{}", mark(i), i + 1, option.label));
+    }
+    let other = match (q.multi_select, typed) {
+        (true, Some(text)) => format!("[✔] {text}"),
+        (true, None) => "[ ] Type something".to_owned(),
+        (false, Some(text)) => text.to_owned(),
+        (false, None) => "Type something.".to_owned(),
+    };
+    rows.push(format!("{} {}. {other}", mark(n), n + 1));
+    let mut chat = n + 1;
+    if q.multi_select {
+        let label = if at + 1 < questions.len() { "Next" } else { "Submit" };
+        rows.push(format!("{}    {label}", mark(n + 1)));
+        chat += 1;
+    }
+    rows.push(rule);
+    rows.push(format!("{} {}. Chat about this", mark(chat), n + 2));
+    rows.push(String::new());
+    rows.push("Enter to select · Tab/Arrow keys to navigate · Esc to cancel".to_owned());
+    rows.join("\r\n")
+}
+
+/// The review after a form's last question, as recorded: no footer.
+fn review_screen(questions: &[Question], answers: &[&str], highlight: usize) -> String {
+    let tabs: Vec<String> = questions.iter().map(|q| format!("☒ {}", q.header)).collect();
+    let mut rows = vec![
+        format!("\x1b[2J\x1b[H{}", "─".repeat(40)),
+        format!("←  {}  ✔ Submit  →", tabs.join("  ")),
+        String::new(),
+        "Review your answers".to_owned(),
+        String::new(),
+    ];
+    for (q, answer) in questions.iter().zip(answers) {
+        rows.push(format!(" ● {}", q.question));
+        rows.push(format!("   → {answer}"));
+    }
+    rows.push(String::new());
+    for (i, entry) in ["Submit answers", "Cancel"].iter().enumerate() {
+        rows.push(format!("{} {}. {entry}", if i == highlight { "❯" } else { " " }, i + 1));
+    }
+    rows.join("\r\n")
+}
+
+impl Fixture {
+    /// Feeds the screen, advances once, and returns what was written.
+    fn step(&mut self, screen: &str, now: Instant) -> Vec<Vec<u8>> {
+        self.screen(screen, now);
+        advance(self.tab(), now, true);
+        self.writes()
+    }
+}
+
+#[test]
+fn a_form_is_answered_question_by_question_and_submitted_only_once_the_review_matches() {
+    let qs = [fruits(), size()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    let (none, f_t_t) = ([false; 3], [false, true, true]);
+    f.screen(&form_screen(&qs, 0, 0, &none, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "a form is answered from the card");
+
+    // Picks stay in the card: nothing is written before Submit.
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert!(press(f.tab(), now, Hit::Option(2)));
+    f.chat().question.field.set_text("Kiwi");
+    assert!(press(f.tab(), now, Hit::Submit));
+    assert_eq!(f.chat().question.error, Some(UNANSWERED), "the size is not answered yet");
+    assert_eq!(f.chat().question.form.page, 1, "the card shows that question");
+    assert!(f.chat().question.field.text().is_empty());
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert!(press(f.tab(), now, Hit::Back));
+    assert_eq!(f.chat().question.field.text(), "Kiwi", "each question keeps its text");
+    assert!(press(f.tab(), now, Hit::Next));
+    assert!(f.writes().is_empty());
+
+    assert!(press(f.tab(), now, Hit::Submit));
+    assert_eq!(f.writes(), [down(1)], "to Pear; nothing is pre-selected");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the screen has not moved yet");
+    assert_eq!(f.step(&form_screen(&qs, 0, 1, &none, None), now), [b"\r".to_vec()], "tick Pear");
+    assert!(f.step(&form_screen(&qs, 0, 1, &none, None), now).is_empty(), "a repaint without the tick: no more keys");
+    assert_eq!(f.step(&form_screen(&qs, 0, 1, &[false, true, false], None), now), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 2, &[false, true, false], None), now), [b"\r".to_vec()]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 2, &f_t_t, None), now), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 3, &f_t_t, None), now), [b"Kiwi".to_vec()]);
+    assert!(f.step(&form_screen(&qs, 0, 3, &f_t_t, None), now).is_empty(), "not typed yet");
+    assert_eq!(f.step(&form_screen(&qs, 0, 3, &f_t_t, Some("Kiwi")), now), [down(1)], "to Next");
+    assert_eq!(f.step(&form_screen(&qs, 0, 4, &f_t_t, Some("Kiwi")), now), [b"\r".to_vec()]);
+    assert!(f.step(&form_screen(&qs, 0, 4, &f_t_t, Some("Kiwi")), now).is_empty(), "the next question first");
+    assert_eq!(f.step(&form_screen(&qs, 1, 0, &[], None), now), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 1, 1, &[], None), now), [b"\r".to_vec()]);
+    let review = review_screen(&qs, &["Pear, Plum, Kiwi", "Large"], 0);
+    assert_eq!(f.step(&review, now), [b"\r".to_vec()], "Submit answers");
+    assert!(f.chat().question.step.is_some(), "waits for the call to resolve");
+    f.resolve();
+    assert!(advance(f.tab(), now, true));
+    assert!(f.chat().question.step.is_none() && f.chat().question.error.is_none());
+}
+
+#[test]
+fn a_review_that_differs_from_the_cards_answers_is_never_submitted() {
+    let qs = [size(), speed()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    f.screen(&form_screen(&qs, 0, 0, &[], None), now);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Next);
+    press(f.tab(), now, Hit::Option(0));
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 1, &[], None), now), [b"\r".to_vec()]);
+    assert_eq!(f.step(&form_screen(&qs, 1, 0, &[], None), now), [b"\r".to_vec()], "Slow is highlighted already");
+    // The terminal recorded Small: no Enter on "Submit answers", ever.
+    assert!(f.step(&review_screen(&qs, &["Small", "Slow"], 0), now).is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(REVIEW_DIFFERS));
+    assert_eq!(f.chat().drawer, Drawer::Manual);
+
+    // The highlight on Cancel is moved up first, and Enter follows only once it shows there.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 1, &[], None), now);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Next);
+    press(f.tab(), now, Hit::Option(0));
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    assert_eq!(f.step(&form_screen(&qs, 1, 0, &[], None), now), [b"\r".to_vec()]);
+    let up = mdshared_term::input::encode_key(mdshared_term::Key::Up, mdshared_term::Mods::NONE, &Default::default());
+    assert_eq!(f.step(&review_screen(&qs, &["Large", "Slow"], 1), now), [up]);
+    assert_eq!(f.step(&review_screen(&qs, &["Large", "Slow"], 0), now), [b"\r".to_vec()]);
+}
+
+#[test]
+fn a_form_stops_when_the_terminal_does_not_follow() {
+    let qs = [fruits(), size()];
+    let now = Instant::now();
+    let answered = |f: &mut Fixture| {
+        press(f.tab(), now, Hit::Option(0));
+        press(f.tab(), now, Hit::Next);
+        press(f.tab(), now, Hit::Option(0));
+    };
+
+    // A box that does not tick: no second Enter, then a stop that says why.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[false; 3], None), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Apple is highlighted: tick it");
+    assert!(f.step(&form_screen(&qs, 0, 0, &[false; 3], None), now).is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NOT_TICKED));
+
+    // The terminal shows the second question: nothing is sent.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 1, 0, &[], None), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NOT_SHOWN));
+
+    // Text typed in the terminal is never cleared or sent on.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[true, false, false], Some("Fig")), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(OTHER_TAKEN));
+
+    // Enter on Next, and the next question never comes.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 4, &[true, false, false], None), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.chat().question.error, Some(NO_NEXT));
+}
+
+#[test]
+fn a_forms_answers_are_checked_in_the_card_before_any_key() {
+    let qs = [size(), fruits()];
+    let now = Instant::now();
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[], None), now);
+    press(f.tab(), now, Hit::Option(0));
+    f.chat().question.field.set_text("Medium");
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.chat().question.error, Some(BOTH), "a single choice takes one answer");
+    press(f.tab(), now, Hit::Option(0));
+    assert_eq!(f.chat().question.form.chosen[0], [false, false], "a second click clears the choice");
+    f.chat().question.field.set_text("3 sizes");
+    press(f.tab(), now, Hit::Next);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Option(2));
+    assert_eq!(f.chat().question.form.chosen[1], [false, true, true], "several boxes");
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.chat().question.error, Some(DIGIT_FIRST));
+    assert_eq!(f.chat().question.form.page, 0);
+    assert!(f.writes().is_empty());
+    assert!(!press(f.tab(), now, Hit::Back), "no question before the first");
+}
+
+#[test]
+fn one_multi_select_question_goes_through_its_submit_row_and_the_review() {
+    let qs = [fruits()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    let pear = [false, true, false];
+    f.screen(&form_screen(&qs, 0, 1, &pear, None), now);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [down(3)], "Pear is ticked already: to Submit");
+    assert_eq!(f.step(&form_screen(&qs, 0, 4, &pear, None), now), [b"\r".to_vec()]);
+    assert_eq!(f.step(&review_screen(&qs, &["Pear"], 0), now), [b"\r".to_vec()]);
+}
+
+#[test]
+fn esc_and_chat_about_this_act_on_the_forms_question_the_screen_shows() {
+    let qs = [fruits(), size()];
+    let now = Instant::now();
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 1, 0, &[], None), now);
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+
+    // The multi-select's Submit row sits between "Type something" and "Chat about this".
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[false; 3], None), now);
+    f.chat().question.field.set_text("Let me explain");
+    press(f.tab(), now, Hit::ChatAbout);
+    assert_eq!(f.writes(), [down(5)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 5, &[false; 3], None), now), [b"\r".to_vec()]);
+    f.resolve();
+    advance(f.tab(), now, true);
+    assert_eq!(f.chat().editor.text, "Let me explain");
+}
+
+#[test]
+fn recorded_form_screens_lead_to_the_expected_keys() {
+    use screens::recorded::*;
+    let screen = |fixture: &str| recorded(fixture);
+    let qs = vec![fruits(), size()];
+    let answers = vec![Answer { picks: vec![0, 2], text: Some("Kiwi".into()) }, Answer { picks: vec![1], text: None }];
+    let run = |expect: Expect| FormRun { questions: qs.clone(), answers: answers.clone(), expect, why: "" };
+    let next =
+        |expect: Expect, fixture: &str| form_next(&run(expect), &screen(fixture)).map(|(key, expect, _)| (key, expect));
+    let modes = Default::default();
+    let down = |n: usize| {
+        mdshared_term::input::encode_key(mdshared_term::Key::Down, mdshared_term::Mods::NONE, &modes).repeat(n)
+    };
+    let other = "[ ] Type something".to_owned();
+    let shows = |cursor: usize, marks: [bool; 3], other: &str| Expect::Shows {
+        at: 0,
+        cursor,
+        marks: marks.to_vec(),
+        other: other.into(),
+    };
+
+    let shown = form_question(&screen(FORM_MULTI), &qs, 0).expect("the first question");
+    assert_eq!((shown.other, shown.submit, shown.chat, shown.marks.as_slice()), (3, Some(4), 5, &[false; 3][..]));
+    assert!(form_question(&screen(FORM_MULTI), &qs, 1).is_none());
+    assert!(form_question(&screen(FORM_SECOND), &qs, 0).is_none(), "the second question shows");
+    assert!(form_question(&screen(FORM_SECOND), &qs, 1).is_some());
+    assert!(form_question(&screen(ASK_MULTI), &qs, 0).is_none(), "another form: its tabs differ");
+
+    assert_eq!(next(Expect::Opened(0), FORM_MULTI), Ok((b"\r".to_vec(), shows(0, [true, false, false], &other))));
+    assert_eq!(
+        next(shows(0, [true, false, false], &other), FORM_MULTI_APPLE),
+        Ok((down(2), shows(2, [true, false, false], &other)))
+    );
+    assert_eq!(next(shows(0, [true, false, false], &other), FORM_MULTI), Err(""), "Apple not ticked yet");
+    assert_eq!(
+        next(shows(2, [true, false, true], &other), FORM_MULTI_PLUM),
+        Ok((down(1), shows(3, [true, false, true], &other)))
+    );
+    let typed = Expect::Typed { at: 0, cursor: 3, marks: vec![true, false, true], text: "Kiwi".into() };
+    assert_eq!(next(shows(3, [true, false, true], &other), FORM_MULTI_TYPE), Ok((b"Kiwi".to_vec(), typed.clone())));
+    assert_eq!(next(typed.clone(), FORM_MULTI_TYPE), Err(""), "the text is not there yet");
+    assert_eq!(next(typed, FORM_MULTI_TYPED), Ok((down(1), shows(4, [true, false, true], "[✔] Kiwi"))));
+    assert_eq!(
+        next(shows(4, [true, false, true], "[✔] Kiwi"), FORM_MULTI_NEXT),
+        Ok((b"\r".to_vec(), Expect::Opened(1)))
+    );
+    let second = Expect::Shows { at: 1, cursor: 1, marks: vec![], other: "Type something.".into() };
+    assert_eq!(next(Expect::Opened(1), FORM_SECOND), Ok((down(1), second)));
+    assert_eq!(next(Expect::Review(None), FORM_REVIEW), Ok((b"\r".to_vec(), Expect::Submitted)));
+    assert_eq!(next(Expect::Review(None), FORM_SECOND), Err(""));
+
+    // Two single choices (Small, Slow), then their review.
+    let qs = vec![size(), speed()];
+    let answers = vec![Answer { picks: vec![0], text: None }, Answer { picks: vec![0], text: None }];
+    let run = |expect: Expect| FormRun { questions: qs.clone(), answers: answers.clone(), expect, why: "" };
+    assert_eq!(form_next(&run(Expect::Opened(0)), &screen(ASK_TWO)).map(|n| n.1), Ok(Expect::Opened(1)));
+    assert_eq!(form_next(&run(Expect::Review(None)), &screen(ASK_REVIEW)).map(|n| n.1), Ok(Expect::Submitted));
+    let wrong = vec![Answer { picks: vec![1], text: None }, Answer { picks: vec![0], text: None }];
+    let run = FormRun { questions: qs.clone(), answers: wrong, expect: Expect::Review(None), why: "" };
+    assert_eq!(form_next(&run, &screen(ASK_REVIEW)).map(|n| n.1), Err(REVIEW_DIFFERS));
+
+    // One multi-select question: its Submit row leads to the review.
+    let qs = vec![fruits()];
+    let answers = vec![Answer { picks: vec![1], text: None }];
+    let run = |expect: Expect| FormRun { questions: qs.clone(), answers: answers.clone(), expect, why: "" };
+    assert_eq!(form_next(&run(Expect::Opened(0)), &screen(MULTI_SUBMIT)).map(|n| n.1), Ok(Expect::Review(None)));
+    assert_eq!(form_next(&run(Expect::Review(None)), &screen(MULTI_REVIEW)).map(|n| n.1), Ok(Expect::Submitted));
 }

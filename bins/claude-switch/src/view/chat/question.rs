@@ -5,6 +5,12 @@
 //! the screen shows it on the chosen row; a typed answer or comment must be visible before Enter.
 //! Nothing is pre-selected and nothing is answered without a click. Anything unexpected fails
 //! closed, says why and opens the drawer. Screen patterns live in `screens`.
+//!
+//! A form (several questions, or a multi-select one) is picked in the card first; Submit then
+//! drives the CLI's form one key at a time, each written only once the screen shows what the key
+//! before should have led to (the highlight moved, the box ticked, the text typed, the next
+//! question or the review opened), and "Submit answers" only once the review reads every answer
+//! as picked.
 pub(super) mod screens;
 
 use std::path::Path;
@@ -52,6 +58,18 @@ const NO_ESC: &str = "This menu does not offer Esc. Use the terminal.";
 const CTRL_B: &[u8] = b"\x02";
 const NOT_BACKGROUND: &str = "The command did not move to the background. Check the terminal.";
 const NO_HINT: &str = "The terminal no longer offers to run this command in the background.";
+const NOT_TICKED: &str = "The terminal did not tick or clear that box, so nothing more was sent. Check the terminal.";
+const NO_NEXT: &str = "The terminal did not show the next question, so nothing more was sent. Check the terminal.";
+const NO_REVIEW: &str =
+    "The terminal did not show the review of your answers, so they were not submitted. Check the terminal.";
+const REVIEW_DIFFERS: &str =
+    "The terminal's review does not match your answers, so they were not submitted. Check the terminal.";
+const OTHER_TAKEN: &str =
+    "The terminal's \"Type something\" row already holds other text, so nothing more was sent. Check the terminal.";
+const UNANSWERED: &str = "Answer this question first: pick a choice or type an answer.";
+const BOTH: &str = "Pick one choice or type an answer for this question, not both.";
+/// How many rows above its entries a form question's tab row and text may use.
+const FORM_ROWS: usize = 20;
 
 /// What the pending tool call asks for.
 #[derive(Clone, Copy)]
@@ -105,9 +123,30 @@ pub(in crate::view) fn waiting_label(model: &Model, screen: &Screen) -> Option<&
     }
 }
 
-/// One single-choice question is what Chat can answer; the rest stays in the terminal.
-pub(super) fn answerable(questions: &[Question]) -> bool {
+/// One single-choice question: a click on a choice answers it.
+fn simple(questions: &[Question]) -> bool {
     matches!(questions, [q] if !q.multi_select)
+}
+
+/// Several questions, or a multi-select one: the card collects every answer and one Submit
+/// drives the CLI's form. Two questions worded alike could not be told apart on the screen.
+fn form(questions: &[Question]) -> bool {
+    !simple(questions)
+        && !questions.is_empty()
+        && questions
+            .iter()
+            .enumerate()
+            .all(|(i, q)| questions[..i].iter().all(|other| squash(&other.question) != squash(&q.question)))
+}
+
+/// Chat can answer the call's questions; anything else stays in the terminal.
+pub(super) fn answerable(questions: &[Question]) -> bool {
+    simple(questions) || form(questions)
+}
+
+/// The text with all whitespace removed, for comparing text the screen may have wrapped.
+fn squash(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
 /// `ExitPlanMode`: the plan approval menu instead of a permission prompt.
@@ -182,7 +221,6 @@ fn has_word(text: &str, word: &str) -> bool {
 
 /// Some run of whole rows reads `text`, all whitespace aside.
 fn has_rows(rows: &[String], text: &str) -> bool {
-    let squash = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
     let want = squash(text);
     !want.is_empty()
         && (0..rows.len()).any(|i| {
@@ -219,6 +257,11 @@ pub enum Hit {
     Background,
     /// Esc: leave the menu, or decline the question or prompt.
     Escape,
+    /// A form's previous and next question in the card (nothing is sent).
+    Back,
+    Next,
+    /// Send the form's answers.
+    Submit,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,6 +287,13 @@ enum Stage {
 #[derive(Clone, Debug)]
 enum Subject {
     Question(Question),
+    /// Question `at` of a form, as `form_question` reads it ("Chat about this" and Esc).
+    FormQuestion {
+        questions: Vec<Question>,
+        at: usize,
+    },
+    /// A form's answers on their way, one checked key at a time.
+    Form(FormRun),
     Tool {
         needles: Vec<Needle>,
         choices: Vec<String>,
@@ -331,6 +381,65 @@ pub(super) struct Card {
     pub(super) held: Option<String>,
     /// The notice a click got because other keys were on their way: it goes when they have.
     busy: Option<&'static str>,
+    /// What the user picked in a form's card.
+    form: Picks,
+}
+
+/// A form's answers as picked in the card, per question. Nothing reaches the terminal before
+/// Submit. The field holds the text of the question on `page`; `texts` keeps the others'.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Picks {
+    page: usize,
+    chosen: Vec<Vec<bool>>,
+    texts: Vec<String>,
+}
+
+impl Picks {
+    /// Starts over unless the picks are for these questions.
+    fn fit(&mut self, questions: &[Question], field: &TextField) {
+        let same = self.chosen.len() == questions.len()
+            && self.chosen.iter().zip(questions).all(|(chosen, q)| chosen.len() == q.options.len());
+        if !same {
+            let mut texts = vec![String::new(); questions.len()];
+            if let Some(first) = texts.first_mut() {
+                *first = field.text().to_owned();
+            }
+            *self = Picks { page: 0, chosen: questions.iter().map(|q| vec![false; q.options.len()]).collect(), texts };
+        }
+    }
+}
+
+/// One question's answer: the chosen options, in order, and the typed text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Answer {
+    picks: Vec<usize>,
+    text: Option<String>,
+}
+
+/// A form being answered: every key waits for the screen to show what the last one should have
+/// led to.
+#[derive(Clone, Debug)]
+struct FormRun {
+    questions: Vec<Question>,
+    answers: Vec<Answer>,
+    expect: Expect,
+    /// What to say when the screen does not show `expect` in time.
+    why: &'static str,
+}
+
+/// What the screen must show before the next key of a form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Expect {
+    /// Question `at`, as it opens.
+    Opened(usize),
+    /// Question `at` with the highlight on `cursor`, these boxes and this "Type something" row.
+    Shows { at: usize, cursor: usize, marks: Vec<bool>, other: String },
+    /// Question `at` with `text` typed on its "Type something" row, highlighted.
+    Typed { at: usize, cursor: usize, marks: Vec<bool>, text: String },
+    /// The review, with the highlight on this entry (any while it opens).
+    Review(Option<usize>),
+    /// Enter went on "Submit answers".
+    Submitted,
 }
 
 impl Card {
@@ -353,6 +462,10 @@ fn read(
 ) -> Option<(screens::Menu, Option<usize>, Option<usize>)> {
     match subject {
         Subject::Question(question) => question_menu(screen, question, typing.is_some()),
+        Subject::FormQuestion { questions, at } => {
+            form_question(screen, questions, *at).map(|shown| (shown.menu, Some(shown.other), Some(shown.chat)))
+        }
+        Subject::Form(_) => None,
         Subject::Tool { needles, choices } => {
             let prompt = screens::permission(screen)?;
             let texts = prompt.menu.texts();
@@ -422,6 +535,232 @@ fn question_menu(
         }
     }
     collapse(&menu.above(15).join(" ")).contains(&collapse(&question.question)).then_some((menu, other, chat))
+}
+
+/// One question of a form as the screen shows it. The menu's entries are the rows in the order the
+/// arrow keys walk them: a multi-select's unnumbered Submit or Next row is an entry of its own,
+/// after "Type something".
+#[derive(Clone, Debug)]
+struct FormShown {
+    menu: screens::Menu,
+    other: usize,
+    submit: Option<usize>,
+    chat: usize,
+    /// The options' boxes (multi-select only), in order.
+    marks: Vec<bool>,
+    /// The "Type something" row with its box, the rows it wraps onto joined.
+    typed: String,
+}
+
+/// Question `at` of the form, only as its own screen: a menu footer; right above the entries,
+/// the tab row naming the form's questions in order, then this question's text and nothing
+/// else; every option in order (with its box for a multi-select), then "Type something", the
+/// multi-select's Submit or Next row, and "Chat about this".
+fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<FormShown> {
+    if crate::attention::screen_permission_prompt(screen) {
+        return None;
+    }
+    let question = questions.get(at)?;
+    let mut menu = screens::menu(screen)?;
+    let n = question.options.len();
+    (menu.entries.len() == n + 2).then_some(())?;
+    let above = menu.above_box(FORM_ROWS);
+    let (tabs, asks) = above.split_first()?;
+    (screens::tab_bar(tabs) && squash(&asks.join(" ")) == squash(&question.question)).then_some(())?;
+    let tabs = squash(tabs);
+    let mut from = 0;
+    for header in questions.iter().map(|q| squash(&q.header)).filter(|h| !h.is_empty()) {
+        from += tabs.get(from..)?.find(&header)? + header.len();
+    }
+    let multi = question.multi_select;
+    let mut marks = Vec::new();
+    for (entry, option) in menu.entries.iter().zip(&question.options) {
+        let label = if multi {
+            let (on, label) = screens::checkbox(&entry.text)?;
+            marks.push(on);
+            label
+        } else {
+            entry.text.as_str()
+        };
+        label_matches(label, &collapse(&option.label)).then_some(())?;
+    }
+    menu.entries[n + 1].text.starts_with(screens::CHAT_ABOUT).then_some(())?;
+    let submit = if multi { Some(screens::submit_row(screen, &menu, n)?) } else { None };
+    let other = &menu.entries[n];
+    let end = submit.as_ref().map_or(menu.entries[n + 1].row, |s| s.row);
+    let typed = collapse(&format!("{} {}", other.text, screens::rows_between(&menu, other.row + 1, end)));
+    let fits = if multi { screens::checkbox(&typed).is_some() } else { !typed.starts_with('[') };
+    fits.then_some(())?;
+    if let Some(submit) = submit {
+        menu.entries.insert(n + 1, submit);
+    }
+    let chat = menu.entries.len() - 1;
+    Some(FormShown { menu, other: n, submit: multi.then_some(n + 1), chat, marks, typed })
+}
+
+/// The "Type something" row as it opens, holding no text.
+fn pristine(multi: bool, row: &str) -> bool {
+    if multi { row == screens::OTHER_BOX } else { row == format!("{}.", screens::OTHER) }
+}
+
+/// The "Type something" row shows `text`: in its ticked box (multi-select), or in place of the
+/// row's own words (the single-choice rendering is not recorded yet, so only that it is there).
+fn typed_shows(multi: bool, row: &str, text: &str) -> bool {
+    if multi {
+        squash(row) == squash(&format!("[✔] {text}"))
+    } else {
+        !pristine(false, row) && squash(row).contains(&squash(text))
+    }
+}
+
+/// A question's answer as the review writes it: the chosen labels in order, then the text.
+fn answer_line(question: &Question, answer: &Answer) -> String {
+    let mut parts: Vec<String> = answer.picks.iter().map(|&i| collapse(&question.options[i].label)).collect();
+    parts.extend(answer.text.clone());
+    parts.join(", ")
+}
+
+/// The answers the card holds, checked: every question answered, a single choice by one choice
+/// or a text, texts short, without control characters and not starting with a digit. `Err`
+/// names the question to show and why.
+fn form_answers(
+    questions: &[Question],
+    picks: &Picks,
+    field: &TextField,
+) -> Result<Vec<Answer>, (usize, &'static str)> {
+    questions
+        .iter()
+        .enumerate()
+        .map(|(k, question)| {
+            let raw = if k == picks.page { field.text() } else { picks.texts.get(k).map_or("", String::as_str) };
+            let text = collapse(raw);
+            let text = match text {
+                _ if text.is_empty() => None,
+                _ if text.chars().count() > MAX_TEXT || text.chars().any(char::is_control) => {
+                    return Err((k, BAD_TEXT));
+                }
+                // Digits pick choices in the CLI's menus.
+                _ if text.starts_with(|c: char| c.is_ascii_digit()) => return Err((k, DIGIT_FIRST)),
+                text => Some(text),
+            };
+            let chosen = picks.chosen.get(k).map_or(&[][..], Vec::as_slice);
+            let picks: Vec<usize> = chosen.iter().enumerate().filter(|(_, on)| **on).map(|(i, _)| i).collect();
+            match (question.multi_select, picks.len(), &text) {
+                (_, 0, None) => Err((k, UNANSWERED)),
+                (false, n, text) if n > 1 || n == 1 && text.is_some() => Err((k, BOTH)),
+                _ => Ok(Answer { picks, text }),
+            }
+        })
+        .collect()
+}
+
+/// The next key of a form, from a screen that must show what the last key should have led to:
+/// the key, what it should lead to, and what to say if it does not. `Err` (with why) while the
+/// screen does not show the expected state, or shows something the run must not go past.
+fn form_next(run: &FormRun, screen: &Screen) -> Result<(Vec<u8>, Expect, &'static str), &'static str> {
+    let at = match &run.expect {
+        Expect::Review(want) => {
+            let review = screens::review(screen).filter(|r| want.is_none() || r.highlight == *want).ok_or(run.why)?;
+            return review_next(run, &review, screen);
+        }
+        Expect::Submitted => return Err(NOT_CLOSED),
+        Expect::Opened(at) | Expect::Shows { at, .. } | Expect::Typed { at, .. } => *at,
+    };
+    let shown = form_question(screen, &run.questions, at).ok_or(run.why)?;
+    let cursor = shown.menu.highlight().ok_or(run.why)?;
+    let multi = run.questions[at].multi_select;
+    let met = match &run.expect {
+        Expect::Shows { cursor: c, marks, other, .. } => cursor == *c && shown.marks == *marks && shown.typed == *other,
+        Expect::Typed { cursor: c, marks, text, .. } => {
+            cursor == *c && shown.marks == *marks && typed_shows(multi, &shown.typed, text)
+        }
+        _ => true,
+    };
+    if !met {
+        return Err(run.why);
+    }
+    question_next(run, at, &shown, cursor, screen)
+}
+
+/// The next key on question `at`: tick or clear each box that differs from the answer, type the
+/// text, then choose the answer (or the Submit or Next row), which leads to the next question or
+/// the review.
+fn question_next(
+    run: &FormRun,
+    at: usize,
+    shown: &FormShown,
+    cursor: usize,
+    screen: &Screen,
+) -> Result<(Vec<u8>, Expect, &'static str), &'static str> {
+    let answer = &run.answers[at];
+    let multi = run.questions[at].multi_select;
+    let to = |target: usize| {
+        let expect = Expect::Shows { at, cursor: target, marks: shown.marks.clone(), other: shown.typed.clone() };
+        (moves(cursor, target, screen), expect, NOT_MOVED)
+    };
+    if multi {
+        for (j, &on) in shown.marks.iter().enumerate() {
+            if on != answer.picks.contains(&j) {
+                if cursor != j {
+                    return Ok(to(j));
+                }
+                let mut marks = shown.marks.clone();
+                marks[j] = !on;
+                return Ok((
+                    b"\r".to_vec(),
+                    Expect::Shows { at, cursor, marks, other: shown.typed.clone() },
+                    NOT_TICKED,
+                ));
+            }
+        }
+    }
+    match &answer.text {
+        Some(text) if typed_shows(multi, &shown.typed, text) => {}
+        Some(text) if pristine(multi, &shown.typed) => {
+            if cursor != shown.other {
+                return Ok(to(shown.other));
+            }
+            let expect = Expect::Typed { at, cursor, marks: shown.marks.clone(), text: text.clone() };
+            return Ok((text.as_bytes().to_vec(), expect, NOT_TYPED));
+        }
+        None if pristine(multi, &shown.typed) => {}
+        _ => return Err(OTHER_TAKEN),
+    }
+    let target = match (multi, answer.picks.first()) {
+        (true, _) => shown.submit.ok_or(CHANGED)?,
+        (false, Some(&i)) => i,
+        (false, None) => shown.other,
+    };
+    if cursor != target {
+        return Ok(to(target));
+    }
+    let (expect, why) = if at + 1 < run.questions.len() {
+        (Expect::Opened(at + 1), NO_NEXT)
+    } else {
+        (Expect::Review(None), NO_REVIEW)
+    };
+    Ok((b"\r".to_vec(), expect, why))
+}
+
+/// On the review: Enter on "Submit answers" once every row reads the question and the answer
+/// the card holds.
+fn review_next(
+    run: &FormRun,
+    review: &screens::Review,
+    screen: &Screen,
+) -> Result<(Vec<u8>, Expect, &'static str), &'static str> {
+    let same = review.answers.len() == run.questions.len()
+        && review.answers.iter().zip(run.questions.iter().zip(&run.answers)).all(|((q, a), (question, answer))| {
+            squash(q) == squash(&question.question) && squash(a) == squash(&answer_line(question, answer))
+        });
+    if !same {
+        return Err(REVIEW_DIFFERS);
+    }
+    match review.highlight {
+        Some(0) => Ok((b"\r".to_vec(), Expect::Submitted, NOT_CLOSED)),
+        Some(h) => Ok((moves(h, 0, screen), Expect::Review(Some(0)), NOT_MOVED)),
+        None => Err(CHANGED),
+    }
 }
 
 #[cfg(test)]
@@ -621,17 +960,27 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             return true;
         }
         _ if chat.question.step.is_some() => return false,
-        // Keys on their way to the terminal (a message, a mode change, Ctrl+B): the card's must not
-        // mix with them.
-        _ if chat.waiting().is_some() || chat.enter_only() => {
-            let busy = chat.waiting().filter(|_| !chat.enter_only()).unwrap_or(SENDING);
-            chat.question.error = Some(busy);
-            chat.question.busy = Some(busy);
+        _ => {}
+    }
+    // A form's picks stay in the card until Submit: nothing is written, so nothing waits for them.
+    let form = pending(&pane.model).and_then(|p| match p.kind {
+        Kind::Question(Some(questions)) if form(questions) => Some((p.item, questions.to_vec())),
+        _ => None,
+    });
+    if let Some((item, questions)) = form.clone()
+        && matches!(hit, Hit::Option(_) | Hit::Back | Hit::Next | Hit::Answer | Hit::Submit)
+    {
+        if hit != Hit::Submit {
+            return press_form(&mut pane.chat.question, hit, &questions);
+        }
+        if busy(&mut pane.chat) {
             return true;
         }
-        // A queued draft waits for the turn to end, which waits for this answer: the answer goes
-        // first, under the same checks. Only text meant for the composer has to wait for it.
-        _ => {}
+        return submit_form(tab, now, item, questions);
+    }
+    let chat = &mut pane.chat;
+    if busy(chat) {
+        return true;
     }
     if hit == Hit::Background {
         return press_background(tab, now);
@@ -641,13 +990,21 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     }
     let Some(Pending { item, kind, alone }) = pending(&pane.model) else { return false };
     let subject = match kind {
-        Kind::Question(questions) => match questions.filter(|q| answerable(q)).and_then(<[Question]>::first) {
-            Some(q) => Subject::Question(q.clone()),
-            None => {
-                pane.chat.question_failed(TERMINAL_ONLY);
-                return true;
+        Kind::Question(Some(questions)) if simple(questions) => Subject::Question(questions[0].clone()),
+        // Esc and "Chat about this" act on the form's question the screen shows.
+        Kind::Question(Some(questions)) if form.is_some() => {
+            match (0..questions.len()).find(|&at| form_question(&tab.term.screen, questions, at).is_some()) {
+                Some(at) => Subject::FormQuestion { questions: questions.to_vec(), at },
+                None => {
+                    pane.chat.question_failed(NOT_SHOWN);
+                    return true;
+                }
             }
-        },
+        }
+        Kind::Question(_) => {
+            pane.chat.question_failed(TERMINAL_ONLY);
+            return true;
+        }
         Kind::Tool(kind) => {
             let needles = needles(kind, &pane.cwd);
             match tool_prompt(kind, alone, &pane.cwd, &tab.term.screen).filter(|s| s.matched) {
@@ -665,7 +1022,8 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         return true;
     }
     let Some((menu, other, chat_row)) = read(&subject, &tab.term.screen, None) else {
-        let error = if matches!(subject, Subject::Question(_)) { NOT_SHOWN } else { NOT_SHOWN_TOOL };
+        let question = matches!(subject, Subject::Question(_) | Subject::FormQuestion { .. });
+        let error = if question { NOT_SHOWN } else { NOT_SHOWN_TOOL };
         tab.pane.as_mut().unwrap().chat.question_failed(error);
         return true;
     };
@@ -692,13 +1050,14 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
                 return true;
             }
         },
-        (Subject::Question(_), Hit::ChatAbout) | (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny)
+        (Subject::Question(_) | Subject::FormQuestion { .. }, Hit::ChatAbout)
+        | (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny)
             if !text.is_empty() && chat.queue.is_some() && !(shown.amend && hit == Hit::Deny) =>
         {
             chat.question.error = Some(QUEUED_TEXT);
             return true;
         }
-        (Subject::Question(_), Hit::ChatAbout) => (chat_row, Then::Chat(text)),
+        (Subject::Question(_) | Subject::FormQuestion { .. }, Hit::ChatAbout) => (chat_row, Then::Chat(text)),
         (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) if text.is_empty() => (shown.deny, Then::Choose),
         (Subject::Tool { .. } | Subject::Plan { .. }, Hit::Deny) => match answer_text(&chat.question.field) {
             Ok(text) if shown.amend => (shown.deny, Then::Amend(text)),
@@ -723,6 +1082,124 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     let epoch = chat.output_epoch;
     let step = Step { item: Some(item), subject, target, then, stage: Stage::Moving, due: now + STEP, epoch };
     start(tab, now, step, from)
+}
+
+/// Keys on their way to the terminal (a message, a mode change, Ctrl+B): the card's must not mix
+/// with them, and the click says so. A queued draft waits for the turn to end, which waits for
+/// this answer: the answer goes first, under the same checks.
+fn busy(chat: &mut Chat) -> bool {
+    if chat.waiting().is_none() && !chat.enter_only() {
+        return false;
+    }
+    let busy = chat.waiting().filter(|_| !chat.enter_only()).unwrap_or(SENDING);
+    chat.question.error = Some(busy);
+    chat.question.busy = Some(busy);
+    true
+}
+
+impl Card {
+    /// Shows question `to` of the form, keeping the field's text for the one it leaves.
+    fn turn(&mut self, to: usize) {
+        if let Some(text) = self.form.texts.get_mut(self.form.page) {
+            *text = self.field.text().to_owned();
+        }
+        self.form.page = to;
+        let text = self.form.texts.get(to).cloned().unwrap_or_default();
+        self.field.set_text(&text);
+        self.error = None;
+    }
+}
+
+/// A pick or a page turn in a form's card: nothing goes to the terminal.
+fn press_form(card: &mut Card, hit: Hit, questions: &[Question]) -> bool {
+    card.form.fit(questions, &card.field);
+    let page = card.form.page.min(questions.len().saturating_sub(1));
+    match hit {
+        Hit::Option(i) => {
+            let Some(row) = card.form.chosen.get_mut(page).filter(|row| i < row.len()) else { return false };
+            if questions[page].multi_select {
+                row[i] = !row[i];
+            } else {
+                let on = !row[i];
+                row.fill(false);
+                row[i] = on;
+            }
+            card.error = None;
+        }
+        Hit::Back => match page.checked_sub(1) {
+            Some(to) => card.turn(to),
+            None => return false,
+        },
+        // Enter in the field turns the page too; on the last one only Submit sends.
+        Hit::Next | Hit::Answer if page + 1 < questions.len() => card.turn(page + 1),
+        _ => return false,
+    }
+    true
+}
+
+/// Submit: the card's answers, checked, then the first key, written only while the screen shows
+/// the form's first question; `advance` sends the rest one checked key at a time.
+fn submit_form(tab: &mut Tab, now: Instant, item: ItemId, questions: Vec<Question>) -> bool {
+    let card = &mut tab.pane.as_mut().unwrap().chat.question;
+    card.form.fit(&questions, &card.field);
+    let answers = match form_answers(&questions, &card.form, &card.field) {
+        Ok(answers) => answers,
+        Err((page, error)) => {
+            if page != card.form.page {
+                card.turn(page);
+            }
+            card.error = Some(error);
+            return true;
+        }
+    };
+    if !ready(tab) {
+        tab.pane.as_mut().unwrap().chat.question_failed(BLOCKED);
+        return true;
+    }
+    let mut run = FormRun { questions, answers, expect: Expect::Opened(0), why: NOT_SHOWN };
+    let next = form_next(&run, &tab.term.screen);
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    let (key, expect, why) = match next {
+        Ok(next) => next,
+        Err(error) => {
+            chat.question_failed(error);
+            return true;
+        }
+    };
+    chat.question.error = None;
+    chat.question.focus = false;
+    let epoch = chat.output_epoch;
+    run.expect = expect;
+    run.why = why;
+    let subject = Subject::Form(run);
+    let step =
+        Step { item: Some(item), subject, target: 0, then: Then::Choose, stage: Stage::Moving, due: now + STEP, epoch };
+    match write(tab, &key) {
+        Ok(()) => tab.pane.as_mut().unwrap().chat.question.step = Some(step),
+        Err(error) => tab.pane.as_mut().unwrap().chat.question_failed(error),
+    }
+    true
+}
+
+/// What the screen says about a form in flight. `may_act`: the window allows writes and the
+/// screen changed since the last key.
+fn look_form(screen: &Screen, step: &Step, run: &FormRun, now: Instant, may_act: bool) -> Action {
+    let late = now >= step.due;
+    if step.stage == Stage::Sent {
+        return if late && screens::review(screen).is_some() {
+            Action::Fail(NOT_CLOSED)
+        } else if late {
+            Action::Closed
+        } else {
+            Action::Wait
+        };
+    }
+    match form_next(run, screen) {
+        Ok((key, expect, why)) if may_act => Action::Key(key, expect, why),
+        Ok(_) if late => Action::Fail(run.why),
+        Err(error) if late => Action::Fail(error),
+        _ => Action::Wait,
+    }
 }
 
 /// Writes the first keys of a step whose menu shows its highlight on `from`.
@@ -876,8 +1353,11 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         return changed;
     }
     let fresh = pane.chat.output_epoch != step.epoch;
-    let action =
-        if !ready(tab) { Action::Fail(BLOCKED) } else { look(&tab.term.screen, &step, now, may_write && fresh) };
+    let action = match &step.subject {
+        _ if !ready(tab) => Action::Fail(BLOCKED),
+        Subject::Form(run) => look_form(&tab.term.screen, &step, run, now, may_write && fresh),
+        _ => look(&tab.term.screen, &step, now, may_write && fresh),
+    };
     let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
     let result = match action {
         Action::Wait => return changed,
@@ -898,6 +1378,16 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             step.stage = Stage::Sent;
             step.due = now + RESULT;
         }),
+        Action::Key(key, expect, why) => write(tab, &key).map(|()| {
+            let sent = expect == Expect::Submitted;
+            if let Subject::Form(run) = &mut step.subject {
+                run.expect = expect;
+                run.why = why;
+            }
+            step.stage = if sent { Stage::Sent } else { Stage::Moving };
+            step.due = now + if sent { RESULT } else { STEP };
+            step.epoch = epoch;
+        }),
     };
     let chat = &mut tab.pane.as_mut().unwrap().chat;
     match result {
@@ -915,6 +1405,8 @@ enum Action {
     Arrive,
     Type(String),
     Enter,
+    /// A form's next key, what it should lead to, and what to say if it does not.
+    Key(Vec<u8>, Expect, &'static str),
 }
 
 /// The text in the comment field open on the subject's highlighted `target` choice; `None` when
@@ -1059,7 +1551,8 @@ fn tool_title(kind: &ItemKind) -> String {
 pub(super) fn place(chat: &mut Chat, model: &Model) {
     let wanted = match pending(model).map(|p| p.kind) {
         Some(Kind::Question(questions)) => {
-            let options = questions.and_then(<[Question]>::first).map_or(0, |q| q.options.len());
+            // A form keeps one height for all its questions.
+            let options = questions.into_iter().flatten().map(|q| q.options.len()).max().unwrap_or(0);
             Some(HEADER + QUESTION + options as f32 * (OPTION + 4.0))
         }
         Some(Kind::Tool(kind)) => chat.question.shown.as_ref().map(|s| {
@@ -1200,18 +1693,26 @@ impl Draw<'_> {
     ) {
         let pal = self.pal;
         let mut y = inner.y;
-        let Some((questions, question)) = questions.and_then(|q| Some((q, q.first()?))) else {
+        let Some(questions) = questions.filter(|q| !q.is_empty()) else {
             p.text(Face::Semibold, 12.5, inner.x, y + HEADER / 2.0, "Claude is asking a question", pal.text, inner.w);
             self.footer(p, chat, inner, false, hits);
             return;
         };
         let can_answer = chat.question.answerable.is_some() || chat.question.failed && answerable(questions);
+        let is_form = form(questions);
+        if is_form {
+            chat.question.form.fit(questions, &chat.question.field);
+        }
+        let page = if is_form { chat.question.form.page.min(questions.len() - 1) } else { 0 };
+        let question = &questions[page];
+        let chosen =
+            if is_form { chat.question.form.chosen.get(page).cloned().unwrap_or_default() } else { Vec::new() };
+        let asks = if question.header.is_empty() { "Claude asks" } else { question.header.as_str() };
         let more = questions.len().saturating_sub(1);
-        let header = match (question.header.is_empty(), more) {
-            (true, 0) => "Claude asks".to_owned(),
-            (false, 0) => question.header.clone(),
-            (true, n) => format!("Claude asks · {n} more in the terminal"),
-            (false, n) => format!("{} · {n} more in the terminal", question.header),
+        let header = match more {
+            _ if is_form && more > 0 => format!("{asks} · {} of {}", page + 1, questions.len()),
+            0 => asks.to_owned(),
+            n => format!("{asks} · {n} more in the terminal"),
         };
         p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, &header, pal.muted, inner.w);
         if question.multi_select {
@@ -1226,20 +1727,87 @@ impl Draw<'_> {
             let row = Rect::new(inner.x, y, inner.w, OPTION);
             let target = Target::Chat(Control::Question(Hit::Option(i)));
             let hot = can_answer && self.hover == Some(target);
-            p.rbox(row, 6.0, if hot { pal.hover } else { pal.bar });
+            // A form's picks are the card's own, shown as such; the terminal's highlight never is.
+            let on = chosen.get(i).copied().unwrap_or(false);
+            let fill = if hot {
+                pal.hover
+            } else if on {
+                pal.selection
+            } else {
+                pal.bar
+            };
+            if on {
+                p.frame(row, 6.0, fill, pal.accent);
+                p.text_right(Face::Semibold, 12.0, row.right() - 10.0, row.cy(), "✓", pal.accent);
+            } else {
+                p.rbox(row, 6.0, fill);
+            }
             let label = format!("{}. {}", i + 1, option.label);
             let cy = if option.description.is_empty() { row.cy() } else { row.y + 12.0 };
-            p.text(Face::Semibold, 12.0, row.x + 10.0, cy, &label, pal.text, row.w - 20.0);
+            p.text(Face::Semibold, 12.0, row.x + 10.0, cy, &label, pal.text, row.w - 36.0);
             if !option.description.is_empty() {
                 let description = collapse(&option.description);
-                p.text(Face::Ui, 11.0, row.x + 10.0, row.y + 27.0, &description, pal.muted, row.w - 20.0);
+                p.text(Face::Ui, 11.0, row.x + 10.0, row.y + 27.0, &description, pal.muted, row.w - 36.0);
             }
             if can_answer {
                 hits.push((row, target));
             }
             y += OPTION + 4.0;
         }
-        self.footer(p, chat, Rect::new(inner.x, y, inner.w, inner.bottom() - y), can_answer, hits);
+        let area = Rect::new(inner.x, y, inner.w, inner.bottom() - y);
+        if is_form {
+            self.form_footer(p, chat, area, can_answer, (page, questions.len()), hits);
+        } else {
+            self.footer(p, chat, area, can_answer, hits);
+        }
+    }
+
+    /// A form's field (the text for the question shown), Back, Next or Submit, and "Chat about
+    /// this".
+    fn form_footer(
+        &self,
+        p: &mut Painter,
+        chat: &mut Chat,
+        area: Rect,
+        can_answer: bool,
+        (page, pages): (usize, usize),
+        hits: &mut Vec<(Rect, Target)>,
+    ) {
+        let pal = self.pal;
+        let button = |p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit| {
+            let target = Target::Chat(Control::Question(hit));
+            super::paint::button(p, pal, r, label, self.hover == Some(target), false);
+            hits.push((r, target));
+        };
+        let row = Rect::new(area.x, area.y, area.w, FIELD - 4.0);
+        if can_answer {
+            let buttons = 64.0 + 4.0 + 84.0 + 4.0 + 120.0;
+            let field = Rect::new(row.x, row.y, (row.w - buttons - 8.0).max(0.0), row.h);
+            let focus = chat.question.focus && self.focused;
+            p.frame(field, 5.0, pal.field, if focus { pal.accent } else { pal.line });
+            let colors =
+                FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
+            chat.question.field.draw(p, field.inset(6.0), Face::Ui, 12.0, &colors, "Type something…", focus, focus);
+            hits.push((field, Target::Chat(Control::Question(Hit::Field))));
+            let mut x = field.right() + 8.0;
+            if page > 0 {
+                button(p, hits, Rect::new(x, row.y, 64.0, row.h), "Back", Hit::Back);
+            }
+            x += 68.0;
+            if page + 1 < pages {
+                button(p, hits, Rect::new(x, row.y, 84.0, row.h), "Next", Hit::Next);
+            } else {
+                button(p, hits, Rect::new(x, row.y, 84.0, row.h), "Submit", Hit::Submit);
+            }
+            button(p, hits, Rect::new(x + 88.0, row.y, 120.0, row.h), "Chat about this", Hit::ChatAbout);
+        } else {
+            p.text(Face::Ui, 11.5, row.x, row.cy(), TERMINAL_ONLY, pal.muted, (row.w - 130.0).max(0.0));
+            button(p, hits, Rect::new(row.right() - 120.0, row.y, 120.0, row.h), "Open terminal", Hit::Open);
+        }
+        let status = chat.question.error.or_else(|| chat.question_notice());
+        if let Some(status) = status {
+            p.text(Face::Ui, 11.0, area.x, row.bottom() + STATUS / 2.0 + 2.0, status, pal.muted, area.w);
+        }
     }
 
     fn permission(

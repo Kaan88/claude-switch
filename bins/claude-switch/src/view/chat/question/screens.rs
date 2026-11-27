@@ -110,7 +110,7 @@ fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
     (menu_footer(&rows[prev]) && rows[prev].ends_with('·')).then_some(prev)
 }
 
-fn numbered(text: &str) -> Option<(usize, &str)> {
+pub(super) fn numbered(text: &str) -> Option<(usize, &str)> {
     let (n, rest) = text.split_once(". ")?;
     (!n.is_empty() && n.len() <= 2 && n.chars().all(|c| c.is_ascii_digit())).then_some(())?;
     Some((n.parse().ok()?, rest))
@@ -332,6 +332,93 @@ pub(super) fn plan(screen: &Screen) -> Option<Menu> {
 /// The plan approval's choice that keeps planning.
 pub(super) fn plan_keep(menu: &Menu) -> Option<usize> {
     menu.entries.iter().position(|e| PLAN_KEEP.iter().any(|keep| e.text.contains(keep)))
+}
+
+/// The row a multi-select question draws, unnumbered, under "Type something": "Next" while another
+/// question follows, "Submit" on the last (Claude Code 2.1.332).
+pub(super) const SUBMIT_ROWS: [&str; 2] = ["Submit", "Next"];
+/// The free-text row of a multi-select question while it holds no text.
+pub(super) const OTHER_BOX: &str = "[ ] Type something";
+/// The heading of the step after a form's last question.
+pub(super) const REVIEW: &str = "Review your answers";
+const REVIEW_ENTRIES: [&str; 2] = ["Submit answers", "Cancel"];
+
+/// A multi-select entry's box and the text after it.
+pub(super) fn checkbox(text: &str) -> Option<(bool, &str)> {
+    text.strip_prefix("[✔] ").map(|rest| (true, rest)).or_else(|| text.strip_prefix("[ ] ").map(|rest| (false, rest)))
+}
+
+/// The row of question tabs over a form: "←  ☐ Size  ☐ Speed  ✔ Submit  →".
+pub(super) fn tab_bar(text: &str) -> bool {
+    text.starts_with('←') && text.ends_with('→')
+}
+
+/// A multi-select question's Submit or Next row, drawn without a number between entry `other`
+/// ("Type something") and the next entry: the last non-empty row there that is not a rule. Rows
+/// between `other` and it are the typed text wrapping on.
+pub(super) fn submit_row(screen: &Screen, menu: &Menu, other: usize) -> Option<Entry> {
+    let start = menu.entries.get(other)?.row + 1;
+    let end = menu.entries.get(other + 1).map_or(menu.footer, |e| e.row);
+    let row = (start..end).rev().find(|&row| {
+        let text = &menu.lines[row];
+        !text.is_empty() && !rule(text)
+    })?;
+    let (highlighted, text) = clean(&screen.row_text(row));
+    SUBMIT_ROWS.contains(&text.as_str()).then_some(Entry { row, highlighted, text })
+}
+
+/// Rows from `start` up to `end` that are neither empty nor rules, joined.
+pub(super) fn rows_between(menu: &Menu, start: usize, end: usize) -> String {
+    let rows = menu.lines.get(start..end).unwrap_or_default();
+    collapse(&rows.iter().filter(|t| !t.is_empty() && !rule(t)).cloned().collect::<Vec<_>>().join(" "))
+}
+
+/// The review a form shows after its last question, as the CLI draws it with no footer: the tab
+/// row, "Review your answers", a "● question" and "→ answer" pair per question (each may wrap
+/// onto the rows under it), then "1. Submit answers" and "2. Cancel" as the last rows drawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Review {
+    pub answers: Vec<(String, String)>,
+    /// 0 on "Submit answers", 1 on "Cancel"; `None` unless exactly one of them is highlighted.
+    pub highlight: Option<usize>,
+}
+
+pub(super) fn review(screen: &Screen) -> Option<Review> {
+    let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
+    let last = rows.iter().rposition(|(_, text)| !text.is_empty())?;
+    let first = last.checked_sub(1)?;
+    let entry = |at: usize, n: usize| numbered(&rows[at].1) == Some((n + 1, REVIEW_ENTRIES[n]));
+    (entry(first, 0) && entry(last, 1)).then_some(())?;
+    let anchor = rows[..first].iter().rposition(|(_, text)| text == REVIEW)?;
+    let above = rows[..anchor].iter().rev().find(|(_, text)| !text.is_empty())?;
+    (tab_bar(&above.1) && !rows[anchor].0).then_some(())?;
+    let mut answers: Vec<(String, String)> = Vec::new();
+    for (highlighted, text) in &rows[anchor + 1..first] {
+        if *highlighted {
+            return None;
+        }
+        if text.is_empty() {
+            continue;
+        }
+        if let Some(question) = text.strip_prefix("● ") {
+            answers.push((question.to_owned(), String::new()));
+            continue;
+        }
+        let pair = answers.last_mut()?;
+        match text.strip_prefix("→ ") {
+            Some(answer) if pair.1.is_empty() => pair.1 = answer.to_owned(),
+            Some(_) => return None,
+            None if pair.1.is_empty() => pair.0 = format!("{} {text}", pair.0),
+            None => pair.1 = format!("{} {text}", pair.1),
+        }
+    }
+    (!answers.is_empty() && answers.iter().all(|(_, answer)| !answer.is_empty())).then_some(())?;
+    let highlight = match (rows[first].0, rows[last].0) {
+        (true, false) => Some(0),
+        (false, true) => Some(1),
+        _ => None,
+    };
+    Some(Review { answers, highlight })
 }
 
 #[cfg(test)]

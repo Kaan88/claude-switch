@@ -23,6 +23,16 @@ pub(in crate::view::chat) const ASK_SINGLE_OTHER: &str = include_str!("../fixtur
 pub(in crate::view::chat) const ASK_MULTI: &str = include_str!("../fixtures/ask_multi.txt");
 pub(in crate::view::chat) const ASK_TWO: &str = include_str!("../fixtures/ask_two.txt");
 pub(in crate::view::chat) const ASK_REVIEW: &str = include_str!("../fixtures/ask_review.txt");
+pub(in crate::view::chat) const FORM_MULTI: &str = include_str!("../fixtures/form_multi.txt");
+pub(in crate::view::chat) const FORM_MULTI_APPLE: &str = include_str!("../fixtures/form_multi_apple.txt");
+pub(in crate::view::chat) const FORM_MULTI_PLUM: &str = include_str!("../fixtures/form_multi_plum.txt");
+pub(in crate::view::chat) const FORM_MULTI_TYPE: &str = include_str!("../fixtures/form_multi_type.txt");
+pub(in crate::view::chat) const FORM_MULTI_TYPED: &str = include_str!("../fixtures/form_multi_typed.txt");
+pub(in crate::view::chat) const FORM_MULTI_NEXT: &str = include_str!("../fixtures/form_multi_next.txt");
+pub(in crate::view::chat) const FORM_SECOND: &str = include_str!("../fixtures/form_second.txt");
+pub(in crate::view::chat) const FORM_REVIEW: &str = include_str!("../fixtures/form_review.txt");
+pub(in crate::view::chat) const MULTI_SUBMIT: &str = include_str!("../fixtures/multi_submit.txt");
+pub(in crate::view::chat) const MULTI_REVIEW: &str = include_str!("../fixtures/multi_review.txt");
 pub(in crate::view::chat) const PERM_BASH: &str = include_str!("../fixtures/perm_bash.txt");
 pub(in crate::view::chat) const PERM_WRITE: &str = include_str!("../fixtures/perm_write.txt");
 pub(in crate::view::chat) const PERM_FETCH_CLIPPED: &str = include_str!("../fixtures/perm_fetch_clipped.txt");
@@ -66,8 +76,47 @@ fn multi_select_and_multi_question_forms_read_as_menus() {
     let two = menu(&recorded(ASK_TWO)).expect("first of two questions");
     assert_eq!(two.texts(), ["Small", "Large", "Type something.", "Chat about this"]);
     assert!(two.footer_text().contains("tab/arrow keys to navigate"));
-    // The review step has no footer; the cards do not read it yet.
+    // The review step has no footer: it is no menu, and `review` reads it.
     assert!(menu(&recorded(ASK_REVIEW)).is_none());
+}
+
+#[test]
+fn the_review_step_reads_its_questions_answers_and_highlight() {
+    let pairs = |r: &Review| r.answers.iter().map(|(q, a)| format!("{q} = {a}")).collect::<Vec<_>>();
+    let two = review(&recorded(ASK_REVIEW)).expect("the review of two questions");
+    assert_eq!(pairs(&two), ["Which size? = Small", "Which speed? = Slow"]);
+    assert_eq!(two.highlight, Some(0));
+    let form = review(&recorded(FORM_REVIEW)).expect("the review with a multi-select");
+    assert_eq!(pairs(&form), ["Which fruits do you like? = Apple, Plum, Kiwi", "Which size? = Large"]);
+    let multi = review(&recorded(MULTI_REVIEW)).expect("one multi-select question is reviewed too");
+    assert_eq!(pairs(&multi), ["Which fruits do you like? = Pear"]);
+    for fixture in [ASK_REVIEW, FORM_REVIEW, MULTI_REVIEW] {
+        let screen = recorded(fixture);
+        assert!(!permission_like(&screen) && panel(&screen).is_none());
+        assert!(sends_blocked(&screen));
+    }
+    for fixture in [ASK_SINGLE, ASK_TWO, ASK_MULTI, FORM_MULTI, FORM_SECOND, PERM_BASH, PLAN, IDLE_NBSP] {
+        assert!(review(&recorded(fixture)).is_none());
+    }
+}
+
+#[test]
+fn a_multi_select_shows_its_submit_or_next_row_between_type_something_and_chat_about_this() {
+    let row = |fixture: &str| {
+        let screen = recorded(fixture);
+        let menu = menu(&screen).expect("a question's menu");
+        submit_row(&screen, &menu, 3).map(|e| (e.text, e.highlighted))
+    };
+    assert_eq!(row(ASK_MULTI), Some(("Submit".to_owned(), false)), "the only question");
+    assert_eq!(row(MULTI_SUBMIT), Some(("Submit".to_owned(), true)));
+    assert_eq!(row(FORM_MULTI), Some(("Next".to_owned(), false)), "another question follows");
+    assert_eq!(row(FORM_MULTI_TYPED), Some(("Next".to_owned(), false)));
+    assert_eq!(row(FORM_MULTI_NEXT), Some(("Next".to_owned(), true)));
+    let next = menu(&recorded(FORM_MULTI_NEXT)).unwrap();
+    assert_eq!(next.highlight(), None, "no numbered entry is highlighted then");
+    assert_eq!(next.texts()[3], "[✔] Kiwi", "typed text ticks its box");
+    let single = recorded(ASK_TWO);
+    assert_eq!(submit_row(&single, &menu(&single).unwrap(), 2), None, "a single choice has none");
 }
 
 #[test]

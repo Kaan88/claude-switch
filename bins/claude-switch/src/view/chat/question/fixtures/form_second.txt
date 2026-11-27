@@ -1,0 +1,23 @@
+cursor 24 99
+
+
+
+
+
+❯ Use the AskUserQuestion tool now (no other tools) with two questions at once: first header
+  "Fruits", question "Which fruits do you like?", options Apple, Pear, Plum, multiSelect true;
+  second header "Size", question "Which size?", options Small, Large, multiSelect false.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruits  ☐ Size  ✔ Submit  →
+
+Which size?
+
+❯ 1. Small
+     Small
+  2. Large
+     Large
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
