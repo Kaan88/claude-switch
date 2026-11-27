@@ -13,6 +13,7 @@
 //! as picked.
 mod background;
 mod blocked;
+mod cards;
 pub(in crate::view) mod denials;
 mod prompt;
 pub(in crate::view) mod rewind;
@@ -380,14 +381,11 @@ pub(super) struct MenuShown {
     question: bool,
     /// A question's "Type something" row, and whether it has a box (a multi-select question).
     other: Option<(usize, bool)>,
+    /// A question's own header ("Colour"), for the card's chip; empty when the screen has none.
+    header: String,
 }
 
 impl MenuShown {
-    /// How many choices have a description to show under them.
-    fn noted(&self) -> usize {
-        self.notes.iter().filter(|note| !note.is_empty()).count()
-    }
-
     /// It only shows information: no choices to pick.
     pub(super) fn panel(&self) -> bool {
         self.choices.is_empty()
@@ -401,7 +399,8 @@ fn menu_shown(screen: &Screen) -> Option<MenuShown> {
     // Only the row as the CLI first draws it: once it holds text it is an answer, not the field.
     let other = choices.iter().position(|c| pristine(false, c) || pristine(true, c)).filter(|_| question);
     let other = other.map(|at| (at, screens::checkbox(&choices[at]).is_some()));
-    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc, notes, question, other })
+    let (title, rows, esc, header) = (panel.title, panel.rows, panel.esc, panel.header);
+    Some(MenuShown { title, choices, rows, esc, notes, question, other, header })
 }
 
 /// A permission prompt as last read from the screen, for the card.
@@ -461,6 +460,13 @@ pub(super) struct Card {
     busy: Option<&'static str>,
     /// What the user picked in a form's card.
     form: Picks,
+    /// The card stands in the composer's place: it waits for an answer, and nothing is sent
+    /// past it. (The denied permissions and the background agents sit over the composer.)
+    docked: bool,
+    /// How much of the card's detail fits the window.
+    density: cards::Density,
+    /// The colours of added and removed lines, for an edit a prompt asks about.
+    pub(super) colours: Option<crate::view::look::Diff>,
 }
 
 /// A form's answers as picked in the card, per question. Nothing reaches the terminal before
@@ -524,6 +530,12 @@ impl Card {
     /// The card has room in the conversation.
     pub(super) fn visible(&self) -> bool {
         self.rect.h > 0.0
+    }
+
+    /// The card stands where the composer is: the composer is not drawn and takes no input, and
+    /// its draft is kept for when the card is gone.
+    pub(in crate::view::chat) fn docked(&self) -> bool {
+        self.docked && self.visible()
     }
 
     pub(super) fn deadline(&self) -> Option<Instant> {
@@ -1779,8 +1791,6 @@ pub(super) fn text(chat: &mut Chat, text: &str) -> bool {
 
 const PAD: f32 = 12.0;
 const HEADER: f32 = 18.0;
-const QUESTION: f32 = 38.0;
-const OPTION: f32 = 38.0;
 const CHOICE: f32 = 28.0;
 const LINE: f32 = 16.0;
 const FIELD: f32 = 30.0;
@@ -1829,59 +1839,71 @@ fn tool_title(kind: &ItemKind) -> String {
     }
 }
 
-/// Takes the card's room from the bottom of the conversation while a question or a permission
-/// prompt waits.
+/// The share of Chat's height a card may take: one that shows a prompt whole (read from the
+/// screen alone) may take more.
+const CARD_SHARE: f32 = 0.72;
+const PROMPT_SHARE: f32 = 0.86;
+
+/// Gives the card its place. A card that waits for an answer (a question, a permission prompt,
+/// a CLI menu, the list of blocked calls, a rewind) stands where the composer is, as wide as the
+/// composer's box, and the conversation ends over it. The background agents and the denied
+/// permissions do not stop a message: they sit over the composer.
 pub(super) fn place(chat: &mut Chat, model: &Model) {
-    // A permission prompt read from the screen is shown whole: it may take more of the
-    // conversation's room than the other cards, and wraps its rows at the card's width.
-    let screen_prompt = chat.question.prompt.is_some() && !rewind_shown(&chat.question, model);
-    // On the column's edges, as the composer's box is.
-    let card_w = chat.layout.box_frame.w;
-    let wanted = match pending(model).map(|p| p.kind) {
-        _ if rewind_shown(&chat.question, model) => chat.question.rewind.as_ref().map(rewind::height),
-        _ if screen_prompt => Some(prompt::height(&mut chat.question, card_w - 2.0 * PAD)),
-        Some(Kind::Question(questions)) => {
-            // A form keeps one height for all its questions.
-            let options = questions.into_iter().flatten().map(|q| q.options.len()).max().unwrap_or(0);
-            Some(HEADER + QUESTION + options as f32 * (OPTION + 4.0))
-        }
-        Some(Kind::Tool(kind)) => chat.question.shown.as_ref().map(|s| {
-            let lines = detail(kind).len() + s.body.len().min(BODY_LINES);
-            HEADER + lines as f32 * LINE + 8.0 + LINE + 6.0 + s.choices.len() as f32 * (CHOICE + 4.0)
-        }),
-        None => None,
+    let frame = chat.layout.box_frame;
+    let inner_w = (frame.w - 2.0 * cards::INSET).max(1.0);
+    if let Some(Kind::Question(Some(questions))) = pending(model).map(|p| p.kind)
+        && form(questions)
+    {
+        chat.question.form.fit(questions, &chat.question.field);
+    }
+    let rewind = rewind_shown(&chat.question, model);
+    // A permission prompt read from the screen is shown whole: it may take more of the window
+    // than the other cards, and wraps its rows at the card's width.
+    let screen_prompt = chat.question.prompt.is_some() && !rewind;
+    let old = |inside: f32| 2.0 * PAD + inside + FIELD + STATUS;
+    let parts = cards::parts(chat, model, inner_w);
+    let (wanted, docked) = if rewind {
+        (chat.question.rewind.as_ref().map(|r| old(rewind::height(r))), true)
+    } else if screen_prompt {
+        (Some(prompt::height(&mut chat.question, prompt::text_width(frame.w))), true)
+    } else if let Some(inside) = blocked::height(&chat.question) {
+        (Some(old(inside)), true)
+    } else if let Some(parts) = &parts {
+        (Some(cards::height(parts, cards::Density::Roomy)), true)
+    } else if let Some(inside) = background::height(&chat.question) {
+        (Some(old(inside)), false)
+    } else {
+        (None, false)
     };
-    let wanted = wanted.or_else(|| blocked::height(&chat.question));
-    let wanted = wanted.or_else(|| background::height(&chat.question)).or_else(|| {
-        chat.question.menu.as_ref().map(|m| {
-            // A panel has no title row: its rows say what it is.
-            if m.choices.is_empty() {
-                let title = if m.title.is_empty() { 0.0 } else { LINE };
-                HEADER + 6.0 + title + m.rows.len() as f32 * LINE
-            } else {
-                HEADER + LINE + 6.0 + m.choices.len() as f32 * (CHOICE + 4.0) + m.noted() as f32 * LINE
-            }
-        })
-    });
     // With no other card, the current turn's denied permissions: a strip with their count, or
     // their list. Its height is its own.
     chat.question.denials_only = wanted.is_none();
-    let wanted = match wanted {
-        Some(wanted) => 2.0 * PAD + wanted + FIELD + STATUS,
-        None => match denials::height(&chat.question) {
-            Some(whole) => whole,
-            None => {
-                chat.question.rect = Rect::default();
-                return;
-            }
-        },
+    let Some(wanted) = wanted.or_else(|| denials::height(&chat.question)) else {
+        chat.question.rect = Rect::default();
+        chat.question.docked = false;
+        return;
     };
+    chat.question.docked = docked;
     let conversation = &mut chat.layout.conversation;
-    let share = if screen_prompt { 0.85 } else { 0.6 };
-    let h = wanted.min((conversation.h * share).floor()).max(0.0);
-    let w = card_w;
-    chat.question.rect = Rect::new(chat.layout.box_frame.x, conversation.bottom() - h - 8.0, w, h);
-    conversation.h = (conversation.h - h - 16.0).max(0.0);
+    if docked {
+        // From the top of the conversation to the foot of the composer's box.
+        let whole = (frame.bottom() - conversation.y).max(0.0);
+        let room = ((whole - 40.0) * if screen_prompt { PROMPT_SHARE } else { CARD_SHARE }).floor().max(0.0);
+        let mut h = wanted.min(room);
+        if let Some(parts) = &parts {
+            chat.question.density = cards::density_for(parts, room);
+            h = cards::height(parts, chat.question.density).min(room);
+        }
+        chat.question.rect = Rect::new(frame.x, frame.bottom() - h, frame.w, h);
+        conversation.h = (chat.question.rect.y - 10.0 - conversation.y).max(0.0);
+        // Nothing of the composer is shown: its pickers close.
+        chat.commands.open = false;
+        chat.popups.close();
+    } else {
+        let h = wanted.min((conversation.h * 0.6).floor()).max(0.0);
+        chat.question.rect = Rect::new(frame.x, conversation.bottom() - h - 8.0, frame.w, h);
+        conversation.h = (conversation.h - h - 16.0).max(0.0);
+    }
     prompt::fit(&mut chat.question);
 }
 
@@ -1901,377 +1923,37 @@ impl Draw<'_> {
         hits.push((r, target));
     }
 
-    /// The card under the conversation; called by the Chat painter.
+    /// The card: in the composer's place while it waits for an answer, else over the composer.
+    /// Called by the Chat painter.
     pub(super) fn card(&self, p: &mut Painter, chat: &mut Chat, model: &Model, hits: &mut Vec<(Rect, Target)>) {
         let r = chat.question.rect;
         if r.h <= 0.0 {
             return;
         }
         let pal = self.pal;
-        let clip = p.clip(r);
-        p.frame(r, 8.0, pal.popup, pal.popup_line);
-        let inner = r.inset(PAD);
-        match pending(model).map(|p| p.kind) {
-            _ if rewind_shown(&chat.question, model) => self.rewind(p, chat, inner, hits),
-            _ if chat.question.prompt.is_some() => self.prompt(p, chat, inner, hits),
-            _ if chat.question.blocked.is_some() => self.blocked(p, chat, inner, hits),
-            Some(Kind::Question(questions)) => self.question(p, chat, inner, questions, hits),
-            Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
-            _ if chat.question.menu.is_some() => self.menu(p, chat, inner, hits),
-            _ if background::height(&chat.question).is_some() => self.background(p, chat, inner, hits),
-            _ => self.denials(p, chat, r, hits),
+        if chat.question.docked {
+            // The composer's own box: same width, radius, surface and shadow.
+            crate::view::look::raised_box(p, pal, r, false);
+        } else {
+            p.frame(r, 8.0, pal.popup, pal.popup_line);
         }
-        // Esc leaves a menu or declines what the card shows, under the same checks as a choice.
-        let escape = match pending(model).map(|p| p.kind) {
-            _ if chat.question.step.is_some() || rewind_shown(&chat.question, model) => false,
-            // Esc declines without reading on: the prompt's footer always offers it.
-            _ if chat.question.prompt.is_some() => chat.question.prompt_answers(),
-            // The list of blocked calls names what Esc will do on its own button.
-            _ if chat.question.blocked.is_some() => false,
-            Some(Kind::Question(_)) => chat.question.answerable.is_some(),
-            Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
-            // A panel offers Close in its own footer instead.
-            _ => chat.question.menu.as_ref().is_some_and(|m| m.esc && !m.choices.is_empty()),
-        };
-        if escape {
-            let r = Rect::new(inner.right() - 64.0, inner.y - 2.0, 64.0, HEADER + 2.0);
-            let target = Target::Chat(Control::Question(Hit::Escape));
-            super::paint::button(p, pal, r, "Esc", self.hover == Some(target), false);
-            hits.push((r, target));
+        let clip = p.clip(r);
+        let inner = r.inset(PAD);
+        if rewind_shown(&chat.question, model) {
+            self.rewind(p, chat, inner, hits);
+        } else if chat.question.prompt.is_some() {
+            self.prompt(p, chat, r, hits);
+        } else if chat.question.blocked.is_some() {
+            self.blocked(p, chat, inner, hits);
+        } else if let Some(mut parts) = cards::parts(chat, model, (r.w - 2.0 * cards::INSET).max(1.0)) {
+            cards::fit_panel(&mut parts, r.h, chat.question.density);
+            self.parts(p, chat, r, &parts, hits);
+        } else if background::height(&chat.question).is_some() {
+            self.background(p, chat, inner, hits);
+        } else {
+            self.denials(p, chat, r, hits);
         }
         p.restore(clip);
-    }
-
-    /// A CLI menu, picker or dialog: its choices as buttons, or its rows read-only.
-    fn menu(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, hits: &mut Vec<(Rect, Target)>) {
-        let pal = self.pal;
-        let Some(menu) = chat.question.menu.clone() else { return };
-        if menu.choices.is_empty() {
-            return self.panel(p, chat, inner, &menu, hits);
-        }
-        let mut y = inner.y;
-        let kind = if menu.question { "Claude asks" } else { "Claude Code menu" };
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, kind, pal.muted, inner.w);
-        y += HEADER;
-        let title = if menu.title.is_empty() { "Choose in the terminal's menu" } else { menu.title.as_str() };
-        copied_row(p, Face::Semibold, 12.5, inner.x, y + LINE / 2.0, title, pal.text, inner.w);
-        y += LINE + 6.0;
-        for (i, choice) in menu.choices.iter().enumerate() {
-            let note = menu.notes.get(i).filter(|note| !note.is_empty());
-            let row = Rect::new(inner.x, y, inner.w, CHOICE + if note.is_some() { LINE } else { 0.0 });
-            let target = Target::Chat(Control::Question(Hit::Option(i)));
-            p.rbox(row, 6.0, if self.hover == Some(target) { pal.hover } else { pal.bar });
-            p.text(
-                Face::Semibold,
-                12.0,
-                row.x + 10.0,
-                row.y + CHOICE / 2.0,
-                // A question's rows are not all numbered on the screen (Next, Submit).
-                &if menu.question { choice.clone() } else { format!("{}. {choice}", i + 1) },
-                pal.text,
-                row.w - 20.0,
-            );
-            if let Some(note) = note {
-                p.text(Face::Ui, 11.0, row.x + 10.0, row.y + CHOICE + LINE / 2.0 - 4.0, note, pal.muted, row.w - 20.0);
-            }
-            hits.push((row, target));
-            y += row.h + 4.0;
-        }
-        let mut row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
-        let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or("");
-        if menu.other.is_some() {
-            // The user's own answer: typed on the question's "Type something" row.
-            let field = Rect::new(row.x, row.y, (row.w - 104.0 - 8.0 - 120.0 - 8.0).max(0.0), row.h);
-            let focus = chat.question.focus && self.focused;
-            p.frame(field, 5.0, pal.field, if focus { pal.accent } else { pal.line });
-            let colors =
-                FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
-            chat.question.field.draw(
-                p,
-                field.inset(6.0),
-                Face::Ui,
-                12.0,
-                &colors,
-                "Type your own answer…",
-                focus,
-                focus,
-            );
-            hits.push((field, Target::Chat(Control::Question(Hit::Field))));
-            let answer = Rect::new(field.right() + 8.0, row.y, 104.0, row.h);
-            let target = Target::Chat(Control::Question(Hit::Answer));
-            let label = if menu.other.is_some_and(|(_, boxed)| boxed) { "Add answer" } else { "Answer" };
-            super::paint::button(p, pal, answer, label, self.hover == Some(target), false);
-            hits.push((answer, target));
-        } else {
-            p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
-        }
-        let open = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
-        let target = Target::Chat(Control::Question(Hit::Open));
-        super::paint::button(p, pal, open, "Open terminal", self.hover == Some(target), false);
-        hits.push((open, target));
-        if menu.other.is_some() {
-            row.y += FIELD;
-            p.text(Face::Ui, 11.5, row.x, row.y + STATUS / 2.0 - 4.0, status, pal.muted, row.w);
-        }
-    }
-
-    /// A CLI panel that only shows information (/usage, /status): its rows, usage bars drawn as
-    /// bars, and Close (Esc) when its footer offers Esc, else Open terminal.
-    fn panel(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, menu: &MenuShown, hits: &mut Vec<(Rect, Target)>) {
-        let pal = self.pal;
-        let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code panel", pal.muted, inner.w);
-        y += HEADER + 6.0;
-        if !menu.title.is_empty() {
-            p.text(Face::Semibold, 12.5, inner.x, y + LINE / 2.0, &menu.title, pal.text, inner.w);
-            y += LINE;
-        }
-        // From the panel's top, as many rows as the card has room for; the rest is named.
-        let room = ((inner.bottom() - y - FIELD - STATUS) / LINE).floor().max(1.0) as usize;
-        let (shown, more) = if menu.rows.len() > room { (room - 1, menu.rows.len() - room + 1) } else { (room, 0) };
-        for row in menu.rows.iter().take(shown) {
-            let cy = y + LINE / 2.0;
-            match screens::usage_bar(row) {
-                Some((percent, label)) => {
-                    let label_w = p.measure(Face::Ui, 11.0, label);
-                    let track_w = (inner.w - label_w - 10.0).clamp(0.0, BAR_W);
-                    let track = Rect::new(inner.x, cy - 3.0, track_w, 6.0);
-                    p.rbox(track, 3.0, pal.bar);
-                    let filled = (track_w * f32::from(percent) / 100.0).round();
-                    if filled > 0.0 {
-                        p.rbox(Rect::new(track.x, track.y, filled.max(6.0), track.h), 3.0, pal.accent);
-                    }
-                    p.text(Face::Ui, 11.0, track.right() + 10.0, cy, label, pal.text, label_w + 2.0);
-                }
-                None => copied_row(p, Face::Mono, 11.0, inner.x, cy, row, pal.muted, inner.w),
-            }
-            y += LINE;
-        }
-        if more > 0 {
-            let note = format!("{more} more rows in the terminal");
-            p.text(Face::Ui, 11.0, inner.x, y + LINE / 2.0, &note, pal.muted, inner.w);
-            y += LINE;
-        }
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
-        let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or("");
-        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
-        let (label, hit) = if menu.esc { ("Close (Esc)", Hit::Escape) } else { ("Open terminal", Hit::Open) };
-        let r = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
-        let target = Target::Chat(Control::Question(hit));
-        super::paint::button(p, pal, r, label, self.hover == Some(target), false);
-        hits.push((r, target));
-    }
-
-    fn question(
-        &self,
-        p: &mut Painter,
-        chat: &mut Chat,
-        inner: Rect,
-        questions: Option<&[Question]>,
-        hits: &mut Vec<(Rect, Target)>,
-    ) {
-        let pal = self.pal;
-        let mut y = inner.y;
-        let Some(questions) = questions.filter(|q| !q.is_empty()) else {
-            p.text(Face::Semibold, 12.5, inner.x, y + HEADER / 2.0, "Claude is asking a question", pal.text, inner.w);
-            self.footer(p, chat, inner, false, hits);
-            return;
-        };
-        let can_answer = chat.question.answerable.is_some() || chat.question.failed && answerable(questions);
-        let is_form = form(questions);
-        if is_form {
-            chat.question.form.fit(questions, &chat.question.field);
-        }
-        let page = if is_form { chat.question.form.page.min(questions.len() - 1) } else { 0 };
-        let question = &questions[page];
-        let chosen =
-            if is_form { chat.question.form.chosen.get(page).cloned().unwrap_or_default() } else { Vec::new() };
-        let asks = if question.header.is_empty() { "Claude asks" } else { question.header.as_str() };
-        let more = questions.len().saturating_sub(1);
-        let header = match more {
-            _ if is_form && more > 0 => format!("{asks} · {} of {}", page + 1, questions.len()),
-            0 => asks.to_owned(),
-            n => format!("{asks} · {n} more in the terminal"),
-        };
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, &header, pal.muted, inner.w);
-        if question.multi_select {
-            p.text_right(Face::Ui, 11.5, inner.right(), y + HEADER / 2.0, "Several answers", pal.muted);
-        }
-        y += HEADER;
-        let text_clip = p.clip(Rect::new(inner.x, y, inner.w, QUESTION));
-        p.paragraph(Face::Semibold, 13.0, inner.x, y, inner.w, &question.question, pal.text);
-        p.restore(text_clip);
-        y += QUESTION;
-        for (i, option) in question.options.iter().enumerate() {
-            let row = Rect::new(inner.x, y, inner.w, OPTION);
-            let target = Target::Chat(Control::Question(Hit::Option(i)));
-            let hot = can_answer && self.hover == Some(target);
-            // A form's picks are the card's own, shown as such; the terminal's highlight never is.
-            let on = chosen.get(i).copied().unwrap_or(false);
-            let fill = if hot {
-                pal.hover
-            } else if on {
-                pal.selection
-            } else {
-                pal.bar
-            };
-            if on {
-                p.frame(row, 6.0, fill, pal.accent);
-                p.text_right(Face::Semibold, 12.0, row.right() - 10.0, row.cy(), "✓", pal.accent);
-            } else {
-                p.rbox(row, 6.0, fill);
-            }
-            let label = format!("{}. {}", i + 1, option.label);
-            let cy = if option.description.is_empty() { row.cy() } else { row.y + 12.0 };
-            p.text(Face::Semibold, 12.0, row.x + 10.0, cy, &label, pal.text, row.w - 36.0);
-            if !option.description.is_empty() {
-                let description = collapse(&option.description);
-                p.text(Face::Ui, 11.0, row.x + 10.0, row.y + 27.0, &description, pal.muted, row.w - 36.0);
-            }
-            if can_answer {
-                hits.push((row, target));
-            }
-            y += OPTION + 4.0;
-        }
-        let area = Rect::new(inner.x, y, inner.w, inner.bottom() - y);
-        if is_form {
-            self.form_footer(p, chat, area, can_answer, (page, questions.len()), hits);
-        } else {
-            self.footer(p, chat, area, can_answer, hits);
-        }
-    }
-
-    /// A form's field (the text for the question shown), Back, Next or Submit, and "Chat about
-    /// this".
-    fn form_footer(
-        &self,
-        p: &mut Painter,
-        chat: &mut Chat,
-        area: Rect,
-        can_answer: bool,
-        (page, pages): (usize, usize),
-        hits: &mut Vec<(Rect, Target)>,
-    ) {
-        let pal = self.pal;
-        let button = |p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit| {
-            let target = Target::Chat(Control::Question(hit));
-            super::paint::button(p, pal, r, label, self.hover == Some(target), false);
-            hits.push((r, target));
-        };
-        let row = Rect::new(area.x, area.y, area.w, FIELD - 4.0);
-        if can_answer {
-            let buttons = 64.0 + 4.0 + 84.0 + 4.0 + 120.0;
-            let field = Rect::new(row.x, row.y, (row.w - buttons - 8.0).max(0.0), row.h);
-            let focus = chat.question.focus && self.focused;
-            p.frame(field, 5.0, pal.field, if focus { pal.accent } else { pal.line });
-            let colors =
-                FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
-            chat.question.field.draw(p, field.inset(6.0), Face::Ui, 12.0, &colors, "Type something…", focus, focus);
-            hits.push((field, Target::Chat(Control::Question(Hit::Field))));
-            let mut x = field.right() + 8.0;
-            if page > 0 {
-                button(p, hits, Rect::new(x, row.y, 64.0, row.h), "Back", Hit::Back);
-            }
-            x += 68.0;
-            if page + 1 < pages {
-                button(p, hits, Rect::new(x, row.y, 84.0, row.h), "Next", Hit::Next);
-            } else {
-                button(p, hits, Rect::new(x, row.y, 84.0, row.h), "Submit", Hit::Submit);
-            }
-            button(p, hits, Rect::new(x + 88.0, row.y, 120.0, row.h), "Chat about this", Hit::ChatAbout);
-        } else {
-            p.text(Face::Ui, 11.5, row.x, row.cy(), TERMINAL_ONLY, pal.muted, (row.w - 130.0).max(0.0));
-            button(p, hits, Rect::new(row.right() - 120.0, row.y, 120.0, row.h), "Open terminal", Hit::Open);
-        }
-        let status = chat.question.error.or_else(|| chat.question_notice());
-        if let Some(status) = status {
-            p.text(Face::Ui, 11.0, area.x, row.bottom() + STATUS / 2.0 + 2.0, status, pal.muted, area.w);
-        }
-    }
-
-    fn permission(
-        &self,
-        p: &mut Painter,
-        chat: &mut Chat,
-        inner: Rect,
-        kind: &ItemKind,
-        hits: &mut Vec<(Rect, Target)>,
-    ) {
-        let pal = self.pal;
-        let Some(shown) = chat.question.shown.clone() else { return };
-        let can_answer = shown.matched && (chat.question.answerable.is_some() || chat.question.failed);
-        let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, &tool_title(kind), pal.muted, inner.w);
-        y += HEADER;
-        for line in detail(kind) {
-            p.text(Face::Mono, 11.5, inner.x, y + LINE / 2.0, &line, pal.text, inner.w);
-            y += LINE;
-        }
-        // The terminal's own words, including warnings such as a countdown.
-        for line in shown.body.iter().rev().take(BODY_LINES).rev() {
-            copied_row(p, Face::Ui, 11.0, inner.x, y + LINE / 2.0, line, pal.muted, inner.w);
-            y += LINE;
-        }
-        y += 8.0;
-        p.text(Face::Semibold, 12.5, inner.x, y + LINE / 2.0, &shown.question, pal.text, inner.w);
-        y += LINE + 6.0;
-        for (i, choice) in shown.choices.iter().enumerate() {
-            let row = Rect::new(inner.x, y, inner.w, CHOICE);
-            let target = Target::Chat(Control::Question(Hit::Option(i)));
-            // Nothing is pre-selected: the terminal's highlight is not shown as a choice.
-            p.rbox(row, 6.0, if can_answer && self.hover == Some(target) { pal.hover } else { pal.bar });
-            p.text(
-                Face::Semibold,
-                12.0,
-                row.x + 10.0,
-                row.cy(),
-                &format!("{}. {choice}", i + 1),
-                pal.text,
-                row.w - 20.0,
-            );
-            if can_answer {
-                hits.push((row, target));
-            }
-            y += CHOICE + 4.0;
-        }
-        self.footer(p, chat, Rect::new(inner.x, y, inner.w, inner.bottom() - y), can_answer, hits);
-    }
-
-    fn footer(&self, p: &mut Painter, chat: &mut Chat, area: Rect, can_answer: bool, hits: &mut Vec<(Rect, Target)>) {
-        let pal = self.pal;
-        let button = |p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit| {
-            let target = Target::Chat(Control::Question(hit));
-            super::paint::button(p, pal, r, label, self.hover == Some(target), false);
-            hits.push((r, target));
-        };
-        let row = Rect::new(area.x, area.y, area.w, FIELD - 4.0);
-        let approval = chat.question.approval;
-        let comment = !approval || chat.question.shown.as_ref().is_some_and(|s| s.deny.is_some());
-        if can_answer && comment {
-            let buttons = if approval { 160.0 } else { 104.0 + 4.0 + 120.0 };
-            let field = Rect::new(row.x, row.y, (row.w - buttons - 8.0).max(0.0), row.h);
-            let focus = chat.question.focus && self.focused;
-            p.frame(field, 5.0, pal.field, if focus { pal.accent } else { pal.line });
-            let colors =
-                FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
-            let placeholder = if approval { "Tell Claude what to do instead…" } else { "Type something…" };
-            chat.question.field.draw(p, field.inset(6.0), Face::Ui, 12.0, &colors, placeholder, focus, focus);
-            hits.push((field, Target::Chat(Control::Question(Hit::Field))));
-            let x = field.right() + 8.0;
-            if approval {
-                button(p, hits, Rect::new(x, row.y, 160.0, row.h), "No, and tell Claude", Hit::Deny);
-            } else {
-                button(p, hits, Rect::new(x, row.y, 104.0, row.h), "Answer", Hit::Answer);
-                button(p, hits, Rect::new(x + 108.0, row.y, 120.0, row.h), "Chat about this", Hit::ChatAbout);
-            }
-        } else if !can_answer {
-            p.text(Face::Ui, 11.5, row.x, row.cy(), TERMINAL_ONLY, pal.muted, (row.w - 130.0).max(0.0));
-            button(p, hits, Rect::new(row.right() - 120.0, row.y, 120.0, row.h), "Open terminal", Hit::Open);
-        }
-        let status = chat.question.error.or_else(|| chat.question_notice());
-        if let Some(status) = status {
-            p.text(Face::Ui, 11.0, area.x, row.bottom() + STATUS / 2.0 + 2.0, status, pal.muted, area.w);
-        }
     }
 }
 

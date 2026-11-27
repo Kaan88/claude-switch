@@ -406,6 +406,18 @@ pub(super) struct Panel {
     pub notes: Vec<String>,
     /// The menu is a question of Claude's (`AskUserQuestion`), known by its tab row.
     pub question: bool,
+    /// A question's own header (" ☐ Colour" reads "Colour"); empty for a form's row of tabs and
+    /// for any other menu.
+    pub header: String,
+}
+
+/// A question's header without its box.
+fn header_text(first: &str) -> String {
+    ["☐ ", "☒ ", "[ ] ", "[×] ", "[x] "]
+        .iter()
+        .find_map(|b| first.strip_prefix(b))
+        .map(|rest| rest.trim().to_owned())
+        .unwrap_or_default()
 }
 
 /// The first row of a question Claude asks: its header with a box (" ☐ Colour"), or a form's row
@@ -446,6 +458,7 @@ fn review_panel(screen: &Screen) -> Option<Panel> {
         esc: false,
         notes: Vec::new(),
         question: true,
+        header: String::new(),
     })
 }
 
@@ -497,13 +510,17 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
     let mut title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
     // A question Claude asks: its text is every row between its tab row and its choices, and
     // each choice has its description under it.
-    let (mut notes, mut question) = (Vec::new(), false);
+    let (mut notes, mut question, mut header) = (Vec::new(), false, String::new());
     if let Some(menu) = &menu {
         let above = menu.above_box(FORM_ABOVE);
         if let Some((first, text)) = above.split_first().filter(|(first, _)| question_tabs(first)) {
             question = true;
             if !text.is_empty() {
                 title = collapse(&text.join(" "));
+                // The row over the question is its header, unless it is a form's tabs.
+                if !tab_bar(first) {
+                    header = header_text(first);
+                }
             } else if !tab_bar(first) {
                 title = (*first).to_owned();
             }
@@ -527,7 +544,7 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
         rows.remove(0);
     }
     let rows = rows.into_iter().map(|(_, text)| text.clone()).collect();
-    Some(Panel { title, menu, rows, esc, notes, question })
+    Some(Panel { title, menu, rows, esc, notes, question, header })
 }
 
 /// Where a panel starts: under the nearest full-width solid rule above its footer. A panel

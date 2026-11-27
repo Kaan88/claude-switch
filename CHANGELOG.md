@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Chat: a question of Claude's, a permission prompt and a Claude Code menu now stand where the
+  message box is, in the same box, instead of in a card over it. The message box is not shown
+  while such a card waits (nothing can be sent then anyway); a draft is kept and comes back with
+  the box, and typing meanwhile no longer changes it. The line "Waiting for your answer" is gone:
+  the card says it.
+- Chat: these cards are laid out anew. A question has its own header as a small chip, the
+  question in larger type, and the choices as one list, each with its number and its
+  description. "Type something" is only the field ("Something else…", with a send arrow) and
+  "Chat about this" only a button at the foot; both used to be listed as choices too. A form
+  shows "1 of 2" with Back and Next, and Submit on the last question.
+- Chat: a permission prompt's title is the prompt's own ("Bash command"), and the command is
+  shown once, in a box; it used to be shown twice under two titles. The choices are the CLI's
+  exact words with their numbers, with the field "No, and tell Claude what to do instead…" where
+  the prompt offers it. An edit's lines are in the diff's colours.
+- Chat: every such card has a × at the top (Esc, where the CLI offers it) and "Open terminal" at
+  the foot. In a short window a card drops the descriptions, then lowers its rows, before it is
+  cut. What a click does, and every check before a key is written, is as before.
+
 - Chat and the Session view: a code block in an answer has a header with its language on the
   left and Copy on the right. The Copy button used to cover the language, so no block showed it.
 

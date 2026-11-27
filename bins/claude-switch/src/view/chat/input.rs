@@ -95,7 +95,8 @@ impl AppState {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
-        if !chat.locked() {
+        // A card stands where the composer is: its hidden draft takes no paste.
+        if !chat.locked() && !chat.question.docked() {
             chat.paste_clipboard(false);
             self.chat_editor_changed();
         }
@@ -280,6 +281,11 @@ impl AppState {
             self.arm_chat_tick(cx);
             return true;
         }
+        // A card stands where the composer is: the hidden draft takes no keys, and Enter sends
+        // nothing. The card's own field takes them once it was clicked (above).
+        if self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.question.docked()) {
+            return true;
+        }
         if mods.none()
             && let Some(key) = k.name.as_ref()
             && self.chat_picker_key(cx, key)
@@ -313,7 +319,7 @@ impl AppState {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
-        if super::question::text(chat, text) || chat.popup_text(text) {
+        if super::question::text(chat, text) || chat.question.docked() || chat.popup_text(text) {
             return true;
         }
         if !chat.locked() {
@@ -418,7 +424,7 @@ impl AppState {
             chat.popups.step(count, dy < 0.0);
         } else if chat.question_wheel(x, y, dy) {
             // A permission prompt longer than its card scrolls.
-        } else if chat.layout.editor.contains(x, y) {
+        } else if chat.layout.editor.contains(x, y) && !chat.question.docked() {
             chat.editor.wheel(dy);
         } else if chat.layout.side.w > 0.0 && chat.layout.side.contains(x, y) {
             chat.details.wheel(dy);

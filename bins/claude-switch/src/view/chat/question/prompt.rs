@@ -157,25 +157,35 @@ impl Chat {
     }
 }
 
-/// What the card needs under its header, and how many lines it then has room for.
+/// The padding of the well that holds the prompt's rows.
+const WELL: (f32, f32) = (12.0, 8.0);
+
+/// The width the prompt's rows are wrapped at in a card `card_w` wide.
+pub(super) fn text_width(card_w: f32) -> f32 {
+    (card_w - 2.0 * cards::INSET - 2.0 * WELL.0).max(1.0)
+}
+
+/// The card's height around the prompt's own rows: its head, the well's padding, the question,
+/// the choices, a row for a notice and the foot.
+fn chrome(prompt: &Prompt) -> f32 {
+    let head = cards::INSET + cards::HEAD + 10.0;
+    let well = 2.0 * WELL.1 + 12.0;
+    let question = LINE + 10.0;
+    let choices = prompt.choices.len() as f32 * cards::CHOICE_ROW + 10.0;
+    head + well + question + choices + STATUS + cards::FOOT + cards::INSET - 6.0
+}
+
+/// The card's whole height for the prompt wrapped at `width`.
 pub(super) fn height(card: &mut Card, width: f32) -> f32 {
     let Some(prompt) = &card.prompt else { return 0.0 };
     card.prompt_view.flow(prompt, width);
-    let lines = card.prompt_view.lines.len() as f32;
-    // The caller adds the field's and the status row's room; this card has no field.
-    HEADER + lines * LINE + below(prompt) - STATUS
-}
-
-/// The height under the prompt's rows: the question and the choices.
-fn below(prompt: &Prompt) -> f32 {
-    8.0 + LINE + 6.0 + prompt.choices.len() as f32 * (CHOICE + 4.0)
+    chrome(prompt) + card.prompt_view.lines.len() as f32 * LINE
 }
 
 /// The card got its rectangle: how many lines fit.
 pub(super) fn fit(card: &mut Card) {
     let Some(prompt) = &card.prompt else { return };
-    let inner = card.rect.inset(PAD);
-    let room = (inner.h - HEADER - below(prompt) - FIELD) / LINE;
+    let room = (card.rect.h - chrome(prompt)) / LINE;
     card.prompt_view.room = room.floor().max(0.0) as usize;
 }
 
@@ -233,24 +243,34 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit, shown: Prompt) -> boo
 }
 
 impl Draw<'_> {
-    /// A permission prompt read from the screen: its rows as drawn, the question, the choices.
-    pub(super) fn prompt(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, hits: &mut Vec<(Rect, Target)>) {
+    /// A permission prompt read from the screen: its rows word for word in a well, the question,
+    /// the choices.
+    pub(super) fn prompt(&self, p: &mut Painter, chat: &mut Chat, card: Rect, hits: &mut Vec<(Rect, Target)>) {
         let pal = self.pal;
         let Some(prompt) = chat.question.prompt.clone() else { return };
         let notice = chat.question.error.or_else(|| chat.question_notice());
+        // Esc declines without reading on: the prompt's footer always offers it.
+        let close = chat.question.prompt_answers() && chat.question.step.is_none();
+        let (x, w) = (card.x + cards::INSET, (card.w - 2.0 * cards::INSET).max(1.0));
+        let mut y = card.y + cards::INSET;
+        let title = ("Claude Code asks for permission", crate::view::look::TERMINAL);
+        self.head(p, hits, Rect::new(x, y, w, cards::HEAD), "", title, "", close);
+        y += cards::HEAD + 10.0;
         let view = &mut chat.question.prompt_view;
         view.mono = p.measure(Face::Mono, MONO, "MMMMMMMMMM") / 10.0;
         view.show(self.now);
-        let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code asks for permission", pal.muted, inner.w);
-        y += HEADER;
+        let shown = view.lines.len().saturating_sub(view.scroll).min(view.room);
+        let well = Rect::new(x, y, w, shown as f32 * LINE + 2.0 * WELL.1);
+        p.frame(well, 8.0, if pal.dark { pal.field } else { pal.bar }, crate::view::look::edge(pal));
+        let inner = Rect::new(well.x + WELL.0, well.y + WELL.1, (well.w - 2.0 * WELL.0).max(1.0), well.h);
         let mut clipped = false;
+        let mut ly = inner.y;
         for line in view.lines.iter().skip(view.scroll).take(view.room) {
-            let cy = y + LINE / 2.0;
+            let cy = ly + LINE / 2.0;
+            ly += LINE;
             let (face, text, size) = match line {
                 Line::Rule => {
                     p.fill(Rect::new(inner.x, cy, inner.w, p.px()), pal.line);
-                    y += LINE;
                     continue;
                 }
                 Line::Head(text) => (Face::Semibold, text, 12.5),
@@ -258,51 +278,49 @@ impl Draw<'_> {
             };
             clipped |= p.measure(face, size, text) > inner.w;
             p.text(face, size, inner.x, cy, text, pal.text, inner.w);
-            y += LINE;
         }
         view.clipped = clipped;
         let more = view.lines.len().saturating_sub(view.scroll + view.room);
         let can_answer = prompt.whole && view.read_all() && !view.clipped;
-        y += 8.0;
-        p.text(Face::Semibold, 12.5, inner.x, y + LINE / 2.0, &prompt.question, pal.text, inner.w);
-        y += LINE + 6.0;
-        for (i, choice) in prompt.choices.iter().enumerate() {
-            let row = Rect::new(inner.x, y, inner.w, CHOICE);
-            let target = Target::Chat(Control::Question(Hit::Option(i)));
-            // Nothing is pre-selected: the terminal's highlight is not shown as a choice.
-            p.rbox(row, 6.0, if can_answer && self.hover == Some(target) { pal.hover } else { pal.bar });
-            let color = if can_answer { pal.text } else { pal.muted };
-            p.text(Face::Semibold, 12.0, row.x + 10.0, row.cy(), &format!("{}. {choice}", i + 1), color, row.w - 20.0);
-            if can_answer {
-                hits.push((row, target));
-            }
-            y += CHOICE + 4.0;
-        }
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
-        let button = |p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit| {
-            let target = Target::Chat(Control::Question(hit));
-            super::super::paint::button(p, pal, r, label, self.hover == Some(target), false);
-            hits.push((r, target));
-        };
-        let mut right = row.right();
         let status = notice.or(match () {
             _ if !prompt.whole => Some(TOP_HIDDEN),
             _ if view.clipped => Some(TOO_WIDE),
             _ if !view.read_all() => Some(READ_ALL),
             _ => None,
         });
-        // Always: a decline with text is given in the terminal.
-        right -= 120.0;
-        button(p, hits, Rect::new(right, row.y, 120.0, row.h), "Open terminal", Hit::Open);
-        right -= 8.0;
-        if more > 0 {
-            right -= 104.0;
-            button(p, hits, Rect::new(right, row.y, 104.0, row.h), &format!("{more} more ▾"), Hit::More);
-            right -= 8.0;
-        }
+        y = well.bottom() + 12.0;
+        p.text(Face::Semibold, 14.0, x, y + LINE / 2.0, &prompt.question, pal.text, w);
+        y += LINE + 10.0;
+        // Nothing is pre-selected: the terminal's highlight is not shown as a choice.
+        let rows: Vec<cards::Choice> = prompt
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(i, choice)| cards::Choice {
+                number: Some(i + 1),
+                label: choice.clone(),
+                note: String::new(),
+                hit: Hit::Option(i),
+                on: false,
+            })
+            .collect();
+        y += self.choices(p, hits, x, y, w, &rows, can_answer, cards::Density::Plain) + 10.0;
         if let Some(status) = status {
-            p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (right - row.x).max(0.0));
+            let ink = if chat.question.error.is_some() { pal.warn } else { pal.muted };
+            p.text(Face::Ui, 12.0, x, y + STATUS / 2.0 - 2.0, status, ink, w);
         }
+        y += STATUS;
+        // Always: a decline with text is given in the terminal.
+        let more_label = format!("{more} more ▾");
+        let mut right = Vec::new();
+        if more > 0 {
+            right.push((more_label.as_str(), Hit::More));
+        }
+        right.push(("Open terminal", Hit::Open));
+        if close {
+            right.push(("Esc to cancel", Hit::Escape));
+        }
+        self.foot(p, hits, Rect::new(x, y, w, cards::FOOT), &[], "", &right);
     }
 }
 
@@ -310,7 +328,7 @@ impl Draw<'_> {
 impl Card {
     /// For tests: the card painted its prompt at `at`, with room for every line.
     pub(super) fn prompt_painted(&mut self, at: Instant) {
-        let width = 700.0;
+        let width = text_width(752.0);
         if let Some(prompt) = &self.prompt {
             self.prompt_view.flow(prompt, width);
         }

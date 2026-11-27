@@ -103,8 +103,11 @@ impl AppState {
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
         let l = chat.layout;
-        let suggestions = chat.suggestion_plan(&self.win_file.chat_pins);
-        let popup = if suggestions.is_none() { chat.popup_plan(&pane.model) } else { None };
+        // A card that waits for an answer stands where the composer is: the composer is not
+        // drawn then, and its draft is kept.
+        let docked = chat.question.docked();
+        let suggestions = if docked { None } else { chat.suggestion_plan(&self.win_file.chat_pins) };
+        let popup = if suggestions.is_none() && !docked { chat.popup_plan(&pane.model) } else { None };
         let transcript_mouse = suggestions.as_ref().map_or(mouse, |popup| popup.pointer_behind(mouse));
         let transcript_mouse = popup.as_ref().map_or(transcript_mouse, |popup| popup.pointer_behind(transcript_mouse));
         pane.ui.set_chat_reading(crate::view::Reading::from_key(&self.win_file.chat_reading));
@@ -215,9 +218,14 @@ impl AppState {
             p.text(Face::Ui, 11.5, row.x, row.cy(), Reason::Tool.label(), pal.muted, (row.w - 122.0).max(0.0));
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
         }
+        chat.question.colours = Some(diff);
         super::question::Draw { pal, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
         if details_active {
             self.hits.extend(detail_hits);
+        }
+        if docked {
+            chat.layout.suggestions = Rect::default();
+            return frame;
         }
         // The slash picker sits above the transcript, including its footer and the closed-drawer hint.
         composer::Draw {

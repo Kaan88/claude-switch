@@ -5,8 +5,8 @@ use std::ops::Range;
 
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::richtext::parley::{
-    Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, Layout, LayoutContext, LineHeight,
-    OverflowWrap, Selection, StyleProperty,
+    Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight, Layout, LayoutContext,
+    LineHeight, OverflowWrap, Selection, StyleProperty,
 };
 use mdshared_ui::richtext::{self, Brush};
 use mdshared_ui::theme::Palette;
@@ -38,12 +38,17 @@ impl TextLayout {
         files: Option<&links::Files>,
         mono: bool,
     ) -> Self {
-        Self::build(raw, pal, scale, width, size, files, mono, None)
+        Self::build(raw, pal, scale, width, size, files, mono, None, false)
+    }
+
+    /// Semibold interface text, wrapped: a card's question.
+    pub fn heading(raw: &str, pal: &Palette, scale: f32, width: f32, size: f32) -> Self {
+        Self::build(raw, pal, scale, width, size, None, false, None, true)
     }
 
     /// Mono text whose lines are `line` times the font size apart: a diff's rows.
     pub fn spaced(raw: &str, pal: &Palette, scale: f32, width: f32, size: f32, line: f32) -> Self {
-        Self::build(raw, pal, scale, width, size, None, true, Some(line))
+        Self::build(raw, pal, scale, width, size, None, true, Some(line), false)
     }
 
     #[allow(clippy::too_many_arguments)] // one shaping call behind the two constructors
@@ -56,6 +61,7 @@ impl TextLayout {
         files: Option<&links::Files>,
         mono: bool,
         line: Option<f32>,
+        semibold: bool,
     ) -> Self {
         let links = files.map_or_else(Vec::new, |files| links::existing(raw, files));
         let brush = |[r, g, b]: [u8; 3]| [r, g, b, 255];
@@ -68,6 +74,9 @@ impl TextLayout {
             build.push_default(StyleProperty::OverflowWrap(OverflowWrap::Anywhere));
             if let Some(line) = line {
                 build.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(line)));
+            }
+            if semibold {
+                build.push_default(StyleProperty::FontWeight(FontWeight::SEMI_BOLD));
             }
             for (range, _) in &links {
                 build.push(StyleProperty::Brush(brush(pal.accent)), range.clone());

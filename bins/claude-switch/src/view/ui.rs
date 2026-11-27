@@ -151,8 +151,8 @@ impl Ui {
     /// Where the conversation's text goes in a Chat conversation area at `x`, `width` wide:
     /// `(left, width)`. The composer and the cards are laid out on it before the frame is drawn.
     pub(super) fn column_for(&self, x: f32, width: f32) -> (f32, f32) {
-        let pad = self.pad();
-        self.text_column(x + pad, (width - 2.0 * pad).max(1.0))
+        // Chat's column whatever this pane last drew as: the layout is Chat's.
+        self.reading_column(x + CHAT_PAD, (width - 2.0 * CHAT_PAD).max(1.0))
     }
 
     pub(super) fn detail_side(&self) -> Option<super::chat::Side> {
@@ -242,9 +242,11 @@ impl Ui {
     /// The left edge and width of the conversation's text between `x` and `x + width`: in Chat,
     /// the reading column beside the docked panel; elsewhere the whole width.
     fn text_column(&self, x: f32, width: f32) -> (f32, f32) {
-        if !self.chat {
-            return (x, width);
-        }
+        if self.chat { self.reading_column(x, width) } else { (x, width) }
+    }
+
+    /// Chat's reading column between `x` and `x + width`, beside the docked panel.
+    fn reading_column(&self, x: f32, width: f32) -> (f32, f32) {
         let row = Rect::new(x, 0.0, width, 1.0);
         let content = if self.markdown.is_some() { self.panel.split(row).0 } else { row };
         if content.w <= GUTTER {
