@@ -185,3 +185,66 @@ fn notices_are_compact_rows_that_expand_and_thoughts_do_not_split_or_count_in_a_
     let hook = open.iter().find(|r| r.id == Id::Tool(id(7))).unwrap();
     assert!(hook.h > TOOL_H && hook.body.as_ref().unwrap().text().contains("Run the tests first."));
 }
+
+#[test]
+fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
+    let demo = crate::demo::Transcript::new().unwrap();
+    let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let local = |name: &str, summary: &str, text: &str, state| {
+        item(ItemKind::Tool {
+            id: format!("local:{name}"),
+            name: name.into(),
+            summary: summary.into(),
+            file_path: None,
+            state,
+            duration_ms: None,
+            pictures: Vec::new(),
+            subagent: None,
+            card: Some(ToolCard::Output(text.into())),
+        })
+    };
+    model.items = [
+        item(ItemKind::Prompt { text: "/model".into(), pictures: vec![], synthetic: false }),
+        local("/model", "", "Set model to Opus 5.5", ToolState::Ok),
+        item(ItemKind::Prompt { text: "/context".into(), pictures: vec![], synthetic: false }),
+        local("/context", "", "Context Usage\n⛁ ⛁ ⛀ 12k / 200k", ToolState::Ok),
+        local("Shell", "! git status", "On branch main", ToolState::Ok),
+        local("Shell", "! git lg", "git: 'lg' is not a git command.", ToolState::Failed),
+        item(ItemKind::Prompt { text: "next".into(), pictures: vec![], synthetic: false }),
+        local("Shell", "! true", "", ToolState::Ok),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, item)| (id(i as u64), item))
+    .collect();
+    model.groups = super::super::super::model::group(&model.items);
+    let project = |tools: BTreeSet<ItemId>| {
+        let pal = &mdshared_ui::theme::DARK;
+        let mut rows =
+            Rows { list: vec![], previous: BTreeMap::new(), end: 0.0, width: 700.0, scale: 1.0, pal, chat: true };
+        rows.conversation(&model, &BTreeSet::new(), &tools);
+        rows.list
+    };
+    let rows = project(BTreeSet::new());
+    let row = |i| rows.iter().find(|r| r.id == Id::Tool(id(i))).unwrap();
+    let model_row = row(1);
+    assert_eq!((model_row.title.as_str(), model_row.target.as_str()), ("/model", "Set model to Opus 5.5"));
+    assert!(model_row.body.is_none() && model_row.h == TOOL_H, "a one-line reply is a closed note");
+    let context = row(3);
+    assert_eq!(context.body.as_ref().unwrap().text(), "Context Usage\n⛁ ⛁ ⛀ 12k / 200k", "longer output is shown");
+    assert!(context.h > TOOL_H && context.target.is_empty());
+    let shell = row(4);
+    assert_eq!((shell.title.as_str(), shell.target.as_str()), ("Shell", "! git status"));
+    assert_eq!(shell.body.as_ref().unwrap().text(), "On branch main", "shell output sits under its command");
+    let failed = row(5);
+    assert!(matches!(failed.tone, Tone::Warning) && failed.stamp == "✗ failed");
+    assert_eq!(row(7).h, TOOL_H, "a shell command that printed nothing is one line");
+    // The one-line reply still opens; a click folds longer output.
+    let open = project([id(1), id(3)].into());
+    let folded = open.iter().find(|r| r.id == Id::Tool(id(3))).unwrap();
+    assert!(!folded.open && folded.body.is_none() && folded.h == TOOL_H);
+    assert_eq!(
+        open.iter().find(|r| r.id == Id::Tool(id(1))).unwrap().body.as_ref().unwrap().text(),
+        "Set model to Opus 5.5"
+    );
+}

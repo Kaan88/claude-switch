@@ -277,6 +277,8 @@ impl Rows<'_> {
         }
         let size = if self.chat { 16.0 } else { 14.0 };
         let empty = Files::new();
+        // Tool details (diffs, command output) are read on demand: muted, like their row.
+        let quiet = Palette { text: self.pal.muted, ..*self.pal };
         let layout = if kind == BodyKind::Markdown {
             Layout::Markdown(Box::new(Preview::new(
                 raw,
@@ -290,7 +292,7 @@ impl Rows<'_> {
             let mono = matches!(kind, BodyKind::Mono | BodyKind::Shell);
             Layout::Plain(Box::new(TextLayout::new(
                 raw,
-                self.pal,
+                if mono { &quiet } else { self.pal },
                 self.scale,
                 width,
                 if mono { 12.0 } else { size },
@@ -474,6 +476,15 @@ impl Rows<'_> {
                 row.title = one_line(name, 160);
                 let target = file_path.as_deref().unwrap_or(summary);
                 row.target = one_line(target, 320);
+                // A command's one-line reply ("Set model to …", "Settings dialog dismissed") reads on
+                // its row like a note; longer output is a mono card under it.
+                let reply = match card {
+                    Some(ToolCard::Output(text)) if target.is_empty() && one_liner(text) => Some(text),
+                    _ => None,
+                };
+                if let Some(text) = reply {
+                    row.target = one_line(text, 320);
+                }
                 if row.target == row.title {
                     row.target.clear();
                 }
@@ -486,10 +497,15 @@ impl Rows<'_> {
                 row.tone = tone;
                 row.busy = *state == ToolState::Running;
                 row.duration = duration_ms.map(duration).unwrap_or_default();
-                row.open = open;
+                // A plan is read before it is approved: always open. Command output starts open and a
+                // click folds it; everything else starts folded.
+                row.open = match card {
+                    Some(ToolCard::Plan(_)) => true,
+                    Some(ToolCard::Output(text)) if reply.is_none() && !text.trim().is_empty() => !open,
+                    _ => open,
+                };
                 row.background = background;
-                // A plan is read before it is approved: always open.
-                if open || matches!(card, Some(ToolCard::Plan(_) | ToolCard::Output(_))) {
+                if row.open {
                     let (detail, kind) = tool_detail(card.as_ref(), target);
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
                     row.agent.clone_from(subagent);
@@ -652,6 +668,12 @@ fn duration(ms: u64) -> String {
     } else {
         mdshared_app::fmt::duration(ms / 1000)
     }
+}
+
+/// Short enough to read whole on a tool row.
+fn one_liner(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty() && !text.contains('\n') && text.chars().count() <= 140
 }
 
 fn one_line(s: &str, cap: usize) -> String {

@@ -475,6 +475,14 @@ mod tests {
             json!({"type":"user","message":{"content":"<local-command-stdout>Context usage 12k / 200k</local-command-stdout>"}}),
             json!({"type":"user","message":{"content":"<bash-input>git status</bash-input>"}}),
             json!({"type":"user","message":{"content":"<bash-stdout>On branch main</bash-stdout><bash-stderr></bash-stderr>"}}),
+            json!({"type":"user","message":{"content":"<command-name>/model</command-name><command-args></command-args>"}}),
+            json!({"type":"user","message":{"content":"<local-command-stdout></local-command-stdout>"}}),
+            json!({"type":"system","subtype":"local_command","content":"<local-command-stdout>Reconnected to sprawl.</local-command-stdout>"}),
+            // Shell mode as the CLI also writes it: the command and its output as two blocks of one record.
+            json!({"type":"user","message":{"role":"user","content":[
+                {"type":"text","text":"<bash-input> git log -1 --oneline</bash-input>\n"},
+                {"type":"text","text":"<bash-stdout>9981c63 SDK</bash-stdout><bash-stderr></bash-stderr>"}
+            ]}}),
         ] {
             writeln!(file, "{row}").unwrap();
         }
@@ -491,7 +499,15 @@ mod tests {
             .collect();
         assert_eq!(
             rows,
-            ["prompt /context", "/context||Ok|Context usage 12k / 200k", "Shell|! git status|Ok|On branch main"]
+            [
+                "prompt /context",
+                "/context||Ok|Context usage 12k / 200k",
+                "Shell|! git status|Ok|On branch main",
+                "prompt /model",
+                "Command output||Ok|Reconnected to sprawl.",
+                "Shell|! git log -1 --oneline|Ok|9981c63 SDK",
+            ],
+            "an empty output closes its command, so /model does not label the next output"
         );
         assert_eq!(reader.chat().pending, None, "finished rows never wait");
     }

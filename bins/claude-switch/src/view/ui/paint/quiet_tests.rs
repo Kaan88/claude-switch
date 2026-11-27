@@ -210,3 +210,70 @@ fn tool_rows_are_quiet_in_light_dark_and_custom_themes_and_failures_still_show()
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn command_results_and_shell_mode_are_quiet_mono_cards_under_their_command() {
+    let dir = std::env::temp_dir().join(format!("cs-quiet-local-{}", std::process::id()));
+    let user = |sec: u8, text: &str| {
+        json!({"timestamp": format!("2026-11-27T10:01:{sec:02}Z"), "type": "user",
+            "message": {"role": "user", "content": text}})
+    };
+    let extra = [
+        user(
+            0,
+            "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>",
+        ),
+        user(
+            1,
+            "<local-command-stdout>Set model to `Opus 5.5` and saved as your default for new sessions</local-command-stdout>",
+        ),
+        user(
+            2,
+            "<command-name>/context</command-name>\n<command-message>context</command-message>\n<command-args></command-args>",
+        ),
+        user(
+            3,
+            "<local-command-stdout> \u{1b}[1mContext Usage\u{1b}[22m\n\u{1b}[38;2;136;136;136m⛁ ⛁ ⛁ ⛀ \u{1b}[39m  claude-opus-5-5 · 41k/200k tokens (21%)\n⛶ ⛶ ⛶ ⛶   Free space: 159k</local-command-stdout>",
+        ),
+        user(4, "<bash-input>git status --short</bash-input>"),
+        user(5, "<bash-stdout> M docs/TODO.md\n?? notes.txt</bash-stdout><bash-stderr></bash-stderr>"),
+        user(6, "<bash-input>git lg</bash-input>"),
+        user(
+            7,
+            "<bash-stdout></bash-stdout><bash-stderr>git: 'lg' is not a git command. See 'git --help'.</bash-stderr>",
+        ),
+    ];
+    let path = fixture(&dir, &extra);
+    for (name, pal) in [("local-dark", mdshared_ui::theme::DARK), ("local-light", mdshared_ui::theme::LIGHT)] {
+        let mut model = model(&path, &dir);
+        let mut ui = Ui::default();
+        let bmp = paint(&mut ui, &mut model, &pal, name);
+        let tools = ui.rows.iter().filter(|r| r.style == Style::Tool).collect::<Vec<_>>();
+        let titles = tools.iter().map(|r| (r.title.as_str(), r.target.as_str())).collect::<Vec<_>>();
+        assert_eq!(
+            titles[2..],
+            [
+                ("/model", "Set model to `Opus 5.5` and saved as your default for new sessions"),
+                ("/context", ""),
+                ("Shell", "! git status --short"),
+                ("Shell", "! git lg")
+            ],
+            "{name}"
+        );
+        let context = tools[3];
+        assert!(context.body.as_ref().unwrap().text().contains("Free space: 159k"), "{name}: escapes stripped, kept");
+        assert!(!context.body.as_ref().unwrap().text().contains('\u{1b}'));
+        assert_eq!(tools[4].body.as_ref().unwrap().text(), " M docs/TODO.md\n?? notes.txt", "{name}: indent kept");
+        assert!(matches!(tools[5].tone, Tone::Warning), "{name}: stderr alone is a failure");
+        // The card's text is muted like its row: quieter than the answers.
+        let card = Rect::new(
+            ui.body.x + context.geo.tx,
+            ui.body.y + context.top - ui.offset + context.geo.ty,
+            context.geo.tw,
+            context.h - context.geo.ty,
+        );
+        let loud = pixels(&bmp, card).into_iter().map(|c| reach(c, pal.page)).max().unwrap();
+        assert!(loud > 30 && loud < reach(pal.text, pal.page) - 20, "{name}: {loud}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

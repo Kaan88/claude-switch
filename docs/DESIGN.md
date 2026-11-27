@@ -1001,9 +1001,15 @@ Permission prompts). Stop sends Escape at most once per freshly
 verified active turn.
 **Command results and shell mode.** A `<local-command-stdout>` (or `-stderr`) record becomes a finished
 row named after the slash command before it, and `<bash-input>` with its `<bash-stdout>`/`<bash-stderr>`
-becomes a "Shell" row (`! command`), both with the output as mono text, always open, cut at 60 lines or
-6,000 characters, escape sequences removed (`transcript/local.rs`). They never count as pending calls.
-Interactive panels that print their result the same way get the same row. The composer has no `!`
+becomes a "Shell" row (`! command`). Both are quiet tool rows (see the conversation look above). A
+one-line reply of at most 140 characters ("Set model to …", "Settings dialog dismissed") sits on the
+row as its target and opens on a click like any tool. Longer output and shell output are a mono card
+under the row in the muted text colour, open at first and folded by a click (no output, one line); a shell
+command whose output is only stderr is a failed row. Output is cut at 60 lines or 6,000 characters,
+escape sequences and surrounding blank lines removed, the first line's indent kept
+(`transcript/local.rs`). They never count as pending calls. Interactive panels that print their
+result the same way (`/context`, `/usage`, `/config`, `/mcp`) get the same row; a command that
+printed nothing shows no row and does not lend its name to the next output. The composer has no `!`
 toggle: whether a pasted `!` enters the CLI's shell mode is unverified.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
