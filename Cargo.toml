@@ -4,7 +4,7 @@ members = ["crates/core", "crates/opencode", "bins/claude-switch"]
 
 [workspace.package]
 edition = "2024"
-version = "0.1.1"
+version = "0.1.2"
 license = "MIT"
 
 [profile.release]

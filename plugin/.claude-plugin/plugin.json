@@ -1,6 +1,6 @@
 {
   "name": "switch-handover",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": { "name": "Kaan" },
   "description": "Hand off the current Claude Code session to Claude Switch."
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 (2026-11-27)
+
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and
   its own folder (subagents, tool results) to the Recycle Bin and removes its Claude Switch marks and
   summary. It is unavailable, with the reason, while the session runs, is open in a tab or is pinned,
