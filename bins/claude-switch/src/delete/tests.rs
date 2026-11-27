@@ -5,7 +5,6 @@ use claude_switch_core::marks::Marks;
 use claude_switch_core::meaning::{Cache, Digest};
 use claude_switch_core::{Roots, Session};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 const ID: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 const OTHER: &str = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -46,9 +45,7 @@ fn session(st: &AppState, id: &str, file: &Path) -> Session {
 }
 
 fn real(tag: &str) -> Real {
-    static NEXT: AtomicU32 = AtomicU32::new(0);
-    let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("cs-delete-{tag}-{}-{n}", std::process::id()));
+    let root = crate::testing::unique(&format!("cs-delete-{tag}"));
     let _ = std::fs::remove_dir_all(&root);
     let roots = Roots { home: root.join("home"), appdata: root.join("appdata") };
     let project = roots.primary_cli_dir().join("projects").join("C--work-delete-test");

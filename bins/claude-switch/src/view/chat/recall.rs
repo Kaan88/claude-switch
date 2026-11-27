@@ -5,7 +5,7 @@ use std::ops::Bound::{Excluded, Unbounded};
 use claude_switch_core::transcript::{Item, ItemId, ItemKind};
 use mdshared_ui::keys::KeyName;
 
-use super::{Chat, editor::ComposerEditor};
+use super::{Chat, editor::ComposerEditor, undo::Snapshot};
 use crate::view::model::Model;
 
 #[derive(Default)]
@@ -17,7 +17,7 @@ pub(super) struct Recall {
 struct Browsing {
     generation: u64,
     shown: ItemId,
-    draft: ComposerEditor,
+    draft: Snapshot,
 }
 
 /// A prompt the user typed, as Up and Ctrl+R offer it.
@@ -67,7 +67,8 @@ impl Recall {
 
     fn restore(&mut self, editor: &mut ComposerEditor) -> bool {
         if let Some(saved) = self.browsing.take() {
-            *editor = saved.draft;
+            // One undo step, like each recalled prompt.
+            editor.restore_draft(saved.draft);
             editor.follow = true;
             true
         } else {
@@ -83,7 +84,7 @@ impl Recall {
         let browsing = self.browsing.get_or_insert_with(|| Browsing {
             generation: model.generation,
             shown: id,
-            draft: std::mem::take(editor),
+            draft: editor.snapshot(),
         });
         browsing.shown = id;
         editor.set(prompt.to_owned());

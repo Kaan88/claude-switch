@@ -70,6 +70,7 @@ fn program() -> Result<PathBuf, String> {
 
 impl AppState {
     pub fn ask_new_opencode_tab(&mut self) {
+        self.check_folders();
         self.dialog = Some(crate::dialogs::new_opencode_dialog(self));
     }
 

@@ -563,7 +563,8 @@ mod tests {
 
     #[test]
     fn oversized_saved_tabs_are_not_loaded_or_overwritten() {
-        let path = std::env::temp_dir().join(format!("cs-w3-tabs-cap-{}.json", std::process::id()));
+        let scratch = crate::testing::Scratch::created("cs-w3-tabs-cap");
+        let path = scratch.join("tabs.json");
         let len = claude_switch_core::APP_FILE_LIMIT as u64 + 1;
         std::fs::File::create_new(&path).unwrap().set_len(len).unwrap();
         let mut restore = Restore::default();
@@ -575,7 +576,8 @@ mod tests {
 
     #[test]
     fn finish_restore_then_save_changed_tabs_keeps_the_loaded_revision() {
-        let root = std::env::temp_dir().join(format!("cs-restore-exit-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-restore-exit");
+        let root = scratch.to_path_buf();
         let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
         let file = path(&disk).unwrap();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -755,7 +757,8 @@ mod tests {
 
     #[test]
     fn a_second_window_never_replaces_the_first_windows_saved_tabs_in_any_close_order() {
-        let root = std::env::temp_dir().join(format!("cs-restore-second-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-restore-second");
+        let root = scratch.to_path_buf();
         let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
         let file = path(&disk).unwrap();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -800,7 +803,8 @@ mod tests {
 
     #[test]
     fn a_second_window_that_closes_last_saves_its_tabs_and_one_without_tabs_keeps_the_firsts() {
-        let root = std::env::temp_dir().join(format!("cs-restore-last-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-restore-last");
+        let root = scratch.to_path_buf();
         let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
         let file = path(&disk).unwrap();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();

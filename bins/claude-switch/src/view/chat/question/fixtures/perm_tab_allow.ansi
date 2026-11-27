@@ -1,0 +1,50 @@
+cursor 34 109
+@size 110 46
+@wrapped 13
+@modes paste
+  for [0;38;2;177;185;249mmkdir [0min your settings. If you'd like, I can retry it once you've changed the permission.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mSautéed for 5s · done 6:29 PM[0m
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mNow run exactly this with the Bash tool and nothing else: mkdir probe_blocked_b                             [0m
+
+[0;38;2;255;107;128m●[0;38;2;215;119;87m [0;1mBash[0m(mkdir probe_blocked_b)
+[0;38;2;153;153;153m  ⎿  Blocked by auto mode · /permissions to review · see https://code.claude.com/docs/s/claude-code-auto-mode[0m
+     [0;2m│[0m [0;38;2;153;153;153mAuto mode: No reason provided[0m
+
+[0;38;2;255;255;255m●[0;38;2;215;119;87m [0mThe Bash call [0;38;2;177;185;249mmkdir probe_blocked_b[0m was denied by the auto mode classifier, with no reason given. This is
+  the same denial as [0;38;2;177;185;249mprobe_blocked_a[0m.
+
+  I haven't tried another way to make the directory, since you asked for the Bash tool only. To get it to run,
+  approve the command if a prompt appears, or add a Bash permission rule for [0;38;2;177;185;249mmkdir[0m in your settings, then I
+  can retry.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mBaked for 5s · done 6:29 PM[0m
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55m/permissions                                                                                                [0m
+
+[0;38;2;177;185;249m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0;1;38;2;177;185;249mPermissions[0m  Recently blocked  [0;1;7m Allow [0m  Ask   Deny   Auto mode   Workspace
+
+  Claude Code won't ask for these. Rules off in auto mode aren't listed.
+
+  [0;2m╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮[0m
+  [0;2m│[0m [0;38;2;153;153;153m⌕ Search…  [0m                                                                                            [0;2m│[0m
+  [0;2m╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯[0m
+  [0;38;2;177;185;249m❯ Add a new rule…[0m
+
+  [0;3;38;2;153;153;153m←/→ to switch · / to search · Enter to select · Esc to close[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+

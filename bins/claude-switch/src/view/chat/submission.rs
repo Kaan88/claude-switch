@@ -14,10 +14,30 @@ pub(super) use report::CliReport;
 use report::local_reports;
 use screen::{clean_prompt, idle_slash_prompt, is_image_marker, prompt};
 pub(super) use stages::Staging;
-use stages::{Completion, EchoWait, EnterOnly, LinesWait, Recovery, Stamp, can_confirm, recovery_ready, shown_exactly};
+use stages::{
+    CommandWait, Completion, EchoWait, EnterOnly, LinesWait, Recovery, Sent, Stamp, Takeback, can_confirm,
+    recovery_ready, shown_exactly,
+};
 
-const IMAGE_TIMEOUT: Duration = Duration::from_secs(4);
-const ECHO_TIMEOUT: Duration = Duration::from_secs(2);
+/// Claude Code reads the clipboard's picture through a helper process on Windows, which can take
+/// seconds; the wait ends at once when anything else changes.
+pub(super) const IMAGE_TIMEOUT: Duration = Duration::from_secs(20);
+pub(super) const ECHO_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a slash command waits for the CLI's prompt to go quiet before it is refused.
+const COMMAND_WAIT: Duration = Duration::from_secs(3);
+/// How long one Ctrl+U may take to show, and how many a put-back message may need.
+const TAKEBACK_STEP: Duration = Duration::from_secs(2);
+const TAKEBACK_KEYS: u8 = 40;
+const CLEAR_LINE: &[u8] = b"\x15";
+const TAKEN_BACK: &str = "Stopped before Claude answered. Your message is back in the box.";
+const TAKEN_BACK_PICTURE: &str =
+    "Stopped before Claude answered. Your message is back in the box; paste its picture again.";
+const TAKEBACK_FAILED: &str =
+    "Claude Code put your last message back on its input and Chat could not clear it. Clear it in the terminal.";
+const TAKEBACK_HELD: &str = "Claude Code put your last message back on its input. Chat left it there, as the message \
+     box holds a draft: send or clear it in the terminal, then send the draft.";
+const TAKEBACK_UNSURE: &str = "Stopped before Claude answered. Your message is back in the box, but Claude Code kept \
+     drawing: check that its input is empty before you send.";
 const IMAGE_KEY: &[u8] = b"\x1bv";
 pub(super) const CHECK: &str = "Open the terminal to check";
 pub(super) const NO_QUIET_PROMPT: &str = "No quiet, empty Claude Code prompt is visible. Check the terminal.";
@@ -40,7 +60,6 @@ pub(super) const FULLSCREEN: &str = "Claude Code is drawing its full-screen view
 pub(super) const NO_TRANSCRIPT: &str =
     "Waiting for Claude Code to write this chat's transcript. Check the terminal before sending again.";
 const BUSY_CMD: &str = "A turn is running. Wait for it to finish before running this command.";
-const NO_IMAGE_PROMPT: &str = "No empty CLI input line for the picture. Check the terminal.";
 pub(super) const REMOVE_ATTACHMENTS: &str = "Remove attachments before running a slash command.";
 pub(super) const BAD_COMMAND: &str = "Choose a command or enter a single slash command without control characters.";
 
@@ -57,6 +76,9 @@ pub(super) struct Queue {
     generation: u64,
     latest: Option<u64>,
     stop: Option<Stop>,
+    /// Queued while a new chat's transcript was still to come: the reader starting on it is not
+    /// another session.
+    awaiting: bool,
 }
 
 struct Stop {
@@ -104,7 +126,7 @@ impl Chat {
     /// A draft queued behind the running turn, as Queue makes it.
     #[cfg(test)]
     pub(super) fn queue_draft(&mut self, generation: u64) {
-        self.queue = Some(Queue { generation, latest: None, stop: None });
+        self.queue = Some(Queue { generation, latest: None, stop: None, awaiting: false });
     }
 
     pub(super) fn interrupt_submission(&mut self) {
@@ -115,6 +137,8 @@ impl Chat {
     /// Terminal input that leaves card key sequences alone (a wheel report): what was staged for a
     /// send no longer knows the screen.
     pub(super) fn interrupt_staging(&mut self) {
+        // Whatever the CLI's input holds now may be the user's own.
+        (self.staging.sent, self.staging.takeback, self.staging.command) = (None, None, None);
         if let Some(wait) = self.image_wait.take() {
             self.staging.recovery = Some(Recovery::Picture(Stamp { epoch: self.output_epoch, ..wait.stamp }));
             self.error = Some(IMAGE_INTERRUPTED);
@@ -164,6 +188,7 @@ impl Chat {
         self.retry = None;
         self.queue = None;
         self.editor.set(String::new());
+        self.editor.clear_history();
         self.commands.open = false;
         self.chips.clear();
         self.chip_page = 0;
@@ -228,11 +253,19 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
 
 impl AppState {
     pub(super) fn chat_send(tab: &mut Tab, now: Instant, force: bool) {
+        let pane = tab.pane.as_ref().unwrap();
+        let chat = &pane.chat;
         let intent = if !force {
             Intent::Draft
-        } else if tab.pane.as_ref().unwrap().chat.queue.is_some() {
+        } else if chat.queue.is_some()
+            && (chat.demo
+                || clean_prompt(&tab.term.screen)
+                || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running)
+        {
+            // Into the visibly empty input, also while a turn runs.
             Intent::Now
         } else {
+            // No readable prompt and no turn: the explicit override.
             Intent::Override
         };
         Self::send_with_intent(tab, now, intent);
@@ -255,14 +288,19 @@ impl AppState {
             chat.refused(BAD_TEXT, None);
             return;
         };
-        if intent == Intent::Draft
-            && error == Some(CHECK)
-            && chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now) == (Gate::Running, None)
-        {
+        // Whatever passes by itself is waited for, not refused: a running turn, a prompt the CLI
+        // is still drawing, a command's output, a new chat's transcript. The draft is held and
+        // goes out once the CLI's input is ready.
+        let waits = matches!(error, Some(e) if e == CHECK || e == NO_TRANSCRIPT || e == Reason::Slash.label());
+        // A picture needs the visibly empty input for its marker, whoever asked for the send.
+        let picture_waits =
+            chat.clipboard_sequence().is_some() && error.is_none() && !chat.demo && !clean_prompt(&tab.term.screen);
+        if intent == Intent::Draft && waits || picture_waits {
             chat.queue = Some(Queue {
                 generation: pane.model.chat.generation,
                 latest: pane.model.chat.latest.map(|x| x.0),
                 stop: None,
+                awaiting: chat.awaiting_transcript,
             });
             chat.error = None;
             chat.retry = None;
@@ -277,11 +315,6 @@ impl AppState {
             if !chat.demo && clipboard::sequence() != Some(seq) {
                 chat.queue = None;
                 chat.refused(CHANGED_CLIPBOARD, None);
-                return;
-            }
-            if !chat.demo && !clean_prompt(&tab.term.screen) {
-                chat.queue = None;
-                chat.refused(NO_IMAGE_PROMPT, None);
                 return;
             }
             // The guard is armed before the first write but no Enter is present in that write.
@@ -434,6 +467,34 @@ impl AppState {
                 return true;
             }
         }
+        if chat.queue.as_ref().is_some_and(|q| q.awaiting && q.generation != pane.model.chat.generation)
+            && !chat.awaiting_transcript
+        {
+            // The new chat's transcript appeared: the queued draft follows it.
+            let (generation, latest) = (pane.model.chat.generation, pane.model.chat.latest.map(|x| x.0));
+            let queue = tab.pane.as_mut().unwrap().chat.queue.as_mut().unwrap();
+            (queue.generation, queue.latest, queue.awaiting) = (generation, latest, false);
+            return true;
+        }
+        if let Some(wait) = &chat.staging.command {
+            let error = blocked(tab, now, Intent::Slash);
+            if error.is_none() && may_write {
+                let wait = tab.pane.as_mut().unwrap().chat.staging.command.take().unwrap();
+                Self::submit_slash(tab, now, &wait.line, wait.from_editor);
+                return true;
+            }
+            if now >= wait.due || error.is_some_and(|e| e != NO_QUIET_PROMPT) {
+                let chat = &mut tab.pane.as_mut().unwrap().chat;
+                chat.staging.command = None;
+                chat.refused(error.unwrap_or(NO_QUIET_PROMPT), Some(Intent::Slash));
+                return true;
+            }
+        }
+        if take_back(tab, now, may_write) {
+            return true;
+        }
+        let pane = tab.pane.as_ref().unwrap();
+        let chat = &pane.chat;
         if let Some(queue) = &chat.queue {
             if chat.identity_unverified
                 || pane.model.error.is_some()
@@ -446,12 +507,15 @@ impl AppState {
                 return true;
             }
             let intent = if queue.interrupted(tab, now) { Intent::Interrupted } else { Intent::Draft };
+            // The screen's idle input releases it as a newer completion does: the transcript may
+            // never show one (an interrupted turn, a command, a resumed session).
+            let idle = chat.screen_idle(&tab.term, now);
             // Never past keys of a card, a mode change or Ctrl+B still on their way: the draft
             // stays queued until they have gone (the send itself would refuse and drop the queue).
             if may_write
                 && chat.waiting().is_none()
                 && !chat.enter_only()
-                && (intent == Intent::Interrupted || queue.completed(&pane.model.chat))
+                && (intent == Intent::Interrupted || idle || queue.completed(&pane.model.chat))
                 && blocked(tab, now, intent).is_none()
                 && (chat.demo || clean_prompt(&tab.term.screen))
             {
@@ -473,10 +537,6 @@ impl AppState {
                 chat.retry = None;
             }
             return changed || updated;
-        }
-        if chat.error == Some(NO_IMAGE_PROMPT) && clean_prompt(&tab.term.screen) {
-            tab.pane.as_mut().unwrap().chat.error = None;
-            return true;
         }
         changed
     }
@@ -500,6 +560,15 @@ impl AppState {
             chat.refused(BAD_COMMAND, None);
             return;
         };
+        if error == Some(NO_QUIET_PROMPT) && !chat.demo && chat.staging.command.is_none() {
+            // The prompt may only be settling (a turn just ended, a key just went): the command
+            // waits a moment for it and runs by itself.
+            chat.staging.command = Some(CommandWait { due: now + COMMAND_WAIT, line: line.to_owned(), from_editor });
+            chat.commands.open = false;
+            chat.error = None;
+            chat.retry = None;
+            return;
+        }
         if let Some(error) = error {
             chat.refused(error, Some(Intent::Slash));
             return;
@@ -528,6 +597,118 @@ impl AppState {
         let retry = tab.pane.as_mut().unwrap().chat.staging.retry.take().unwrap();
         submit_enter(tab, retry);
     }
+}
+
+/// Interrupted before any answer, Claude Code takes the turn out of the conversation and puts the
+/// prompt back on its input (2.1.332), where it would block every later send. While that input
+/// shows exactly the message Chat last submitted, with no turn running and nothing else typed
+/// into the terminal since, Chat empties it with Ctrl+U (one line per key, each after the screen
+/// showed the one before) and gives the text back to the message box. Only an empty box with no
+/// attachments and no held draft takes it back: otherwise the message stays on the CLI input,
+/// with a notice, so that no text is ever cleared without a place to go.
+fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
+    let pane = tab.pane.as_ref().unwrap();
+    let chat = &pane.chat;
+    let screen = &tab.term.screen;
+    let Some(sent) = &chat.staging.sent else { return false };
+    let resting = chat.screen_resting(&tab.term, now);
+    let Some(step) = &chat.staging.takeback else {
+        let put_back = may_write
+            && chat.waiting().is_none()
+            && !chat.enter_only()
+            && resting
+            && !clean_prompt(screen)
+            && shown_exactly(tab, &sent.expected);
+        if !put_back {
+            return false;
+        }
+        let box_free = chat.editor.text.trim().is_empty() && chat.chips.is_empty() && chat.queue.is_none();
+        let chat = &mut tab.pane.as_mut().unwrap().chat;
+        if box_free {
+            let epoch = chat.output_epoch.wrapping_sub(1);
+            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP, clean: None });
+        } else {
+            // The message stays where the user can see it, and the box keeps its draft (a held
+            // one is let go when the user types in the terminal, and stays in the box).
+            chat.staging.sent = None;
+            chat.refused(TAKEBACK_HELD, None);
+        }
+        return true;
+    };
+    if clean_prompt(screen) {
+        // The input reads empty. Settled (quiet), that is so. With output still coming (a turn
+        // that starts by itself, a redraw) one reading may be a screen caught half way, with
+        // part of the message still on the input: it counts once a second reading of newer
+        // output, both after the last Ctrl+U's, reads empty too.
+        let epoch = chat.output_epoch;
+        let fresh = epoch != step.epoch;
+        let confirmed = chat.quiet(now) || fresh && step.clean.is_some_and(|first| first != epoch);
+        if confirmed {
+            give_back(&mut tab.pane.as_mut().unwrap().chat, false);
+            return true;
+        }
+        if now >= step.due {
+            // No Enter went with the keys, so the message was not sent: it comes back to the
+            // box rather than nowhere, with a word to check what the CLI input still holds.
+            give_back(&mut tab.pane.as_mut().unwrap().chat, true);
+            return true;
+        }
+        if fresh && step.clean.is_none() {
+            tab.pane.as_mut().unwrap().chat.staging.takeback.as_mut().unwrap().clean = Some(epoch);
+        }
+        return false;
+    }
+    if step.clean.is_some() {
+        // Not two readings in a row.
+        tab.pane.as_mut().unwrap().chat.staging.takeback.as_mut().unwrap().clean = None;
+    }
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    let Some(step) = &chat.staging.takeback else { return false };
+    let input = prompt(screen).is_some() || screen::shows_some_input(screen);
+    if step.presses >= TAKEBACK_KEYS || now >= step.due || screen::working(screen) || !input {
+        let chat = &mut tab.pane.as_mut().unwrap().chat;
+        (chat.staging.sent, chat.staging.takeback) = (None, None);
+        chat.refused(TAKEBACK_FAILED, None);
+        return true;
+    }
+    if !may_write || chat.output_epoch == step.epoch {
+        return false;
+    }
+    let presses = step.presses + 1;
+    tab.pane.as_mut().unwrap().note_composer_input();
+    let written = write(tab, CLEAR_LINE, "");
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    match written {
+        Ok(()) => {
+            chat.staging.takeback =
+                Some(Takeback { epoch: chat.output_epoch, presses, due: now + TAKEBACK_STEP, clean: None })
+        }
+        Err(error) => {
+            (chat.staging.sent, chat.staging.takeback) = (None, None);
+            chat.refused(error, None);
+        }
+    }
+    true
+}
+
+/// The take-back is over: the message goes back to the box (in front of anything there, which
+/// the locked composer should never hold), with a word to check the terminal when the CLI input
+/// could not be read as empty for sure.
+fn give_back(chat: &mut Chat, unsure: bool) {
+    let sent = chat.staging.sent.take().unwrap();
+    chat.staging.takeback = None;
+    chat.queue = None;
+    let text = match chat.editor.text.trim().is_empty() {
+        true => sent.text,
+        false => format!("{}\n\n{}", sent.text, chat.editor.text),
+    };
+    chat.editor.set(text);
+    chat.error = Some(match (unsure, sent.picture) {
+        (true, _) => TAKEBACK_UNSURE,
+        (false, true) => TAKEN_BACK_PICTURE,
+        (false, false) => TAKEN_BACK,
+    });
+    chat.retry = None;
 }
 
 fn clear_recovery(tab: &mut Tab, now: Instant) -> bool {
@@ -674,9 +855,12 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
     }
     let pane = tab.pane.as_mut().unwrap();
     let chat = &mut pane.chat;
+    chat.note_sent();
     match input.completion {
         Completion::Message(_) => {
             chat.first_sent |= chat.awaiting_transcript;
+            let (expected, text, picture) = (input.expected, chat.editor.text.clone(), input.picture);
+            chat.staging.sent = Some(Sent { expected, text, picture });
             chat.submitted();
         }
         Completion::Command { line, from_editor } => {
@@ -732,7 +916,7 @@ pub(super) fn write(tab: &mut Tab, bytes: &[u8], demo_text: &str) -> Result<(), 
             );
             chat.demo_progress = true;
         }
-    } else {
+    } else if !chat.scripted() {
         let pty =
             tab.term.pty.as_ref().filter(|p| tab.term.ended.is_none() && p.running()).ok_or("The session ended.")?;
         pty.write(bytes).map_err(|_| "The terminal write failed. Check the drawer before retrying.")?;
@@ -742,17 +926,28 @@ pub(super) fn write(tab: &mut Tab, bytes: &[u8], demo_text: &str) -> Result<(), 
     Ok(())
 }
 
-pub(super) fn stage_deadline(chat: &Chat) -> Option<Instant> {
-    chat.image_wait
-        .as_ref()
-        .map(|wait| wait.due)
-        .or_else(|| chat.staging.echo.as_ref().map(|wait| wait.due))
-        .or_else(|| chat.staging.lines.as_ref().map(|wait| wait.due))
-        .or_else(|| chat.question.deadline())
-        .or_else(|| chat.mode_deadline())
+/// The next stage deadline still ahead. One already past is never armed again: its stage acts on
+/// it at the next tick, which the pending work's poll brings anyway, and re-arming an instant
+/// that has gone would wake the window at once, over and over.
+pub(super) fn stage_deadline(chat: &Chat, now: Instant) -> Option<Instant> {
+    [
+        chat.image_wait.as_ref().map(|wait| wait.due),
+        chat.staging.echo.as_ref().map(|wait| wait.due),
+        chat.staging.lines.as_ref().map(|wait| wait.due),
+        chat.staging.command.as_ref().map(|wait| wait.due),
+        chat.staging.takeback.as_ref().map(|step| step.due),
+        chat.question.deadline(),
+        chat.mode_deadline(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|due| *due > now)
+    .min()
 }
 
 #[cfg(test)]
 mod identity_tests;
+#[cfg(test)]
+pub(in crate::view::chat) mod ready_tests;
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,28 @@
+# A call auto mode blocks (one added rule, --settings) and the list of blocked calls /permissions
+# opens on: its one call marked to be approved and unmarked again, so Esc only closes.
+# Two model requests, and auto mode's own checks.
+#: args --permission-mode auto --settings {scripts}/block-probe.json
+#: seconds 30
+start
+send Run exactly this with the Bash tool and nothing else: mkdir probe_blocked_one
+sleep 800
+send \r
+sleep 3000
+gone esc to interrupt 120000
+quiet 1500 60000
+snap refused
+send /permissions
+sleep 800
+send \r
+wait Enter to approve 15000
+sleep 1500
+snap list
+send \r
+sleep 1500
+snap marked
+send \r
+sleep 1500
+snap unmarked
+send \e
+sleep 1500
+snap closed

@@ -31,8 +31,7 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = fs::remove_file(self.0.join(".credentials.json"));
-        let _ = fs::remove_dir(&self.0);
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 

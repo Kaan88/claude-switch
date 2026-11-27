@@ -1,0 +1,29 @@
+# The idle input at the start and after a turn, text typed on it, the rewind list (Esc Esc)
+# and the input after /clear. One model request.
+#: args --permission-mode default
+#: seconds 20
+start
+snap start
+send Reply with just the word: pong
+sleep 800
+snap typed
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap idle
+send \e
+sleep 150
+send \e
+wait Enter to continue 10000
+sleep 1000
+snap rewind
+send \e
+sleep 1500
+snap rewind_closed
+send /clear
+sleep 800
+send \r
+sleep 2500
+quiet 1000 15000
+snap cleared

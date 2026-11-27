@@ -2,7 +2,6 @@
 
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::host::Cx;
-use mdshared_ui::overlay::Bubble;
 use mdshared_ui::splitter::{self, Axis};
 
 use crate::state::{AppState, Focus, Msg, Target};
@@ -61,9 +60,9 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
 
     crate::resume_tabs::draw_toasts(st, cx, p, window);
     list::draw_undo(st, p, window);
-    if let Some(over) = st.tip.shown() {
-        let tip = Bubble::tip(p, &over.text, over.anchor, w, h);
-        windowlook::Cards::for_frame(st, p).draw(p, tip.rect, pal.popup, |p| tip.draw(p, &pal));
+    // A dialog's tooltip is drawn above the dialog, with the overlays.
+    if st.dialog.is_none() {
+        windowlook::draw_tip(st, p, window);
     }
     st.draw_session_overlay(p, &pal, window);
     windowlook::draw_overlays(st, cx, p, window);

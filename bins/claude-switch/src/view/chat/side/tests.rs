@@ -58,6 +58,7 @@ fn put_tool(model: &mut Model, cwd: &Path, offset: u64, name: &str, path: &str, 
         duration_ms: None,
         pictures: vec![],
         subagent: None,
+        denial: None,
         card: None,
     };
     model.items.insert(id, Item { kind, timestamp: Some("2026-11-26T18:42:01Z".into()) });

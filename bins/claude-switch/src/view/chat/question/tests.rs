@@ -57,6 +57,7 @@ impl Fixture {
             duration_ms: None,
             pictures: vec![],
             subagent: None,
+            denial: None,
             card: Some(ToolCard::Questions(questions)),
         };
         pane.model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });
@@ -304,11 +305,12 @@ fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
     }
 }
 
-/// A permission prompt as the classic renderer draws it.
+/// A permission prompt as the classic renderer draws it, under its full-width rule (the test
+/// terminal is 70 columns wide).
 fn prompt(command: &str, highlight: usize, comment: Option<&str>) -> String {
     let choices = ["Yes", "Yes, and don't ask again for cargo test commands", "No"];
     let mut rows = vec![
-        "\x1b[2J\x1b[H────────────────────".to_owned(),
+        format!("\x1b[2J\x1b[H{}", "─".repeat(70)),
         " Bash command".to_owned(),
         String::new(),
         format!("   {command}"),
@@ -337,6 +339,7 @@ fn shell(id: &str, command: &str) -> ItemKind {
         duration_ms: None,
         pictures: vec![],
         subagent: None,
+        denial: None,
         card: Some(ToolCard::Shell { command: command.into(), result: vec![] }),
     }
 }
@@ -393,20 +396,32 @@ fn a_permission_prompt_for_the_pending_call_is_answered_from_the_card() {
 }
 
 #[test]
-fn a_prompt_for_another_call_or_with_other_choices_is_left_to_the_terminal() {
-    // The screen names another command.
+fn a_prompt_for_another_call_is_shown_as_the_screen_has_it_never_as_the_pending_call() {
+    // The screen names another command than the pending call: the card shows the screen's prompt,
+    // not the transcript's call, and answers only what it has shown.
     let mut f = Fixture::tool("cargo test --workspace");
     let now = Instant::now();
     f.screen(&prompt("rm -rf target", 0, None), now);
     f.sync();
-    assert_eq!(f.chat().question.answerable, None);
-    assert_eq!(f.decide(now), Some(Reason::Permission));
-    assert_ne!(f.chat().drawer, Drawer::Closed);
+    assert_eq!(f.chat().question.answerable, None, "not the pending call's card");
+    assert!(f.chat().question.shown.is_none() && !f.chat().question.approval);
+    let shown = f.chat().question.prompt.clone().expect("the prompt, read from the screen");
+    assert!(shown.whole);
+    assert_eq!(shown.rows, ["Bash command", "  rm -rf target", "  Run the tests"]);
+    assert_eq!((shown.question.as_str(), shown.choices.len()), ("Do you want to proceed?", 3));
+    assert_eq!(f.decide(now), Some(Reason::Approval));
+    assert_eq!(f.chat().drawer, Drawer::Closed);
+    // Not before the card has painted it, and not in the same moment.
     press(f.tab(), now, Hit::Option(0));
-    assert!(f.writes().is_empty());
-    assert_eq!(f.chat().question.error, Some(NOT_SHOWN_TOOL));
+    assert_eq!((f.writes().len(), f.chat().question.error), (0, Some(prompt::READ_ALL)));
+    f.chat().question.prompt_painted(now);
+    press(f.tab(), now, Hit::Option(0));
+    assert_eq!((f.writes().len(), f.chat().question.error), (0, Some(prompt::NOT_SEEN)));
+    press(f.tab(), now + prompt::SEEN, Hit::Option(0));
+    assert_eq!(f.writes(), [b"\r".to_vec()], "the highlight is on Yes already");
 
-    // Two calls are pending: the prompt may be for either.
+    // Two calls are pending: the prompt may be for either, so the pending call's card is not
+    // the one shown. The screen's prompt is.
     let mut f = Fixture::tool("cargo test --workspace");
     let pane = f.tab().pane.as_mut().unwrap();
     pane.model
@@ -415,7 +430,22 @@ fn a_prompt_for_another_call_or_with_other_choices_is_left_to_the_terminal() {
     f.screen(&prompt("cargo test --workspace", 0, None), now);
     f.sync();
     assert_eq!(f.chat().question.answerable, None);
+    assert!(f.chat().question.prompt.is_some() && f.chat().question.shown.is_none());
     press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty(), "nothing before the card showed it");
+
+    // A prompt whose top rule is not on the screen cannot be read whole: the terminal answers.
+    let mut f = Fixture::tool("cargo test --workspace");
+    let cut = prompt("rm -rf target", 0, None).replace(&"─".repeat(70), "");
+    f.screen(&cut, now);
+    f.sync();
+    assert!(f.chat().question.prompt.as_ref().is_some_and(|p| !p.whole));
+    assert_eq!(f.decide(now), Some(Reason::Permission));
+    assert_ne!(f.chat().drawer, Drawer::Closed);
+    f.chat().question.prompt_painted(now);
+    press(f.tab(), now + prompt::SEEN, Hit::Option(0));
+    assert_eq!((f.writes().len(), f.chat().question.error), (0, Some(prompt::TOP_HIDDEN)));
+    press(f.tab(), now + prompt::SEEN, Hit::Escape);
     assert!(f.writes().is_empty());
 
     // The choices change between the click and the next step: nothing more is written.
@@ -455,7 +485,7 @@ fn a_queued_draft_lets_the_cards_answer_go_first_but_not_text_for_the_composer()
 /// A permission prompt whose "don't ask again" choice wraps onto three rows.
 fn wrapped_prompt(command: &str) -> String {
     [
-        "\x1b[2J\x1b[H────────────────────",
+        &format!("\x1b[2J\x1b[H{}", "─".repeat(70)),
         " Bash command",
         "",
         &format!("   {command}"),
@@ -485,11 +515,16 @@ fn a_permission_prompt_never_becomes_a_menu_card_even_when_its_choices_wrap() {
     assert!(crate::attention::screen_permission_prompt(&f.tab().term.screen), "wrapped choices are read");
     f.sync();
     assert!(f.chat().question.menu.is_none(), "never the generic menu card");
-    assert_eq!(f.chat().question.answerable, None, "two calls pending: the terminal answers");
-    assert_eq!(f.decide(now), Some(Reason::Permission));
-    assert_ne!(f.chat().drawer, Drawer::Closed);
+    assert_eq!(f.chat().question.answerable, None, "two calls pending: not the pending call's card");
+    let shown = f.chat().question.prompt.clone().expect("the prompt, read from the screen");
+    assert_eq!(
+        shown.choices[1],
+        "Yes, and don't ask again for rm commands in /home/someone/projects/a-rather-long-folder-name /and-one-more-level"
+    );
+    assert_eq!(f.decide(now), Some(Reason::Approval));
+    assert_eq!(f.chat().drawer, Drawer::Closed);
     press(f.tab(), now, Hit::Option(0));
-    assert!(f.writes().is_empty());
+    assert!(f.writes().is_empty(), "nothing before the card showed it");
 
     // A screen that only looks like a permission prompt (its footer offers Tab to amend) is not
     // recognised, yet still never shows as a menu card.
@@ -561,6 +596,7 @@ fn a_path_or_host_matches_only_as_a_whole_word() {
         duration_ms: None,
         pictures: vec![],
         subagent: None,
+        denial: None,
         card: None,
     };
     let root = std::env::temp_dir().join("proj");
@@ -654,6 +690,7 @@ fn a_plan_is_approved_from_the_card_only_while_its_menu_shows() {
         duration_ms: None,
         pictures: vec![],
         subagent: None,
+        denial: None,
         card: Some(ToolCard::Plan("# Build the parser\n\n1. Tokens\n2. Tree".into())),
     };
     f.tab().pane.as_mut().unwrap().model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });
@@ -1103,11 +1140,15 @@ fn esc_leaves_a_menu_or_declines_a_prompt_only_while_the_screen_shows_it() {
     assert!(press(f.tab(), now, Hit::Escape));
     assert_eq!(f.writes(), [ESC.to_vec()]);
 
-    // Another call's prompt, or a question the screen does not show: nothing.
+    // Another call's prompt is the screen's own card: Esc declines what that card shows.
     let mut f = Fixture::tool("cargo test --workspace");
     f.screen(&prompt("rm -rf target", 0, None), now);
-    press(f.tab(), now, Hit::Escape);
-    assert!(f.writes().is_empty());
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    assert!(
+        matches!(f.chat().question.step.as_ref().map(|s| &s.subject), Some(Subject::Prompt(p)) if p.rows[1] == "  rm -rf target")
+    );
+    // A question the screen does not show: nothing.
     let mut f = Fixture::new(vec![question(false)]);
     f.screen("\x1b[?2004h❯ ", now);
     press(f.tab(), now, Hit::Escape);
@@ -1851,9 +1892,11 @@ fn with_menus_off_menus_and_permission_prompts_stay_in_the_terminal() {
     f.screen(&prompt("cargo test --workspace", 0, None), now);
     f.sync();
     assert!(f.chat().question.shown.is_none() && f.chat().question.menu.is_none());
+    assert!(f.chat().question.prompt.is_none(), "nor the card read from the screen");
     assert_eq!(f.chat().question.answerable, None);
     assert!(!f.chat().question.approval);
-    assert_ne!(f.decide(now), Some(Reason::Approval));
+    assert_eq!(f.decide(now), Some(Reason::Permission));
+    assert_ne!(f.chat().drawer, Drawer::Closed);
     f.chat().menus_off = false;
     f.sync();
     assert!(f.chat().question.approval, "on again: the card is back");

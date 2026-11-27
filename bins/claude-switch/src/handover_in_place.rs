@@ -217,7 +217,8 @@ mod tests {
     fn a_failed_save_keeps_the_continuation_marks_and_tries_again() {
         use crate::{source::Source, tabs::NewTab, term::Term};
         use claude_switch_core::{Roots, marks::Marks};
-        let root = std::env::temp_dir().join(format!("cs-in-place-marks-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-in-place-marks");
+        let root = scratch.to_path_buf();
         let _ = std::fs::remove_dir_all(&root);
         let roots = Roots { home: root.join("home"), appdata: root.join("appdata") };
         let mut st = AppState::new(Source::Real(roots.clone()), None, Default::default());

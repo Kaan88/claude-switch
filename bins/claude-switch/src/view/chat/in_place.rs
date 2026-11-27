@@ -234,7 +234,7 @@ mod tests {
 
     impl Real {
         fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!("cs-in-place-{name}-{}", std::process::id()));
+            let root = crate::testing::unique(&format!("cs-in-place-{name}"));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(&root).unwrap();
             let mut st = AppState::new(Source::Demo, Some(false), Default::default());

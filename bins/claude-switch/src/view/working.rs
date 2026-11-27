@@ -44,8 +44,10 @@ impl Working {
             self.turn = None;
             return (None, None);
         };
-        if let Some(label) = waiting.filter(|_| info.pending.is_some()) {
-            // Claude is not working: the turn waits for an answer or an approval.
+        if let Some(label) = waiting {
+            // Claude is not working: the turn waits for an answer or an approval. The transcript
+            // may not hold the call yet (Claude Code 2.1.332 writes an `AskUserQuestion` only once
+            // it is answered), so the screen's own menu counts.
             return (Some(Footer { label: label.into(), stop: None }), None);
         }
         let (row, hint) = visible(screen);
@@ -92,11 +94,23 @@ impl AppState {
             && term.ended.is_none()
             && (pane.chat.is_demo() || term.running())
             && !term.screen.modes().alt_screen;
-        let waiting = super::chat::question::waiting_label(&pane.model, &term.screen);
-        // A permission prompt hides the working line unless it is the pending call's own.
-        let allowed = allowed && (waiting.is_some() || !crate::attention::screen_permission_prompt(&term.screen));
+        let approval = pane.chat.prompt_waiting();
+        let waiting = super::chat::question::waiting_label(&pane.model, &term.screen)
+            .or(approval)
+            .or_else(|| pane.chat.menu_waiting());
+        // A permission prompt hides the working line unless it is the pending call's own. So does
+        // the CLI's idle input: the transcript's last record reads as a running turn after an
+        // interruption, and nothing is working then.
+        let allowed = allowed
+            && (waiting.is_some() || !crate::attention::screen_permission_prompt(&term.screen))
+            && !pane.chat.screen_resting(term, now);
         let can_stop = allowed && pane.chat.stop_ready(&pane.model.chat, term, &tab.program_title, now);
-        let (footer, wake) = pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop, waiting);
+        let (footer, wake) = match approval.filter(|_| allowed) {
+            // A prompt read from the screen waits whatever the transcript says: a subagent's shows
+            // after the main turn has ended.
+            Some(label) => (Some(Footer { label: label.into(), stop: None }), None),
+            None => pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop, waiting),
+        };
         if pane.ui.set_working(footer) {
             cx.request_redraw(area);
         }
@@ -189,6 +203,12 @@ fn visible(screen: &Screen) -> (Option<String>, bool) {
         hint |= interrupt(line.trim_start_matches([' ', '·', '•', '─']));
     }
     (None, hint)
+}
+
+/// `row` reads as the CLI's working line: a spinner glyph, a word, "…" and at most its timer,
+/// token count and interrupt hint.
+pub(in crate::view) fn working_row(row: &str) -> bool {
+    parse(row).is_some()
 }
 
 fn parse(row: &str) -> Option<Line<'_>> {
@@ -389,14 +409,11 @@ mod tests {
         let mut state = Working::default();
         let footer = state.update(Instant::now(), &info, true, &screen, true, Some(ASKING)).0.unwrap();
         assert_eq!(footer, Footer { label: ASKING.into(), stop: None });
+        // Claude Code writes an `AskUserQuestion` to the transcript only once it is answered:
+        // the screen's own menu is enough to say the turn waits.
         info.pending = None;
-        assert!(
-            state
-                .update(Instant::now(), &info, true, &screen, true, Some(ASKING))
-                .0
-                .unwrap()
-                .label
-                .starts_with("Working")
-        );
+        let footer = state.update(Instant::now(), &info, true, &screen, true, Some(ASKING)).0.unwrap();
+        assert_eq!(footer, Footer { label: ASKING.into(), stop: None });
+        assert!(state.update(Instant::now(), &info, true, &screen, true, None).0.unwrap().label.starts_with("Working"));
     }
 }

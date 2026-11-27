@@ -58,6 +58,39 @@ fn projects_resolve_subfolders_worktrees_and_submodules_without_a_git_program() 
 }
 
 #[test]
+fn only_a_git_file_pointing_into_worktrees_makes_a_linked_worktree() {
+    let t = TempDir::new("linked-worktree");
+    let folder = |name: &str| {
+        let path = t.0.join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    };
+    let main = folder("main");
+    put(&main.join(".git").join("HEAD"), "ref: refs/heads/main\n");
+    // The main repository these point at need not exist.
+    let linked = folder("linked");
+    put(&linked.join(".git"), "gitdir: C:/gone/repo/.git/worktrees/linked\n");
+    let bare = folder("of-bare");
+    put(&bare.join(".git"), "gitdir: ../repo.git/worktrees/of-bare\n");
+    let submodule = folder("main/vendor/lib");
+    put(&submodule.join(".git"), "gitdir: ../../.git/modules/lib\n");
+    let separate = folder("separate");
+    put(&separate.join(".git"), "gitdir: ../elsewhere.git\n");
+    let broken = folder("broken");
+    put(&broken.join(".git"), "not a pointer\n");
+    for path in [&linked, &bare, &folder("linked/src/deep")] {
+        assert!(in_linked_worktree(path), "{}", path.display());
+    }
+    for path in [&main, &folder("main/src"), &submodule, &separate, &broken, &folder("plain"), &t.0.join("missing")] {
+        assert!(!in_linked_worktree(path), "{}", path.display());
+    }
+    // The first `.git` upwards decides: a repository of its own inside a worktree is no worktree.
+    let nested = folder("linked/nested");
+    std::fs::create_dir(nested.join(".git")).unwrap();
+    assert!(!in_linked_worktree(&nested));
+}
+
+#[test]
 fn project_refresh_rechecks_a_normal_comp_folder_after_git_init() {
     let t = TempDir::new("project-refresh");
     let comp = t.0.join("comp");

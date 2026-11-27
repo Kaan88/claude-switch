@@ -2,9 +2,11 @@ use super::*;
 
 #[test]
 fn forgetting_consent_after_first_part_prevents_further_submission() {
-    let temp = Scratch::new().unwrap();
-    let roots = claude_switch_core::Roots { home: temp.0.clone(), appdata: temp.0.clone() };
-    let file = temp.0.join("session-1.jsonl");
+    // Not the runner's own scratch folder: that one goes only when empty, and this test writes
+    // settings and a transcript into it.
+    let temp = crate::testing::Scratch::created("cs-consent-parts");
+    let roots = claude_switch_core::Roots { home: temp.to_path_buf(), appdata: temp.to_path_buf() };
+    let file = temp.join("session-1.jsonl");
     fs::write(
         &file,
         format!("{}\n", json!({"type":"assistant","cwd":"C:/fixture","message":{"content":"part ".repeat(100)}})),

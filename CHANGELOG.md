@@ -2,6 +2,92 @@
 
 ## Unreleased
 
+## 0.1.3 (2026-11-27)
+
+- Development: a check against new Claude Code versions (`tools/screen-recorder`, `tools/cli-compat.ps1`,
+  `.github/workflows/cli-compat.yml`) records what the newest Claude Code draws and runs Chat's screen
+  readers over it, so a version that breaks Chat is caught before it is met in use. On GitHub it runs
+  once per new version and waits for an `ANTHROPIC_API_KEY` secret; on this PC it runs by hand.
+- Chat no longer refuses nearly every message in the installed app. Started from the Start menu,
+  Claude Code got no `TERM` and drew its input mark as `>`, which Chat did not read as the prompt:
+  sends, pictures ("No empty CLI input line for the picture"), slash commands and the Mode chip all
+  pointed at the terminal. Claude tabs now start with `TERM=xterm-256color`, and Chat reads both
+  drawings.
+- Chat takes "ready" from the screen: a quiet, empty input with no working line. A resumed session,
+  a turn stopped with Esc, a slash command or a key in the terminal no longer leave "Open the
+  terminal to check" or a turn that seems to run forever. An answer that mentions "esc to
+  interrupt" is no longer taken for a running turn, and a bell no longer blocks an idle prompt.
+- A message sent while Claude Code is busy or still drawing its prompt is held and goes out by
+  itself; **Send now** and **Cancel** stay. A slash command waits up to three seconds for the
+  prompt.
+- A question Claude asks now shows in Chat while it waits (Claude Code writes it to the transcript
+  only after the answer): its text, choices and their descriptions, a form's pages and its review,
+  with "Waiting for your answer" instead of "Working…". When the terminal is silent for seconds
+  with nothing Chat can read, the terminal drawer opens by itself.
+- Your own answer to a question: the question card has a field for it, also in forms with
+  several questions. Chat types it on the CLI's "Type something" row and confirms only once the
+  screen shows exactly that text.
+- A permission prompt from a subagent, or one of several tool calls made at once, no longer sends
+  you to the terminal. Chat shows the prompt as Claude Code draws it: the tool, whose call it is
+  ("from the general-purpose agent"), the command or file, the question and its choices. A long
+  one scrolls, and its choices can be clicked once you have seen all of it. Nothing is approved
+  that the card did not show: the keys go only while the terminal still shows that same prompt.
+  To decline with a comment, use Open terminal.
+- Denied permissions are said out loud. A tool call that auto mode blocked, a rule denied or you
+  declined now reads "blocked by auto mode", "denied by a rule" or "you said no" in the
+  conversation instead of "failed", and a card under the conversation counts the current turn's
+  denials and lists what was denied and why. **Review blocked calls…** opens Claude Code's own
+  list of calls auto mode blocked (`/permissions`), which Chat shows as a card: choose a call, see
+  its command, **Approve** or **Retry now**, then apply. **Ask Claude to retry** puts a sentence
+  in the message box and sends nothing.
+- Stop before Claude answers: Claude Code puts the message back on its own input, which blocked
+  the next send. Chat now clears it there and puts the text back in the message box. When the
+  box holds a draft (a second message held behind the first, or one you were typing), Chat leaves
+  the message on Claude Code's input and says so, instead of clearing it with nowhere to go.
+- More time for a pasted picture to show (20 s) and for a pasted message to appear (5 s).
+- Chat: the working line ("✶ Sprouting… (40s · ↓ 3.2k tokens)"), "Waiting for your answer/approval",
+  the terminal-answer hint, a read error and Load earlier line up with the conversation's reading
+  column instead of the window's left edge.
+- Chat: Cut in the message box (right-click › Cut and Ctrl+X) removes the selected text after copying
+  it; before, it only copied.
+- Chat: undo and redo in the message box: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Undo and Redo in its
+  right-click menu. Typing undoes a word at a time; a paste, a cut, a run of deletions, a completion,
+  a recalled prompt or a filled chip is one step each. Sending a message clears the history.
+- Chat and the handover editor: Ctrl+Left and Ctrl+Right move by word, and Ctrl+Shift+Left/Right
+  select by word, as in Windows text boxes. Before, they moved one character. Ctrl+Backspace and
+  Ctrl+Delete remove a word, one undo step each in the message box.
+- Settings: **Peek** at the top right of every page. Hold it with the mouse, or hold Space when
+  nothing focused uses Space, and the dim and the dialog fade away (instantly with Reduce motion)
+  to show the window as it is with the changes already applied, Mica or Acrylic included; a pill at
+  the top says how to come back. Let go and Settings returns on the same page, scroll and focus.
+  Clicks and keys do nothing while peeking, and switching away from the window ends it.
+- Settings › Appearance: the dark and light palettes (and the Terminal page's colour presets) are a
+  grid of equal cards, five across, each a small window in that palette: title bar, side pane, text,
+  accent button and a terminal with its colours. Names sit whole inside the card; a long custom name
+  is shortened, with the full name on hover. The chosen card has an accent border and a check, the
+  hovered one a lighter fill, and the keyboard's ring sits outside the card. Dark and light share
+  one column grid, custom themes wrap to a further line, and nothing runs into the next setting.
+- Handover: **Compact and open…** writes the handover in the background. The dialog closes when you
+  press Make handover, and the Review handover window opens by itself when it is ready (after any
+  dialog or menu you have open, once you have stopped typing for a moment, and ignoring keys
+  already on their way; click in its text or press Tab to edit). The Sessions column shows
+  handovers being written (with Cancel), failed ones (with the reason and Retry) and reviews closed
+  without acting on them (Review). Closing the window asks first while one is being written or
+  waiting to be opened.
+
+- Handover: the review's text wraps at word boundaries instead of in the middle of words.
+- Handover: the Review handover dialog's buttons always fit; Copy and Save as… sit on the left, or
+  under **More ▾** when the dialog is narrow.
+- New session: **Recent folders** is now a scrolling list of up to 200 folders instead of four, newest
+  activity first, with the last-active time. It leaves out archived and hidden sessions, sessions
+  started by tools while the list hides them, folders that no longer exist, temporary folders and
+  Git worktrees (you can still type or browse to those), and counts different spellings of a folder
+  once. Type in the folder field to filter it; the arrows, Page Up/Down, Home, End and Enter work in
+  it.
+- Terminal: a blinking cursor (Settings › Terminal › Blink) keeps an even rhythm in Claude tabs and
+  the Chat drawer. Output now restarts the blink only when it moves or changes the cursor, so
+  Claude Code's once-a-second counter elsewhere on the screen no longer cuts the off phase short.
+
 ## 0.1.2 (2026-11-27)
 
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and

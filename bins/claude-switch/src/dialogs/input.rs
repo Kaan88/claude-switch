@@ -28,6 +28,7 @@ pub fn wheel(st: &mut AppState, x: f32, y: f32, dy: f32) {
         Some(Dialog::Accounts { scroll, .. }) => *scroll = (*scroll - dy).max(0.0),
         Some(Dialog::Session(panel)) => panel.wheel(dy),
         Some(Dialog::Compact(compact)) => compact.wheel(dy),
+        Some(Dialog::NewSession(picker)) => picker.wheel(dy),
         Some(Dialog::Confirm { .. }) => st.confirm_scroll = (st.confirm_scroll - dy).max(0.0),
         _ => {}
     }

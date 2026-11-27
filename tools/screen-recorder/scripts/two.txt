@@ -1,0 +1,19 @@
+# Two calls of one message, each with its own prompt. About two model requests.
+#: args --permission-mode default
+#: seconds 25
+start
+send In a single message, call the Bash tool twice in parallel: one call with the command mkdir par_a and one call with the command mkdir par_b. Nothing else.
+sleep 800
+send \r
+wait Do you want to proceed? 120000
+sleep 1500
+snap first
+# The second prompt follows at once, or after one more request when the model made two messages of it.
+send \r
+sleep 7000
+snap second
+send \r
+sleep 2000
+gone esc to interrupt 120000
+quiet 1500 60000
+snap done

@@ -60,6 +60,7 @@ impl AppState {
             self.usage.popup.due,
             self.usage.cache_retry_at().filter(|_| self.config.show_usage),
             self.field_deadline(),
+            self.handover_held(cx.now()),
         ]
         .into_iter()
         .flatten()
@@ -175,6 +176,12 @@ impl AppState {
             Target::UndoHide => self.undo_hidden(now),
             Target::InfoClose => self.info = None,
             Target::Info(topbar::RESET_SETTINGS) => self.reset_settings(now),
+            Target::Info(id) if id >= crate::handover_jobs::INFO_RETRY => {
+                self.info = None;
+                let job = u64::from(id - crate::handover_jobs::INFO_RETRY);
+                self.handover_act(job, crate::handover_jobs::Act::Retry, now);
+            }
+            Target::HandoverJob(id, act) => self.handover_act(id, act, now),
             Target::Dialog(id) => dialogs::click(self, now, id, x),
             _ => {}
         }
@@ -228,6 +235,7 @@ impl AppState {
                 MenuKind::Chat(tab, mode) => return self.chat_menu_chosen(cx, tab, mode, id),
                 MenuKind::Field(field) => return self.field_menu_chosen(field, id),
                 MenuKind::Conversation(tab) => return self.conversation_menu_chosen(cx, tab, id),
+                MenuKind::HandoverMore => return dialogs::click(self, cx.now(), id, 0.0),
             };
             self.command(cx.now(), id, anchor);
         }
@@ -430,6 +438,9 @@ impl AppState {
             return;
         }
         if self.dialog.is_some() {
+            if self.folder_scroll_press(x, y) {
+                return;
+            }
             self.pressed = if self.field_press(x, y, cx.mods(), cx.now()) { None } else { hover };
             return;
         }
@@ -495,7 +506,7 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
-        if self.field_release(x, y, cx.now()) {
+        if self.field_release(x, y, cx.now()) || self.folder_scroll_release() {
             return;
         }
         if self.chat_end_drag(Some((x, y))) {

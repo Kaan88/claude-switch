@@ -27,21 +27,25 @@ const ACCOUNT: u32 = 11;
 const REFRESH: u32 = 12;
 pub(crate) const EDITOR: u32 = 13;
 const BACK: u32 = 14;
-const COPY: u32 = 15;
-const SAVE: u32 = 16;
+pub(crate) const COPY: u32 = 15;
+pub(crate) const SAVE: u32 = 16;
 const PREV: u32 = 17;
 const NEXT: u32 = 18;
 const AGENT: u32 = 19;
 pub(crate) const NAME_FIELD: u32 = 20;
 const OPENCODE: u32 = 21;
 pub(crate) const DELETE_ORIGINAL: u32 = 22;
+/// The review's “More ▾”: Copy and Save as… when the footer has no room for them.
+const MORE: u32 = 23;
 const OPTION: u32 = 100;
 const PAGE: usize = 7;
 
 #[derive(Default)]
 pub struct Cache {
     models: Option<Vec<String>>,
-    retiring: Vec<Work>,
+    pub(crate) retiring: Vec<Work>,
+    /// Handovers being written, or written, behind the window (`handover_jobs`).
+    pub jobs: crate::handover_jobs::Jobs,
     pub startup: Option<crate::compact_open::NewHandover>,
     pub startup_ack: Option<String>,
     /// The handover channel this window claimed at startup, until it serves it.
@@ -56,13 +60,13 @@ pub struct Cache {
     pub auto: crate::auto_handover::Watcher,
 }
 
-enum Update {
+pub(crate) enum Update {
     Loaded(Option<std::sync::Arc<compact::Handover>>, Result<Vec<String>, String>),
     Preview(String),
     Agents(String, Vec<agents::Agent>),
 }
 
-type Work = Job<Result<Update, String>>;
+pub(crate) type Work = Job<Result<Update, String>>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Choice {
@@ -117,6 +121,17 @@ pub struct Compact {
     message: Option<(String, bool)>,
     /// "Delete the original session afterwards": off each time the dialog opens.
     pub(crate) delete_original: bool,
+    /// Where the review's “More ▾” was drawn, when Copy and Save as… were folded into it.
+    more_at: Option<Rect>,
+    /// `job` writes the handover: the dialog closes and it goes on in the background.
+    generating: bool,
+    /// The handover was opened (in the CLI or OpenCode): closing does not keep it.
+    acted: bool,
+    /// A review that opened by itself ignores keys, and clicks that act, until then.
+    settle_until: Option<Instant>,
+    /// A review that opened by itself has the dialog focused, not its editor or name field:
+    /// typing edits nothing until a click in one of them, or Tab.
+    unfocused: bool,
 }
 
 impl Drop for Compact {
@@ -159,6 +174,12 @@ impl AppState {
 }
 
 impl Cache {
+    /// Cancels a worker nobody waits for; the window's exit waits for it to end.
+    pub(crate) fn retire(&mut self, work: Work) {
+        work.cancel();
+        self.retiring.push(work);
+    }
+
     /// Models listed from Settings › Sessions, shared with the handover dialog.
     pub fn set_listed_models(&mut self, models: Vec<String>) {
         self.models = Some(models);
@@ -253,6 +274,10 @@ impl AppState {
     }
 
     pub fn ask_compact_for(&mut self, session: Session, account: Option<&str>, history: bool) {
+        // One handover a session at a time: a written or failed one opens instead.
+        if !history && self.background_handover_of(&session.id, Instant::now()) {
+            return;
+        }
         if let Source::Real(roots) = &self.source {
             // A different window may have saved the default since this window opened.
             self.config.compact = claude_switch_core::config::load(roots).compact;
@@ -315,6 +340,7 @@ impl AppState {
             job.cancel();
             self.compact.retiring.push(job);
         }
+        self.cancel_background_handovers();
         self.compact.retiring.retain(Job::running);
         !self.compact.retiring.is_empty()
     }
@@ -363,6 +389,11 @@ impl Compact {
             saving: None,
             message: None,
             delete_original: false,
+            more_at: None,
+            generating: false,
+            acted: false,
+            settle_until: None,
+            unfocused: false,
         };
         this.reset_agents();
         this.check_in_place(st);
@@ -504,6 +535,8 @@ impl Compact {
         })
         .map_err(|_| self.error("Could not start the handover worker.".into()))
         .ok();
+        // The dialog closes and the model writes in the background (`handover_jobs`).
+        self.generating = self.job.is_some();
     }
 
     fn export(&mut self, st: &AppState) {
@@ -608,32 +641,43 @@ impl Compact {
     pub(crate) fn focus_name(&mut self) {
         if self.name_editable() {
             self.name_focused = true;
+            self.unfocused = false;
         }
     }
 
+    /// False closes the dialog; the caller hands it to `AppState::compact_closed`, which keeps
+    /// a handover being written, or a written one not acted on, and cancels anything else.
     pub fn click(&mut self, st: &mut AppState, now: Instant, id: u32, x: f32) -> bool {
+        if self.settling(now) && matches!(id, OK | OPENCODE | DELETE_ORIGINAL) {
+            return true;
+        }
         match id {
-            CANCEL => {
-                if let Some(job) = self.job.take() {
-                    job.cancel();
-                    st.compact.retiring.push(job);
+            CANCEL => return false,
+            OK if matches!(self.phase, Phase::Setup | Phase::Consent) => {
+                self.make(st, self.phase == Phase::Consent);
+                if self.generating {
+                    return false;
                 }
-                return false;
             }
-            OK if self.phase == Phase::Setup => self.make(st, false),
-            OK if self.phase == Phase::Consent => self.make(st, true),
             OK if self.phase == Phase::Preview && self.choice.is_none() => match self.open(st, now) {
-                Ok(()) => return false,
+                Ok(()) => {
+                    self.acted = true;
+                    return false;
+                }
                 Err(e) => self.error(e),
             },
             OPENCODE if self.phase == Phase::Preview && self.choice.is_none() => match self.open_in_opencode(st) {
-                Ok(()) => return false,
+                Ok(()) => {
+                    self.acted = true;
+                    return false;
+                }
                 Err(e) => self.error(e),
             },
             BACK if self.choice.take().is_some() => {}
             BACK if matches!(self.phase, Phase::Consent | Phase::Preview) => {
                 self.phase = Phase::Setup;
                 self.name_focused = false;
+                self.unfocused = false;
                 self.message = None;
             }
             COPY if self.phase == Phase::Preview => {
@@ -641,6 +685,14 @@ impl Compact {
                 self.message = Some(("Handover copied.".into(), false));
             }
             SAVE if self.phase == Phase::Preview => self.export(st),
+            MORE if self.phase == Phase::Preview => {
+                if let Some(at) = self.more_at {
+                    use mdshared_ui::menu::{Item, Menu};
+                    let items = vec![Item::new(COPY, "Copy"), Item::new(SAVE, "Save as…")];
+                    let menu = Menu::new(items, at.x, at.bottom(), false).around(at);
+                    st.menu = Some((crate::state::MenuKind::HandoverMore, menu));
+                }
+            }
             DELETE_ORIGINAL if self.phase == Phase::Preview && self.choice.is_none() => {
                 self.delete_original = !self.delete_original;
             }
@@ -652,9 +704,11 @@ impl Compact {
             AGENT if self.phase == Phase::Preview => self.pick(Choice::Agent, st),
             NAME_FIELD if self.phase == Phase::Preview && self.choice.is_none() => {
                 self.name_focused = true;
+                self.unfocused = false;
             }
             EDITOR => {
                 self.name_focused = false;
+                self.unfocused = false;
                 let px = self.edit_area.x;
                 let py = self.edit_area.y;
                 let col = ((x - px) / self.cell_width).round().max(0.0) as usize;
@@ -683,6 +737,9 @@ impl Compact {
     }
 
     pub fn key(&mut self, k: &KeyName, mods: Mods, text: Option<&str>) -> Option<u32> {
+        if self.settling(Instant::now()) {
+            return None;
+        }
         if *k == KeyName::Escape {
             if self.choice.take().is_some() {
                 return None;
@@ -704,10 +761,14 @@ impl Compact {
         } else if self.phase == Phase::Preview && matches!(k, KeyName::Char('d' | 'D')) && mods.alt && !mods.ctrl {
             return Some(DELETE_ORIGINAL);
         } else if self.phase == Phase::Preview && *k == KeyName::Tab && !mods.ctrl && !mods.alt {
-            self.name_focused = !self.name_focused;
+            // From the dialog itself, Tab goes to the name field first.
+            self.name_focused = !self.name_focused || self.unfocused;
+            self.unfocused = false;
             if self.name_focused {
                 self.new_name.select_all();
             }
+        } else if self.phase == Phase::Preview && self.unfocused {
+            // Keys for the dialog itself (Esc, Alt+A, Alt+D) are above; nothing is typed.
         } else if self.phase == Phase::Preview && self.name_focused {
             if *k == KeyName::Enter {
                 self.name_focused = false;
@@ -723,6 +784,9 @@ impl Compact {
     }
 
     pub fn text_input(&mut self, text: &str) {
+        if self.settling(Instant::now()) || self.unfocused {
+            return;
+        }
         if self.choice.is_none() && (self.phase == Phase::Preview || (self.phase == Phase::Setup && self.job.is_none()))
         {
             if self.name_focused {
@@ -758,6 +822,130 @@ impl Compact {
         } else {
             self.editor().wheel(dy);
         }
+    }
+}
+
+/// The dialog's side of a handover written in the background (`handover_jobs`).
+impl Compact {
+    pub(crate) fn title(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn session_id(&self) -> &str {
+        &self.session.id
+    }
+
+    pub(crate) fn generating(&self) -> bool {
+        self.generating
+    }
+
+    /// A written handover not acted on: closing the review keeps it in the strip.
+    pub(crate) fn parkable(&self) -> bool {
+        self.phase == Phase::Preview && !self.acted && !self.preview.text.is_empty()
+    }
+
+    /// The worker, if any, for the caller to cancel.
+    pub(crate) fn take_work(&mut self) -> Option<Work> {
+        self.generating = false;
+        self.job.take()
+    }
+
+    fn settling(&self, now: Instant) -> bool {
+        self.settle_until.is_some_and(|until| now < until)
+    }
+
+    /// What the background worker ended with, once it has: the review is ready (`Ok`) or the
+    /// reason it is not.
+    pub(crate) fn poll_generation(&mut self, st: &mut AppState) -> Option<Result<(), String>> {
+        if !self.generating || self.job.as_ref()?.running() {
+            return None;
+        }
+        let job = self.job.take()?;
+        self.generating = false;
+        let result = job.take().unwrap_or_else(|| Err("The handover worker stopped unexpectedly.".into()));
+        self.apply(st, result);
+        Some(match (self.phase, &self.message) {
+            (Phase::Preview, _) => Ok(()),
+            (_, Some((reason, true))) => Err(reason.clone()),
+            _ => Err("The handover worker stopped unexpectedly.".into()),
+        })
+    }
+
+    /// Shown again: rechecks where it continues, starts with the delete box off as every time
+    /// the review opens, and when it opened by itself (`settle_from`) lets keys settle first.
+    pub(crate) fn reopened(&mut self, st: &AppState, settle_from: Option<Instant>) {
+        self.check_in_place(st);
+        self.delete_original = false;
+        self.choice = None;
+        self.settle_until = settle_from.map(|at| at + crate::handover_jobs::SETTLE);
+        self.unfocused = settle_from.is_some();
+        if self.unfocused {
+            self.name_focused = false;
+        }
+    }
+
+    /// Whether typing goes into the editor or the name field.
+    #[cfg(test)]
+    pub(crate) fn editor_focused(&self) -> bool {
+        !self.unfocused
+    }
+
+    /// A failed background handover shown again: the setup step with the reason.
+    pub(crate) fn failed(&mut self, reason: String) {
+        self.phase = Phase::Setup;
+        self.error(reason);
+    }
+
+    /// Starts writing again with the same choices. False when it did not start (it needs
+    /// consent again, or the reason is in the dialog).
+    pub(crate) fn retry(&mut self, st: &mut AppState) -> bool {
+        self.phase = Phase::Setup;
+        self.message = None;
+        self.make(st, false);
+        self.generating
+    }
+}
+
+#[cfg(test)]
+impl Compact {
+    pub(crate) fn is_review(&self) -> bool {
+        self.phase == Phase::Preview
+    }
+
+    pub(crate) fn preview_text(&self) -> &str {
+        &self.preview.text
+    }
+
+    pub(crate) fn account_slug(&self) -> Option<&str> {
+        self.accounts.get(self.account).map(|a| a.0.as_str())
+    }
+
+    pub(crate) fn settle_now(&mut self) {
+        self.settle_until = None;
+    }
+
+    pub(crate) fn edit_for_test(&mut self, text: &str) {
+        self.preview.move_to(self.preview.text.len(), false);
+        self.preview.insert(text);
+    }
+
+    /// A worker standing in for the model: it returns what `gate` sends, or ends when cancelled.
+    pub(crate) fn start_test_generation(
+        &mut self,
+        wake: impl Fn() + Send + Sync + 'static,
+        gate: mpsc::Receiver<Result<String, String>>,
+    ) {
+        self.job = Job::start(wake, move |cancel, _| {
+            loop {
+                match gate.recv_timeout(std::time::Duration::from_millis(5)) {
+                    Ok(result) => return result.map(Update::Preview),
+                    Err(mpsc::RecvTimeoutError::Timeout) if !cancel.cancelled() => {}
+                    Err(_) => return Err("Canceled.".into()),
+                }
+            }
+        })
+        .ok();
+        self.generating = self.job.is_some();
     }
 }
 

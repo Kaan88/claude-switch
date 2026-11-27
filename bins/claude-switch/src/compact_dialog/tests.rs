@@ -64,7 +64,8 @@ fn a_missing_saved_agent_is_checked_before_launch_even_without_opening_the_picke
 
 #[test]
 fn creating_a_handover_dialog_reads_another_windows_saved_default() {
-    let root = std::env::temp_dir().join(format!("cs-agent-default-{}", crate::compact_open::session_id().unwrap()));
+    let scratch = crate::testing::Scratch::new("cs-agent-default");
+    let root = scratch.to_path_buf();
     let roots = claude_switch_core::Roots { home: root.join("home"), appdata: root.join("appdata") };
     let mut st = app();
     let session = st.selected_session().unwrap().clone();
@@ -115,7 +116,8 @@ fn compact(st: &AppState) -> &Compact {
 
 #[test]
 fn real_source_preview_and_cancel_leave_no_handover_history() {
-    let root = std::env::temp_dir().join(format!("cs-preview-cancel-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-preview-cancel");
+    let root = scratch.to_path_buf();
     std::fs::create_dir(&root).unwrap();
     let roots = claude_switch_core::Roots { home: root.clone(), appdata: root.clone() };
     let mut st = app();
@@ -190,4 +192,83 @@ fn delete_the_original_is_off_each_time_and_toggles_by_click_or_alt_d() {
     assert!(st.toasts.find(|t| t.contains("nothing was")).is_some());
     let again = Compact::new(&st, source, None);
     assert!(!again.delete_original, "not remembered between uses");
+}
+
+/// The review at `w` x `h` and `scale`: the footer's buttons, by id, as drawn.
+fn draw_review(dialog: &mut Compact, w: f32, h: f32, scale: f32, shot: Option<&str>) -> Vec<(Rect, Target)> {
+    use mdshared_text::Bitmap;
+    use mdshared_ui::gfx::{Gfx, Painter};
+    let mut gfx = Gfx::new();
+    let mut bmp = Bitmap::new((w * scale) as u32, (h * scale) as u32);
+    let mut hits = Vec::new();
+    {
+        let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+        p.fill(Rect::new(0.0, 0.0, w, h), mdshared_ui::theme::DARK.page);
+        let mut d = dialogs::Draw::for_test(&mut hits, mdshared_ui::theme::DARK);
+        dialog.draw(&mut d, &mut p, w, h);
+    }
+    if let (Some(shot), Ok(dir)) = (shot, std::env::var("CS_SHOT_DIR")) {
+        bmp.write_png(&std::path::Path::new(&dir).join(format!("{shot}.png"))).unwrap();
+    }
+    hits
+}
+
+#[test]
+fn review_footer_fits_from_the_smallest_window_to_a_wide_one_at_every_scale() {
+    use mdshared_ui::overlay::{DIALOG_FOOTER, DIALOG_PAD, dialog_card};
+    let mut st = app();
+    let mut dialog = Compact::new(&st, st.selected_session().unwrap().clone(), None);
+    let text = "## Goal\n\n> Localize Sfera subtitle projects into Turkish, working from the English EMT plus German \
+                audio evidence, then verify and write by code. Two jobs completed back to back.\n";
+    dialog.apply(&mut st, Ok(Update::Preview(text.repeat(4))));
+    let footer_ids = [OK, OPENCODE, CANCEL, BACK, COPY, SAVE, MORE];
+    // 620 px is narrower than the window can be made: it stands for a card with less room.
+    for (w, h) in [(620.0, 480.0), (760.0, 480.0), (900.0, 600.0), (1400.0, 900.0)] {
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let shot = (scale == 1.0).then(|| format!("cs-review-{w}x{h}"));
+            let hits = draw_review(&mut dialog, w, h, scale, shot.as_deref());
+            let card = dialog_card(760.0_f32.min(w - 28.0), 480.0_f32.min(h - 24.0), w, h);
+            let buttons: Vec<_> = hits
+                .iter()
+                .filter_map(|(r, t)| match t {
+                    Target::Dialog(id) if footer_ids.contains(id) => Some((*id, *r)),
+                    _ => None,
+                })
+                .collect();
+            for (id, r) in &buttons {
+                assert!(
+                    r.x >= card.x + DIALOG_PAD - 0.5 && r.right() <= card.right() - DIALOG_PAD + 0.5,
+                    "{w}x{h}@{scale}: {id} {r:?}"
+                );
+                assert!(r.y >= card.bottom() - DIALOG_FOOTER && r.bottom() <= card.bottom(), "{w}x{h}@{scale}: {id}");
+            }
+            for (i, (a, ra)) in buttons.iter().enumerate() {
+                for (b, rb) in &buttons[i + 1..] {
+                    assert!(ra.right() <= rb.x || rb.right() <= ra.x, "{w}x{h}@{scale}: {a} overlaps {b}");
+                }
+            }
+            let has = |id| buttons.iter().any(|(b, _)| *b == id);
+            assert!(has(OK) && has(OPENCODE) && has(CANCEL) && has(BACK), "{w}x{h}");
+            // Copy and Save as… are either both shown or both behind More.
+            assert!((has(COPY) && has(SAVE) && !has(MORE)) || (!has(COPY) && !has(SAVE) && has(MORE)), "{w}x{h}");
+            if w >= 760.0 {
+                assert!(has(COPY), "the smallest window shows every action: {w}x{h}");
+            }
+        }
+    }
+    // A narrower card folds them; More offers both.
+    draw_review(&mut dialog, 620.0, 480.0, 1.0, None);
+    assert!(dialog.more_at.is_some());
+    assert!(dialog.click(&mut st, Instant::now(), MORE, 0.0));
+    let Some((crate::state::MenuKind::HandoverMore, _)) = &st.menu else { panic!("More opens its menu") };
+}
+
+#[test]
+fn footer_buttons_narrow_to_their_labels_before_they_overflow() {
+    let sizes = [(120.0, 80.0), (96.0, 60.0), (96.0, 50.0)];
+    assert_eq!(dialogs::fit(&sizes, 400.0, 8.0), vec![120.0, 96.0, 96.0], "room: natural widths");
+    let narrowed = dialogs::fit(&sizes, 250.0, 8.0);
+    assert!(narrowed.iter().sum::<f32>() + 16.0 <= 250.0, "{narrowed:?}");
+    assert!(narrowed.iter().zip(&sizes).all(|(w, s)| *w >= s.1 && *w <= s.0));
+    assert_eq!(dialogs::fit(&sizes, 10.0, 8.0), vec![80.0, 60.0, 50.0], "never below a label");
 }

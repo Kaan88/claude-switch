@@ -12,6 +12,9 @@
 //! question or the review opened), and "Submit answers" only once the review reads every answer
 //! as picked.
 mod background;
+mod blocked;
+pub(in crate::view) mod denials;
+mod prompt;
 pub(in crate::view) mod rewind;
 pub(super) mod screens;
 
@@ -268,6 +271,18 @@ pub enum Hit {
     Next,
     /// Send the form's answers.
     Submit,
+    /// Scroll a long permission prompt on (nothing is sent).
+    More,
+    /// In Claude Code's list of blocked calls: Enter on the highlighted call (approve, or unmark).
+    Approve,
+    /// In that list: `r` on the highlighted call (retry, or make a retry an approval).
+    Retry,
+    /// Open Claude Code's /permissions dialog (the slash command, under its own checks).
+    Review,
+    /// Put a sentence asking Claude to retry the denied calls in the message box (nothing is sent).
+    AskRetry,
+    /// Show or fold the list of denied permissions (nothing is sent).
+    Denials(bool),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -275,10 +290,17 @@ enum Then {
     Choose,
     /// Type on the target row, then Enter.
     Type(String),
+    /// Type on the target row and leave it there: a multi-select's "Type something" row, where
+    /// Enter would clear its box again. The form's Next or Submit row sends it.
+    Fill(String),
     /// Choose the row, then put the text in the composer for the next message.
     Chat(String),
     /// Tab to open the prompt's comment field on the row, type, then Enter.
     Amend(String),
+    /// Move the highlight to the row and stop: nothing is chosen.
+    Rest,
+    /// One key on the row that is not Enter.
+    Press(&'static [u8]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -316,6 +338,12 @@ enum Subject {
     Panel {
         rows: Vec<String>,
     },
+    /// A permission prompt read from the screen alone: its rows, question and choices.
+    Prompt(prompt::Prompt),
+    /// Claude Code's list of blocked calls: its rows with their marks.
+    Blocked {
+        entries: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -341,9 +369,20 @@ pub(super) struct MenuShown {
     rows: Vec<String>,
     /// Its footer offers Esc.
     pub(super) esc: bool,
+    /// A question of Claude's: the description under each choice (empty for other menus).
+    notes: Vec<String>,
+    /// It is a question Claude asks, read from the screen.
+    question: bool,
+    /// A question's "Type something" row, and whether it has a box (a multi-select question).
+    other: Option<(usize, bool)>,
 }
 
 impl MenuShown {
+    /// How many choices have a description to show under them.
+    fn noted(&self) -> usize {
+        self.notes.iter().filter(|note| !note.is_empty()).count()
+    }
+
     /// It only shows information: no choices to pick.
     pub(super) fn panel(&self) -> bool {
         self.choices.is_empty()
@@ -353,7 +392,11 @@ impl MenuShown {
 fn menu_shown(screen: &Screen) -> Option<MenuShown> {
     let panel = screens::panel(screen)?;
     let choices = panel.menu.as_ref().map(screens::Menu::texts).unwrap_or_default();
-    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc })
+    let (notes, question) = (panel.notes, panel.question);
+    // Only the row as the CLI first draws it: once it holds text it is an answer, not the field.
+    let other = choices.iter().position(|c| pristine(false, c) || pristine(true, c)).filter(|_| question);
+    let other = other.map(|at| (at, screens::checkbox(&choices[at]).is_some()));
+    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc, notes, question, other })
 }
 
 /// A permission prompt as last read from the screen, for the card.
@@ -379,6 +422,17 @@ pub(super) struct Card {
     failed: bool,
     rect: Rect,
     shown: Option<Shown>,
+    /// A permission prompt the pending call's card does not cover, read from the screen alone.
+    prompt: Option<prompt::Prompt>,
+    prompt_view: prompt::View,
+    /// Claude Code's list of the calls auto mode blocked (/permissions), read from the screen.
+    blocked: Option<blocked::Shown>,
+    blocked_view: blocked::View,
+    /// The current turn's denied permissions, from the transcript, and how the card shows them.
+    denials: Vec<denials::Denied>,
+    denials_watch: denials::Watch,
+    /// The card laid out is the denials' (no other card wanted the room).
+    denials_only: bool,
     /// A CLI menu with no question or permission card for it.
     pub(super) menu: Option<MenuShown>,
     /// The running shell call the CLI offers to move to the background.
@@ -509,14 +563,33 @@ fn read(
         Subject::Menu { title, choices } => {
             let panel = screens::panel(screen)?;
             let menu = panel.menu?;
-            (panel.title == *title && menu.texts() == *choices).then_some((menu, None, None))
+            let texts = menu.texts();
+            let same = texts.len() == choices.len()
+                && texts.iter().zip(choices).enumerate().all(|(i, (a, b))| a == b || typing == Some(i));
+            (panel.title == *title && same).then_some((menu, None, None))
         }
         Subject::Panel { rows } => {
             let panel = screens::panel(screen)?;
             let empty = screens::Menu { entries: Vec::new(), lines: Vec::new(), footer: 0 };
             (panel.menu.is_none() && panel.rows == *rows).then_some((empty, None, None))
         }
+        Subject::Prompt(want) => prompt::still_shown(want, screen).map(|menu| (menu, None, None)),
+        Subject::Blocked { entries } => blocked::still_shown(entries, screen).map(|menu| (menu, None, None)),
     }
+}
+
+/// Entry `i` of the menu reads exactly `text`, the rows it wraps onto included, in its ticked box
+/// when it has one.
+fn entry_shows(menu: &screens::Menu, i: usize, text: &str) -> bool {
+    let Some(entry) = menu.entries.get(i) else { return false };
+    let end = menu.entries.get(i + 1).map_or(menu.footer, |e| e.row);
+    let shown = collapse(&format!("{} {}", entry.text, screens::rows_between(menu, entry.row + 1, end)));
+    let shown = match screens::checkbox(&shown) {
+        Some((true, rest)) => rest,
+        Some((false, _)) => return false,
+        None => shown.as_str(),
+    };
+    squash(shown) == squash(text)
 }
 
 fn names(prompt: &screens::Permission, needles: &[Needle]) -> bool {
@@ -633,7 +706,7 @@ fn pristine(multi: bool, row: &str) -> bool {
 /// row's own words (the single-choice rendering is not recorded yet, so only that it is there).
 fn typed_shows(multi: bool, row: &str, text: &str) -> bool {
     if multi {
-        squash(row) == squash(&format!("[✔] {text}"))
+        [squash(&format!("[✔] {text}")), squash(&format!("[√] {text}"))].contains(&squash(row))
     } else {
         !pristine(false, row) && squash(row).contains(&squash(text))
     }
@@ -813,7 +886,7 @@ fn write(tab: &mut Tab, bytes: &[u8]) -> Result<(), &'static str> {
     let chat = &mut tab.pane.as_mut().expect("Chat pane").chat;
     #[cfg(test)]
     chat.writes.push(bytes.to_vec());
-    if !chat.demo {
+    if !chat.demo && !chat.scripted() {
         let pty =
             tab.term.pty.as_ref().filter(|p| tab.term.ended.is_none() && p.running()).ok_or("The session ended.")?;
         pty.write(bytes).map_err(|_| "The terminal write failed. Check the terminal.")?;
@@ -909,7 +982,20 @@ impl Chat {
         if collapse(self.question.field.text()) == *text {
             self.question.field.clear();
         }
-        self.question.held = Some(text.clone());
+        self.hold_text(text.clone());
+    }
+
+    /// Text for the message box joins what already waits for it there, never replacing it (the
+    /// same text twice is kept once), and lands once the box is empty.
+    fn hold_text(&mut self, text: String) {
+        match &mut self.question.held {
+            Some(held) if *held == text || held.ends_with(&format!("\n\n{text}")) => {}
+            Some(held) => {
+                held.push_str("\n\n");
+                held.push_str(&text);
+            }
+            None => self.question.held = Some(text),
+        }
         self.land_held();
     }
 
@@ -938,17 +1024,42 @@ impl Chat {
         let item = pending.as_ref().map(|p| p.item);
         let mut changed = false;
         if self.question.item != item {
-            if let Some(step) = self.question.step.take().filter(|step| step.stage == Stage::Sent) {
+            let step = self.question.step.take();
+            if let Some(step) = step.as_ref().filter(|step| step.stage == Stage::Sent) {
                 // "Chat about this" and "No, and tell Claude" return to the prompt; the text
                 // goes as the next message.
-                self.hold(&step);
+                self.hold(step);
             }
+            // A prompt read from the screen is not the transcript's call: its card and an answer
+            // in flight go on (each key still needs the same prompt on the screen).
+            let step = step.filter(|step| matches!(step.subject, Subject::Prompt(_) | Subject::Blocked { .. }));
+            let prompt = self.question.prompt.take();
+            let prompt_view = std::mem::take(&mut self.question.prompt_view);
+            let blocked = self.question.blocked.take();
+            let blocked_view = std::mem::take(&mut self.question.blocked_view);
+            let denials = std::mem::take(&mut self.question.denials);
+            let denials_watch = std::mem::take(&mut self.question.denials_watch);
             let field = std::mem::take(&mut self.question.field);
             let held = self.question.held.take();
             let agent_step = self.question.agent_step.take();
             let rewind = self.question.rewind.take();
-            let error = self.question.error.filter(|_| agent_step.is_some());
-            self.question = Card { item, field, held, agent_step, rewind, error, ..Card::default() };
+            let error = self.question.error.filter(|_| agent_step.is_some() || step.is_some());
+            self.question = Card {
+                item,
+                field,
+                held,
+                agent_step,
+                rewind,
+                error,
+                step,
+                prompt,
+                prompt_view,
+                blocked,
+                blocked_view,
+                denials,
+                denials_watch,
+                ..Card::default()
+            };
             if item.is_none() {
                 self.question.field.clear();
             }
@@ -960,6 +1071,18 @@ impl Chat {
             }
             _ => None,
         };
+        // A recognised prompt that card does not answer (no pending call, several, a subagent's,
+        // or a prompt that does not name the call) is read from the screen alone. The plan's own
+        // menu is no such prompt.
+        let covered = shown.as_ref().is_some_and(|s| s.matched)
+            || matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Tool(kind)) if is_plan(kind) && shown.is_some());
+        let prompt = (!self.menus_off && !covered).then(|| prompt::shown(screen)).flatten();
+        let shown = if prompt.is_some() { None } else { shown };
+        if self.question.prompt != prompt {
+            self.question.prompt_view = prompt::View::default();
+            self.question.prompt = prompt;
+            changed = true;
+        }
         changed |= self.question.shown != shown;
         self.question.approval = shown.is_some();
         let answerable = pending.as_ref().filter(|_| !self.question.failed).filter(|p| match p.kind {
@@ -978,15 +1101,21 @@ impl Chat {
         let rewind_holds = self.question.rewind.as_ref().is_some_and(|r| !r.failed() || (left_open && rewind_screen));
         // Any other menu the screen shows, unless a question or prompt card already covers it.
         // A Stop agent or a rewind drives the CLI's list itself; so does a stopped one left open.
-        let menu = (!self.menus_off
+        let free = !self.menus_off
             && shown.is_none()
             && self.question.agent_step.is_none()
             && !rewind_holds
-            && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
-        .then(|| menu_shown(screen))
-        .flatten();
+            && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_)));
+        // Claude Code's list of blocked calls has a card of its own: its rows are no plain choices.
+        let blocked = (free && self.question.prompt.is_none()).then(|| blocked::shown(screen)).flatten();
+        if self.question.blocked != blocked {
+            self.question.blocked = blocked;
+            changed = true;
+        }
+        let menu = (free && self.question.blocked.is_none()).then(|| menu_shown(screen)).flatten();
         changed |= self.question.menu != menu;
-        let covered = shown.is_some() || menu.is_some();
+        let covered =
+            shown.is_some() || menu.is_some() || self.question.prompt.is_some() || self.question.blocked.is_some();
         let background = pending.as_ref().filter(|_| !covered).and_then(|p| background::shell_offer(Some(p), screen));
         let background_changed = self.question.background != background;
         changed |= background_changed;
@@ -1003,13 +1132,26 @@ impl Chat {
             changed = true;
         }
         // Only a question or permission card has a field: no hidden card keeps the keyboard.
-        let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some();
+        let typed = self.question.menu.as_ref().is_some_and(|menu| menu.question);
+        let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some() || typed;
+        let field = field && self.question.prompt.is_none();
         if !field && std::mem::take(&mut self.question.focus) {
             changed = true;
         }
+        // A screen question's own answer goes with it.
+        if self.question.item.is_none() && self.question.menu.is_none() && self.question.step.is_none() {
+            self.question.field.clear();
+        }
         self.question.shown = shown;
+        changed |= self.question.sync_denials(denials::current(model));
         changed |= std::mem::replace(&mut self.question.answerable, answerable) != answerable;
         changed | self.clear_busy() | self.land_held()
+    }
+
+    /// The working line's words while the card shows a CLI menu with choices: the CLI waits for
+    /// the user, whatever the transcript says.
+    pub(in crate::view) fn menu_waiting(&self) -> Option<&'static str> {
+        self.question.menu.as_ref().filter(|menu| !menu.panel()).map(|_| ASKING)
     }
 
     pub(super) fn question_notice(&self) -> Option<&'static str> {
@@ -1030,13 +1172,15 @@ fn ready(tab: &Tab) -> bool {
     !pane.chat.identity_unverified
         && pane.model.error.is_none()
         && tab.term.ended.is_none()
-        && (pane.chat.demo || tab.term.running())
+        && (pane.chat.demo || pane.chat.scripted() || tab.term.running())
 }
 
 /// The rewind's card is the one shown: while it runs or offers its choices, and once it stopped
 /// only while no question, permission prompt or CLI menu needs the card (they come first).
 fn rewind_shown(card: &Card, model: &Model) -> bool {
     let other = card.shown.is_some()
+        || card.prompt.is_some()
+        || card.blocked.is_some()
         || card.menu.is_some()
         || matches!(pending(model).map(|p| p.kind), Some(Kind::Question(_)));
     card.rewind.as_ref().is_some_and(|r| !r.failed() || !other)
@@ -1056,11 +1200,19 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             chat.open_drawer();
             return true;
         }
+        Hit::Denials(_) | Hit::Review | Hit::AskRetry => return denials::press(tab, now, hit),
         Hit::Option(_) | Hit::Escape | Hit::Close if rewind_shown(&chat.question, &pane.model) => {
             return rewind::press(tab, now, hit);
         }
         _ if chat.question.step.is_some() => return false,
         _ => {}
+    }
+    // The screen's permission prompt comes before whatever the transcript's call would show.
+    if let Some(prompt) = chat.question.prompt.clone() {
+        return prompt::press(tab, now, hit, prompt);
+    }
+    if let Some(list) = chat.question.blocked.clone() {
+        return blocked::press(tab, now, hit, list);
     }
     // A form's picks stay in the card until Submit: nothing is written, so nothing waits for them.
     let form = pending(&pane.model).and_then(|p| match p.kind {
@@ -1312,6 +1464,9 @@ fn look_form(screen: &Screen, step: &Step, run: &FormRun, now: Instant, may_act:
 /// Writes the first keys of a step whose menu shows its highlight on `from`.
 fn start(tab: &mut Tab, now: Instant, mut step: Step, from: usize) -> bool {
     let target = step.target;
+    if from == target && step.then == Then::Rest {
+        return true;
+    }
     let result =
         if from == target { arrived(tab, &mut step, now) } else { write(tab, &moves(from, target, &tab.term.screen)) };
     let chat = &mut tab.pane.as_mut().unwrap().chat;
@@ -1360,9 +1515,27 @@ fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
         };
         return escape(tab, now, None, subject);
     }
-    let Hit::Option(target) = hit else { return false };
-    if target >= shown.choices.len() {
-        return false;
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    let (target, then) = match (hit, shown.other) {
+        (Hit::Option(target), _) if target < shown.choices.len() => (target, Then::Choose),
+        // The user's own answer, typed on the question's "Type something" row.
+        (Hit::Answer, Some((other, boxed))) => match answer_text(&chat.question.field) {
+            // The row shows no field of its own: a leading digit could pick a choice instead.
+            Ok(text) if text.starts_with(|c: char| c.is_ascii_digit()) => {
+                chat.question.error = Some(DIGIT_FIRST);
+                return true;
+            }
+            Ok(text) if boxed => (other, Then::Fill(text)),
+            Ok(text) => (other, Then::Type(text)),
+            Err(error) => {
+                chat.question.error = Some(error);
+                return true;
+            }
+        },
+        _ => return false,
+    };
+    if busy(chat) {
+        return true;
     }
     if !ready(tab) {
         tab.pane.as_mut().unwrap().chat.question_failed(BLOCKED);
@@ -1377,7 +1550,7 @@ fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
     };
     chat.question.error = None;
     let epoch = chat.output_epoch;
-    let step = Step { item: None, subject, target, then: Then::Choose, stage: Stage::Moving, due: now + STEP, epoch };
+    let step = Step { item: None, subject, target, then, stage: Stage::Moving, due: now + STEP, epoch };
     start(tab, now, step, from)
 }
 
@@ -1385,7 +1558,7 @@ fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
 fn arrived(tab: &mut Tab, step: &mut Step, now: Instant) -> Result<(), &'static str> {
     let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
     match &step.then {
-        Then::Type(text) => {
+        Then::Type(text) | Then::Fill(text) => {
             write(tab, text.as_bytes())?;
             step.stage = Stage::Typing;
             step.due = now + STEP;
@@ -1400,6 +1573,13 @@ fn arrived(tab: &mut Tab, step: &mut Step, now: Instant) -> Result<(), &'static 
             step.stage = Stage::Sent;
             step.due = now + RESULT;
         }
+        Then::Press(key) => {
+            write(tab, key)?;
+            step.stage = Stage::Sent;
+            step.due = now + RESULT;
+        }
+        // The highlight is where it was asked to be; `start` and `advance` end the step there.
+        Then::Rest => {}
     }
     step.epoch = epoch;
     Ok(())
@@ -1433,6 +1613,14 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             let chat = &mut tab.pane.as_mut().unwrap().chat;
             chat.question.step = None;
             chat.hold(&step);
+            // A screen question's typed answer has gone: the next question starts empty.
+            if step.item.is_none() && matches!(step.then, Then::Type(_) | Then::Fill(_)) {
+                chat.question.field.clear();
+            }
+            return true;
+        }
+        Action::Arrive if step.then == Then::Rest => {
+            tab.pane.as_mut().unwrap().chat.question.step = None;
             return true;
         }
         Action::Arrive => arrived(tab, &mut step, now),
@@ -1490,14 +1678,17 @@ fn comment(subject: &Subject, screen: &Screen, target: usize) -> Option<String> 
 fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
     let late = now >= step.due;
     let typed_text = match &step.then {
-        Then::Type(text) | Then::Amend(text) => Some(text.as_str()),
-        Then::Choose | Then::Chat(_) => None,
+        Then::Type(text) | Then::Fill(text) | Then::Amend(text) => Some(text.as_str()),
+        Then::Choose | Then::Chat(_) | Then::Rest | Then::Press(_) => None,
     };
     match step.stage {
         // A menu that moved on (closed, or opened the next one) is done at once.
         Stage::Sent
             if may_act
-                && matches!(step.subject, Subject::Menu { .. } | Subject::Panel { .. })
+                && matches!(
+                    step.subject,
+                    Subject::Menu { .. } | Subject::Panel { .. } | Subject::Prompt(_) | Subject::Blocked { .. }
+                )
                 && read(&step.subject, screen, None).is_none() =>
         {
             Action::Closed
@@ -1521,13 +1712,21 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
             let text = typed_text.unwrap_or_default();
             let typed = if matches!(step.then, Then::Amend(_)) {
                 comment(&step.subject, screen, step.target).is_some_and(|typed| typed.contains(text))
+            } else if matches!(step.subject, Subject::Menu { .. }) {
+                // A question read from the screen: the row must read exactly the text, the rows
+                // it wraps onto included, with the highlight still on it.
+                read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
+                    menu.highlight() == Some(step.target) && entry_shows(&menu, step.target, text)
+                })
             } else {
                 read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
                     menu.highlight() == Some(step.target)
                         && menu.rows_from(step.target).is_some_and(|rows| rows.contains(text))
                 })
             };
-            if typed && may_act {
+            if typed && may_act && matches!(step.then, Then::Fill(_)) {
+                Action::Closed
+            } else if typed && may_act {
                 Action::Enter
             } else if late {
                 Action::Fail(NOT_TYPED)
@@ -1628,8 +1827,13 @@ fn tool_title(kind: &ItemKind) -> String {
 /// Takes the card's room from the bottom of the conversation while a question or a permission
 /// prompt waits.
 pub(super) fn place(chat: &mut Chat, model: &Model) {
+    // A permission prompt read from the screen is shown whole: it may take more of the
+    // conversation's room than the other cards, and wraps its rows at the card's width.
+    let screen_prompt = chat.question.prompt.is_some() && !rewind_shown(&chat.question, model);
+    let card_w = (chat.layout.conversation.w - 24.0).clamp(0.0, 760.0);
     let wanted = match pending(model).map(|p| p.kind) {
         _ if rewind_shown(&chat.question, model) => chat.question.rewind.as_ref().map(rewind::height),
+        _ if screen_prompt => Some(prompt::height(&mut chat.question, card_w - 2.0 * PAD)),
         Some(Kind::Question(questions)) => {
             // A form keeps one height for all its questions.
             let options = questions.into_iter().flatten().map(|q| q.options.len()).max().unwrap_or(0);
@@ -1641,6 +1845,7 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         }),
         None => None,
     };
+    let wanted = wanted.or_else(|| blocked::height(&chat.question));
     let wanted = wanted.or_else(|| background::height(&chat.question)).or_else(|| {
         chat.question.menu.as_ref().map(|m| {
             // A panel has no title row: its rows say what it is.
@@ -1648,30 +1853,49 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
                 let title = if m.title.is_empty() { 0.0 } else { LINE };
                 HEADER + 6.0 + title + m.rows.len() as f32 * LINE
             } else {
-                HEADER + LINE + 6.0 + m.choices.len() as f32 * (CHOICE + 4.0)
+                HEADER + LINE + 6.0 + m.choices.len() as f32 * (CHOICE + 4.0) + m.noted() as f32 * LINE
             }
         })
     });
-    let Some(wanted) = wanted else {
-        chat.question.rect = Rect::default();
-        return;
+    // With no other card, the current turn's denied permissions: a strip with their count, or
+    // their list. Its height is its own.
+    chat.question.denials_only = wanted.is_none();
+    let wanted = match wanted {
+        Some(wanted) => 2.0 * PAD + wanted + FIELD + STATUS,
+        None => match denials::height(&chat.question) {
+            Some(whole) => whole,
+            None => {
+                chat.question.rect = Rect::default();
+                return;
+            }
+        },
     };
     let conversation = &mut chat.layout.conversation;
-    let wanted = 2.0 * PAD + wanted + FIELD + STATUS;
-    let h = wanted.min((conversation.h * 0.6).floor()).max(0.0);
-    let w = (conversation.w - 24.0).clamp(0.0, 760.0);
+    let share = if screen_prompt { 0.85 } else { 0.6 };
+    let h = wanted.min((conversation.h * share).floor()).max(0.0);
+    let w = card_w;
     chat.question.rect =
         Rect::new(conversation.x + ((conversation.w - w) / 2.0).round(), conversation.bottom() - h - 8.0, w, h);
     conversation.h = (conversation.h - h - 16.0).max(0.0);
+    prompt::fit(&mut chat.question);
 }
 
 pub(super) struct Draw<'a> {
     pub pal: &'a Palette,
     pub hover: Option<Target>,
     pub focused: bool,
+    /// When this frame is painted: a prompt read from the screen notes when it was first shown.
+    pub now: Instant,
 }
 
 impl Draw<'_> {
+    /// A button of the card.
+    fn button(&self, p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit) {
+        let target = Target::Chat(Control::Question(hit));
+        super::paint::button(p, self.pal, r, label, self.hover == Some(target), false);
+        hits.push((r, target));
+    }
+
     /// The card under the conversation; called by the Chat painter.
     pub(super) fn card(&self, p: &mut Painter, chat: &mut Chat, model: &Model, hits: &mut Vec<(Rect, Target)>) {
         let r = chat.question.rect;
@@ -1684,14 +1908,21 @@ impl Draw<'_> {
         let inner = r.inset(PAD);
         match pending(model).map(|p| p.kind) {
             _ if rewind_shown(&chat.question, model) => self.rewind(p, chat, inner, hits),
+            _ if chat.question.prompt.is_some() => self.prompt(p, chat, inner, hits),
+            _ if chat.question.blocked.is_some() => self.blocked(p, chat, inner, hits),
             Some(Kind::Question(questions)) => self.question(p, chat, inner, questions, hits),
             Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
             _ if chat.question.menu.is_some() => self.menu(p, chat, inner, hits),
-            _ => self.background(p, chat, inner, hits),
+            _ if background::height(&chat.question).is_some() => self.background(p, chat, inner, hits),
+            _ => self.denials(p, chat, r, hits),
         }
         // Esc leaves a menu or declines what the card shows, under the same checks as a choice.
         let escape = match pending(model).map(|p| p.kind) {
             _ if chat.question.step.is_some() || rewind_shown(&chat.question, model) => false,
+            // Esc declines without reading on: the prompt's footer always offers it.
+            _ if chat.question.prompt.is_some() => chat.question.prompt_answers(),
+            // The list of blocked calls names what Esc will do on its own button.
+            _ if chat.question.blocked.is_some() => false,
             Some(Kind::Question(_)) => chat.question.answerable.is_some(),
             Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
             // A panel offers Close in its own footer instead.
@@ -1714,34 +1945,69 @@ impl Draw<'_> {
             return self.panel(p, chat, inner, &menu, hits);
         }
         let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code menu", pal.muted, inner.w);
+        let kind = if menu.question { "Claude asks" } else { "Claude Code menu" };
+        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, kind, pal.muted, inner.w);
         y += HEADER;
         let title = if menu.title.is_empty() { "Choose in the terminal's menu" } else { menu.title.as_str() };
         copied_row(p, Face::Semibold, 12.5, inner.x, y + LINE / 2.0, title, pal.text, inner.w);
         y += LINE + 6.0;
         for (i, choice) in menu.choices.iter().enumerate() {
-            let row = Rect::new(inner.x, y, inner.w, CHOICE);
+            let note = menu.notes.get(i).filter(|note| !note.is_empty());
+            let row = Rect::new(inner.x, y, inner.w, CHOICE + if note.is_some() { LINE } else { 0.0 });
             let target = Target::Chat(Control::Question(Hit::Option(i)));
             p.rbox(row, 6.0, if self.hover == Some(target) { pal.hover } else { pal.bar });
             p.text(
                 Face::Semibold,
                 12.0,
                 row.x + 10.0,
-                row.cy(),
-                &format!("{}. {choice}", i + 1),
+                row.y + CHOICE / 2.0,
+                // A question's rows are not all numbered on the screen (Next, Submit).
+                &if menu.question { choice.clone() } else { format!("{}. {choice}", i + 1) },
                 pal.text,
                 row.w - 20.0,
             );
+            if let Some(note) = note {
+                p.text(Face::Ui, 11.0, row.x + 10.0, row.y + CHOICE + LINE / 2.0 - 4.0, note, pal.muted, row.w - 20.0);
+            }
             hits.push((row, target));
-            y += CHOICE + 4.0;
+            y += row.h + 4.0;
         }
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
+        let mut row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
         let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or("");
-        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
+        if menu.other.is_some() {
+            // The user's own answer: typed on the question's "Type something" row.
+            let field = Rect::new(row.x, row.y, (row.w - 104.0 - 8.0 - 120.0 - 8.0).max(0.0), row.h);
+            let focus = chat.question.focus && self.focused;
+            p.frame(field, 5.0, pal.field, if focus { pal.accent } else { pal.line });
+            let colors =
+                FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
+            chat.question.field.draw(
+                p,
+                field.inset(6.0),
+                Face::Ui,
+                12.0,
+                &colors,
+                "Type your own answer…",
+                focus,
+                focus,
+            );
+            hits.push((field, Target::Chat(Control::Question(Hit::Field))));
+            let answer = Rect::new(field.right() + 8.0, row.y, 104.0, row.h);
+            let target = Target::Chat(Control::Question(Hit::Answer));
+            let label = if menu.other.is_some_and(|(_, boxed)| boxed) { "Add answer" } else { "Answer" };
+            super::paint::button(p, pal, answer, label, self.hover == Some(target), false);
+            hits.push((answer, target));
+        } else {
+            p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
+        }
         let open = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
         let target = Target::Chat(Control::Question(Hit::Open));
         super::paint::button(p, pal, open, "Open terminal", self.hover == Some(target), false);
         hits.push((open, target));
+        if menu.other.is_some() {
+            row.y += FIELD;
+            p.text(Face::Ui, 11.5, row.x, row.y + STATUS / 2.0 - 4.0, status, pal.muted, row.w);
+        }
     }
 
     /// A CLI panel that only shows information (/usage, /status): its rows, usage bars drawn as
@@ -2006,3 +2272,11 @@ impl Draw<'_> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+impl Card {
+    /// For tests outside this module: whether a step is in flight, and the card's notice.
+    pub(in crate::view::chat) fn probe(&self) -> (bool, Option<&'static str>) {
+        (self.step.is_some(), self.error)
+    }
+}

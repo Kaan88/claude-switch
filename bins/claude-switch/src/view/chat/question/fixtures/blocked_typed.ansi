@@ -1,0 +1,49 @@
+cursor 20 14
+@size 110 46
+@modes paste cursor
+[0;38;2;215;119;87m ▐[0;38;2;215;119;87;48;2;0;0;0m▛███▛█[0m   [0;1mClaude[0m [0;1mCode[0m [0;38;2;153;153;153mv2.1.332[0m
+[0;38;2;215;119;87m▝▜[0;38;2;215;119;87;48;2;0;0;0m█████[0;38;2;215;119;87m█▀[0m  [0;38;2;153;153;153mHaiku[0m [0;38;2;153;153;153m5.5[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153mClaude[0m [0;38;2;153;153;153mMax[0m
+[0;38;2;215;119;87m ▝▝[0m   [0;38;2;215;119;87m▝▝[0m   [0;38;2;153;153;153m~\work\scratch[0m
+
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mRun exactly this with the Bash tool and nothing else: mkdir probe_blocked_two                               [0m
+
+[0;38;2;255;107;128m●[0;38;2;215;119;87m [0;1mBash[0m(mkdir probe_blocked_two)
+[0;38;2;153;153;153m  ⎿  Blocked by auto mode · /permissions to review · see https://code.claude.com/docs/s/claude-code-auto-mode[0m
+     [0;2m│[0m [0;38;2;153;153;153mAuto mode: No reason provided[0m
+
+[0;38;2;255;255;255m●[0m The [0;38;2;177;185;249mmkdir probe_blocked_two [0mcommand was denied by the auto mode classifier, so the directory was not
+  created. I didn't try another tool to create it, since that would get around the denial.
+
+  To allow this, add a Bash permission rule for [0;38;2;177;185;249mmkdir[0m in your Claude Code settings, or approve the command if
+  you're prompted again. Once it's allowed, I can rerun the command.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mCrunched for 5s · done 6:25 PM[0m
+
+[0;38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+❯ [0;38;2;177;185;249m/permissions[0m
+[0;38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0;38;2;177;185;249m❯ /[0;1;38;2;177;185;249mpermissions[0;38;2;177;185;249m                      Manage allow and deny tool permission rules[0m
+  [0;38;2;153;153;153m  /fewer-[0;1mpermission[0;38;2;153;153;153m-prompt[0;1ms[0;38;2;153;153;153m         Pre-approve safe read-only commands based on your usage[0m
+  [0;38;2;153;153;153m [0m [0;38;2;153;153;153m/chrome-browser[0m                   [0;38;2;153;153;153mRead[0m [0;38;2;153;153;153mthis[0m [0;38;2;153;153;153mskill[0m [0;38;2;153;153;153mbefore[0m [0;38;2;153;153;153mthe[0m [0;38;2;153;153;153mfirst[0m [0;38;2;153;153;153mstep[0m [0;38;2;153;153;153mthat[0m [0;38;2;153;153;153muses[0m [0;38;2;153;153;153mClaude[0m [0;38;2;153;153;153min[0m [0;38;2;153;153;153mChrome,[0m [0;38;2;153;153;153mthe[0m
+                                      [0;38;2;153;153;153mbrowser[0m [0;38;2;153;153;153mextension[0m [0;38;2;153;153;153mwhose[0m [0;38;2;153;153;153mtools[0m [0;38;2;153;153;153mare[0m [0;38;2;153;153;153mnamed[0m [0;38;2;153;153;153mmcp__claude-in-chrome__*[0m [0;38;2;153;153;153m(als…[0m
+  [0;38;2;153;153;153m [0m [0;38;2;153;153;153m/update-config[0m                    [0;38;2;153;153;153mChange[0m [0;38;2;153;153;153msettings:[0m [0;38;2;153;153;153mhooks,[0m [0;1mpermissions[0;38;2;153;153;153m,[0m [0;38;2;153;153;153menvironment[0m [0;38;2;153;153;153mvariables[0m
+  [0;38;2;153;153;153m [0m [0;38;2;153;153;153m/claude-in-chrome[0m                 [0;38;2;153;153;153mLet[0m [0;38;2;153;153;153mClaude[0m [0;38;2;153;153;153mbrowse[0m [0;38;2;153;153;153mand[0m [0;38;2;153;153;153minteract[0m [0;38;2;153;153;153mwith[0m [0;38;2;153;153;153mpages[0m [0;38;2;153;153;153min[0m [0;38;2;153;153;153myour[0m [0;38;2;153;153;153mChrome[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

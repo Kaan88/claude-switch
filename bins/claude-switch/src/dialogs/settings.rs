@@ -13,6 +13,7 @@ mod appearance;
 mod chat_page;
 mod meaning;
 mod pages;
+pub(crate) mod peek;
 mod theme_editor;
 mod tiles;
 pub(crate) use chat_page::CHAT;
@@ -195,10 +196,10 @@ fn terminal(st: &AppState) -> Vec<Row> {
     let mut rows: Vec<_> = PRESETS
         .chunks(tiles::ACROSS)
         .enumerate()
-        .map(|(i, chunk)| {
+        .flat_map(|(i, chunk)| {
             let (id, label) = if i == 0 { (SET_TERM_COLOURS, "Terminal colours") } else { (tiles::MORE_TERMINAL, "") };
             let names: Vec<_> = chunk.iter().map(|s| s.name).collect();
-            Row::choice(id, label, &names, if selected / tiles::ACROSS == i { selected % tiles::ACROSS } else { 0 })
+            tiles::line(id, label, &names, if selected / tiles::ACROSS == i { selected % tiles::ACROSS } else { 0 })
         })
         .collect();
     rows.extend([
@@ -903,7 +904,9 @@ mod tests {
     fn switching_pages_reads_the_merged_config_without_writing_navigation_or_republishing_preferences() {
         use claude_switch_core::{Roots, config};
 
-        let folder = std::env::temp_dir().join(format!("cs-settings-pages-test-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-settings-pages-test");
+
+        let folder = scratch.to_path_buf();
         let roots = Roots { home: folder.join("home"), appdata: folder.join("appdata") };
         let mut st = AppState::new(Source::Real(roots.clone()), None, WindowFile::default());
         st.dialog = Some(settings(&mut st, Some("Sessions")));

@@ -1,0 +1,19 @@
+[package]
+name = "recorder"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Records Claude Code's terminal screens for Chat's fixtures and checks them after an update"
+
+[dependencies]
+# The same toolkit revision as bins/claude-switch: raise both together.
+mdshared-term = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31" }
+mdshared-pty = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31" }
+# Only for `recorder compat`: its screen, and the check's summary and the transcripts' usage.
+ratatui = "=0.30.2"
+crossterm = "=0.29.0"
+serde_json = "=1.0.154"
+
+# A crate of its own: not part of the app's workspace or its release build.
+[workspace]

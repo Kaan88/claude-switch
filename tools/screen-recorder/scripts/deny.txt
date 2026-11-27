@@ -1,0 +1,20 @@
+# A call a deny rule refuses without a prompt (--settings), and the /permissions panel after it.
+# Two model requests.
+#: args --permission-mode default --settings {scripts}/deny-mkdir.json
+#: seconds 20
+start
+send Run exactly this with the Bash tool and nothing else: mkdir probe_denied
+sleep 800
+send \r
+sleep 3000
+gone esc to interrupt 120000
+quiet 1500 60000
+snap refused
+send /permissions
+sleep 800
+send \r
+sleep 2500
+snap permissions
+send \e
+sleep 1500
+snap closed

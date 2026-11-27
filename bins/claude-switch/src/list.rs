@@ -55,17 +55,46 @@ pub fn ago_at(now_ms: u64, then_ms: u64, offset: i32) -> String {
 }
 
 pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut Painter, area: Rect) {
+    let now = cx.now();
+    for r in draw_with(st, cx.anim(), p, area, now) {
+        cx.animating(r);
+    }
+    // The strip's elapsed time ticks even with reduced motion, when nothing animates.
+    if st.compact.jobs.list.iter().any(|j| j.state == crate::handover_jobs::State::Writing) {
+        cx.wake_at(now + std::time::Duration::from_secs(1));
+    }
+}
+
+/// [`draw_with`] at the current time, for tests that draw the list under another layer.
+#[cfg(test)]
+pub(crate) fn draw_in(st: &mut AppState, anim: &mut Animator, p: &mut Painter, area: Rect) -> Vec<Rect> {
+    draw_with(st, anim, p, area, std::time::Instant::now())
+}
+
+/// [`draw`] without a window: returns what to keep redrawing.
+pub fn draw_with(
+    st: &mut AppState,
+    anim: &mut Animator,
+    p: &mut Painter,
+    area: Rect,
+    now: std::time::Instant,
+) -> Vec<Rect> {
+    let mut moving = Vec::new();
     let pal = *st.pal();
     p.fill(area, pal.pane);
     controls(st, p, area);
-    let area = Rect::new(area.x, area.y + CONTROLS_H, area.w, (area.h - CONTROLS_H).max(0.0));
+    // Background handovers, between the filter chips and the list; no room when there are none.
+    let strip = Rect::new(area.x, area.y + CONTROLS_H, area.w, st.compact.jobs.height());
+    moving.extend(crate::handover_jobs::draw_strip(st, p, strip, now, Some(&mut *anim)));
+    let top = CONTROLS_H + strip.h;
+    let area = Rect::new(area.x, area.y + top, area.w, (area.h - top).max(0.0));
     st.list_area = area;
     st.list_scroll_track = None;
     st.sections.view = area.h;
     st.sections.scroll = st.sections.clamp_scroll(st.sections.scroll);
     st.hits.push((area, Target::ListBlank));
     if st.groups.is_empty() && st.conversation_search.on {
-        return;
+        return moving;
     }
     if st.groups.is_empty() {
         let text = if !st.scanned {
@@ -76,7 +105,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
             "No sessions match this view."
         };
         p.text_center(Face::Ui, 13.0, Rect::new(area.x, area.y + 40.0, area.w, 24.0), text, pal.muted);
-        return;
+        return moving;
     }
     let old = p.clip(area);
     let now = now_ms();
@@ -87,7 +116,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
         let r = st.sections.rect(area, i);
         match st.sections.entry(i) {
             Some(Entry::Heading(g)) => heading(st, p, r, g, i, (now, offset)),
-            Some(Entry::Row { .. }) if row(st, cx.anim(), p, r, i, cursor == Some(i), (now, offset)) => cx.animating(r),
+            Some(Entry::Row { .. }) if row(st, anim, p, r, i, cursor == Some(i), (now, offset)) => moving.push(r),
             _ => {}
         }
     }
@@ -106,6 +135,7 @@ pub fn draw(st: &mut AppState, cx: &mut mdshared_ui::host::Cx<'_, Msg>, p: &mut 
         st.list_scroll_track = Some(track);
     }
     p.restore(old);
+    moving
 }
 
 fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {

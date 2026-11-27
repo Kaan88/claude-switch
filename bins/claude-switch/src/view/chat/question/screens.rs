@@ -3,8 +3,10 @@
 //! live session. A screen that does not match exactly is not answered.
 use mdshared_term::Screen;
 
+use crate::view::chat::submission::screen::prompt_mark;
+
 /// Footer hints under a CLI menu, picker or dialog (the last non-empty row), lower case.
-const MENU_FOOTERS: [&str; 9] = [
+const MENU_FOOTERS: [&str; 10] = [
     "esc to cancel",
     "escape to cancel",
     "esc to close",
@@ -15,6 +17,9 @@ const MENU_FOOTERS: [&str; 9] = [
     "enter to continue",
     // The plan approval's only hint; it wraps onto the plan file's path (Claude Code 2.1.332).
     "ctrl+g to edit",
+    // /permissions › Recently blocked once a call is marked: "r to retry · Enter to approve · Esc
+    // to approve 1 blocked" (no arrows, and Esc no longer closes without acting).
+    "enter to approve",
 ];
 /// The row the CLI shows under a running shell command that can move to the background.
 const BACKGROUND_HINT: &str = "(ctrl+b to run in background)";
@@ -89,6 +94,8 @@ const MODES: [(&str, &str); 6] = [
 const MODE_ROWS: usize = 4;
 /// How far above a menu's footer its rows may start.
 const MENU_ROWS: usize = 60;
+/// How many rows above its first choice a question's tab row and text may use.
+const FORM_ABOVE: usize = 20;
 /// How many rows above a permission question its tool description may use.
 const BODY_ROWS: usize = 16;
 
@@ -121,18 +128,40 @@ fn solid_rule(text: &str) -> bool {
     text.chars().count() >= 20 && text.chars().all(|c| matches!(c, '─' | '━' | '═'))
 }
 
+/// How many rows with text under a menu's footer are passed over to find it.
+const UNDER_FOOTER: usize = 6;
+
 /// The footer of whatever the CLI draws at the bottom: the last non-empty row, or the row right
 /// above it when the footer wrapped (it then ends with its `·` separator). `rows` are the screen's
 /// cleaned rows; the last row is found on the screen itself, where an empty input (`❯`) counts.
+/// A menu takes the input box's place, so while no input row is under it a footer a few rows up
+/// still counts, whatever the CLI or a redraw left under it (a rule, a notice): the
+/// conversation's own words are above the input row, never under it.
 fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
     let last = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty())?;
     let footer = if menu_footer(&rows[last]) {
         last
     } else {
         let prev = last.checked_sub(1)?;
-        (menu_footer(&rows[prev]) && rows[prev].ends_with('·')).then_some(prev)?
+        if menu_footer(&rows[prev]) && rows[prev].ends_with('·') {
+            prev
+        } else {
+            let mut texts = (0..last).rev().filter(|&row| !rows[row].is_empty()).take(UNDER_FOOTER);
+            let footer = texts.find(|&row| menu_footer(&rows[row]))?;
+            let input = |row| crate::view::chat::submission::screen::marks_input(screen, row);
+            if (footer + 1..=last).any(input) {
+                return None;
+            }
+            footer
+        }
     };
     (!input_box_above(screen, footer)).then_some(footer)
+}
+
+/// The row of the footer of a menu, picker or dialog that has the screen, if one shows.
+pub(in crate::view) fn live_footer(screen: &Screen) -> Option<usize> {
+    let rows: Vec<String> = (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1).collect();
+    footer_row(screen, &rows)
 }
 
 /// The CLI's input box (a `❯` row right under a solid rule, closed by another rule) sits just above
@@ -147,7 +176,7 @@ pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> boo
         return false;
     };
     let first = text(top + 1);
-    first.starts_with('❯') && numbered(first.trim_start_matches('❯').trim()).is_none()
+    first.starts_with(prompt_mark) && numbered(first.trim_start_matches(prompt_mark).trim()).is_none()
 }
 
 pub(super) fn numbered(text: &str) -> Option<(usize, &str)> {
@@ -288,6 +317,41 @@ pub(super) fn permission(screen: &Screen) -> Option<Permission> {
     Some(Permission { question, body, tell, menu })
 }
 
+/// Every row of a permission prompt from its own top rule down to its question, as the CLI draws
+/// them (Claude Code 2.1.332, the `perm_agent_*` and `perm_two_*` fixtures): what is asked for and,
+/// when the screen says so, by whom ("Bash command · from the general-purpose agent"), then the
+/// tip, the description and the command or file between its dashed rules. The one column of margin
+/// is removed and blank rows are left out; a dashed rule stays a row of its own.
+///
+/// The top rule is the full-width solid rule over the prompt: no row of the prompt itself can be
+/// one, since every one of them starts after the margin. `None` when it is not on the screen (the
+/// prompt is taller than the terminal) or the rows do not end in the prompt's question: what
+/// cannot be read whole is not shown as whole.
+pub(super) fn permission_rows(screen: &Screen, prompt: &Permission) -> Option<Vec<String>> {
+    let first = prompt.menu.entries.first()?.row;
+    let top_rule = |row: usize| {
+        let text = screen.row_text(row);
+        let text = text.trim_end();
+        text.chars().count() >= screen.cols() && solid_rule(text)
+    };
+    let top = (0..first).rev().find(|&row| top_rule(row))?;
+    let mut rows: Vec<String> = (top + 1..first)
+        .map(|row| {
+            let text = screen.row_text(row);
+            let text = text.trim_end();
+            text.strip_prefix(' ').unwrap_or(text).to_owned()
+        })
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    let question = rows.pop()?;
+    (collapse(&question) == prompt.question && !rows.is_empty()).then_some(rows)
+}
+
+/// A dashed or solid rule row, as `permission_rows` keeps them.
+pub(super) fn is_rule(text: &str) -> bool {
+    rule(text.trim())
+}
+
 /// The permission mode the indicator under the input row names, if any.
 pub(in crate::view::chat) fn mode(screen: &Screen) -> Option<&'static str> {
     let row = screen.cursor().row;
@@ -306,6 +370,52 @@ pub(super) struct Panel {
     pub rows: Vec<String>,
     /// The footer offers Esc.
     pub esc: bool,
+    /// For a question Claude asks: what the screen shows under each choice (its description),
+    /// one text per menu entry; empty for any other menu.
+    pub notes: Vec<String>,
+    /// The menu is a question of Claude's (`AskUserQuestion`), known by its tab row.
+    pub question: bool,
+}
+
+/// The first row of a question Claude asks: its header with a box (" ☐ Colour"), or a form's row
+/// of tabs. Boxes are drawn `[ ]` and `[×]` where Claude Code draws without Unicode.
+fn question_tabs(text: &str) -> bool {
+    tab_bar(text) || ["☐ ", "☒ ", "[ ] ", "[×] ", "[x] "].iter().any(|b| text.starts_with(b))
+}
+
+/// The numbered menu with the rows the arrow keys also stop on: a multi-select question's
+/// unnumbered Submit or Next row, after its "Type something" row.
+pub(super) fn walk_menu(screen: &Screen) -> Option<Menu> {
+    let mut menu = menu(screen)?;
+    // The last row with a box is "Type something", whatever was typed on it since.
+    let other = menu.entries.iter().rposition(|e| checkbox(&e.text).is_some());
+    if let Some(other) = other
+        && let Some(entry) = submit_row(screen, &menu, other)
+    {
+        menu.entries.insert(other + 1, entry);
+    }
+    Some(menu)
+}
+
+/// The review of a form's answers as a menu of its two entries. It has no footer; it is known by
+/// its own rows (`review`).
+fn review_panel(screen: &Screen) -> Option<Panel> {
+    let review = review(screen)?;
+    let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
+    let last = rows.iter().rposition(|(_, text)| !text.is_empty())?;
+    let entries = (last - 1..=last)
+        .map(|row| Entry { row, highlighted: rows[row].0, text: numbered(&rows[row].1).map_or("", |n| n.1).to_owned() })
+        .collect();
+    let answers: Vec<String> = review.answers.iter().map(|(q, a)| format!("{q} → {a}")).collect();
+    let menu = Menu { entries, lines: rows.into_iter().map(|(_, text)| text).collect(), footer: last + 1 };
+    Some(Panel {
+        title: format!("{REVIEW}: {}", answers.join("; ")),
+        menu: Some(menu),
+        rows: Vec::new(),
+        esc: false,
+        notes: Vec::new(),
+        question: true,
+    })
 }
 
 /// The screen may show a permission prompt: recognised, or a menu with a permission prompt's rows
@@ -340,13 +450,40 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
     if permission_like(screen) || screen.modes().alt_screen {
         return None;
     }
+    if let Some(review) = review_panel(screen) {
+        return Some(review);
+    }
     let lines: Vec<String> = (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1).collect();
     // Only a footer at the bottom of what the CLI draws: an old menu left in the output above has
     // the input and its status rows under it. The cursor is no guide (see `permission_like`).
     let footer = footer_row(screen, &lines)?;
-    let esc = lines[footer].to_lowercase().contains("esc");
-    let menu = menu(screen);
+    // The list of calls auto mode blocked is never a menu of plain choices: Enter on a row
+    // approves that call, and Esc applies what was marked. Its own card reads it (`blocked`);
+    // one it cannot read shows as rows only, with Esc only while Esc just closes.
+    let blocked = lines[footer].to_lowercase().contains(BLOCKED_APPROVE);
+    let esc = lines[footer].to_lowercase().contains(if blocked { "esc to close" } else { "esc" });
+    let menu = if blocked { None } else { walk_menu(screen) };
     let mut title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
+    // A question Claude asks: its text is every row between its tab row and its choices, and
+    // each choice has its description under it.
+    let (mut notes, mut question) = (Vec::new(), false);
+    if let Some(menu) = &menu {
+        let above = menu.above_box(FORM_ABOVE);
+        if let Some((first, text)) = above.split_first().filter(|(first, _)| question_tabs(first)) {
+            question = true;
+            if !text.is_empty() {
+                title = collapse(&text.join(" "));
+            } else if !tab_bar(first) {
+                title = (*first).to_owned();
+            }
+            notes = (0..menu.entries.len())
+                .map(|i| {
+                    let end = menu.entries.get(i + 1).map_or(menu.footer, |e| e.row);
+                    rows_between(menu, menu.entries[i].row + 1, end)
+                })
+                .collect();
+        }
+    }
     let top = panel_top(screen, &lines, footer);
     let mut rows: Vec<(usize, &String)> =
         (top..footer).map(|row| (row, &lines[row])).filter(|(_, text)| !text.is_empty() && !rule(text)).collect();
@@ -359,7 +496,7 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
         rows.remove(0);
     }
     let rows = rows.into_iter().map(|(_, text)| text.clone()).collect();
-    Some(Panel { title, menu, rows, esc })
+    Some(Panel { title, menu, rows, esc, notes, question })
 }
 
 /// Where a panel starts: under the nearest full-width solid rule above its footer. A panel
@@ -374,7 +511,7 @@ fn panel_top(screen: &Screen, lines: &[String], footer: usize) -> usize {
     let conversation = (0..footer).any(|row| {
         let text = screen.row_text(row);
         let text = text.trim_start();
-        text.starts_with(['❯', '●', '⎿'])
+        text.starts_with(['❯', '●', '⎿']) || text.starts_with("> ")
     });
     if conversation { footer.saturating_sub(PANEL_ROWS) } else { 0 }
 }
@@ -393,13 +530,127 @@ fn selected(screen: &Screen, row: usize) -> String {
     collapse(&text)
 }
 
+/// The footer hint only the list of blocked calls shows, lower case.
+const BLOCKED_APPROVE: &str = "enter to approve";
+const BLOCKED_RETRY: &str = "r to retry";
+/// The tab of the /permissions dialog that lists them, as its tab row names it.
+const BLOCKED_TAB: &str = "Recently blocked";
+/// The row under an entry list with marks: "Esc will approve 1 blocked call".
+const BLOCKED_PENDING: &str = "Esc will ";
+/// How a blocked call's row starts: not marked, or marked to be approved or retried.
+const BLOCKED_MARKS: [char; 2] = ['✘', '✔'];
+/// What a row marked for a retry says after the call's description.
+const BLOCKED_RETRY_MARK: &str = "(retry)";
+
+/// What the user marked a blocked call for in the list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Mark {
+    /// `✘`: nothing; the call stays blocked.
+    None,
+    /// `✔`: Esc tells Claude it may retry the call.
+    Approve,
+    /// `✔ … (retry)`: Esc tells Claude so and starts the retry at once.
+    Retry,
+}
+
+/// The "Recently blocked" tab of Claude Code's /permissions dialog (2.1.332, the `blocked_*`
+/// fixtures): the calls auto mode's classifier blocked, newest first, each "n. ✘ what  why"; the
+/// highlighted one's command between dashed rules under the list. Enter marks the highlighted
+/// call to be approved (`✔`) and Enter again unmarks it; `r` marks it to be retried (`✔ … (retry)`)
+/// and `r` again turns that into an approval. While anything is marked a row under the list says
+/// what Esc will do and the footer reads "Esc to approve 1 blocked" instead of "Esc to close".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Blocked {
+    /// The tab's own words: "Commands auto mode recently blocked. Approving adds no rule."
+    pub note: String,
+    /// The calls, as the rows read after their number (mark, description, reason).
+    pub menu: Menu,
+    pub marks: Vec<Mark>,
+    /// "Esc will approve 1 blocked call", while anything is marked.
+    pub pending: Option<String>,
+    /// The highlighted call's own rows (its command), as drawn.
+    pub detail: Vec<String>,
+    /// What the footer says Esc does: "close", "approve 1 blocked", "retry 1 blocked".
+    pub esc: String,
+}
+
+/// The list of blocked calls, only as its own screen: the dialog's top rule, its tab row with
+/// "Recently blocked" selected, the tab's note, the numbered calls with exactly one highlighted,
+/// the row saying what Esc will do, the highlighted call's rows between two dashed rules, and the
+/// footer offering `r`, Enter and Esc. Any other row and it is not read.
+pub(super) fn blocked(screen: &Screen) -> Option<Blocked> {
+    if screen.modes().alt_screen {
+        return None;
+    }
+    let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
+    let lines: Vec<String> = rows.iter().map(|(_, text)| text.clone()).collect();
+    let footer = footer_row(screen, &lines)?;
+    let hints: Vec<&str> = lines[footer].split(" · ").map(str::trim).collect();
+    let has = |hint: &str| hints.iter().any(|h| h.eq_ignore_ascii_case(hint));
+    (has(BLOCKED_APPROVE) && has(BLOCKED_RETRY)).then_some(())?;
+    let esc = hints.iter().find_map(|h| h.strip_prefix("Esc to "))?.to_owned();
+    let top = (0..footer).rev().find(|&row| {
+        let text = screen.row_text(row);
+        let text = text.trim_end();
+        text.chars().count() >= screen.cols() && solid_rule(text)
+    })?;
+    let mut at = (top + 1..footer).filter(|&row| !lines[row].is_empty());
+    let tabs = at.next()?;
+    (lines[tabs].starts_with("Permissions") && selected(screen, tabs) == BLOCKED_TAB).then_some(())?;
+    let note = lines[at.next()?].clone();
+    (!note.is_empty() && numbered(&note).is_none() && !rule(&note)).then_some(())?;
+    let (mut entries, mut marks) = (Vec::new(), Vec::new());
+    let mut pending = None;
+    let mut next = at.next()?;
+    loop {
+        let (highlighted, text) = &rows[next];
+        if let Some((n, rest)) = numbered(text) {
+            (n == entries.len() + 1 && pending.is_none()).then_some(())?;
+            let mark = match rest.strip_prefix(BLOCKED_MARKS)?.strip_prefix(' ')? {
+                _ if rest.starts_with(BLOCKED_MARKS[0]) => Mark::None,
+                words if words.contains(BLOCKED_RETRY_MARK) => Mark::Retry,
+                _ => Mark::Approve,
+            };
+            entries.push(Entry { row: next, highlighted: *highlighted, text: rest.to_owned() });
+            marks.push(mark);
+        } else if text.starts_with(BLOCKED_PENDING) && pending.is_none() && !highlighted {
+            pending = Some(text.clone());
+        } else {
+            break;
+        }
+        next = at.next()?;
+    }
+    // The highlighted call's rows, between two dashed rules; nothing after them but the footer.
+    (rule(&lines[next]) && !solid_rule(&lines[next])).then_some(())?;
+    let rest: Vec<usize> = at.collect();
+    let (&close, detail) = rest.split_last()?;
+    (rule(&lines[close]) && !detail.is_empty() && detail.iter().all(|&row| !rule(&lines[row]) && !rows[row].0))
+        .then_some(())?;
+    let detail = detail
+        .iter()
+        .map(|&row| {
+            let text = screen.row_text(row);
+            // The dialog's indent and the row's own column of margin.
+            let text = text.trim_end();
+            let text = text.strip_prefix("  ").unwrap_or(text);
+            text.strip_prefix(' ').unwrap_or(text).to_owned()
+        })
+        .collect();
+    let menu = Menu { entries, lines, footer };
+    menu.highlight()?;
+    // A mark and what Esc will do go together.
+    let marked = marks.iter().any(|mark| *mark != Mark::None);
+    (marked == pending.is_some() && marked != (esc == "close")).then_some(())?;
+    Some(Blocked { note, menu, marks, pending, detail, esc })
+}
+
 /// The live input row: a `❯` row between two solid rules, the lowest on the screen. It is found
 /// without the cursor, which the CLI parks in its agent list while that has the keys.
 pub(super) fn input_row(screen: &Screen) -> Option<usize> {
     let text = |r: usize| screen.row_text(r).trim().to_owned();
     (1..screen.rows().saturating_sub(1))
         .rev()
-        .find(|&r| text(r).starts_with('❯') && solid_rule(&text(r - 1)) && solid_rule(&text(r + 1)))
+        .find(|&r| text(r).starts_with(prompt_mark) && solid_rule(&text(r - 1)) && solid_rule(&text(r + 1)))
 }
 
 /// The row that opens a tool call's block, `Tool(summary)`, with or without its bullet (it blinks
@@ -485,8 +736,8 @@ impl AgentList {
 
 fn agent_row(row: &str) -> Option<(bool, AgentRow)> {
     let row = row.trim();
-    let highlighted = row.starts_with('❯');
-    let row = row.trim_start_matches('❯').trim_start();
+    let highlighted = row.starts_with(prompt_mark);
+    let row = row.trim_start_matches(prompt_mark).trim_start();
     let rest = row.strip_prefix(['●', '◯'])?.strip_prefix(' ')?;
     if rest == "main" {
         let main = AgentRow { name: "main".into(), description: String::new(), state: AgentState::Other };
@@ -688,7 +939,9 @@ const REVIEW_ENTRIES: [&str; 2] = ["Submit answers", "Cancel"];
 
 /// A multi-select entry's box and the text after it.
 pub(super) fn checkbox(text: &str) -> Option<(bool, &str)> {
-    text.strip_prefix("[✔] ").map(|rest| (true, rest)).or_else(|| text.strip_prefix("[ ] ").map(|rest| (false, rest)))
+    // The tick is `√` where Claude Code draws without Unicode.
+    let ticked = text.strip_prefix("[✔] ").or_else(|| text.strip_prefix("[√] "));
+    ticked.map(|rest| (true, rest)).or_else(|| text.strip_prefix("[ ] ").map(|rest| (false, rest)))
 }
 
 /// The row of question tabs over a form: "←  ☐ Size  ☐ Speed  ✔ Submit  →".
@@ -764,6 +1017,8 @@ pub(super) fn review(screen: &Screen) -> Option<Review> {
     Some(Review { answers, highlight })
 }
 
+#[cfg(test)]
+mod compat;
 #[cfg(test)]
 pub(in crate::view::chat) mod recorded;
 

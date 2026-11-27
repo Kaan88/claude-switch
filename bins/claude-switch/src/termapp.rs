@@ -33,6 +33,8 @@ pub struct Woken {
     pub all: bool,
     pub strip: bool,
     pub output: bool,
+    /// The shown tab's cursor moved or changed: its blink starts again, on.
+    pub cursor: bool,
 }
 
 /// The variable that makes Claude Code draw with its classic main-screen renderer. Per the docs
@@ -46,6 +48,20 @@ pub(crate) const CLASSIC_RENDERER: &str = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"
 pub(crate) fn classic_renderer(launch: &mut Launch, enabled: bool) {
     if enabled && term::is_claude_program(&launch.program) {
         launch.env.insert(CLASSIC_RENDERER.into(), "1".into());
+    }
+}
+
+/// What the terminal tabs' screen understands, as the toolkit's PTY names it on other systems.
+pub(crate) const TERM_NAME: (&str, &str) = ("TERM", "xterm-256color");
+
+/// Names the terminal for a Claude tab. On Windows nothing sets `TERM` for a program started from
+/// the Start menu, and Claude Code then takes the terminal for one without Unicode: it draws its
+/// input mark as `>`, check boxes as `[ ]` and so on (Claude Code 2.1.332), not the screens Chat
+/// was recorded against. With `TERM=xterm-256color` it draws them as in any modern terminal. A
+/// launch that sets `TERM` itself keeps its own; other programs are left as they are.
+pub(crate) fn terminal_name(launch: &mut Launch) {
+    if term::is_claude_program(&launch.program) {
+        launch.env.entry(TERM_NAME.0.into()).or_insert_with(|| TERM_NAME.1.into());
     }
 }
 
@@ -100,6 +116,7 @@ impl AppState {
         let signing_in = claude_switch_core::launch::is_login(l);
         let mut l = l.clone();
         classic_renderer(&mut l, self.config.classic_terminal_view);
+        terminal_name(&mut l);
         if let Some(pane) = &mut pane {
             pane.chat.classic_renderer = l.env.contains_key(CLASSIC_RENDERER);
             if !self.source.is_demo() {
@@ -218,14 +235,23 @@ impl AppState {
     /// The window is asked to close: true when it can at once; otherwise the question is open.
     pub fn ask_quit(&mut self) -> bool {
         let n = self.tabs.running();
-        if n == 0 {
+        let handovers = self.handover_close_note();
+        if n == 0 && handovers.is_none() {
             return true;
         }
-        let text = if n == 1 {
-            "A terminal tab is still running. Its program ends.".to_string()
-        } else {
-            format!("{n} terminal tabs are still running. Their programs end.")
+        // The confirmation replaces the dialog: an open review waits in the strip if you stay.
+        self.park_open_review(std::time::Instant::now());
+        let mut text = match n {
+            0 => String::new(),
+            1 => "A terminal tab is still running. Its program ends.".to_string(),
+            n => format!("{n} terminal tabs are still running. Their programs end."),
         };
+        if let Some(note) = handovers {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&note);
+        }
         self.dialog =
             Some(Dialog::Confirm { title: "Close the window?".into(), text, ok: "Close".into(), then: Pending::Quit });
         false
@@ -262,6 +288,7 @@ impl AppState {
                 continue;
             }
             w.output = true;
+            w.cursor |= r.cursor_moved;
             if tab.term.scroll > 0 {
                 // Scrollback growth can move the overlaid thumb outside the dirty grid rows.
                 w.all = true;
@@ -606,7 +633,10 @@ impl AppState {
         if w.output {
             self.session_tick(cx, true);
         }
-        if w.all || !w.rects.is_empty() {
+        // Only a cursor that changed starts its blink again. A program that repaints around a
+        // parked cursor (Claude Code's counter while it works) would otherwise cut every off
+        // phase short, about once a second.
+        if w.cursor {
             Self::cursor_moved(cx);
         }
         if w.all || self.metrics.is_none() {
@@ -656,7 +686,7 @@ impl AppState {
         }
     }
 
-    /// Restarts the cursor's blink, after a key or output.
+    /// Restarts the cursor's blink, after a key or output that moved or changed the cursor.
     pub fn cursor_moved(cx: &mut Cx<'_, Msg>) {
         cx.anim().forget(CURSOR);
     }

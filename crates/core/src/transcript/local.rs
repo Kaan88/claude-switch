@@ -93,6 +93,7 @@ pub(super) fn item(id: String, name: &str, summary: String, text: String, failed
         duration_ms: None,
         pictures: Vec::new(),
         subagent: None,
+        denial: None,
         card: Some(ToolCard::Output(text)),
     }
 }

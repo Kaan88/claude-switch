@@ -1,0 +1,31 @@
+# A running tool, text typed meanwhile, Esc during the turn, and Esc right after a send
+# (the prompt goes back onto the input). Two model requests, one of them cut short.
+# The tool is a ping of 25 seconds: Claude Code refuses a bare `sleep`.
+#: args --permission-mode default --settings {scripts}/allow-ping.json
+#: seconds 50
+start
+send Run exactly this with the Bash tool and nothing else: ping -n 26 127.0.0.1
+sleep 800
+send \r
+wait ctrl+b to run in background 60000
+sleep 1500
+snap working
+send hello while busy
+sleep 1000
+snap working_typed
+# Ctrl+U empties the row; Esc then stops the turn.
+send \x15
+sleep 600
+send \e
+sleep 2000
+gone esc to interrupt 30000
+quiet 1500 20000
+snap interrupted
+send Reply with just the word: pong
+sleep 800
+send \r
+sleep 250
+send \e
+sleep 2500
+quiet 1500 20000
+snap restored

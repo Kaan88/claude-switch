@@ -64,6 +64,34 @@ pub struct Pumped {
     pub title: Option<String>,
     /// The program ended in this look.
     pub ended: bool,
+    /// The output left the cursor somewhere else or looking different ([`CursorMark`]).
+    pub cursor_moved: bool,
+}
+
+/// What a cursor's blink restarts on: where the cursor is (its absolute line, so output that
+/// scrolls under a cursor parked on the last row counts), how it looks, which screen it is on,
+/// and the cell it covers. A program that repaints elsewhere and puts the cursor back where it
+/// was, as Claude Code's elapsed-time counter does every second while it works, leaves the mark
+/// as it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CursorMark {
+    line: u64,
+    cursor: mdshared_term::Cursor,
+    alt_screen: bool,
+    cell: Option<mdshared_term::Cell>,
+}
+
+impl CursorMark {
+    pub fn of(screen: &Screen) -> CursorMark {
+        let cursor = screen.cursor();
+        CursorMark {
+            line: screen.screen_start() + cursor.row as u64,
+            cursor,
+            alt_screen: screen.modes().alt_screen,
+            cell: (cursor.row < screen.rows() && cursor.col < screen.cols())
+                .then(|| screen.cell(cursor.row, cursor.col)),
+        }
+    }
 }
 
 pub struct Term {
@@ -145,7 +173,7 @@ impl Term {
         let bytes = pty.take_output();
         let exit = pty.exit();
         if !bytes.is_empty() {
-            self.feed(&bytes);
+            out.cursor_moved = self.feed_marked(&bytes);
             out.output = true;
             let reply = self.screen.take_reply();
             self.write(&reply);
@@ -172,6 +200,13 @@ impl Term {
         self.screen.feed(format!("\x1b[0m\x1b[?7h\r\n{line}\x1b[?25l").as_bytes());
         let end = self.screen.screen_start() + self.screen.cursor().row as u64 + 1;
         self.ended_lines = end.saturating_sub(line_count)..end;
+    }
+
+    /// [`feed`](Self::feed), saying whether the cursor's [`CursorMark`] changed.
+    pub fn feed_marked(&mut self, bytes: &[u8]) -> bool {
+        let before = CursorMark::of(&self.screen);
+        self.feed(bytes);
+        before != CursorMark::of(&self.screen)
     }
 
     /// Feeds output to the screen, keeping a view that looks back on the same lines and
@@ -272,11 +307,36 @@ impl Term {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use claude_switch_core::Place;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// Claude Code 2.1.332's idle prompt in its classic renderer: the cursor after `❯ ` on row 11.
+    pub(crate) const PROMPT: &[u8] =
+        b"\x1b[2J\x1b[7;3H! sleep 12\x1b[8;5HRunning\xe2\x80\xa6 (0s)\x1b[11;1H\xe2\x9d\xaf\xc2\xa0\x1b[11;3H";
+    /// What it then writes about once a second while it works (recorded through ConPTY): the
+    /// counter, two rows above, and the cursor put back where it was.
+    pub(crate) const COUNTER: &[u8] = b"\x1b[?25l\x1b[38;2;153;153;153m\x1b[8;16H3\x1b[11;3H\x1b[?25h\x1b[m";
+
+    #[test]
+    fn the_cursor_mark_ignores_a_repaint_that_puts_the_cursor_back() {
+        let mut t = Term::empty((100, 30));
+        assert!(t.feed_marked(PROMPT));
+        assert!(!t.feed_marked(COUNTER), "a repaint around a parked cursor");
+        assert!(!t.feed_marked("\x1b]0;\u{25d0} Claude Code\x07".as_bytes()), "a title");
+        assert!(t.feed_marked(b"h"), "an echoed key");
+        assert!(t.feed_marked(b"\x1b[?25l"), "hidden");
+        assert!(t.feed_marked(b"\x1b[?25h"), "shown again");
+        assert!(t.feed_marked(b"\x1b[6 q"), "a new shape");
+        assert!(t.feed_marked(b"i\x08"), "the cell under it");
+        assert!(!t.feed_marked(b"\x1b7\x1b[1;1Hx\x1b8"), "saved and restored");
+        // Output that scrolls under a cursor parked on the last row.
+        t.feed(b"\x1b[30;1H");
+        assert!(t.feed_marked(b"\r\n"));
+        assert!(t.feed_marked(b"\x1b[?1049h"), "the alternate screen");
+    }
 
     #[test]
     fn a_launch_becomes_the_command_with_its_program_arguments_folder_and_environment() {

@@ -187,3 +187,31 @@ fn claude_tabs_get_the_classic_renderer_only_when_the_setting_is_on() {
     classic_renderer(&mut shell, true);
     assert!(shell.env.is_empty(), "other programs keep their own full-screen views");
 }
+
+#[test]
+fn claude_tabs_name_their_terminal_so_claude_code_draws_with_unicode() {
+    let launch = |program: &str| Launch {
+        program: program.into(),
+        args: vec![],
+        cwd: None,
+        env: Default::default(),
+        env_remove: vec!["TERM".into()],
+        place: claude_switch_core::Place::Terminal,
+        label: String::new(),
+    };
+    for program in ["claude", r"C:\Users\me\.local\bin\claude.exe"] {
+        let mut tab = launch(program);
+        terminal_name(&mut tab);
+        assert_eq!(tab.env.get("TERM").map(String::as_str), Some("xterm-256color"), "{program}");
+        // A launch's settings are applied after its removals (`term::command`), so it reaches the child.
+        let bare = Launch { env: Default::default(), ..tab.clone() };
+        assert_eq!(term::command(&tab), term::command(&bare).env("TERM", "xterm-256color"));
+    }
+    let mut own = launch("claude");
+    own.env.insert("TERM".into(), "xterm-kitty".into());
+    terminal_name(&mut own);
+    assert_eq!(own.env["TERM"], "xterm-kitty", "a launch's own TERM stays");
+    let mut shell = launch("pwsh.exe");
+    terminal_name(&mut shell);
+    assert!(shell.env.is_empty(), "other programs are left as they are");
+}

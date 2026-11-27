@@ -1,4 +1,5 @@
 use super::*;
+use crate::dialogs::PeekInput;
 use crate::tabs::SESSIONS;
 use crate::windowlook;
 use mdshared_ui::gfx::Painter;
@@ -29,6 +30,18 @@ impl App for AppState {
     }
 
     fn event(&mut self, cx: &mut Cx<'_, Msg>, event: Event) {
+        if matches!(event, Event::Key(_) | Event::Text(_)) {
+            self.compact.jobs.typed = Some(cx.now());
+        }
+        match self.peek_event(&event) {
+            PeekInput::Swallow => return,
+            PeekInput::Redraw => {
+                self.refresh_pointer(cx);
+                cx.request_redraw_all();
+                return;
+            }
+            PeekInput::Pass => {}
+        }
         match event {
             Event::PointerMove { x, y } => {
                 if self.moved(cx, x, y) {
@@ -120,6 +133,7 @@ impl App for AppState {
             }
             Event::Focus(false) => {
                 self.field_mouse.cancel();
+                self.folder_scroll_release();
                 self.tabs.drag = None;
                 self.chat_end_drag(None);
                 self.usage.popup = Default::default();
@@ -161,6 +175,10 @@ impl App for AppState {
                 }
                 self.terminal_drop_due(cx, now);
                 self.session_tick(cx, false);
+                // A written handover held while the keyboard was in use.
+                if self.open_finished_handover(now) {
+                    cx.request_redraw_all();
+                }
                 if let Some(at) = self.typed_due(now) {
                     cx.wake_at(at);
                 }
@@ -210,6 +228,8 @@ impl App for AppState {
             return;
         }
         self.restore_tabs_if_always(cx.now());
+        // A written handover waits for whatever modal thing this event may have closed.
+        self.open_finished_handover(cx.now());
         self.attention_tick(cx);
         self.usage_warning_tick(cx.now());
         windowlook::apply(self, cx);
@@ -218,6 +238,16 @@ impl App for AppState {
     }
 
     fn raw(&mut self, cx: &mut Cx<'_, Msg>, event: &winit::event::WindowEvent) {
+        // The host reduces only key presses; a held Space's peek ends on its release.
+        if let winit::event::WindowEvent::KeyboardInput { event, .. } = event
+            && event.state == winit::event::ElementState::Released
+            && (event.physical_key == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Space)
+                || event.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space))
+            && self.space_released()
+        {
+            self.refresh_pointer(cx);
+            cx.request_redraw_all();
+        }
         if matches!(event, winit::event::WindowEvent::Moved(_)) {
             self.capture_window(cx);
         }
@@ -233,7 +263,10 @@ impl App for AppState {
                     | self.take_usage_jobs(cx.now())
                     | self.take_desktop_job(cx.now())
                     | self.take_compact_jobs()
+                    | self.take_background_handovers()
                     | self.take_opencode_job(cx.now());
+                let changed = changed | self.open_finished_handover(cx.now());
+                self.handover_attention(cx);
                 let changed = changed | self.restore_tabs_if_always(cx.now());
                 self.attention_tick(cx);
                 self.auto_handover_tick(cx);

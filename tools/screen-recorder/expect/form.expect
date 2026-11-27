@@ -1,0 +1,41 @@
+[page1]
+kind = question
+title = Which fruits do you like?
+choices = [ ] Apple | [ ] Pear | [ ] Plum | [ ] Type something | Next | Chat about this
+highlight = [ ] Apple
+send = no
+
+[page1_typed]
+kind = question
+title = Which fruits do you like?
+choices = [ ] Apple | [ ] Pear | [ ] Plum | [✔] kiwi | Next | Chat about this
+answer = kiwi
+
+[page1_next]
+kind = question
+title = Which fruits do you like?
+highlight = Next
+
+[page2]
+kind = question
+title = Which size?
+choices = Small | Large | Type something. | Chat about this
+highlight = Small
+
+[page2_typed]
+kind = question
+title = Which size?
+answer = medium
+
+[review]
+kind = review
+answers = Which fruits do you like? = kiwi | Which size? = medium
+choices = Submit answers | Cancel
+highlight = Submit answers
+send = no
+
+[submitted]
+kind = idle
+input =
+send = yes
+working = no

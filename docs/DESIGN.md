@@ -214,9 +214,40 @@ shell. Explorer Reveal uses the same environment scrub as other direct launches.
 document, image and URL opens use OS associations; Switch does not control their environments.
 
 **New session.** The toolbar button asks for a folder and account first. It starts with the selected
-session's folder (or home when none is selected) and the current account. The four most recent
-distinct folders are shortcuts to fill the field. Start or Enter checks that the folder exists;
-Cancel or Escape closes the dialog without starting anything.
+session's folder (or home when none is selected) and the current account. Start or Enter checks that
+the folder exists; Cancel or Escape closes the dialog without starting anything.
+
+**Recent folders.** A scrolling list under the folder field (8 rows, fewer in a low window) whose rows
+fill the field: the folder's last component, the path above it muted, and its last activity; the
+tooltip is the full path.
+
+- *Which:* the folders of sessions that are not archived here, not archived in the Desktop app
+  (unless that setting shows them) and not hidden, by themselves or by their folder; **Show hidden**
+  does not bring them back. Worker sessions count only while **Show sessions started by tools** is
+  on, as in the list.
+- *Not temporary:* nothing at or under `%TEMP%`, `%TMP%`, `%LOCALAPPDATA%\Temp`, `%SystemRoot%\Temp`
+  or the system's temporary folder (Claude Code's scratchpads are under these). Compared by name,
+  with Switch's own environment; a relative value or a drive root is ignored.
+- *Not a worktree:* the first `.git` at or above the folder is not a file pointing into a
+  `worktrees` directory. Main checkouts and submodules stay. Only that file is read, so a worktree
+  whose main repository has gone is left out too. As for Projects, network and redirected
+  (junction, `subst`) paths are not probed, so a worktree there is listed.
+- Temporary folders and worktrees are only left out of the list: typing one or choosing it with
+  Browse works as for any folder.
+- *One row per folder:* spellings that differ in case, separators (`/`, doubled, trailing), `.`
+  components or the `\\?\` prefix are one, shown as its newest session spells it. Nothing is
+  resolved on disk (junctions and 8.3 names stay apart). Newest activity first.
+- *Existing only:* a worker looks (for existence and worktrees) after every scan and again when the
+  dialog opens; the dialog shows what the last look found and updates when the new one ends, so
+  opening waits for no disk or network path. Start still checks the folder itself. The demo's folders
+  count as existing, plain folders.
+- *Filter:* typing in the folder field narrows the list to paths holding every word, newest first,
+  or, when none does, to fuzzy matches, best first. The prefilled, picked or browsed folder filters
+  nothing. At most 200 rows show; the filter searches all folders.
+- *Keys:* ↑, ↓, Page Up and Page Down in the field move into the list, where Home and End work too
+  (in the field they move the caret). Enter picks the highlighted folder; the next Enter starts. Text
+  with no `\`, `/` or `:` highlights its first match as it is typed; a typed path highlights nothing,
+  so Enter starts there. Tab keeps its three stops: folder, account, app.
 
 ## Workers
 
@@ -406,6 +437,8 @@ with its default association. Ctrl+click on an inline file link instead reveals 
 in answers still open in the browser; transcript attachments still use the picture pipeline.
 Chat's conversation has its own Narrow, Medium, Wide or Full reading width in Settings → Sessions,
 stored per window in `window.ini` (`chat_reading`); it uses the same column sizes as the viewer.
+The lines above and below the conversation (a read error, Load earlier, the working or waiting line
+with Stop and Jump to latest, the terminal-answer hint) share the column's left edge and width.
 The composer stays centred and capped independently. Conversation and Markdown scrollbars appear
 on scrolling or hover, hold briefly, then fade; with reduced motion they disappear without a fade.
 Their tracks remain interactive even when hidden.
@@ -481,7 +514,12 @@ process on Cancel or after 120 seconds per request. Provider consent and the sel
 `config.json`. A CLI invocation without prior provider consent refuses before reading the transcript.
 Both routes recheck persisted consent before sending each part or merge.
 
-The preview is editable, with characters and approximate tokens (characters / 4). Previewing or
+The preview is editable, with characters and approximate tokens (characters / 4). Its text wraps at word
+boundaries (a word is cut only when it alone is longer than a row); End, Up/Down and a click past a
+row's end stay on that row. The review card is up to 760 px wide. Its footer has Back, Cancel, In
+OpenCode and Open in CLI (or Continue here) on the right and Copy and Save as… in a group on the left,
+which folds into **More ▾** (a menu with both) when the card is too narrow for the two groups. Any
+dialog's footer narrows its buttons toward their labels' width rather than run past the card. Previewing or
 canceling does not save a handover. Only an explicit Save As or Open writes the edited text.
 Local Markdown files live in `handover/<session-id>-<time>.md` beside config; the newest 20
 are kept per session. An opened edited handover is kept as a new revision. Save As never
@@ -628,6 +666,44 @@ compare-and-swap for this value. An interruption after append but before recordi
 leave an untracked entry rather than let uninstall claim an entry it cannot prove it added.
 The plugin retains its fallback to the default per-user installation.
 
+### Writing in the background
+
+**Compact and open…** (session menu, palette, details pane, tab menu, the usage pop-up's offer and
+Automatic handover's **Ask first**, which all open the same dialog) keeps its setup step: model,
+account, focus and provider consent, all checked as before. **Make handover** (or **Allow and make
+handover**) starts the worker and closes the dialog at once; the dialog itself, with every choice
+made in it, waits while the model writes, so the app can be used meanwhile. Several handovers can
+be written at once, one a session: asking again for a session whose handover is being written says
+so, and one that is written or failed opens instead.
+
+When it is written, the same **Review handover** window opens by itself with the result, as soon as
+nothing modal is open (a dialog, Settings, a confirmation, a menu, the palette, the accounts list or
+the usage pop-up) and the keyboard has not been used anywhere in the app for 1.5 seconds, so
+someone typing a sentence goes on typing where they are; several open one after another, in the
+order they finished. It opens over the Chat composer or a terminal with the dialog focused, not its
+editor or name field: typing edits nothing until a click in one of them, or Tab (to the name
+field). For its first 300 ms it also ignores keys and typed text, and clicks on Open in CLI, In
+OpenCode and the delete box, so a key already on its way (an Enter half-typed into the composer)
+cannot act in it. The delete box starts off and where it continues (in place or a
+new tab) is checked again, as each time the review opens. When the window is not in front, its
+taskbar button flashes (and, when it is hidden in the notification area, a notice says the handover
+is ready); it never takes the focus from another program.
+
+The Sessions column shows a strip between its filter chips and the list, taking no room when empty:
+**Writing handover · 0:42 · <session>** with a spinner and **Cancel** (which stops the worker), a
+failure in the danger colour with its reason on a second line and **Retry** (which starts again with
+the same choices, through the consent check; when consent is needed again the dialog opens), and
+**Handover ready · <session>** with **Review** and ✕ for a review closed with Cancel or Esc without
+acting on it (✕ discards it). More than two fold into one line ("3 handovers · 1 being written ·
+1 ready · 1 failed") with **Show**/**Hide**. The session's details pane has the same entry beside
+**Handovers…**. A failure while a terminal tab is shown also puts up the error bar with **Retry**.
+
+Closing the window while a handover is being written or a written one has not been opened asks
+first (with the terminal tabs' line when tabs run) and says what happens: one being written is
+canceled, and a written one that was not opened is lost, since previewing does not save a handover
+(only Open, In OpenCode and Save as… write the file). An open review is moved to the strip before
+the confirmation, so it is still there when you stay. Nothing about them survives a restart.
+
 ### Automatic handover instead of compaction
 
 **Settings → Handovers → Hand over automatically** is Off (the default), Ask first or Automatic.
@@ -723,8 +799,15 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 The Appearance page controls the window. The window theme is System, Light or Dark;
 `--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
-(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as named swatches.
-A click on the preview or caption chooses it; Tab focuses a row and Left/Right or Home/End changes
+(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as a grid of equal cards,
+five across at every Settings width: a small window drawn in the palette (title bar, side pane,
+text, accent button, and a terminal with five of its ANSI colours) above the whole name. A custom
+name too long for its card is elided, with the full name in a tooltip on hover. The chosen card has
+an accent border and a check; hover lightens a card; the keyboard ring is the toolkit's, outside the
+card (or round the whole line when its choice is on another line). Each line of cards is one form
+choice row plus empty spacer rows (`tiles::line`), so the next setting starts below the cards; a
+press between cards does nothing, and keyboard focus scrolls the whole line into view.
+A click on the card chooses it; Tab focuses a row and Left/Right or Home/End changes
 the choice. On a row without the current selection, Right starts at the first swatch, Left at the
 last, and Enter or Space leaves the selection alone. Terminal presets use the same control.
 Dark: Neutral (the toolkit's dark), Near black, Warm,
@@ -789,6 +872,24 @@ both windows changed differently is refused, with a notice naming it; the other 
 kept and this window reloads the current settings, without asking for a restart. It never republishes
 the separately persisted usage opt-in or handover consent; the tab-restore preference still uses
 `window.ini`. Switching categories does not write settings.
+
+**Peek.** Settings dims the window, so a palette, the backdrop, terminal colours or the Chat
+reading width can't be judged under it. The **Peek** button (an eye, at the top right of the page's
+card on its title's line; Close stays in the footer; tooltip "Hold to see the window without
+Settings") hides the dim and the dialog while the left button is held on it, and Space does the
+same while held when Settings has the keyboard and what has focus does nothing with Space: the
+category list, no control, or a number. A text box, switch, segmented choice, palette card, button,
+Close or an open dropdown or picker keeps its Space, and Space with Ctrl, Alt or Shift does not
+peek. Both fade the layer (a snapshot of the window under it, blended) over 120 ms each way, instant
+with Reduce motion, Windows' reduced motion or high contrast; when settled nothing of Settings is
+drawn, so Mica or Acrylic shows exactly as without it. A pill at the top centre, under the title
+bar ("Peeking · let go to return to Settings", an eye, accent border on the popup surface) says
+what is happening. Settings keeps its page, scroll and focus, and nothing is saved by a peek.
+While peeking the app swallows every press, key, wheel, text and pointer move (`AppState::
+peek_event`), so nothing reaches the window under it; only the release of what started the peek
+ends it: the left button anywhere (the press captured the mouse, so a release outside the window
+arrives too), or Space's key release, which the host does not reduce and the app reads in its raw
+winit hook. Losing the keyboard (Alt+Tab, a click in another window) ends any peek.
 
 ## Recent sessions and local marks
 
@@ -1052,32 +1153,55 @@ Terminal layout keeps its normal Session view and controls. F6 switches layouts 
 command palette is open; a focused terminal still receives its ordinary F6. Ctrl+Shift+E remains reserved by the window
 and toggles the drawer in Chat.
 
-**What counts as ready.** The screen heuristic checks the live cursor's `❯` input row, including
-boxed rows, and ignores SGR-faint placeholder characters. It rejects recognized menus, permission
-questions and the alternate screen. A successful write only means input was handed to the terminal.
-An ordinary automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
-tool in the current turn, at least 750 ms without terminal output, bracketed-paste mode, and no
-alternate screen or blocking drawer signal. An old completion from a resumed transcript, missing
-stop reasons, an unrecognized title, and terminal quiet alone are not proof. The OSC title has no
-verified Claude readiness protocol: explicit busy labels only veto a send. On a transcript reset
-or after any composer send or direct terminal input, an old completion cannot rearm sending;
-a new prompt must be observed. There is still a race between observing the PTY and writing it.
-When uncertain, Chat retains the draft and displays the refusal inside the composer until its cause
-changes. **Send anyway** is explicit and requires bracketed-paste mode outside the alternate screen.
-During an active turn, **Queue** keeps one draft in memory and locks its text and attachments until
-it sends or is cancelled. Automatic delivery waits for a newer completion and a visibly empty prompt,
-even after switching tabs. A minimized window, an open dialog or another blocking window overlay
-pauses automatic writes in every tab; stage deadlines still run. After the app's **Stop**, a fresh
-clean prompt with the observed working
-indicator gone (or a new interruption notice) can also release the queue. **Send now** can send
-during a turn when that prompt is visibly empty; **Cancel**
-unlocks the draft without sending. Neither path overrides a recognized permission question, pending
-tool, bell or slash menu. Direct terminal input cancels a queued or staged send, and samples a
+**What counts as ready.** The screen is what the next key meets, so the screen decides (decided
+2026-11-27, after 0.1.2 refused nearly every send; the owner: "zero instances where I have to open
+the terminal"). Ready is the CLI's input shown idle: the live cursor's input row (`❯`, or `>` right
+under the input box's rule where Claude Code draws without Unicode; boxed rows too) visibly empty,
+SGR-faint placeholder and suggestion characters aside; no working line (the interrupt hint in the
+rows under the input, or the CLI's own spinner line right above it: never those words in an answer);
+no recognized menu, permission question or alternate screen; bracketed-paste mode; and at least
+750 ms without terminal output or input. A message Chat just submitted must have shown first (newer
+output, or five seconds). The transcript only hints: it shows no completion for a resumed session,
+its last record after an Esc reads as a running turn, and a command or a key in the terminal leaves
+it stale. It still says a turn runs (a newer prompt with no end, a pending tool) while the screen
+does not show an input at rest, and a newly observed `end_turn` still makes a quiet demo or test
+screen ready. The OSC title is no protocol: explicit busy labels only veto a send. A successful
+write only means input was handed to the terminal, and there is still a race between observing the
+PTY and writing it.
+A draft that only has to wait is held, not refused: a running turn, a prompt the CLI is still
+drawing, a command's output, a new chat's transcript, a picture while the input is not empty. It is
+locked (text and attachments) until it sends or is cancelled, and goes out by itself, also in a
+hidden tab, once the input is idle (or a newer completion shows, where no screen can be read).
+**Send now** on a held draft pastes into the visibly empty input while a turn runs, and is the
+explicit override (bracketed paste, outside the alternate screen, no pending tool, no text on the
+input) when no prompt can be read. Refused outright, with the reason in the composer, are only
+what waiting cannot fix: text already on the CLI's input, a card that wants an answer first, an
+unverified session, an ended program.
+Interrupted before any answer, Claude Code 2.1.332 takes the turn out of the conversation and puts
+the prompt back on its input, where it would block the next send. While that input shows exactly
+the message Chat last submitted, with no working line and no terminal input since, Chat empties it
+with Ctrl+U (one line a key, each after the screen showed the one before, two seconds a key, forty
+keys at most) and puts the text back in the message box; a picture has to be pasted again. Once
+the input reads empty the text comes back when the screen goes quiet. While output keeps coming
+(a turn starting by itself, a redraw) one empty reading may be a screen caught half way, so it
+takes two in a row, each of newer output than the last Ctrl+U's; without them by the key's
+deadline the text still comes back (no Enter went, so it was not sent), with a notice to check
+that the CLI input is empty before sending. The take-back starts only when the message box is empty, with no
+attachments and no held draft: otherwise the message stays on the CLI input, with a notice to send
+or clear it in the terminal (which lets a held draft go, back to the box) and then send the draft.
+Text the user typed in the terminal is never cleared, and no text is cleared without a place to go.
+A minimized window, an open dialog or another blocking window overlay pauses automatic writes in
+every tab; stage deadlines still run. **Cancel** unlocks a held draft without sending. No path
+overrides a recognized permission question, a pending tool or a menu. Direct terminal input cancels a queued or staged send, and samples a
 transcript byte watermark before writing so a buffered earlier prompt cannot rearm Chat.
 
-**When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
-of terminal silence is a hint, not proof of a permission question. A slow tool can look the
-same. A BEL and process exit also open the drawer. Only an automatically
+**When the drawer opens.** For what Chat cannot read. A pending tool first observed at least four
+seconds ago plus 750 ms of terminal silence, or a running turn whose terminal has been silent for
+four seconds, with no working line on the screen, no text on the input and no card for what shows:
+the CLI may be waiting for an answer ("Claude Code may be waiting for your answer in the
+terminal."). Under the working line the same silence is a slow tool and opens nothing. A BEL opens
+it only while the screen shows neither the working line nor an idle input (an idle input clears the
+bell), and a process exit does. Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. Chat
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
@@ -1137,9 +1261,31 @@ to" row, "Tab to amend", "don't ask again" or "tell Claude what to do", or Yes a
 "Esc to cancel". Only the menu's own rows are read for these: those below the nearest rule above
 the footer (the CLI draws its prompts and menus under one), so the same words in the conversation
 above do not count; with no rule in those 24 rows, all of them do. Unless a question card answers that menu, the gate treats it as a permission
-prompt left to the terminal (drawer, notice).
+prompt: one Chat recognises gets a permission card (see Permission prompts), one that only looks
+like a prompt is left to the terminal (drawer, notice). The list of calls auto mode blocked
+(/permissions › Recently blocked, footer "r to retry · Enter to approve") is no menu either: Enter
+on a row approves that call, so it has a card of its own (see Denied permissions).
 
-**Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
+**Questions.** Claude Code 2.1.332 writes an `AskUserQuestion` call to the transcript only once it
+is answered or declined (checked with copies of the transcript while a question waited 30 s; a
+`Write`, `Bash` or `ExitPlanMode` call is written at once). So while a question waits the screen is
+all there is, and it shows through the menu card (see CLI menus): "Claude asks", the question's
+text (every row between its tab row, " ☐ Header" or a form's "←  ☐ A  ☐ B  ✔ Submit  →", and its
+choices), each choice with the description the screen shows under it, a form page's unnumbered
+Next or Submit row where the arrow keys reach it, and the review ("Review your answers", which has
+no footer) as its two entries with the answers in the title. A click moves the highlight and
+presses Enter under the menu card's checks; a box is ticked the same way. The working line reads
+"Waiting for your answer" while that card shows, whatever the transcript says. The user's own answer goes
+through the card's field while the question's "Type something" row is as the CLI first draws it
+("Type something.", or "[ ] Type something" in a multi-select): arrows to that row, the text only
+once the screen shows the highlight there, and Enter only once that row reads exactly the text,
+the rows it wraps onto included ("4. my own answer"; recorded 2026-11-27, also without Unicode). In
+a multi-select the row's box ticks itself as text is typed and Enter would clear it again, so the
+step ends once the row reads "[x] text" with its tick, and the form's Next or Submit row sends it.
+A text starting with a digit is refused (digits pick choices), as is one with control characters;
+a row that does not show the text within two seconds stops with a notice and no Enter. Text
+already typed on that row is a choice like any other and is not edited from Chat.
+A pending `AskUserQuestion` call that the main transcript does hold is shown as a card built from
 the call's input (header, question, options with descriptions), never from the screen. A lone
 single-choice question is answered by one click: before any key it requires the live screen to show a menu footer,
 the question text, and every option as `n. label` in order, followed only by "Type something" and
@@ -1196,9 +1342,7 @@ prompt's own rows above the question (warnings and countdowns included), the que
 screen's choices, exactly as written. Clicks are answered only if the prompt names that call: the
 whole command as whole rows of the prompt (whitespace and wrapping aside), the file's full path or
 its path from the session folder, the MCP server and tool, or the fetched address or host, each as
-a whole word, never a part of a longer word or path. A prompt while a subagent may be asking (one
-is running, or this turn started one whose end is unknown), two pending calls, or any other prompt
-stays terminal-only with an Open terminal button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
+a whole word, never a part of a longer word or path. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
 highlight there with the same choices; nothing is pre-selected and nothing is answered without a
 click. A decline with text uses the prompt's Tab comment field when the footer offers "Tab to
 amend" (Tab; the text only once the screen shows the field open on that row, the choice followed by
@@ -1207,6 +1351,97 @@ whose text then goes to the composer. Shift+Tab is never sent at a prompt. The s
 fail-closed rules as questions apply. While the card can answer, sends are refused with "Answer
 Claude's request above", the drawer stays closed and the working line reads "Waiting for your
 approval".
+
+**A prompt the pending call does not cover.** A subagent's prompt, the prompts of several calls made
+in one message, and any prompt that does not name the pending call used to stay in the terminal.
+The owner decided otherwise (2026-11-27): show such a prompt exactly as Claude Code draws it, so
+that what is approved is what was seen. Recorded from Claude Code 2.1.332 (`perm_agent_*`,
+`perm_two_*`): a subagent's prompt says whose call it is in its first row ("Bash command · from the
+general-purpose agent", "Create file · from the general-purpose agent"), its footer adds "ctrl+x
+ctrl+k twice to stop background agents" and drops "Tab to amend" while the highlight is on a
+choice that takes no comment; the main transcript holds no pending call then, and may show the turn
+as ended. Two calls of one message are asked one after the other, each prompt for one call with no
+source in its header, and at the first prompt the transcript holds neither call. At the second
+prompt Claude Code leaves its hidden cursor on the first call's output row, fifteen rows above the
+prompt's footer (`perm_two_after`), so a prompt is known by its place and not by the cursor: its
+"Esc to cancel" footer is the last text on the screen, which prompt text left in the conversation
+never is (the input box and its status rows are under it). So the transcript
+cannot say what such a prompt is for, and the card is built from the screen alone
+(`question/prompt.rs`): every row from the prompt's own top rule down to its question (what is asked
+for and by whom, the tip, the description, the command or the file's content between its dashed
+rules, wrapped at the card's width), the question, the choices as buttons, Esc, and Open terminal.
+The top rule is the full-width solid rule the CLI draws over a prompt; a row of the prompt itself
+cannot be one, since each starts after a column of margin. The card may take up to 85 % of the
+conversation's height; a longer prompt scrolls (wheel, or the "n more" button), and its choices
+take a click only once every row has been in view. A choice also needs the card to have shown that
+prompt for half a second, so that a second click meant for one prompt cannot answer the next one,
+which Claude Code draws in the same place at once. Every key (the arrows, then Enter once the
+highlight is on the chosen row) is written only while the screen still shows exactly the same rows,
+question and choices; a prompt that changed gets no Enter, the step stops after two seconds with
+"The prompt changed in the terminal", and the card shows the new prompt, to be read again. Esc is
+written under the same check, without reading to the end. The gate reports such a prompt as it does
+the pending call's card: sends are refused with "Answer Claude's request above", the drawer stays
+closed and the working line reads "Waiting for your approval", also after the main turn's end. Left
+to the terminal: a prompt whose top rule is not on the screen (taller than the terminal: the card
+shows the rows it can read and says so), a row that does not fit the card even wrapped, and a
+decline with text (how the comment field draws was never recorded, and the transcript cannot
+confirm it for a call it does not hold). The pending call's own card stays as it was where it
+applies, and the plan approval is no such prompt (its menu has no "No" choice). Two identical
+prompts in a row cannot be told apart: the first answer then stops after eight seconds with "the
+prompt is still open", and the card answers the second on the next click.
+
+**Denied permissions.** A tool call Claude Code refuses looked like any failed call, and the reason
+was in the terminal. The owner asked for it to be said in Chat (2026-11-27): what was denied, by
+whom, and a way to approve it. Recorded from Claude Code 2.1.332: the `user` record with the call's
+`tool_result` carries `toolDenialKind` at its top level, `"user-rejected"` for the user's own No or
+Esc (with `toolDenialBeforeRun: true`), `"permission-rule"` for a deny rule (with
+`permissionDecision.ruleSource`, seen: `"flagSettings"`) and `"automode-blocked"` for auto mode's
+classifier (`permissionDecision.reasonType: "classifier"`); an allowed call in auto mode has
+`permissionDecision.decision: "accept"` and no denial kind. The reader keeps the kind, the
+before-run flag, the rule's source and the reason on the tool item (`transcript/denial.rs`: for auto
+mode the classifier's words after "Reason: ", else the result's first line); a kind it does not
+know is kept as "denied", and a failure without `toolDenialKind` is never taken for a denial,
+whatever its words. In the conversation such a row reads "✗ blocked by auto mode", "✗ denied by a
+rule" or "✗ you said no" instead of "✗ failed", says why when opened, and a folded group counts
+"2 denied · 1 failed" apart.
+A card under the conversation lists the current turn's denials (`question/denials.rs`): "✗ 2
+permissions denied since your last message", each call with its tool and target and one line on
+who refused it and what that means (the user's own No needs no approval; a rule names where it
+comes from and stays in force until it changes; auto mode's line is the classifier's reason).
+"Current" is the turn of the newest prompt in the main conversation, without the calls that a
+later call of the same tool and target ran successfully (approved, retried, or allowed the second
+time); the next prompt starts over, and a subagent's own denials are not counted (they are in its
+transcript). A denial that happens while the tab is open opens the card; ones already there when
+the tab opens show as a one-line strip with the count and Show; Hide folds it back to that strip.
+It takes the card's place only when no question, prompt, menu or background card wants it, and it
+never blocks a send. Its buttons do the least: **Review blocked calls…** (or **Open /permissions**
+for a rule) runs `/permissions` as any slash command, under that command's checks; **Ask Claude to
+retry** puts one sentence naming the calls that were not auto mode's in the message box when it is
+empty (else once it is) and sends nothing.
+What Claude Code offers for a call auto mode blocked, recorded (`blocked_*`): `/permissions` opens
+on its "Recently blocked" tab while there are such calls ("Commands auto mode recently blocked.
+Approving adds no rule."), newest first as "n. ✘ what  why", with the highlighted call's command
+between dashed rules under the list. Enter marks the highlighted call `✔` and Enter again unmarks
+it; `r` marks it `✔ … (retry)` and `r` again makes that an approval; a row under the list then
+says "Esc will approve 1 blocked call" and the footer's "Esc to close" becomes "Esc to approve 1
+blocked" (or "retry"). Esc applies the marks and closes: "Told Claude it may retry <command>. Auto
+mode checks it again; this adds no rule." (a `permission_retry` system record, now shown as a
+notice), and for a retry the turn starts at once; for an approval nothing runs until the next
+message. The classifier does check again: the retried call was blocked a second time in the
+recording. A user's No and a rule's denial are not in that list.
+Chat drives that list as a card (`question/blocked.rs`), never as a menu of plain choices (there a
+click on a row would have approved it): the tab's own note, the calls with their marks, the
+highlighted call's command, what Esc will do, and buttons for exactly the recorded changes
+(Approve and Retry now on an unmarked call, Unmark on an approved one, Approve only on one marked
+to retry), plus the Esc button under the footer's own words ("Close", "Approve 1 blocked"). A
+click on another call only moves the highlight (arrow keys, no Enter), so that its command shows
+before anything can be marked. A key that marks, and the Esc that applies marks, is written only
+for the list the card painted, row for row with its highlight and command, at least half a second
+ago, and while the screen still shows that list; Esc that only closes needs no wait. A command
+longer than eight rows or wider than the card is shown cut, with no button to mark that call. A
+list Chat cannot read (a call's row that wraps, a mark it does not know) shows as rows only, with
+Close while Esc just closes and Open terminal otherwise. The dialog's other tabs (Allow, Ask,
+Deny, Auto mode, Workspace) are read-only panels in Chat: changing a rule is the terminal's.
 
 A card answers ahead of a queued draft: the queue waits for the turn to end, which waits for the
 answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer
@@ -1316,9 +1551,50 @@ for a send. Only an answer stopped before its Enter leaves its prompt to the ter
 whose Enter went ends quietly, a Ctrl+B or Stop agent leaves a notice that goes with its card, and a
 rewind says so on its own card.
 
-Every screen pattern lives in `view/chat/question/screens.rs`.
+Every screen pattern lives in `view/chat/question/screens.rs` and `view/chat/submission/screen.rs`.
+The fixtures next to them are recorded from the real CLI through a ConPTY (`*.txt`: rows and
+cursor; `*.ansi`: also styles, size and the rows the terminal marks as wrapping; `plain_*`: started
+without `TERM`). `cargo test probe_recordings -- --ignored --nocapture` with `CS_PROBE_DIR` set to a
+folder of such recordings prints what the gates make of each. Recorded on 2026-11-27 for the
+readiness rules: the idle input after a turn, at the start, with the next-prompt suggestion, with a
+background shell, after Esc, after a declined prompt, under one- and two-row status lines, at 40 to
+200 columns and 10 to 50 rows, after `/clear` and `/compact`; a running tool, agent and compaction
+(the screen changes at least every 229 ms while a turn runs); typed, pasted (`[Pasted text #1 +13
+lines]`), wrapped and queued input; questions, forms, permission prompts (the main session's, a
+subagent's with the highlight on each kind of choice and after Esc, and the two prompts of two
+calls made in one message), a call blocked by auto mode and the /permissions list of blocked calls
+in each of its states, plan approval, the
+rewind list and the panels of `/model`, `/effort`, `/config` (which takes two Esc to close),
+`/status`, `/help`, `/mcp`, `/permissions`, `/resume` and `/theme`. Not recorded: a pasted
+picture's marker (the recorder does not touch the clipboard).
 
-**Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
+The fixtures prove the readers against the version they were recorded from. For each new Claude
+Code version `recorder compat` records these states again from the installed CLI and the readers
+are asked what each screen is (`screens/compat.rs`, the expectations in
+`tools/screen-recorder/expect`): by hand with `tools/cli-compat.ps1`, and daily in
+`.github/workflows/cli-compat.yml`, which opens an issue naming the states that no longer read as
+expected. `tools/screen-recorder/README.md` ("After a Claude Code update") says how to read a
+failure and what to do. Its first run found that the second of two prompts was not recognised,
+which the fixtures had not shown.
+
+**What still needs the terminal.** Each for a reason a key could not be justified: text the user
+typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat
+cannot show whole (its top is above the terminal's screen, or a row does not fit the card), and a
+decline with text for a prompt the pending call does not cover; changing a permission rule (the
+/permissions tabs are read-only in Chat), and a blocked call whose row or command Chat cannot show
+whole; a dialog with no footer Chat knows (the drawer opens by itself after
+four silent seconds); Claude Code's full-screen renderer or another full-screen program; a session
+whose identity could not be verified; a card step whose screen did not follow within its deadline
+(the card says which, and Open terminal).
+
+**Renderer.** Claude tabs start with `TERM=xterm-256color` (a launch's own `TERM` stays). Windows
+sets no `TERM` for a program started from the Start menu, and Claude Code 2.1.332 then takes the
+terminal for one without Unicode: `>` for `❯`, `[ ]`/`[×]`/`√` for `☐`/`☒`/`✔`. With `TERM` set,
+and nothing else, it draws as recorded. The readers take the plain drawing all the same (a tab
+kept from an older version, a launch with another `TERM`): the input mark `>` counts only right
+under the input box's rule, a ticked box is `[√]` or `[✔]`. 0.1.2 knew only `❯`, which is why the
+installed app, unlike one started from a shell, refused every send.
+Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
 Sessions › Classic terminal view is on (the default): Claude Code then draws on the main screen,
 where the prompt checks above apply. The variable is set for that process only, never in Claude
 Code's settings. The alternate-screen veto stays for every tab; in a tab started without the
@@ -1328,7 +1604,9 @@ needs a capture from a real session and is not attempted.
 **Local data.** File chips use the existing path quoting. Ctrl+V prefers clipboard text. Use
 Ctrl+Shift+V or **Attach… → Paste picture** to choose the picture explicitly. Supported picture
 formats get an in-memory thumbnail. A send checks the clipboard sequence, writes Alt+V alone,
-and waits up to four seconds for a newly displayed `[Image #n]` on the CLI input row. Only then does
+and waits up to twenty seconds for a newly displayed `[Image #n]` on the CLI input row (Claude Code
+reads the clipboard through a helper process on Windows; the wait ends at once on any other
+change). A picture sent while the input is not visibly empty is held like any draft. Only then does
 Chat paste the text and write one Enter. Timeout or an intervening input, permission, clipboard or
 session change retains the draft. Failed picture or command staging blocks new sends until newer
 terminal output shows a quiet, clean prompt. If paste succeeded but Enter did not, **Press Enter**
@@ -1337,8 +1615,10 @@ bracketed paste carries them as CR, as a terminal pastes), replaces tabs with sp
 control characters, and writes the text as bracketed paste followed by one app-generated Enter. A
 message of several lines gets its Enter only once newer output shows it on the input line: the rows
 from the `❯` row to the cursor equal the text (whitespace and wrapping aside), or the input is the
-CLI's `[Pasted text #n +m lines]` marker (after a picture's marker when there is one). Two seconds
-without that keep the draft, press no Enter and ask to check the terminal. Ordinary
+CLI's `[Pasted text #n +m lines]` marker (after a picture's marker when there is one). Five seconds
+without that keep the draft, press no Enter and ask to check the terminal. A slash command's line
+may wrap onto more rows; one refused only because the prompt is not quiet yet waits up to three
+seconds for it and then runs by itself. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Composer Up on the
 first displayed line and Down on the last walk real prompts in the main transcript, including
 terminal input. Recall skips adjacent repeats, pages back through the transcript worker as needed,
@@ -1411,7 +1691,21 @@ view share the Shells and Outputs Details rendering.
 Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
-overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+overlong words, and uses the toolkit context menu for Undo, Redo, Cut, Copy, Paste and Select all.
+The composer has undo (Ctrl+Z) and redo (Ctrl+Y, Ctrl+Shift+Z) in `view/chat/undo.rs`, recorded
+inside the composer's editor, so every way the draft changes is covered. Typing is one step per
+word or after a one-second pause, a run of Backspace or Delete is one step, and a paste, a cut, a
+completion, a recalled prompt (and leaving it) or a filled chip is a step of its own. A step brings
+back the text with its caret and selection. At most 100 steps are kept; sending a message clears
+them. Neither the toolkit's single-line `TextField` (search box, dialog fields, Settings) nor the
+handover dialog's editor has undo.
+Caret keys follow a Windows text box. Shift extends the selection. Ctrl+Left and Ctrl+Right go to
+the start of the previous or next word, where a run of punctuation is a word of its own and a line
+break a stop. Ctrl+Backspace and Ctrl+Delete remove a word, one undo step each. Home and End go to
+the wrapped line's ends; with Ctrl, to the draft's ends. Ctrl+A selects all. Up and Down recall
+earlier prompts only without modifiers, so Shift+Up and Shift+Down always select. The word rules
+live in the editor the composer shares with the handover dialog (`compact_dialog/editor.rs`); the
+toolkit's `TextField` has its own word movement.
 The composer toolbar separates session values, actions and panels by their surfaces. Fixed-width
 value controls keep their neighbours still as values change; effort is a five-dot scale and
 context remains a token count, not a filled bar, because the transcript supplies no verified limit.
@@ -1536,6 +1830,10 @@ Settings → Terminal saves `appearance.cursorShape`, `appearance.cursorBlink`, 
 including the Chat drawer. The default cursor is a steady Block; Bar and Underline are fallbacks
 when the program has not chosen a DECSCUSR style. Blink is off by default. When enabled it still
 respects an explicitly steady cursor, the system caret interval, focus, visibility and reduced motion.
+It starts again, on, after each key and after output that moves the cursor (by absolute line, so
+scrolling counts) or changes its look, its screen or the cell under it. Output that repaints
+elsewhere and puts the cursor back, as Claude Code's elapsed-time counter does every second while it
+works, leaves the rhythm alone.
 
 Opacity defaults to 100% and steps down to 60% by 5%. It affects normal backgrounds and padding,
 not text, explicit terminal backgrounds, or selected cells. The toolkit can raise opacity for text

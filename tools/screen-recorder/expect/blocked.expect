@@ -1,0 +1,41 @@
+# The call is refused without a prompt; what it was and why is in the transcript, not on a screen
+# Chat reads.
+[refused]
+kind = idle
+input =
+send = yes
+working = no
+mode = Auto
+
+# How the model describes the call is its own wording: the star takes it.
+[list]
+kind = blocked
+title = Commands auto mode recently blocked.*
+choices = ✘ *
+count = 1
+highlight = ✘ *
+marks = none
+pending = -
+esc-does = close
+body = mkdir probe_blocked_one
+send = no
+
+[marked]
+kind = blocked
+choices = ✔ *
+marks = approve
+pending = Esc will approve 1 blocked call
+esc-does = approve 1 blocked
+send = no
+
+[unmarked]
+kind = blocked
+marks = none
+pending = -
+esc-does = close
+
+[closed]
+kind = idle
+input =
+send = yes
+working = no

@@ -1,0 +1,36 @@
+# Which models the picker lists depends on the account.
+[model]
+kind = menu
+rows = Select model*
+esc = yes
+send = no
+
+[model_closed]
+kind = idle
+input =
+send = yes
+working = no
+
+[config]
+kind = panel
+rows = *Search settings*
+esc = yes
+send = no
+
+[config_closed]
+kind = idle
+input =
+send = yes
+working = no
+
+[permissions]
+kind = panel
+rows = Permissions*Allow*Ask*Deny*
+esc = yes
+send = no
+
+[permissions_closed]
+kind = idle
+input =
+send = yes
+working = no

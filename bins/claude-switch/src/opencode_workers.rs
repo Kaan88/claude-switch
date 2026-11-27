@@ -278,7 +278,8 @@ mod tests {
 
     #[test]
     fn studio_detection_accepts_only_the_fixed_install_location() {
-        let dir = std::env::temp_dir().join(format!("cs-studio-test-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-studio-test");
+        let dir = scratch.to_path_buf();
         let fixed = dir.join("Programs/OpenCode Config Studio/OpenCodeConfigStudio.exe");
         std::fs::create_dir_all(fixed.parent().unwrap()).unwrap();
         let nearby = dir.join("OpenCodeConfigStudio.exe");

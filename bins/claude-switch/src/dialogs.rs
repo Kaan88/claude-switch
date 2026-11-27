@@ -26,6 +26,7 @@ mod opencode_rows;
 mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
+pub(crate) use settings::peek::{PEEK_TIP, PeekInput};
 pub(crate) use settings::{OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
 
 pub const OK: u32 = 1;
@@ -144,6 +145,13 @@ pub(crate) fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
 
 // ---- drawing ---------------------------------------------------------------------------------
 
+#[cfg(test)]
+impl<'a> Draw<'a> {
+    pub(crate) fn for_test(hits: &'a mut Vec<(Rect, Target)>, pal: Palette) -> Self {
+        Draw { hits, hover: None, pressed: None, pal, radius: 9.0, shadow: 0.0 }
+    }
+}
+
 pub(crate) struct Draw<'a> {
     pub hits: &'a mut Vec<(Rect, Target)>,
     pub hover: Option<Target>,
@@ -164,15 +172,39 @@ impl Draw<'_> {
         self.hits.push((r, Target::Dialog(id)));
     }
 
-    /// Footer buttons from the right, the first given rightmost.
+    /// Footer buttons from the right, the first given rightmost. Buttons that would not fit
+    /// between the card's padded edges narrow toward their labels' own width (see [`fit`]).
     pub fn footer(&mut self, p: &mut Painter, footer: Rect, buttons: &[(&str, bool, u32)]) {
+        self.footer_split(p, footer, buttons, &[], 0);
+    }
+
+    /// A footer with a group on the left too: `right` from the right edge as [`Draw::footer`],
+    /// `left` from the left edge in the order given. When both groups do not fit side by side,
+    /// the left group folds into one “More ▾” button with the id `more`, and true is returned
+    /// so the caller can offer the folded actions in a menu. Returns the rectangle of the
+    /// “More” button when it was drawn.
+    pub fn footer_split(
+        &mut self,
+        p: &mut Painter,
+        footer: Rect,
+        right: &[(&str, bool, u32)],
+        left: &[(&str, bool, u32)],
+        more: u32,
+    ) -> Option<Rect> {
+        let layout = footer_layout(p, footer, right, left);
         let y = footer.y + (DIALOG_FOOTER - 32.0) / 2.0;
-        let mut right = footer.right() - DIALOG_PAD;
-        for &(label, primary, id) in buttons {
-            let w = dialog_button_w(p, label);
-            self.button(p, Rect::new(right - w, y, w, 32.0), label, primary, id);
-            right -= w + 8.0;
+        for (&(label, primary, id), (x, w)) in right.iter().zip(&layout.right) {
+            self.button(p, Rect::new(*x, y, *w, 32.0), label, primary, id);
         }
+        if let Some((x, w)) = layout.more {
+            let r = Rect::new(x, y, w, 32.0);
+            self.button(p, r, MORE_LABEL, false, more);
+            return Some(r);
+        }
+        for (&(label, primary, id), (x, w)) in left.iter().zip(&layout.left) {
+            self.button(p, Rect::new(*x, y, *w, 32.0), label, primary, id);
+        }
+        None
     }
 
     pub fn title(&self, p: &mut Painter, card: Rect, text: &str) {
@@ -188,6 +220,78 @@ impl Draw<'_> {
     }
 }
 
+/// The label of the button a footer's left group folds into.
+pub(crate) const MORE_LABEL: &str = "More  ▾";
+const BUTTON_GAP: f32 = 8.0;
+/// Between a footer's left and right groups, at least.
+const GROUP_GAP: f32 = 24.0;
+
+/// Where a footer's buttons go: (x, width) for each, and the folded “More” button if any.
+#[derive(Debug, Default)]
+pub(crate) struct FooterLayout {
+    pub right: Vec<(f32, f32)>,
+    pub left: Vec<(f32, f32)>,
+    pub more: Option<(f32, f32)>,
+}
+
+pub(crate) fn footer_layout(
+    p: &mut Painter,
+    footer: Rect,
+    right: &[(&str, bool, u32)],
+    left: &[(&str, bool, u32)],
+) -> FooterLayout {
+    let sizes = |p: &mut Painter, labels: &mut dyn Iterator<Item = &str>| -> Vec<(f32, f32)> {
+        labels
+            .map(|label| {
+                let natural = dialog_button_w(p, label);
+                (natural, (p.measure(Face::Semibold, 13.0, label) + 20.0).ceil().min(natural))
+            })
+            .collect()
+    };
+    let (start, end) = (footer.x + DIALOG_PAD, footer.right() - DIALOG_PAD);
+    let right_sizes = sizes(p, &mut right.iter().map(|b| b.0));
+    let mut left_sizes = sizes(p, &mut left.iter().map(|b| b.0));
+    let natural = |sizes: &[(f32, f32)]| {
+        sizes.iter().map(|s| s.0).sum::<f32>() + BUTTON_GAP * sizes.len().saturating_sub(1) as f32
+    };
+    let mut folded = false;
+    if !left_sizes.is_empty() && natural(&right_sizes) + GROUP_GAP + natural(&left_sizes) > end - start {
+        left_sizes = sizes(p, &mut std::iter::once(MORE_LABEL));
+        folded = true;
+    }
+    let group = if left_sizes.is_empty() { 0.0 } else { GROUP_GAP - BUTTON_GAP };
+    let all: Vec<_> = right_sizes.iter().chain(&left_sizes).copied().collect();
+    let widths = fit(&all, end - start - group, BUTTON_GAP);
+    let (right_w, left_w) = widths.split_at(right_sizes.len());
+    let mut layout = FooterLayout::default();
+    let mut x = end;
+    for &w in right_w {
+        layout.right.push((x - w, w));
+        x -= w + BUTTON_GAP;
+    }
+    let mut x = start;
+    for &w in left_w {
+        if folded {
+            layout.more = Some((x, w));
+        } else {
+            layout.left.push((x, w));
+        }
+        x += w + BUTTON_GAP;
+    }
+    layout
+}
+
+/// Button widths for a row `room` wide: each its natural width when they all fit, otherwise
+/// all narrowed by the same share of what each can give (down to its least width).
+pub(crate) fn fit(sizes: &[(f32, f32)], room: f32, gap: f32) -> Vec<f32> {
+    let gaps = gap * sizes.len().saturating_sub(1) as f32;
+    let natural: f32 = sizes.iter().map(|s| s.0).sum();
+    let least: f32 = sizes.iter().map(|s| s.1).sum();
+    let give = natural - least;
+    let t = if natural + gaps <= room || give <= 0.0 { 1.0 } else { ((room - gaps - least) / give).clamp(0.0, 1.0) };
+    sizes.iter().map(|&(n, l)| (l + t * (n - l)).floor()).collect()
+}
+
 pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Rect, t: f32) {
     let (w, h) = (window.w, window.h);
     let Some(mut dialog) = st.dialog.take() else { return };
@@ -195,7 +299,9 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     let cards = crate::windowlook::Cards::for_frame(st, p);
     let shadow = if st.high_contrast { 0.0 } else { cards.decoration(look.shadow) };
     if let Dialog::Settings(form) = &mut dialog {
-        form.draw(p, st, window, t, cx.anim());
+        if form.draw_layer(p, st, window, t, cx.anim()) {
+            cx.animating(window);
+        }
         st.dialog = Some(dialog);
         return;
     }
@@ -504,6 +610,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
         Dialog::Compact(mut compact) => {
             if compact.click(st, now, id, x) {
                 st.dialog = Some(Dialog::Compact(compact));
+            } else {
+                st.compact_closed(compact, now);
             }
         }
         d @ Dialog::Settings(_) => st.dialog = Some(d),
@@ -589,7 +697,12 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
                 return true;
             }
         }
-        Dialog::NewSession(picker) => picker.key(st, k, mods, text),
+        Dialog::NewSession(picker) => {
+            if picker.key(st, k, mods, text) {
+                st.dialog = Some(dialog);
+                return true;
+            }
+        }
         Dialog::FolderOpen(editor) => editor.key(k),
         Dialog::Archive(archive) => archive.key(st, k),
         Dialog::Compact(compact) => {

@@ -1,13 +1,14 @@
 use super::*;
 use crate::winfile::WindowFile;
 
-fn fixture(name: &str) -> (AppState, PathBuf) {
-    let folder = std::env::temp_dir().join(format!("cs-usage-{name}-{}-{}", std::process::id(), now_ms()));
-    std::fs::create_dir(&folder).unwrap();
-    let roots = Roots { home: folder.clone(), appdata: folder.clone() };
+/// The app with the `work` account in a scratch folder of its own, with its fake credentials:
+/// the folder goes when the test ends.
+fn fixture(name: &str) -> (AppState, crate::testing::Scratch) {
+    let folder = crate::testing::Scratch::created(&format!("cs-usage-{name}"));
+    let roots = Roots { home: folder.to_path_buf(), appdata: folder.to_path_buf() };
     let mut app = AppState::new(Source::Demo, Some(true), WindowFile::default());
     app.source = Source::Real(roots);
-    app.config.accounts.iter_mut().find(|a| a.slug == "work").unwrap().cli_dir = folder.clone();
+    app.config.accounts.iter_mut().find(|a| a.slug == "work").unwrap().cli_dir = folder.to_path_buf();
     app.usage = Usage::default();
     (app, folder)
 }
@@ -76,4 +77,15 @@ fn sign_in_end_is_not_lost_when_a_pre_login_read_finishes_late() {
     assert_eq!(app.usage.reading("work").unwrap().limits[0].used, 10.0);
     assert!(app.usage.jobs.is_empty());
     assert!(app.usage.sign_in_pending.is_empty());
+}
+
+#[test]
+fn the_fixture_folder_and_its_fake_credentials_go_when_the_test_ends() {
+    let (app, folder) = fixture("cleanup");
+    credentials(&folder);
+    let path = folder.to_path_buf();
+    assert!(path.join(".credentials.json").is_file());
+    drop(app);
+    drop(folder);
+    assert!(!path.exists(), "nothing is left in %TEMP%");
 }

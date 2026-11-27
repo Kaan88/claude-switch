@@ -107,6 +107,8 @@ pub enum Target {
     Handovers,
     Info(u32),
     InfoClose,
+    /// A button of a background handover in the Sessions strip or the details pane, by its id.
+    HandoverJob(u64, crate::handover_jobs::Act),
     /// A control of the open dialog, by the dialog's own number.
     Dialog(u32),
     /// A tab of the strip, by its id ([`crate::tabs::SESSIONS`] for the list), and its close button.
@@ -119,6 +121,8 @@ pub enum Target {
     Chat(crate::view::chat::Control),
     RestoreTabs,
     DismissTabs,
+    /// The Settings dialog's Peek button, for its tooltip (Settings hits it itself).
+    SettingsPeek,
 }
 
 /// Which popup menu is open.
@@ -133,6 +137,8 @@ pub enum MenuKind {
     Field(crate::fieldmouse::FieldId),
     /// Copy, Select all, Copy message, Copy as Markdown on the conversation of a tab.
     Conversation(u64),
+    /// Copy and Save as… from the Review handover dialog's “More ▾”.
+    HandoverMore,
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.
@@ -174,6 +180,8 @@ pub struct AppState {
     pub recent_local_day: Option<(i64, i32)>,
     pub marks: claude_switch_core::marks::Marks,
     pub marks_read_only: bool,
+    /// What the New session list knows about the sessions' folders.
+    pub folders: crate::recent_folders::Disk,
     pub marks_flush_at: Option<Instant>,
     /// Saves left to retry for marks no one will set again (a handover's links); see `save_marks`.
     pub marks_retries: u8,
@@ -295,6 +303,7 @@ impl AppState {
             recent_local_day: None,
             marks: marks.unwrap_or_default(),
             marks_read_only: marks_error.is_some(),
+            folders: Default::default(),
             marks_flush_at: None,
             marks_retries: 0,
             undo_hide: None,
@@ -483,6 +492,7 @@ impl AppState {
         }
         changed |= self.take_conversation_search();
         changed |= self.take_related();
+        changed |= self.take_folder_check();
         let selected = self.selected_session().map(|s| s.file.clone());
         self.take_naming_job() | self.take_meaning_job() | self.session_size.take(selected.as_deref()) | changed
     }
@@ -517,6 +527,8 @@ impl AppState {
             self.restart_conversation_search(Instant::now());
         }
         self.rebuild_view();
+        self.check_folders();
+        self.reload_new_session();
         let keep = self.selected.clone();
         self.last_account = None;
         match keep {

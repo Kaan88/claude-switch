@@ -1,0 +1,49 @@
+cursor 32 109
+@size 110 46
+@modes paste
+[0;38;2;215;119;87m ▐[0;38;2;215;119;87;48;2;0;0;0m▛███▛█[0m   [0;1mClaude[0m [0;1mCode[0m [0;38;2;153;153;153mv2.1.332[0m
+[0;38;2;215;119;87m▝▜[0;38;2;215;119;87;48;2;0;0;0m█████[0;38;2;215;119;87m█▀[0m  [0;38;2;153;153;153mHaiku[0m [0;38;2;153;153;153m5.5[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153mClaude[0m [0;38;2;153;153;153mMax[0m
+[0;38;2;215;119;87m ▝▝[0m   [0;38;2;215;119;87m▝▝[0m   [0;38;2;153;153;153m~\work\scratch[0m
+
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mRun exactly this with the Bash tool and nothing else: mkdir probe_blocked_two                               [0m
+
+[0;38;2;255;107;128m●[0;38;2;215;119;87m [0;1mBash[0m(mkdir probe_blocked_two)
+[0;38;2;153;153;153m  ⎿  Blocked by auto mode · /permissions to review · see https://code.claude.com/docs/s/claude-code-auto-mode[0m
+     [0;2m│[0m [0;38;2;153;153;153mAuto mode: No reason provided[0m
+
+[0;38;2;255;255;255m●[0m The [0;38;2;177;185;249mmkdir probe_blocked_two [0mcommand was denied by the auto mode classifier, so the directory was not
+  created. I didn't try another tool to create it, since that would get around the denial.
+
+  To allow this, add a Bash permission rule for [0;38;2;177;185;249mmkdir[0m in your Claude Code settings, or approve the command if
+  you're prompted again. Once it's allowed, I can rerun the command.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mCrunched for 5s · done 6:25 PM[0m
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55m/permissions                                                                                                [0m
+
+[0;38;2;177;185;249m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0;1;38;2;177;185;249mPermissions[0m [0;1;7m Recently blocked [0m  Allow   Ask   Deny   Auto mode   Workspace
+
+  Commands auto mode recently blocked. Approving adds no rule.
+
+  [0;38;2;177;185;249m❯ [0;38;2;153;153;153m1. [0;38;2;78;186;101m✔ [0;38;2;177;185;249mCreate directory probe_blocked_two  [0;38;2;153;153;153mAuto mode: No reason provided[0m
+  [0;38;2;153;153;153m   Esc will approve 1 blocked call[0m
+  [0;38;2;80;80;80m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌[0m
+   mkdir probe_blocked_two
+  [0;38;2;80;80;80m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌[0m
+
+  [0;3;38;2;153;153;153mr to retry · Enter to approve · Esc to approve 1 blocked[0m
+
+
+
+
+
+
+
+
+
+
+
+
+

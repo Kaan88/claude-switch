@@ -12,12 +12,23 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
   and added to `$reviewedGit` in `tools/write-third-party-notices.ps1` (licence still MIT, no new
   embedded files in the crates Switch ships), or the release run stops at "Unaudited git source"
   after the build, as 0.1.2's first run did. The script needs PowerShell 7 (`pwsh`).
-- Released: 0.1.2 on 2026-11-27 (tag `v0.1.2`, items 22, 47, 49, 53, 56, 59, 61-72 and the Chat
-  cards). Toolkit work is finished for now (owner, 2026-11-27): item 32 (fonts) and item 62's
-  single-opacity option wait for it.
+- Released: 0.1.2 on 2026-11-27 (tag `v0.1.2`, items 22, 47, 49, 53, 56, 59, 61, 63-72 and the Chat
+  cards) and 0.1.3 the same day (tag `v0.1.3`, items 73-77 and the Chat send gate rebuilt from the
+  screen; CHANGELOG.md). Toolkit work is finished for now (owner, 2026-11-27): item 32 (fonts) and
+  item 62's single-opacity option wait for it. OpenCode tabs (59) were tried by the owner and run
+  well; nearly everything else in 0.1.2 and 0.1.3 has not been seen in the running app.
 - Build: `cargo build -p claude-switch`.
 - Hidden flags for trying things: `--demo`, `--theme light|dark`, `--shell <program>`, `--type <text>`,
   `--sessions-tab`.
+
+- In 0.1.3 (2026-11-27): Chat's readiness from the screen, `TERM` for Claude tabs, held drafts, the
+  question and permission cards from the screen, typed answers, denied permissions, the take-back
+  after an early Stop (DESIGN.md, "What counts as ready", "Questions", "Renderer", "What still needs
+  the terminal"). Checked by tests over screens recorded from Claude Code 2.1.332 and two review
+  loops, never in the running app: the first things to try there are a plain send in a resumed
+  tab, a send while a turn runs, Stop right after a send, a question from Claude, and a pasted
+  picture (its marker was not recorded). A new Claude Code version is checked with
+  `tools/cli-compat.ps1` (by hand) or the `cli-compat` workflow (needs an `ANTHROPIC_API_KEY` secret).
 
 ## Completed follow-ups
 
@@ -931,6 +942,82 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     re-checks, mark and summary cleanup, copy and in-place deletion. Not checked: the real Recycle Bin call
     (`SHFileOperationW`) has not been run by a test or by hand, and the copy-written condition assumes Claude Code
     writes the copied conversation into the new transcript with its first message (not verified on a live fork).
+73. **Compact and open… still blocks the app while the model writes** (owner, 2026-11-27: "It still blocks the
+    usage of the app. Was it not done?"; then "put it behind like I asked and have it pop up the same window when
+    it finishes"). Item 61 covered `/switch-compact` and automatic handover, not the dialog. **Done.** Make
+    handover closes the dialog and the worker runs behind; the same Review handover window opens by itself when
+    it is written, after any modal thing closes, one at a time, ignoring keys and acting clicks for 300 ms; the
+    taskbar flashes when the window is not in front. A strip between the Sessions filter chips and the list
+    shows ones being written (elapsed time, spinner, Cancel), failures (reason, Retry) and reviews closed without
+    acting (Review, ✕), folding above two; the details pane has the same entry, and a failure with a terminal
+    shown also gets the error bar with Retry. Closing the window asks first and says a running one is canceled
+    and an unopened written one is lost (previewing never saved a handover, so none is kept across a restart).
+    Consent, in-place rules, the delete box (off each time the review opens) and the name are unchanged.
+    Checked: tests for start, finish and auto-open, waiting for a dialog and a menu, two at once opening in turn,
+    keys in flight, Cancel/Esc parking and Review, Dismiss, Cancel stopping the worker, failure and Retry through
+    consent, a second ask for the same session, the close confirmation and exit cancelling, the strip's folding;
+    the Sessions column drawn with the strip in each state (light and dark) and looked at. Not checked: the
+    real OpenCode run, the taskbar flash and tray notice, and the timing of a real keystroke against the 300 ms
+    guard, since nothing was run in the live app.
+74. **The Review handover dialog's footer buttons overflow** (owner, 2026-11-27, screenshot: Copy sticks
+    out past the dialog's left edge). **Done.** The review card is up to 760 px wide (660 before), with
+    Copy and Save as… in their own group on the left and Back, Cancel, In OpenCode and Open in CLI (or
+    Continue here) on the right; when a card has no room for both groups, the left group folds into
+    **More ▾**, a menu with Copy and Save as…. Every dialog footer now narrows its buttons toward their
+    labels' width instead of running past the card's left edge (no other dialog has more than three
+    buttons, which already fit). A test draws the review at 620 (narrower than the window can be),
+    760, 900 and 1400 px wide at 100, 125, 150 and 200 % and checks every button is inside the card's
+    padding and none overlap; another checks the narrowing. Looked at the 620, 760 and 1400 px pictures.
+75. **The handover text editor wraps in the middle of words** (owner, 2026-11-27: "plu s", "back t o").
+    **Done.** Rows break after the spaces before a word that does not fit (the spaces hang past the edge)
+    and inside a word only when the word alone is longer than a row, as the Chat composer wraps. End,
+    Up/Down and a click past a row's end stay on that row (before the space it broke at); Home, Right
+    and selection cross soft breaks as before. Tests cover wrapping, long words, multi-byte characters,
+    caret movement, selection across a soft break and reflow while typing.
+76. **Permission prompts Chat could not match to the one pending call** (owner, 2026-11-27: a card that
+    shows the prompt exactly as Claude Code draws it, so the user sees what they approve; never approve
+    something the card did not show). **Done.** A subagent's prompt, the prompts of several calls of one
+    message, and a prompt that does not name the pending call show as a card read from the screen alone
+    (DESIGN.md, "A prompt the pending call does not cover"; `view/chat/question/prompt.rs`): every row
+    from the prompt's top rule to its question, the question, the choices, Esc. Keys go only while the
+    screen shows exactly those rows, question and choices; a choice needs every row to have been in view
+    (a long prompt scrolls) and the card to have shown that prompt for half a second. The gate treats it
+    like the pending call's own card (no drawer, "Answer Claude's request above", "Waiting for your
+    approval"). Checked: recordings of Claude Code 2.1.332 (a subagent's Bash and Write prompts, the
+    highlight on each kind of choice, Esc, two parallel Bash calls) as fixtures; reader tests; state
+    tests on a tab gated like a real one, with the card painted (a click before the card showed the
+    prompt, rows that change between the click and the key, the next prompt taking the first one's
+    place, Esc, the setting off, a prompt longer than the card with the wheel and the "more" button);
+    the card's picture looked at in two window sizes. Not checked: nothing was tried in the running
+    app; a prompt with a diff (Edit) was not recorded, only Bash and Write; a prompt taller than the
+    terminal was built by hand, not recorded. Still the terminal's: a prompt whose top is above the
+    terminal's screen, a row wider than the card, and a decline with text (the comment field's drawing
+    is not recorded). Fixed afterwards: the second of two prompts was not recognised when Claude Code
+    left its hidden cursor on the first call's output row (found by the update check's recording, now
+    the `perm_two_after` fixture); a prompt is now known by its footer being the last text on the
+    screen, not by the cursor.
+77. **A warning about denied permissions, with a way to approve** (owner, 2026-11-27: when a permission
+    was denied by auto mode, by a rule or by the user's own No, show it prominently, say what and why,
+    and offer what Claude Code offers). **Done.** The transcript reader carries the denial on the tool
+    item (`crates/core/src/transcript/denial.rs`: kind, before-run flag, reason, the rule's source);
+    tool rows say who refused; a card counts and lists the current turn's denials
+    (`view/chat/question/denials.rs`); `/permissions` › Recently blocked is driven as a card of its own
+    (`question/blocked.rs`); DESIGN.md, "Denied permissions", has the recorded facts and the rules.
+    Checked: recordings of Claude Code 2.1.332 in scratch folders (a classifier block made with one
+    added `autoMode.soft_deny` rule passed by `--settings`; the dialog with one and two blocked calls,
+    Enter, Enter again, `r`, `r` again, Esc after an approval and after a retry; the transcript records
+    of all three kinds); core tests on those records; reader tests on the fixtures; state tests with the
+    cards painted (approve, choose another call, retry, a list that changed since it was painted, a
+    mark that never shows, the setting off, Review through the slash-command path, Ask Claude to
+    retry); the cards' pictures looked at. Not checked: nothing was tried in the running app; a block
+    with a reason from the classifier (the recorded one gave none; the "Reason: " reading is from the
+    record's fixed wording); Enter on a call marked to retry and `r` on an approved one (not offered);
+    a list longer than the terminal, a call's row that wraps, and marks of two kinds at once (the
+    footer's words are shown as they are); `ruleSource` values other than `flagSettings` (the names
+    of the other settings files are Claude Code's documented ones); a No given with text; a denial
+    inside a subagent (not counted: it is in the subagent's transcript, and only the CLI's passing
+    notice under the input says so). Open: the count is hidden while another card has the card's
+    place; a rule can only be changed in the terminal.
 
 80. **Later: `/fork` breaks Chat's continuation** (owner, 2026-11-27: "fork broke chat continuation, I
     think. not a big deal right now. note it."; screenshot). After `/fork` typed in a Claude tab,

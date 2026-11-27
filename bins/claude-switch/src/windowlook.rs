@@ -86,6 +86,15 @@ fn menu_switches<T: Clone + PartialEq>(p: &mut Painter, pal: &Palette, menu: &Me
     p.restore(clip);
 }
 
+/// The tooltip that shows now, if any.
+pub fn draw_tip(st: &AppState, p: &mut Painter, window: Rect) {
+    if let Some(over) = st.tip.shown() {
+        let pal = *st.pal();
+        let tip = mdshared_ui::overlay::Bubble::tip(p, &over.text, over.anchor, window.w, window.h);
+        Cards::for_frame(st, p).draw(p, tip.rect, pal.popup, |p| tip.draw(p, &pal));
+    }
+}
+
 pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Rect) {
     crate::usage_ui::draw_popup(st, p, window, cx.now());
     let pal = *st.pal();
@@ -111,6 +120,10 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
         1.0
     };
     dialogs::draw(st, cx, p, window, t);
+    // Nothing of Settings shows while it is peeked through, its tooltips included.
+    if over_dialog && !st.settings_peeking() {
+        draw_tip(st, p, window);
+    }
     if over_dialog && let Some((kind, menu)) = &mut st.menu {
         popup(cx, p, window, &pal, menu, style, (("popup", *kind), switches));
     }

@@ -1,0 +1,21 @@
+[first]
+kind = permission
+title = Do you want to proceed?
+choices = Yes | Yes, and always allow access to * from this project*| No
+highlight = Yes
+body = Bash command*| mkdir par_a
+request = Bash command*mkdir par_a*
+
+[second]
+kind = permission
+title = Do you want to proceed?
+choices = Yes | Yes, and always allow access to * from this project*| No
+highlight = Yes
+body = Bash command*| mkdir par_b
+request = Bash command*mkdir par_b*
+
+[done]
+kind = idle
+input =
+send = yes
+working = no

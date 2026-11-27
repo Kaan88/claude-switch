@@ -232,9 +232,10 @@ pub(super) fn next_prompt(screen: &Screen) -> Option<String> {
     }
     let cursor = screen.cursor();
     let cells = screen.line(cursor.row)?.cells();
-    let glyph = cells.iter().position(|c| c.ch == '❯')?;
+    let glyph = cells.iter().position(|c| super::submission::screen::prompt_mark(c.ch))?;
     let start = glyph + 2;
-    if cursor.col != start || cells.get(glyph + 1).is_none_or(|c| c.ch != ' ') {
+    // Claude Code 2.1.332 draws a no-break space after the mark.
+    if cursor.col != start || cells.get(glyph + 1).is_none_or(|c| !matches!(c.ch, ' ' | '\u{a0}')) {
         return None;
     }
     let rest = cells.get(start..)?;
@@ -452,7 +453,8 @@ mod tests {
 
     #[test]
     fn the_listing_skips_hidden_and_build_folders_and_stays_bounded() {
-        let root = std::env::temp_dir().join(format!("cs-popups-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-popups");
+        let root = scratch.to_path_buf();
         let _ = std::fs::remove_dir_all(&root);
         for dir in ["src/deep", ".git", "node_modules/pkg", "Target"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();

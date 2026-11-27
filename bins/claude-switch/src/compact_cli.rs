@@ -565,7 +565,8 @@ mod tests {
 
     #[test]
     fn print_writes_only_stdout_unless_save_is_explicit() {
-        let root = std::env::temp_dir().join(format!("cs-review3-print-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-review3-print");
+        let root = scratch.to_path_buf();
         std::fs::create_dir(&root).unwrap();
         let roots = Roots { home: root.clone(), appdata: root.clone() };
         let mut out = Vec::new();

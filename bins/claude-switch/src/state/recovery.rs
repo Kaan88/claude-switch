@@ -76,7 +76,8 @@ impl AppState {
 #[test]
 fn ui_settings_publish_bridge_only_after_commit_and_after_reset() {
     use claude_switch_core::{Roots, WorkersUse, config};
-    let folder = std::env::temp_dir().join(format!("cs-w3-ui-bridge-{}", std::process::id()));
+    let scratch = crate::testing::Scratch::new("cs-w3-ui-bridge");
+    let folder = scratch.to_path_buf();
     let roots = Roots { home: folder.clone(), appdata: folder };
     let initial = config::load(&roots);
     config::save(&roots, &initial).unwrap();

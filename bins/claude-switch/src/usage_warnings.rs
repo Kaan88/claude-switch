@@ -315,7 +315,8 @@ mod tests {
 
     #[test]
     fn failed_notice_claim_stays_pending_until_the_ledger_is_writable() {
-        let folder = std::env::temp_dir().join(format!("cs-w3-warning-retry-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-w3-warning-retry");
+        let folder = scratch.to_path_buf();
         let roots = claude_switch_core::Roots { home: folder.clone(), appdata: folder.clone() };
         let ledger = roots.config_file().with_file_name("usage-notices.json");
         std::fs::create_dir_all(&ledger).unwrap();

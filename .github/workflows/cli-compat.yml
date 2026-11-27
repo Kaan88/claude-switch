@@ -1,0 +1,238 @@
+name: Claude Code compatibility
+
+# Chat reads Claude Code's terminal screen, and Claude Code updates often. Once a day this looks
+# for a new Claude Code version; for a new one it records the screens Chat reads from the real CLI
+# and runs Chat's readers over them (tools/screen-recorder, "After a Claude Code update"). Screens
+# that no longer read as expected go into one issue per Claude Code version.
+#
+# Needs the repository secret ANTHROPIC_API_KEY (a run is a few cents of Haiku). Without it every
+# run ends green with a notice.
+
+'on':
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-compat
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Is there a new Claude Code?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.find.outputs.version }}
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Find the newest version
+        id: find
+        run: |
+          # What the native installer installs; the npm registry as a second source.
+          version="$(curl -fsSL --max-time 30 https://downloads.claude.ai/claude-code-releases/latest || true)"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            version="$(curl -fsSL --max-time 30 https://registry.npmjs.org/@anthropic-ai/claude-code/latest | jq -r .version)"
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$'; then
+            echo "::error::Could not find the newest Claude Code version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Look for the marker of this version
+        id: seen
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cli-compat-marker
+          key: cli-compat-${{ steps.find.outputs.version }}
+          lookup-only: true
+          # The marker is saved on Linux and also looked up on Windows: without this a Windows
+          # runner adds "windows-only" to the cache's version and never finds it (on Linux it
+          # changes nothing, so markers saved before still count).
+          enableCrossOsArchive: true
+      - name: Decide
+        id: decide
+        env:
+          VERSION: ${{ steps.find.outputs.version }}
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+          SEEN: ${{ steps.seen.outputs.cache-hit }}
+        run: |
+          run=true
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::notice::The secret ANTHROPIC_API_KEY is not set: Claude Code $VERSION was not checked. Add it under Settings > Secrets and variables > Actions."
+            run=false
+          elif [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$SEEN" = "true" ]; then
+            echo "::notice::Claude Code $VERSION was already checked."
+            run=false
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: Record and check
+    needs: version
+    if: needs.version.outputs.run == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      issues: write
+    env:
+      CARGO_BUILD_JOBS: '2'
+    outputs:
+      result: ${{ steps.run.outputs.result }}
+      # What was installed and checked: the issue and the marker name this one.
+      installed: ${{ steps.installed.outputs.version }}
+      # Whether it was recorded: not when the installed version was already checked.
+      recorded: ${{ steps.decide.outputs.record }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Claude Code as a user does
+        run: |
+          Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
+          $bin = Join-Path $env:USERPROFILE '.local\bin'
+          if (-not (Test-Path -LiteralPath (Join-Path $bin 'claude.exe'))) { throw "claude.exe is not in $bin." }
+          $bin >> $env:GITHUB_PATH
+      # The installer may install another version than the one found above (a release on its
+      # way, another channel): the run checks what is installed and names that one.
+      - name: Installed version
+        id: installed
+        env:
+          NEWEST: ${{ needs.version.outputs.version }}
+        run: |
+          $line = "$(claude --version | Select-Object -First 1)".Trim()
+          $version = ($line -split '\s+')[0]
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$') { throw "claude --version printed `"$line`"." }
+          if ($version -ne $env:NEWEST) {
+            "::warning::The newest Claude Code is $env:NEWEST, but the installer installed $version: this run checks $version, and the issue and the marker name it."
+          }
+          "Installed Claude Code $version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+      # The marker is saved under the installed version, so while the installer lags behind the
+      # newest release the first job finds none: the installed one is looked for here, and a
+      # version already checked is not recorded again (when started by hand it always is).
+      - name: Look for the marker of the installed version
+        id: seen
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cli-compat-marker
+          key: cli-compat-${{ steps.installed.outputs.version }}
+          lookup-only: true
+          # The marker is saved on Linux and also looked up on Windows: without this a Windows
+          # runner adds "windows-only" to the cache's version and never finds it (on Linux it
+          # changes nothing, so markers saved before still count).
+          enableCrossOsArchive: true
+      - name: Decide
+        id: decide
+        env:
+          VERSION: ${{ steps.installed.outputs.version }}
+          SEEN: ${{ steps.seen.outputs.cache-hit }}
+        run: |
+          $record = 'true'
+          if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -and $env:SEEN -eq 'true') {
+            "::notice::Claude Code $env:VERSION, the version the installer installs, was already checked."
+            $record = 'false'
+          }
+          "record=$record" >> $env:GITHUB_OUTPUT
+      - name: Set up Rust stable
+        if: steps.decide.outputs.record == 'true'
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Build the recorder
+        if: steps.decide.outputs.record == 'true'
+        run: cargo build --locked --manifest-path tools/screen-recorder/Cargo.toml
+      # Built here, before the API key is in any step's environment: the recorder's own build of
+      # the check then finds it done, and runs no build script or proc macro (it also removes
+      # the key from cargo's and the check's environment).
+      - name: Build the check
+        if: steps.decide.outputs.record == 'true'
+        run: cargo test --locked -p claude-switch --no-run
+      # The only step with the key.
+      - name: Record every script and check the recordings
+        id: run
+        if: steps.decide.outputs.record == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'cli-compat'
+          & tools\screen-recorder\target\debug\recorder.exe compat --ci --api-key-env ANTHROPIC_API_KEY --out $out
+          $code = $LASTEXITCODE
+          $result = switch ($code) { 0 { 'ok' } 1 { 'mismatch' } default { 'error' } }
+          "result=$result" >> $env:GITHUB_OUTPUT
+          "out=$out" >> $env:GITHUB_OUTPUT
+          $report = Join-Path $out 'report.md'
+          if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report >> $env:GITHUB_STEP_SUMMARY }
+          exit 0
+      - name: Upload the recordings
+        if: always() && steps.run.outputs.out != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-compat-${{ steps.installed.outputs.version }}
+          path: ${{ steps.run.outputs.out }}
+          retention-days: 30
+          if-no-files-found: warn
+      - name: Open or update the issue for this version
+        if: steps.run.outputs.result == 'mismatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.installed.outputs.version }}
+          OUT: ${{ steps.run.outputs.out }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          $title = "Chat: screens changed in Claude Code $env:VERSION"
+          $body = Join-Path $env:RUNNER_TEMP 'cli-compat-issue.md'
+          @(
+            "The daily check recorded Claude Code $env:VERSION and Chat's screen readers no longer read some screens as expected."
+            "Recordings: artifact ``cli-compat-$env:VERSION`` of $env:RUN_URL"
+            'What to do: `tools/screen-recorder/README.md`, "After a Claude Code update".'
+            ''
+          ) + (Get-Content -LiteralPath (Join-Path $env:OUT 'report.md')) | Set-Content -LiteralPath $body -Encoding utf8
+          # Open or closed: a version checked again (the cache let go of its marker) gets no twin.
+          $found = gh issue list --state all --limit 20 --search "`"$title`" in:title" --json number,title,state | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'gh issue list failed.' }
+          $same = @($found | Where-Object { $_.title -eq $title })
+          $issue = @($same | Where-Object { $_.state -eq 'OPEN' }) + $same | Select-Object -First 1
+          if ($issue -and $issue.state -eq 'OPEN') {
+            gh issue edit $issue.number --body-file $body
+          } elseif ($issue) {
+            # Closed by someone who dealt with it: the new report goes there as a comment, and
+            # the issue stays closed.
+            gh issue comment $issue.number --body-file $body
+          } else {
+            gh issue create --title $title --body-file $body
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'The issue could not be written.' }
+          "::warning::Chat no longer reads some screens of Claude Code $env:VERSION as expected; see the issue `"$title`"."
+      - name: Fail when the check could not run
+        if: steps.decide.outputs.record == 'true' && steps.run.outputs.result != 'ok' && steps.run.outputs.result != 'mismatch'
+        run: |
+          "::error::The check could not run (sign-in, build or start-up); see the step above and the uploaded recordings."
+          exit 1
+
+  remember:
+    name: Remember the checked version
+    needs: [version, check]
+    if: needs.check.result == 'success' && needs.check.outputs.recorded == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write the marker
+        env:
+          VERSION: ${{ needs.check.outputs.installed }}
+          RESULT: ${{ needs.check.outputs.result }}
+        run: printf '%s %s\n' "$VERSION" "$RESULT" > cli-compat-marker
+      - name: Keep it
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cli-compat-marker
+          key: cli-compat-${{ needs.check.outputs.installed }}
+          # The marker is saved on Linux and also looked up on Windows: without this a Windows
+          # runner adds "windows-only" to the cache's version and never finds it (on Linux it
+          # changes nothing, so markers saved before still count).
+          enableCrossOsArchive: true

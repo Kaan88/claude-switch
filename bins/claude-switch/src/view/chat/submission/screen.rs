@@ -15,6 +15,25 @@ fn blank(cell: &Cell) -> bool {
     cell.is_spacer() || cell.ch == ' ' || cell.ch == '\u{a0}' || faint(cell)
 }
 
+/// The mark before Claude Code's input: `❯`, or `>` where Claude Code takes the terminal for one
+/// without Unicode (on Windows: no `TERM`, `WT_SESSION` or the like, as in a tab of a program
+/// started from the Start menu; Claude Code 2.1.332). A `>` alone proves little, so readers ask
+/// for the input box's rule right above its row as well ([`marks_input`]).
+pub(in crate::view) fn prompt_mark(c: char) -> bool {
+    matches!(c, '❯' | '>')
+}
+
+/// Row `row` starts Claude Code's input: its first character is the input mark, and for the
+/// plain `>` the row right above is the input box's rule.
+pub(in crate::view) fn marks_input(screen: &Screen, row: usize) -> bool {
+    let text = screen.row_text(row);
+    match text.trim_start().chars().next() {
+        Some('❯') => true,
+        Some('>') => row.checked_sub(1).and_then(|above| screen.line(above)).is_some_and(|line| rule(line.cells())),
+        _ => false,
+    }
+}
+
 fn footer(line: &str) -> bool {
     crate::view::chat::question::screens::menu_footer(line)
 }
@@ -29,7 +48,9 @@ pub(in crate::view) fn menu(screen: &Screen) -> bool {
     let menu_footer = |row: usize| {
         footer(&screen.row_text(row)) && !crate::view::chat::question::screens::input_box_above(screen, row)
     };
-    (cursor.saturating_sub(1)..(cursor + 9).min(screen.rows())).any(menu_footer) || last.is_some_and(menu_footer)
+    (cursor.saturating_sub(1)..(cursor + 9).min(screen.rows())).any(menu_footer)
+        || last.is_some_and(menu_footer)
+        || crate::view::chat::question::screens::live_footer(screen).is_some()
 }
 
 /// A row that is only a horizontal rule, as the CLI draws above and below its input.
@@ -50,7 +71,7 @@ fn frame(cells: &[Cell], left: usize, right: usize, top: bool) -> bool {
     cells[left + 1..right].iter().all(|c| c.ch == edge)
 }
 
-pub(super) fn prompt(screen: &Screen) -> Option<String> {
+pub(in crate::view::chat) fn prompt(screen: &Screen) -> Option<String> {
     if screen.modes().alt_screen || crate::attention::screen_permission_prompt(screen) || menu(screen) {
         return None;
     }
@@ -59,7 +80,15 @@ pub(super) fn prompt(screen: &Screen) -> Option<String> {
     // A row wrapping onto the prompt row is earlier text, except the input box's top rule: mid-turn
     // the CLI sometimes redraws that full-width rule so that it is marked as wrapping.
     let above = cursor.row.checked_sub(1).and_then(|row| screen.line(row));
-    if line.wrapped() || above.is_some_and(|above| above.wrapped() && !rule(above.cells())) {
+    // The prompt row's own wrap mark is a leftover when the row under it is the input box's rule
+    // or empty: the CLI redrew the row where a full-width one had been (seen after a declined
+    // permission prompt, Claude Code 2.1.332). Input that really wraps goes on in the next row.
+    let wraps_on = line.wrapped()
+        && screen.line(cursor.row + 1).is_some_and(|next| {
+            let cells = next.cells();
+            !rule(cells) && cells.iter().any(|c| c.ch != ' ' && !c.is_spacer())
+        });
+    if wraps_on || above.is_some_and(|above| above.wrapped() && !rule(above.cells())) {
         return None;
     }
     let cells = line.cells();
@@ -94,7 +123,15 @@ pub(super) fn prompt(screen: &Screen) -> Option<String> {
         (first, cells.len())
     };
     let glyph = begin + cells[begin..end].iter().position(|c| c.ch != ' ')?;
-    if cells[glyph].ch != '❯' || faint(&cells[glyph]) || cursor.col <= glyph || cursor.col >= end {
+    if !prompt_mark(cells[glyph].ch) || faint(&cells[glyph]) || cursor.col <= glyph || cursor.col >= end {
+        return None;
+    }
+    // The plain `>` is the input's mark only in the input box: right under its rule, with the
+    // rule that closes the box somewhere below.
+    if cells[glyph].ch == '>'
+        && !(above.is_some_and(|above| rule(above.cells()))
+            && (cursor.row + 1..screen.rows()).any(|row| screen.line(row).is_some_and(|line| rule(line.cells()))))
+    {
         return None;
     }
     let content = &cells[glyph + 1..end];
@@ -111,12 +148,19 @@ pub(in crate::view) fn clean_prompt(screen: &Screen) -> bool {
     prompt(screen).as_deref() == Some("")
 }
 
-pub(super) fn working(screen: &Screen) -> bool {
+/// The CLI shows a turn running: its interrupt hint in the rows under the input (Claude Code
+/// 2.1.332 puts it in the hint row there, and drops it while the input holds text), or its
+/// working line (spinner, word, "…", timer) in the rows right above the input box. Above the
+/// input only that line counts, never the words: an answer that mentions "esc to interrupt" is
+/// not a running turn.
+pub(in crate::view::chat) fn working(screen: &Screen) -> bool {
     let row = screen.cursor().row;
-    (row.saturating_sub(5)..(row + 6).min(screen.rows())).any(|i| {
+    let hint = |i: usize| {
         let row = screen.row_text(i).to_ascii_lowercase();
         row.contains("esc to interrupt") || row.contains("ctrl+c to interrupt")
-    })
+    };
+    (row + 1..(row + 6).min(screen.rows())).any(hint)
+        || (row.saturating_sub(5)..row).any(|i| crate::view::working::working_row(&screen.row_text(i)))
 }
 
 pub(super) fn interrupted(screen: &Screen) -> bool {
@@ -152,14 +196,28 @@ fn input_rows(screen: &Screen) -> Option<Vec<String>> {
             text.trim().trim_start_matches(border).trim_end_matches(border).trim_end().to_owned()
         })
         .collect();
-    let start = rows.iter().rposition(|row| row.trim_start().starts_with('❯'))?;
+    let first = cursor.saturating_sub(INPUT_ROWS);
+    let start = (0..rows.len()).rposition(|i| marks_input(screen, first + i))?;
     // A rule between the `❯` row and the cursor is the input box's edge: the cursor is elsewhere.
     if rows[start..].iter().any(|row| !row.is_empty() && row.chars().all(|c| matches!(c, '─' | '━' | '═'))) {
         return None;
     }
     let mut rows = rows[start..].to_vec();
-    rows[0] = rows[0].trim_start().trim_start_matches('❯').to_owned();
+    rows[0] = rows[0].trim_start().strip_prefix(prompt_mark).unwrap_or(&rows[0]).to_owned();
     Some(rows)
+}
+
+/// The input shows `expected`, a single line too long for one row: its rows from the mark to the
+/// cursor read it, wrapping aside.
+pub(in crate::view::chat) fn shows_wrapped(screen: &Screen, expected: &str) -> bool {
+    let Some(rows) = input_rows(screen) else { return false };
+    let squash = |s: &str| s.split_whitespace().collect::<String>();
+    rows.len() > 1 && !squash(expected).is_empty() && squash(&rows.join(" ")) == squash(expected)
+}
+
+/// The cursor is in the CLI's input, whatever it holds.
+pub(in crate::view::chat) fn shows_some_input(screen: &Screen) -> bool {
+    input_rows(screen).is_some()
 }
 
 /// `[Pasted text #n +m lines]`, as the whole input.
@@ -173,7 +231,7 @@ fn paste_marker(text: &str) -> bool {
 
 /// The input shows `expected`, a text of several lines: as typed (wrapping and indents aside) or
 /// as the CLI's paste marker.
-pub(super) fn shows_lines(screen: &Screen, expected: &str) -> bool {
+pub(in crate::view::chat) fn shows_lines(screen: &Screen, expected: &str) -> bool {
     let Some(rows) = input_rows(screen) else { return false };
     let shown = rows.join("\n");
     let squash = |s: &str| s.split_whitespace().collect::<String>();

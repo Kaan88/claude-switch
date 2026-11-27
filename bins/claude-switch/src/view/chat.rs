@@ -15,6 +15,7 @@ mod rename;
 mod shortcuts;
 pub(super) mod side;
 pub(super) mod submission;
+mod undo;
 
 pub(crate) use commands::valid_name as valid_command_name;
 pub use input::Control;
@@ -34,6 +35,9 @@ use submission::{ImageWait, Intent, Queue};
 
 pub const QUIET: Duration = Duration::from_millis(750);
 const TOOL_WAIT: Duration = Duration::from_secs(4);
+/// How long a submitted message may take to show on the screen before the screen as it stands
+/// counts again (the CLI normally redraws within milliseconds).
+const SENT_WAIT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
@@ -54,7 +58,7 @@ pub enum Reason {
 impl Reason {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Tool => "Waiting for your answer in the terminal",
+            Self::Tool => "Claude Code may be waiting for your answer in the terminal.",
             Self::Bell => "The terminal rang its bell. Check the terminal.",
             Self::Slash => "Claude Code commands are shown in the terminal.",
             Self::Permission => "Answer the permission question in the terminal.",
@@ -87,25 +91,49 @@ struct Signals<'a> {
     ended: bool,
     bracketed: bool,
     alternate: bool,
+    /// The screen shows the CLI's input idle: a quiet, visibly empty prompt and no working line.
+    idle: bool,
+    /// The screen shows the CLI's working line.
+    working: bool,
+    /// The CLI's input holds text.
+    typed: bool,
+    /// The screen shows the CLI's input at rest (empty or not): quiet, with no working line.
+    resting: bool,
 }
 
 fn assess(s: Signals<'_>) -> (Gate, Option<Reason>) {
     if s.ended {
         return (Gate::Ended, Some(Reason::Ended));
     }
-    if s.bell {
+    // The screen is what the next key meets. A quiet, visibly empty input with no working line is
+    // ready whatever the transcript last said: it lags, it has no record for a resumed session's
+    // first prompt, and after an interruption its last record still reads as a running turn.
+    if s.idle && s.bracketed && !s.alternate {
+        return (Gate::Ready, None);
+    }
+    // A bell under the CLI's working line asks for nothing: the turn is running.
+    if s.bell && !s.working {
         return (Gate::Check, Some(Reason::Bell));
     }
     if s.slash {
         return (Gate::Check, Some(Reason::Slash));
     }
-    if s.pending_for.is_some_and(|age| age >= TOOL_WAIT) && s.quiet_for >= QUIET {
+    // A pending tool with a silent terminal may be waiting for an answer Chat cannot read; under
+    // the CLI's working line it is only slow.
+    // So may a turn whose terminal has been silent for seconds with no working line: the CLI
+    // then shows something Chat has no card for.
+    let silent_tool = s.pending_for.is_some_and(|age| age >= TOOL_WAIT) && s.quiet_for >= QUIET;
+    let silent_turn = s.fresh && s.phase == Some(ChatPhase::Active) && s.quiet_for >= TOOL_WAIT && !s.typed;
+    if (silent_tool || silent_turn) && !s.working {
         return (Gate::Check, Some(Reason::Tool));
     }
     // OSC title strings are not a protocol. Only an explicit busy label is a veto; no
     // title (including an apparently idle title) is accepted as proof of readiness.
     let busy_title = matches!(s.title, "Claude Code — Working" | "Claude Code — Running");
-    if s.pending_for.is_some() || busy_title || s.fresh && s.phase == Some(ChatPhase::Active) {
+    // An input at rest with no working line is no running turn, whatever the transcript's last
+    // record says (interrupted before any answer, the prompt is its last record for good).
+    let active = s.fresh && s.phase == Some(ChatPhase::Active) && !s.resting;
+    if s.working || s.pending_for.is_some() || busy_title || active {
         return (Gate::Running, None);
     }
     if s.fresh && s.phase == Some(ChatPhase::EndTurn) && s.quiet_for >= QUIET && s.bracketed && !s.alternate {
@@ -191,6 +219,10 @@ pub struct Chat {
     bell: bool,
     slash: bool,
     last_output: Option<Instant>,
+    /// When the terminal last got input from the user or from Chat.
+    last_input: Option<Instant>,
+    /// A message or command Chat submitted: the output it was written after, and when.
+    sent: Option<(u64, Instant)>,
     last_gate: Option<Gate>,
     demo: bool,
     demo_progress: bool,
@@ -198,6 +230,9 @@ pub struct Chat {
     writes: Vec<Vec<u8>>,
     #[cfg(test)]
     fail_enter_once: bool,
+    /// A test's tab: gated like a real one (not the demo), with its writes only recorded.
+    #[cfg(test)]
+    pub(super) scripted: bool,
     layout: Layout,
 }
 
@@ -242,6 +277,70 @@ impl Chat {
     pub(super) fn watermark_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.invalidate(info);
         self.input_floor = Some(end.unwrap_or(u64::MAX));
+        self.last_input = Some(Instant::now());
+    }
+
+    /// The tab has no program behind it and is not the demo: a test drives its screen.
+    pub(super) fn scripted(&self) -> bool {
+        #[cfg(test)]
+        return self.scripted;
+        #[cfg(not(test))]
+        false
+    }
+
+    /// What the screen shows is newer than the last input: the CLI had time to react to a key
+    /// (it may show nothing for one), and a message Chat submitted has shown (the input emptied,
+    /// the working line appeared) or is long overdue.
+    fn settled(&self, now: Instant) -> bool {
+        let shown =
+            |(epoch, at): (u64, Instant)| self.output_epoch != epoch || now.saturating_duration_since(at) >= SENT_WAIT;
+        self.sent.is_none_or(shown) && self.last_input.is_none_or(|at| now.saturating_duration_since(at) >= QUIET)
+    }
+
+    /// The screen shows the CLI's input idle: a visibly empty prompt under the cursor, no working
+    /// line, no menu or permission prompt, quiet since the last output and input.
+    pub(super) fn screen_idle(&self, term: &crate::term::Term, now: Instant) -> bool {
+        !self.demo
+            && self.settled(now)
+            && !term.screen.modes().alt_screen
+            && submission::screen::idle_slash_prompt(&term.screen, self.quiet(now))
+    }
+
+    /// The screen shows the CLI's input at rest, empty or holding text: under the cursor, quiet
+    /// since the last output and input, with no working line.
+    pub(in crate::view) fn screen_resting(&self, term: &crate::term::Term, now: Instant) -> bool {
+        !self.demo
+            && self.settled(now)
+            && self.quiet(now)
+            && !term.screen.modes().alt_screen
+            && !submission::screen::working(&term.screen)
+            && (submission::screen::prompt(&term.screen).is_some()
+                || submission::screen::shows_some_input(&term.screen))
+    }
+
+    /// An idle input ends what was noted about the screen before it: a bell asked for nothing that
+    /// is still there, and the last message was not put back on the input.
+    pub(super) fn settle(&mut self, idle: bool) {
+        if idle {
+            self.bell = false;
+            self.sent = None;
+            self.forget_sent();
+        }
+    }
+
+    /// When the screen's rest could next change what Chat says: the end of the quiet time after
+    /// the last output or input, and of the silence that makes a turn look stuck.
+    pub(super) fn next_settle(&self, now: Instant) -> Option<Instant> {
+        let after = |at: Option<Instant>, time: Duration| at.map(|at| at + time).filter(|at| *at > now);
+        [after(self.last_output, QUIET), after(self.last_input, QUIET), after(self.last_output, TOOL_WAIT)]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// Chat wrote Enter after a message or command.
+    pub(super) fn note_sent(&mut self) {
+        self.sent = Some((self.output_epoch, Instant::now()));
     }
 
     fn observe(&mut self, info: &ChatInfo, now: Instant) {
@@ -291,7 +390,7 @@ impl Chat {
         if self.identity_unverified {
             return (Gate::Check, Some(Reason::Identity));
         }
-        if term.ended.is_some() || !self.demo && !term.running() {
+        if term.ended.is_some() || !self.demo && !self.scripted() && !term.running() {
             return (Gate::Ended, Some(Reason::Ended));
         }
         // A question card answers its own menu, whatever its words.
@@ -300,8 +399,12 @@ impl Chat {
         if crate::attention::screen_permission_prompt(&term.screen)
             || !question_card && question::screens::permission_like(&term.screen)
         {
-            // The card answers it when it names the pending call; the terminal otherwise.
+            // The card answers it: the pending call's own card when the prompt names that call,
+            // else the card that shows the prompt as the screen has it. The terminal only for a
+            // prompt Chat cannot read whole.
             let card = info.pending.is_some() && self.question.approval && self.question.answerable == info.pending;
+            let card =
+                card || self.question.prompt_answers() && crate::attention::screen_permission_prompt(&term.screen);
             return (Gate::Check, Some(if card { Reason::Approval } else { Reason::Permission }));
         }
         if self.demo
@@ -331,8 +434,17 @@ impl Chat {
             ended: false,
             bracketed: modes.bracketed_paste,
             alternate: modes.alt_screen,
+            idle: self.screen_idle(term, now),
+            working: !self.demo && submission::screen::working(&term.screen),
+            typed: self.demo || submission::screen::prompt(&term.screen).is_some_and(|text| !text.is_empty()),
+            resting: self.screen_resting(term, now),
         });
-        if self.reason == Some(Reason::Tool) && self.pending.is_some() && decision.1.is_none() {
+        if self.reason == Some(Reason::Tool)
+            && self.pending.is_some()
+            && decision.1.is_none()
+            && decision.0 != Gate::Ready
+            && !(!self.demo && submission::screen::working(&term.screen))
+        {
             decision = (Gate::Check, Some(Reason::Tool));
         }
         // The card answers it: the same refusal, without sending the user to the terminal.
@@ -340,7 +452,7 @@ impl Chat {
             decision.1 = Some(if self.question.approval { Reason::Approval } else { Reason::Question });
         }
         // A CLI menu shows as a card: nothing is sent past it and the drawer stays closed.
-        if self.question.menu.is_some()
+        if (self.question.menu.is_some() || self.question.blocked_shown())
             && decision.0 != Gate::Ended
             && decision.1.is_none_or(|r| matches!(r, Reason::Slash | Reason::Tool | Reason::Bell))
         {

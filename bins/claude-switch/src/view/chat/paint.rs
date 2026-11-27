@@ -145,18 +145,23 @@ impl AppState {
                 button(p, pal, r, "Focus terminal", hover == Some(target), false);
                 self.hits.push((r, target));
             }
-        } else if chat.reason == Some(Reason::Tool) && !chat.question.visible() && l.conversation.h > 25.0 {
+        } else if chat.reason == Some(Reason::Tool)
+            && (!chat.question.visible() || chat.question.only_denials())
+            && l.conversation.h > 25.0
+        {
+            // In the conversation's reading column, like the working line under it.
+            let (x, w) = pane.ui.column();
             let row = Rect::new(
-                l.conversation.x + 12.0,
+                x,
                 l.conversation.bottom() - pane.ui.footer_height(l.conversation.w, pane.model.agent.is_none()) - 26.0,
-                (l.conversation.w - 24.0).max(0.0),
+                w.max(0.0),
                 24.0,
             );
             p.fill(row, pal.page);
             p.text(Face::Ui, 11.5, row.x, row.cy(), Reason::Tool.label(), pal.muted, (row.w - 122.0).max(0.0));
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
         }
-        super::question::Draw { pal, hover, focused }.card(p, chat, &pane.model, &mut self.hits);
+        super::question::Draw { pal, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
         if details_active {
             self.hits.extend(detail_hits);
         }

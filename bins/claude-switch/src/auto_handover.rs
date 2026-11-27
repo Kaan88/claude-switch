@@ -508,7 +508,8 @@ mod tests {
 
     #[test]
     fn account_settings_env_is_read_for_the_limits() {
-        let dir = std::env::temp_dir().join(format!("cs-auto-limits-{}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("cs-auto-limits");
+        let dir = scratch.to_path_buf();
         std::fs::create_dir_all(&dir).unwrap();
         let settings = serde_json::json!({"env": {
             "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70",

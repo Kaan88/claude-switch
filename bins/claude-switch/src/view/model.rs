@@ -715,6 +715,7 @@ mod tests {
             pictures: vec![],
             subagent: agent,
             card: None,
+            denial: None,
         };
         let id = |offset| ItemId { offset, block: 0 };
         let items = [
@@ -750,8 +751,8 @@ mod tests {
 
     #[test]
     fn discovery_uses_only_new_top_level_transcripts_in_the_encoded_folder() {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let config = std::env::temp_dir().join(format!("claude-switch-discovery-{}-{nonce}", std::process::id()));
+        let scratch = crate::testing::Scratch::new("claude-switch-discovery");
+        let config = scratch.to_path_buf();
         let cwd = Path::new(r"C:\Work\rail yard");
         let dir = project(&config, cwd);
         assert_eq!(dir, config.join("projects").join("C--Work-rail-yard"));
