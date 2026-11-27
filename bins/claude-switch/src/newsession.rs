@@ -31,6 +31,8 @@ pub struct NewSession {
     folder_key: Option<String>,
     focus: u8, // folder, account, app
     error: Option<&'static str>,
+    /// "New OpenCode tab": the folder only; OpenCode has no Claude account or app.
+    opencode: bool,
 }
 
 impl AppState {
@@ -104,9 +106,14 @@ impl NewSession {
             folder_key: None,
             focus: 0,
             error: None,
+            opencode: false,
         };
         picker.sync_defaults(st);
         picker
+    }
+
+    pub(crate) fn for_opencode(st: &AppState) -> Self {
+        Self { opencode: true, ..Self::new(st) }
     }
 
     fn sync_defaults(&mut self, st: &AppState) {
@@ -123,9 +130,10 @@ impl NewSession {
     pub(super) fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, w: f32, h: f32) {
         let pal = d.pal;
         let recent_height = if self.recent.is_empty() { 0.0 } else { 28.0 + self.recent.len() as f32 * 32.0 };
-        let card = dialog_card(500.0, 216.0 + recent_height + DIALOG_FOOTER, w, h);
+        let rows = if self.opencode { 132.0 } else { 216.0 };
+        let card = dialog_card(500.0, rows + recent_height + DIALOG_FOOTER, w, h);
         let footer = d.card(p, card);
-        d.title(p, card, "New session");
+        d.title(p, card, if self.opencode { "New OpenCode tab" } else { "New session" });
         let x = card.x + DIALOG_PAD;
         let width = card.w - 2.0 * DIALOG_PAD;
 
@@ -150,6 +158,12 @@ impl NewSession {
                 y += 32.0;
             }
             y += 10.0;
+        }
+        if self.opencode {
+            let note = "Your own OpenCode setup, in a terminal tab. Not a Claude session.";
+            p.text(Face::Ui, 12.0, x, y + 8.0, note, pal.muted, width);
+            d.footer(p, footer, &[("Start", true, OK), ("Cancel", false, CANCEL)]);
+            return;
         }
 
         p.text(Face::Ui, 12.0, x, y + 16.0, "Account", pal.muted, 67.0);
@@ -191,6 +205,12 @@ impl NewSession {
                         path.is_dir()
                     }
                 }) {
+                    Ok(cwd) if self.opencode => {
+                        if let Err(e) = st.open_opencode_tab(&cwd, crate::opencode_tab::Start::Fresh) {
+                            st.error("Could not open OpenCode", e);
+                        }
+                        return false;
+                    }
                     Ok(cwd) => {
                         if let Some((slug, _)) = self.accounts.get(self.account) {
                             st.new_session_now(now, self.app, slug, &cwd);
@@ -232,6 +252,7 @@ impl NewSession {
     /// Enter and Escape go through the common dialog routes to Start and Cancel.
     pub(super) fn key(&mut self, st: &AppState, key: &KeyName, mods: Mods, text: Option<&str>) {
         match key {
+            KeyName::Tab if self.opencode => self.focus = 0,
             KeyName::Tab => self.focus = (self.focus + if mods.shift { 2 } else { 1 }) % 3,
             KeyName::Left | KeyName::Up if self.focus == 1 => self.step_account(false),
             KeyName::Right | KeyName::Down if self.focus == 1 => self.step_account(true),

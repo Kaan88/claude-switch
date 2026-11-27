@@ -217,6 +217,7 @@ impl Compact {
             footer,
             &[
                 (if self.in_place { "Continue here" } else { "Open in CLI" }, true, OK),
+                ("In OpenCode", false, OPENCODE),
                 ("Cancel", false, CANCEL),
                 ("Back", false, BACK),
                 ("Save as…", false, SAVE),

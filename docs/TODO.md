@@ -621,13 +621,29 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     fixed-width slot (the widest glyph of the set, centred) and start the text at a fixed x; use tabular figures, or a
     fixed slot per counter, so changing digits do not move what follows (`view/working.rs`, and the Session view's
     copy of the line).
-56. **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
+56. **Done (branch `fix/items-56-59`): search and group sessions by meaning.** Settings › Sessions › Search by
+    meaning (off by default): the model is Claude Haiku via the CLI on the workers' account (Suggest names' isolated
+    run) or an OpenCode model (the handover summarizer's isolated run, its own tool-less agent); List models fills
+    the choice. Palette: "Summarize sessions for search by meaning…" (confirmed; sends Suggest names' payload for up
+    to 100 visible, not hidden, stale sessions in requests of 20; keeps summary, keywords and subject per session
+    in `meaning.json`, re-sent only when the prompts change) and "Ask about past sessions…" (confirmed; sends the
+    question and the kept summaries only; the answer is kept and repeated without a request). With it on, the
+    list's search also matches summaries locally, Details shows "About", and Topics gets a "By meaning" grouping
+    by subject across projects. Everything runs on a worker job with Cancel; DESIGN.md, Session organization.
+    Checked: core tests with a fake model (payload identical to Suggest names', batching, unchanged sessions not
+    re-sent, partial results kept on failure and cancel, answer parsing and cache, local matching of "where we
+    fixed push"), window tests on the demo source (off by default, confirmation text names model and data, index
+    → search → Topics by subject, question → kept answer without a second request, Cancel), the OpenCode search
+    agent's config, fmt, clippy and the workspace tests. Not checked: any real Claude or OpenCode request (none was
+    made during development), answer quality of a real model, the dialogs and the Settings rows by eye in the
+    running app, and timing with a large `meaning.json`.
+    Original request: **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
     later item. not now."). Today search is literal text and Related is word overlap (DESIGN.md, Session
     organization). Wanted: a search that finds a session by what it was about ("where we fixed push"), questions
     about past sessions, and grouping by meaning across projects. Done by a model the owner picks in Settings, the
     same way as the handover's summarizer (an OpenCode worker/model or the Claude CLI), opt-in, sending only the
     excerpts "Suggest names" already sends, with a confirmation before a run that sends anything. An on-device
-    embedding model was the alternative offered; not chosen. Not started.
+    embedding model was the alternative offered; not chosen.
 57. **Better handovers: a fitting focus chosen by itself, and a sharper fixed format** (owner, 2026-11-27, from a
     cc-fable review of six real handovers: sections cut mid-word at 800 characters, "Standing instructions" turned
     into a to-do list, a permission guessed ("presumably approved"), job and session ids missing, space spent on
@@ -659,12 +675,52 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     pull request (repo and number), saved output file, Markdown file (opens the side panel), audio or other binary
     (kind and size). Where a cheap preview exists (a picture, the first page of a PDF if the toolkit can render it),
     show it as the thumbnail; otherwise the icon. The Details panel's Outputs uses the same labels.
-59. **Maybe, idea only: OpenCode as a tab type, and as a handover target** (owner, 2026-11-27: "opencode makes more
+59. **Done (branch `fix/items-56-59`, owner: "full 59"): OpenCode as a tab type and as a handover target.** Palette
+    "New OpenCode tab…" (folder-only picker) starts the owner's normal OpenCode (own config, plugins, Magic Context;
+    Claude Code variables stripped) as a terminal tab with its own label and glyph and no account, transcript, live
+    record, send gate or Chat view. The handover preview's "In OpenCode" opens one in the source folder beside the
+    source tab with the handover as `--prompt` (checked: `opencode --help`, v2.4.1, `opencode [flags] [<directory>]`,
+    `--prompt`, `--continue`); long or option-like text becomes a request to read the saved handover file. Restore:
+    running OpenCode tabs are saved by folder and reopen with `--continue` (the folder's last OpenCode session; the
+    first prompt is never repeated). DESIGN.md, Terminal tabs. Checked: unit tests for the launch (args order, no
+    OpenCode overrides, Claude variables and PWD removed), first-prompt rules, the folder-only dialog opening a
+    non-Claude tab, placement beside the source tab with no marks written, and save/decode/restore of OpenCode
+    rows beside Claude rows; fmt, clippy, workspace tests. Not checked: starting the real OpenCode TUI in a tab
+    (only `--help` was run, in a scratch folder), whether `--prompt` submits at once or waits for Enter, how
+    `--continue` behaves in a folder with no OpenCode session, the button and dialog by eye, and the `compact
+    --open` CLI and auto-handover, which still continue only in Claude.
+    Original idea: **Maybe, idea only: OpenCode as a tab type, and as a handover target** (owner, 2026-11-27: "opencode makes more
     sense as a tab ... leave this as a maybe idea"). A "New OpenCode tab" entry with the folder picker, running the
     owner's normal OpenCode (Magic Context enabled, unlike the bridge's jobs), and "Continue in OpenCode" sending the
     handover text as its first prompt, e.g. when a Claude account hits its limit. Codex CLI support was considered
     and not chosen: every layer of the app is Claude Code specific (accounts, transcripts, live records, the send
-    gate's screen rules). Not started; decide before building.
+    gate's screen rules). Decided 2026-11-27: build it all.
+    **Design proposal (2026-11-27; built as above, except restore, which reopens with `--continue`).**
+    - *New OpenCode tab*: a palette and New-menu entry that opens the existing New session folder picker without
+      the account choice, then starts a tab like "New shell tab" does: `launch::shell`'s sanitized environment
+      (Claude Code variables stripped) with `opencode_cli::find_program()` as the program and the folder as cwd.
+      No `OPENCODE_CONFIG_CONTENT`, `OPENCODE_DISABLE_CLAUDE_CODE` or project-config override, so the owner's normal
+      config, plugins and Magic Context apply; label "OpenCode · <folder>"; ended tabs show "(ended)" as shells do.
+    - *What a non-Claude tab must skip* (most of it already does for shell tabs, which have no session id):
+      accounts (no account picker, colour, usage or "Open as"; OpenCode has its own providers); transcripts and
+      the session index (OpenCode keeps sessions in its own store, so the tab is never a row in Recent, Threads,
+      Related or search, and cannot be resumed, copied or archived); live records and `running.rs` (no
+      already-running safeguard; closing the tab is the only stop); the send gate and the Chat view (both read
+      Claude Code's screen and transcript; the tab is terminal-only, the Chat/Session view toggle disabled);
+      handover, auto-handover and the Details panel's Tasks/Files/Agents. Tab restore would reopen only "OpenCode in
+      <folder>" (a fresh start, not the conversation) or nothing; the latter is simpler. The work is one tab-kind
+      flag checked where tabs with a session id are assumed today, not a new abstraction layer.
+    - *Continue in OpenCode*: a third choice beside This tab / A new tab in the handover preview. It needs the TUI's
+      first-prompt flag (`opencode <folder> --prompt <text>`, to be confirmed with `opencode --help` on this
+      computer before building), the same long-text rule as Claude (above ~15,000 UTF-16 units pass a short prompt
+      that names the saved handover file), and optionally `--model` from a picker. No provenance in `marks.json`
+      (there is no Claude session to link), and the Claude source session is left as is.
+    - *Effort*: the tab about a day (launch, menu entry, guarding Chat view/Details/restore against the new kind,
+      tests); Continue in OpenCode another half day once the prompt flag is verified. Risk is low because shell
+      tabs already prove the non-Claude path; the main cost is auditing every `session`-assuming code path.
+    - *Recommendation*: build the plain OpenCode tab first, terminal-only, no restore, as the owner's fallback when a
+      Claude account hits its limit; add Continue in OpenCode only after the prompt flag is confirmed, and do not
+      try to index or chat-view OpenCode sessions (that would be the Codex-sized rewrite already rejected).
 60. **Clearer names for the two archives** (owner, 2026-11-27: yes). Settings › Sessions "Show archived sessions"
     becomes "Show sessions archived in the desktop app" (help: "Claude Desktop's own archive. Switch's Archive is
     separate."); the Archived chip becomes "Archived here"; the details row "Archived: yes, in the desktop app"

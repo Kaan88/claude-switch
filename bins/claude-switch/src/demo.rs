@@ -82,6 +82,7 @@ pub fn config() -> Config {
         appearance: Default::default(),
         chat: Default::default(),
         compact: Default::default(),
+        meaning: Default::default(),
     }
 }
 

@@ -269,6 +269,28 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
 shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
 running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
 
+**OpenCode tabs.** The palette's **New OpenCode tab…** opens the New session picker with the folder
+only (no account or app) and starts the owner's normal OpenCode there: `opencode_cli::find_program`
+(native `opencode.exe`), the plain shell's sanitized environment (Claude Code's config and session
+variables removed, `PWD` removed because OpenCode prefers it to the process folder) and no OpenCode
+overrides, so the owner's own config, plugins and Magic Context apply, unlike the handover and
+search jobs. The installed CLI (v2.4.1, `opencode --help`) is `opencode [flags] [<directory>]` with
+`--prompt <text>` and `--continue`; options go before the folder. The tab is labelled “OpenCode ·
+<folder>” and shows a terminal glyph instead of an account colour. It has no session id, account,
+launch folder in the Claude sense or pane, so it is never a list row, gets no Chat or Session view,
+live-record matching, send gate, usage, handover or auto-handover, exactly as a shell tab; its folder is
+kept in its own field. The handover preview's **In OpenCode** keeps the edited handover as Open does
+and opens such a tab in the source session's folder, beside the source's tab, with the text as
+`--prompt` (one native argument, no shell). Above 15,000 UTF-16 units, or when the text starts with
+`-` (so OpenCode's parser cannot read it as an option), the prompt instead asks to read the saved
+handover file; OpenCode may ask permission to read it, since it is outside the project. The Claude
+session is left as it is and nothing is recorded in `marks.json`. Whether `--prompt` submits at once or
+waits for Enter was not checked (that would need a model request). Saved tabs keep a running OpenCode
+tab as `{"kind":"opencode","folder","active"}` beside the Claude rows in `terminal-tabs.json`
+(older builds skip such rows); restoring reopens it in that folder with `--continue`, OpenCode's
+last session there, which can be a later one started elsewhere, and never repeats a first prompt.
+A folder that is gone is listed in the "Tabs not reopened" notice.
+
 **Not there:** more than one terminal in a tab, search or links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host
 has no name for Insert); input-method composition (the host turns input methods off on Windows).
@@ -1397,6 +1419,36 @@ topic beside each title. Its transcript excerpts and request count are unchanged
 title and topic editable before acceptance. **Set topic…** edits or clears a local label without
 running a model. Topics have at most three words and 60 characters; blank means no topic. The demo contains synthetic
 projects, a worktree, a four-session thread, adjacent activity, Related prompts and topics.
+
+**Search by meaning** (Settings → Sessions, off by default) adds a model-written summary to
+literal search. **Model** is Claude Haiku through the CLI on the workers' account (the same
+isolated `-p` run as Suggest names: an empty private folder, no tools, MCP, settings, slash
+commands or session persistence) or an OpenCode model, run like the handover's summarizer (an
+empty temporary folder, no project or Claude Code config, its own one-step agent that may use no
+tool, `--standalone --archived`, title “Claude Switch search”). **List models** fills the OpenCode
+choices on a worker; the list is shared with the handover dialog. The palette's **Summarize
+sessions for search by meaning…** confirms first, naming the model, the count and what is sent:
+the payload of a name suggestion (numeric ids, the first and up to three recent prompts, 500
+characters each) for visible, not hidden sessions with no summary or activity since it, newest
+first, at most 100 a run in requests of 20, plus the subjects already in use so groups stay
+stable. Each answer line gives a summary of at most 200 characters, up to eight keywords and a
+subject (a topic-shaped label); invalid, repeated and out-of-range ids are dropped. They are kept
+in `meaning.json` beside `config.json` with an FNV-1a fingerprint of the exact payload: a session
+whose prompts did not change is not sent again, and the file is written after every request, so a
+cancelled or failed run keeps what was answered. A missing or damaged file is an empty cache;
+**Forget** removes it. While the setting is on, the list's search also matches a session when
+every meaningful word of the search (one may miss from three or more; stop words and simple
+suffixes ignored) begins a word of its summary, keywords or subject, locally; Details shows the
+summary as **About**; Topics appears once any summary has a subject and its **By meaning** button
+groups by subject across projects (sessions without one under “Not summarized”). **Ask about past
+sessions…** takes a question and confirms before sending it with the kept summaries, keywords and
+subjects (no prompts, folders or dates) of up to 200 visible sessions; the model answers with at
+most 1,200 characters and up to ten ids, which open from the answer. The answer is kept by
+question (case and spacing ignored), model and the fingerprint of the summaries it went over, so
+the same question again is answered from the file without a request. All requests and transcript
+reads run on one worker job; the dialog's Cancel kills the child process. The demo answers
+locally with synthetic text and sends nothing. Each run is confirmed instead of recording a
+provider consent, so the handover's consents are neither used nor changed.
 
 ## Terminal cursor and backdrop
 

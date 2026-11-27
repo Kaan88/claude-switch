@@ -135,11 +135,14 @@ fn controls(st: &mut AppState, p: &mut Painter, r: Rect) {
     } else {
         p.frame(seg, 7.0, pal.field, pal.line);
         let mode = st.list_mode();
-        if matches!(mode, Mode::Projects | Mode::Recent) {
-            let (label, on) = if mode == Mode::Projects {
-                (if st.config.group_by_folder { "Group by: Folder" } else { "Group by: Project" }, false)
-            } else {
-                ("Sittings", st.config.show_sittings)
+        let by_meaning = mode == Mode::Topics && st.config.meaning.on();
+        if matches!(mode, Mode::Projects | Mode::Recent) || by_meaning {
+            let (label, on) = match mode {
+                Mode::Projects => {
+                    (if st.config.group_by_folder { "Group by: Folder" } else { "Group by: Project" }, false)
+                }
+                Mode::Topics => ("By meaning", st.config.meaning.group_topics),
+                _ => ("Sittings", st.config.show_sittings),
             };
             let target = Target::ListGrouping;
             mdshared_ui::overlay::draw_dialog_button(

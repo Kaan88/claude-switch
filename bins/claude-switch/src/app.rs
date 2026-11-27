@@ -140,6 +140,7 @@ impl AppState {
                 match self.list_mode() {
                     Mode::Projects => self.config.group_by_folder ^= true,
                     Mode::Recent => self.config.show_sittings ^= true,
+                    Mode::Topics if self.config.meaning.on() => self.config.meaning.group_topics ^= true,
                     _ => return,
                 }
                 self.save_config();

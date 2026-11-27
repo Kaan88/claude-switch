@@ -65,3 +65,17 @@ fn handover_launch_keeps_the_isolated_working_directory_and_config() {
     assert!(cmd.get_envs().any(|(key, value)| key == "OPENCODE_DISABLE_PROJECT_CONFIG" && value.unwrap() == "1"));
     assert!(cmd.get_envs().any(|(key, value)| key == "OPENCODE_CONFIG" && value.is_none()));
 }
+
+#[test]
+fn search_requests_use_their_own_one_step_tool_less_agent_in_an_empty_folder() {
+    let spec = agent_config(SEARCH_AGENT, SEARCHER);
+    assert_eq!(spec["agents"][SEARCH_AGENT]["steps"], 1);
+    assert_eq!(spec["agents"][SEARCH_AGENT]["permissions"][0], json!({"action":"*","resource":"*","effect":"deny"}));
+    assert!(spec["agents"][AGENT].is_null(), "not the handover's summarizer");
+    let temp = Scratch::new().unwrap();
+    let cmd = command_with(Path::new("fake-opencode"), &temp.0, Some(spec.clone()));
+    let content = cmd.get_envs().find(|(key, _)| *key == "OPENCODE_CONFIG_CONTENT").and_then(|(_, v)| v);
+    assert_eq!(content.map(|v| v.to_string_lossy().into_owned()), Some(spec.to_string()));
+    assert!(cmd.get_envs().any(|(key, value)| key == "OPENCODE_DISABLE_PROJECT_CONFIG" && value.unwrap() == "1"));
+    assert!(search_request(Path::new("must-not-run"), "no-slash", "x", || false).is_err());
+}

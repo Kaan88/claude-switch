@@ -36,6 +36,8 @@ mod folder_defaults;
 mod handover_in_place;
 mod handover_pipe;
 mod list;
+mod meaning;
+mod opencode_tab;
 mod opencode_workers;
 mod resume_tabs;
 mod run;

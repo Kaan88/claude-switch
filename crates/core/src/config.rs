@@ -304,6 +304,7 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
         appearance: AppearancePrefs::read(&file["appearance"]),
         chat: ChatPrefs::read(&file["chat"]),
         compact: crate::compact::Preferences::read(&file["compact"]),
+        meaning: crate::meaning::Prefs::read(&file["meaning"]),
     }
 }
 
@@ -462,6 +463,7 @@ fn config_value(config: &Config) -> Value {
         "appearance": config.appearance.json(),
         "chat": config.chat.json(),
         "compact": config.compact.json(),
+        "meaning": config.meaning.json(),
     })
 }
 

@@ -11,6 +11,7 @@ use mdshared_ui::settings::{Form, Outcome, Row, Value};
 
 mod appearance;
 mod chat_page;
+mod meaning;
 mod pages;
 mod theme_editor;
 mod tiles;
@@ -20,13 +21,15 @@ pub(crate) use pages::Settings;
 pub(crate) const TERMINAL: &str = "Terminal";
 pub(crate) const OPENCODE: &str = "OpenCode";
 pub(super) const HANDOVERS: &str = "Handovers";
+pub(super) const SESSIONS: &str = "Sessions";
+pub(crate) use meaning::refresh as refresh_sessions_page;
 
 type Page = (&'static str, fn(&AppState) -> Vec<Row>);
 // In display order. Adding a category only needs a label and a row builder here.
 const PAGES: &[Page] = &[
     ("Appearance", appearance::rows),
     (TERMINAL, terminal),
-    ("Sessions", sessions),
+    (SESSIONS, sessions),
     (CHAT, chat_page::rows),
     ("Usage", usage),
     (HANDOVERS, handovers),
@@ -229,7 +232,7 @@ fn terminal(st: &AppState) -> Vec<Row> {
 }
 
 fn sessions(st: &AppState) -> Vec<Row> {
-    vec![
+    let mut rows = vec![
         Row::toggle(SET_EMBEDDED, "Open CLI sessions in a tab of this window", st.config.embedded_terminal)
             .help("Off: they open in a separate console window."),
         Row::toggle(SET_CLASSIC_VIEW, "Classic terminal view for Claude tabs", st.config.classic_terminal_view)
@@ -259,7 +262,9 @@ fn sessions(st: &AppState) -> Vec<Row> {
         .help("Toast mode needs the tray; otherwise flashes."),
         Row::toggle(SET_SUGGEST_TOPICS, "Include topics when suggesting names", st.config.suggest_topics)
             .help("Shares existing topic labels only when you confirm Suggest names. No extra request."),
-    ]
+    ];
+    rows.extend(meaning::rows(st));
+    rows
 }
 
 fn usage(st: &AppState) -> Vec<Row> {
@@ -415,6 +420,9 @@ fn notifications(st: &AppState) -> Vec<Row> {
 
 /// What a settings form's event gave.
 fn settings_outcome(st: &mut AppState, o: Outcome) {
+    if meaning::outcome(st, &o) {
+        return;
+    }
     match o {
         Outcome::Closed => st.dialog = None,
         Outcome::Changed { id, value } if chat_page::owns(id) => {
@@ -735,6 +743,10 @@ mod tests {
                 SET_HIDDEN,
                 SET_ATTENTION,
                 SET_SUGGEST_TOPICS,
+                meaning::SET_MEANING,
+                meaning::SET_MEANING_MODEL,
+                meaning::LIST_MEANING_MODELS,
+                meaning::FORGET_MEANING,
             ],
             &[
                 chat_page::CHIP_SLOT,

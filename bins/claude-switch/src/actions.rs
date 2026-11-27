@@ -47,6 +47,9 @@ const COPY_PATH: u32 = 28;
 const REVEAL: u32 = 29;
 const CHAT_LAYOUT: u32 = 30;
 const SET_TOPIC: u32 = 31;
+const MEANING_INDEX: u32 = 240;
+const MEANING_ASK: u32 = 241;
+pub const NEW_OPENCODE: u32 = 242;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -67,6 +70,7 @@ pub const COMMANDS: &[Command] = &[
     Command::new(OPEN_COPY, "session.open_copy", "Open a copy in CLI"),
     Command::new(crate::compact_dialog::COMMAND, "session.compact", crate::compact_dialog::LABEL),
     Command::new(NEW_SHELL, "tab.new_shell", "New shell tab").keys("Ctrl+Shift+T"),
+    Command::new(NEW_OPENCODE, "tab.new_opencode", "New OpenCode tab…"),
     Command::new(NEXT_TAB, "tab.next", "Next tab").keys("Ctrl+Tab"),
     Command::new(PREV_TAB, "tab.previous", "Previous tab").keys("Ctrl+Shift+Tab"),
     Command::new(CLOSE_TAB, "tab.close", "Close terminal tab").keys("Ctrl+Shift+W"),
@@ -78,6 +82,8 @@ pub const COMMANDS: &[Command] = &[
     Command::new(PIN, "session.pin", "Pin / unpin session").keys("Ctrl+D"),
     Command::new(SUGGEST, "session.suggest", "Suggest names for the selected session"),
     Command::new(SUGGEST_BATCH, "session.suggest_recent", "Suggest names for all unnamed recent sessions"),
+    Command::new(MEANING_INDEX, "session.meaning_index", "Summarize sessions for search by meaning…"),
+    Command::new(MEANING_ASK, "session.meaning_ask", "Ask about past sessions…"),
     Command::new(ACCOUNTS, "app.accounts", "Accounts…"),
     Command::new(SETTINGS, "app.settings", "Settings…"),
     Command::new(ABOUT, "app.about", "About"),
@@ -114,6 +120,8 @@ impl AppState {
             RENAME => self.ask_rename_session(),
             SET_TOPIC => self.ask_set_topic(),
             SUGGEST | SUGGEST_BATCH => self.ask_naming(id == SUGGEST_BATCH),
+            MEANING_INDEX => self.ask_meaning_index(),
+            MEANING_ASK => self.ask_meaning_question(),
             HIDE_FOLDER if let Some(key) = self.context_folder.take() => self.toggle_group_hidden(now, key),
             HIDE | HIDE_FOLDER => self.toggle_hidden(now, id == HIDE_FOLDER),
             PIN => {
@@ -127,6 +135,7 @@ impl AppState {
             CHAT_LAYOUT => self.set_chat_layout(!self.chat_active()),
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
+            NEW_OPENCODE => self.ask_new_opencode_tab(),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
             CLOSE_TAB => {
                 if let Some(t) = self.tabs.active {

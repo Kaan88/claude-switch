@@ -32,6 +32,8 @@ struct Entry {
     cwd: PathBuf,
     active: bool,
     chat: Option<bool>,
+    /// An OpenCode tab in `cwd` (`id` and `account` are empty).
+    opencode: bool,
 }
 
 #[derive(Default)]
@@ -57,17 +59,36 @@ fn valid_id(id: &str) -> bool {
     claude_switch_core::launch::validate_session_id(id).is_ok()
 }
 
+impl Entry {
+    fn opencode(cwd: PathBuf, active: bool) -> Self {
+        Self { id: String::new(), account: String::new(), cwd, active, chat: None, opencode: true }
+    }
+}
+
 fn decode(text: &str) -> VecDeque<Entry> {
     let Ok(Value::Array(rows)) = serde_json::from_str(text) else { return VecDeque::new() };
     let mut ids = HashSet::new();
     rows.into_iter()
         .filter_map(|row| {
+            if row["kind"] == "opencode" {
+                let cwd = PathBuf::from(row["folder"].as_str()?);
+                let active = row["active"].as_bool()?;
+                return cwd.is_absolute().then(|| Entry::opencode(cwd, active));
+            }
             let id = row["id"].as_str()?;
             let account = row["account"].as_str()?;
             let cwd = PathBuf::from(row["folder"].as_str()?);
             let active = row["active"].as_bool()?;
-            (valid_id(id) && !account.is_empty() && cwd.is_absolute() && ids.insert(id.to_ascii_lowercase()))
-                .then(|| Entry { id: id.into(), account: account.into(), cwd, active, chat: row["chat"].as_bool() })
+            (valid_id(id) && !account.is_empty() && cwd.is_absolute() && ids.insert(id.to_ascii_lowercase())).then(
+                || Entry {
+                    id: id.into(),
+                    account: account.into(),
+                    cwd,
+                    active,
+                    chat: row["chat"].as_bool(),
+                    opencode: false,
+                },
+            )
         })
         .collect()
 }
@@ -76,6 +97,9 @@ fn encode(rows: impl IntoIterator<Item = Entry>) -> String {
     Value::Array(
         rows.into_iter()
             .filter_map(|row| {
+                if row.opencode {
+                    return Some(json!({"kind": "opencode", "folder": row.cwd.to_str()?, "active": row.active}));
+                }
                 Some(json!({"id": row.id, "account": row.account, "folder": row.cwd.to_str()?, "active": row.active,
                     "chat":row.chat}))
             })
@@ -99,16 +123,21 @@ fn snapshot(tabs: &Tabs) -> Vec<Entry> {
             cwd,
             active: tabs.active == Some(t.id),
             chat: t.pane.as_ref().map(|p| p.chat.enabled),
+            opencode: false,
         })
     };
     let active = tabs.shown().and_then(entry).map(|t| t.id.to_ascii_lowercase());
     let mut ids = HashSet::new();
     tabs.list
         .iter()
-        .filter_map(entry)
+        .filter_map(|t| match &t.opencode {
+            Some(folder) if t.term.ended.is_none() => Some(Entry::opencode(folder.clone(), tabs.active == Some(t.id))),
+            Some(_) => None,
+            None => entry(t),
+        })
         .filter(|t| {
             let key = t.id.to_ascii_lowercase();
-            (t.active || active.as_ref() != Some(&key)) && ids.insert(key)
+            t.opencode || (t.active || active.as_ref() != Some(&key)) && ids.insert(key)
         })
         .collect()
 }
@@ -232,7 +261,14 @@ impl AppState {
                 .filter(|s| s.desktop_id.is_none())
                 .take(3)
                 .enumerate()
-                .map(|(i, s)| Entry { id: s.id, account: "main".into(), cwd: s.cwd, active: i == 1, chat: None })
+                .map(|(i, s)| Entry {
+                    id: s.id,
+                    account: "main".into(),
+                    cwd: s.cwd,
+                    active: i == 1,
+                    chat: None,
+                    opencode: false,
+                })
                 .collect();
         } else if let Some(text) = &self.restore.baseline {
             self.restore.pending = decode(text);
@@ -342,6 +378,10 @@ impl AppState {
 
     fn next_restore_tab(&mut self, now: Instant) {
         while let Some(entry) = self.restore.pending.pop_front() {
+            if entry.opencode {
+                self.restore_opencode(&entry);
+                continue;
+            }
             match self.check_restore(&entry) {
                 Ok(session) => {
                     if let Some((title, text)) = self.resume_warning(&session, &entry.account, App::Cli) {
@@ -451,6 +491,19 @@ impl AppState {
         id
     }
 
+    /// OpenCode keeps its own sessions: the tab reopens in its folder with `--continue` (that
+    /// folder's last OpenCode session) and never with the prompt it may have started with.
+    fn restore_opencode(&mut self, item: &Entry) {
+        match self.open_opencode_tab(&item.cwd, crate::opencode_tab::Start::Continue) {
+            Ok(id) if item.active => self.restore.active = Some(id),
+            Ok(_) => {}
+            Err(e) => {
+                let label = crate::opencode_tab::label(&item.cwd);
+                self.restore.failures.push(format!("{label} ({e})"));
+            }
+        }
+    }
+
     fn restore_failed(&mut self, item: &Entry, reason: &str) {
         let name = self
             .by_id
@@ -525,6 +578,7 @@ mod tests {
             cwd: app.sessions[2].cwd.clone(),
             active: true,
             chat: None,
+            opencode: false,
         };
         std::fs::write(&file, encode([original.clone()])).unwrap();
         app.restore.load_snapshot(&file).unwrap();
@@ -548,11 +602,46 @@ mod tests {
             cwd: std::env::temp_dir().join("folder"),
             active: true,
             chat: Some(true),
+            opencode: false,
         };
         let invalid = Entry { id: "--bogus".into(), ..entry.clone() };
         let text = encode([entry.clone(), invalid, entry.clone()]);
         assert_eq!(decode(&text), VecDeque::from([entry]));
         assert!(decode("oops").is_empty());
+    }
+
+    #[test]
+    fn opencode_tabs_are_saved_by_folder_and_reopen_with_continue_never_a_prompt() {
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        app.apply_scan(crate::demo::scan(&app.config));
+        let folder = app.sessions[0].cwd.clone();
+        let first = app.open_opencode_tab(&folder, crate::opencode_tab::Start::Prompt("## Goal\nx".into())).unwrap();
+        app.open_opencode_tab(&folder, crate::opencode_tab::Start::Fresh).unwrap();
+        app.show_tab(first);
+        let rows = snapshot(&app.tabs);
+        assert_eq!(rows.len(), 2, "two tabs in one folder are both kept");
+        assert!(rows.iter().all(|r| r.opencode && r.cwd == folder && r.id.is_empty() && r.account.is_empty()));
+        assert!(rows[0].active && !rows[1].active);
+        let claude = Entry {
+            id: A.into(),
+            account: "main".into(),
+            cwd: std::env::temp_dir().join("folder"),
+            active: false,
+            chat: None,
+            opencode: false,
+        };
+        let text = encode(rows.iter().cloned().chain([claude.clone()]));
+        assert!(!text.contains("--prompt") && !text.contains("Goal"), "the prompt is not saved: {text}");
+        let decoded = decode(&text);
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(decoded[2], claude);
+        assert!(decode(r#"[{"kind":"opencode","folder":"relative","active":true}]"#).is_empty());
+
+        app.tabs.list.clear();
+        app.restore.pending = decoded.into_iter().take(1).collect();
+        app.begin_tab_restore(Instant::now());
+        let tab = app.tabs.shown().expect("reopened and shown");
+        assert_eq!(tab.opencode.as_deref(), Some(folder.as_path()));
     }
 
     #[test]
@@ -640,7 +729,14 @@ mod tests {
         let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
         let file = path(&disk).unwrap();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let saved = Entry { id: A.into(), account: "main".into(), cwd: "C:/a".into(), active: true, chat: None };
+        let saved = Entry {
+            id: A.into(),
+            account: "main".into(),
+            cwd: "C:/a".into(),
+            active: true,
+            chat: None,
+            opencode: false,
+        };
         std::fs::write(&file, encode([saved.clone()])).unwrap();
         let open = |second: bool| {
             let mut app = AppState::new(Source::Demo, None, Default::default());
@@ -678,7 +774,14 @@ mod tests {
         let disk = Source::Real(claude_switch_core::Roots { home: root.clone(), appdata: root.clone() });
         let file = path(&disk).unwrap();
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let first = Entry { id: A.into(), account: "main".into(), cwd: "C:/a".into(), active: true, chat: None };
+        let first = Entry {
+            id: A.into(),
+            account: "main".into(),
+            cwd: "C:/a".into(),
+            active: true,
+            chat: None,
+            opencode: false,
+        };
         std::fs::write(&file, encode([first.clone()])).unwrap();
         let open = |tab: bool| {
             let mut app = AppState::new(Source::Demo, None, Default::default());

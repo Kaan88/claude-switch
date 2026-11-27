@@ -96,7 +96,9 @@ impl AppState {
         let query = self.search.text().trim();
         let archive = self.filter == Filter::Archived;
         let newest = |&i: &usize| (std::cmp::Reverse(self.sessions[i].last_active_ms), i);
-        self.grouping.topics = self.sessions.iter().any(|s| self.marks.topic(&s.id).is_some());
+        self.grouping.topics = self.sessions.iter().any(|s| self.marks.topic(&s.id).is_some())
+            || (self.config.meaning.on() && self.meaning.cache.digests.values().any(|d| d.subject.is_some()));
+        let by_meaning = self.config.meaning.on() && self.config.meaning.group_topics;
         self.grouping.earlier.clear();
         self.grouping.project_summary.clear();
         self.grouping.brackets.clear();
@@ -115,6 +117,7 @@ impl AppState {
                     let matched = model::score(query, self.marks.name(&s.id), s, &folder_name(&s.cwd)).is_some()
                         || s.branch.as_ref().is_some_and(|b| mdshared_app::fuzzy::score(query, b).is_some())
                         || self.marks.topic(&s.id).is_some_and(|t| mdshared_app::fuzzy::score(query, t).is_some())
+                        || self.meaning_match(&s.id, query)
                         || (mode == Mode::Projects
                             && !self.config.group_by_folder
                             && self.project(i).is_some_and(|p| mdshared_app::fuzzy::score(query, &p.name).is_some()));
@@ -146,6 +149,10 @@ impl AppState {
                     buckets[calendar.bucket(s.last_active_ms)].push(i);
                     continue;
                 }
+                Mode::Topics if by_meaning => match self.meaning_subject(&s.id) {
+                    Some(subject) => (format!("subject:{}", subject.to_lowercase()), subject.to_owned()),
+                    None => ("subject-none".into(), "Not summarized".into()),
+                },
                 Mode::Topics => match self.marks.topic(&s.id) {
                     Some(topic) => (format!("topic:{}", topic.to_lowercase()), topic.to_owned()),
                     None => ("topic-none".into(), "No topic".into()),

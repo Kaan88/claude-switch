@@ -26,7 +26,7 @@ mod opencode_rows;
 mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
-pub(crate) use settings::{OPENCODE, TERMINAL, settings, settings_event};
+pub(crate) use settings::{OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
@@ -73,6 +73,12 @@ pub enum Pending {
         ids: Vec<String>,
         batch: bool,
     },
+    /// Summarize sessions for search by meaning.
+    MeaningIndex,
+    /// Ask a question over the kept summaries.
+    MeaningAsk {
+        question: String,
+    },
     UnarchiveAll,
     RestartOpenCode(crate::opencode_workers::Restart),
     ManageShell {
@@ -116,6 +122,11 @@ pub fn accounts(st: &mut AppState, now: Instant) -> Dialog {
     let shares =
         st.config.accounts.iter().filter(|a| !a.primary).map(|a| (a.slug.clone(), st.source.share_status(a))).collect();
     Dialog::Accounts { scroll: 0.0, shares }
+}
+
+/// The New session picker for a folder only, starting an OpenCode tab.
+pub(crate) fn new_opencode_dialog(st: &AppState) -> Dialog {
+    Dialog::NewSession(Box::new(newsession::NewSession::for_opencode(st)))
 }
 
 pub(crate) fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
@@ -437,6 +448,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::ManageShell { tab, generation, tool }) => st.confirm_shell_manager(tab, generation, tool),
             (OK, Pending::Quit) => st.quit = true,
             (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
+            (OK, Pending::MeaningIndex) => st.start_meaning_index(),
+            (OK, Pending::MeaningAsk { question }) => st.start_meaning_question(question),
             (OK, Pending::UnarchiveAll) => st.unarchive(now, None),
             (OK | CANCEL, Pending::RestartOpenCode(request)) => st.confirm_restart_opencode(request, id == OK),
             (OK, Pending::Remove { slug }) => {
