@@ -1144,6 +1144,10 @@ Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+The composer toolbar separates session values, actions and panels by their surfaces. Fixed-width
+value controls keep their neighbours still as values change; effort is a five-dot scale and
+context remains a token count, not a filled bar, because the transcript supplies no verified limit.
+An unknown model name too long for the control is shown as Model rather than a cut-off name.
 **Composer conveniences**, all local (`view/chat/popups.rs`). `@` at the caret opens a list of
 the session folder's files and folders, read once per tab on a worker: breadth first, at most 8
 deep and 5000 entries, without hidden folders, `node_modules`, `target` and other build folders,

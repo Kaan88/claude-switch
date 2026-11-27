@@ -344,35 +344,20 @@ impl Draw<'_> {
             Some(n) => format!("Context {}", tokens(n)),
             None => "Context —".into(),
         };
-        // A longer label ("medium (default)", "— after compact") widens its pill while the row
-        // has room; otherwise the short form shows.
-        let fit = |p: &mut Painter, label: &str, min: f32| {
-            let w = p.measure(Face::Semibold, PILL_FONT, label) + 10.0;
-            if w <= min - 2.0 { min } else { w }
-        };
-        // The short forms are measured too: "Effort medium ▾" or "Effort xhigh ▾" is wider
-        // than the 79 px the chip has for "Effort low ▾".
-        let short_effort = format!("Effort {} ▾", effort.trim_end_matches(" (default)"));
-        let short_context = if compacted { format!("Context {after}") } else { context.clone() };
-        let (short_effort_w, short_context_w) = (fit(p, &short_effort, 79.0), fit(p, &short_context, 92.0));
-        let mut effort = format!("Effort {effort} ▾");
-        let mut context = context;
-        let (mut effort_w, mut context_w) = (fit(p, &effort, 79.0), fit(p, &context, 92.0));
+        // Reserve fixed widths for values so a change cannot move adjacent controls.
+        let level = effort.trim_end_matches(" (default)");
+        let effort = format!("{level} ▾");
+        let context = if compacted { format!("After {after}") } else { context };
         let right = if l.stacked { 0.0 } else { TOOLBAR_RIGHT + if self.wide { DETAILS_W } else { 0.0 } };
-        let room = r.w - right - (FIXED_CHIPS + short_effort_w + short_context_w);
-        if effort_w + context_w - short_effort_w - short_context_w > room {
-            (effort, context) = (short_effort, short_context);
-            (effort_w, context_w) = (short_effort_w, short_context_w);
-        }
+        let room = r.w - right - (FIXED_CHIPS + EFFORT_CHIP_MAX + CONTEXT_CHIP_MAX);
         // The permission mode, when the row has room left for it.
         let mode = chat.mode_label();
-        let mode_w = fit(p, &mode, 84.0);
-        let left = room - (effort_w + context_w - short_effort_w - short_context_w);
-        let mode_w = if left >= mode_w + 4.0 { mode_w } else { 0.0 };
+        let mode_w = 125.0;
+        let mode_w = if room >= mode_w + 4.0 { mode_w } else { 0.0 };
         for (label, w, control) in [
             (model.as_str(), MODEL_W, Control::Model),
-            (effort.as_str(), effort_w, Control::Effort),
-            (context.as_str(), context_w, Control::Context),
+            (effort.as_str(), EFFORT_CHIP_MAX, Control::Effort),
+            (context.as_str(), CONTEXT_CHIP_MAX, Control::Context),
             (mode.as_str(), mode_w, Control::Mode),
             ("Compact", 62.0, Control::Compact),
             ("Clear", 44.0, Control::Clear),
@@ -381,14 +366,12 @@ impl Draw<'_> {
             if w == 0.0 {
                 continue;
             }
-            self.pill(
-                p,
-                Rect::new(x, r.y + 1.0, w, 24.0),
-                label,
-                control,
-                control == Control::Commands && chat.commands.open,
-                true,
-            );
+            let chip = Rect::new(x, r.y + 1.0, w, 24.0);
+            if control == Control::Effort {
+                self.effort_pill(p, chip, &effort, level);
+            } else {
+                self.toolbar_pill(p, chip, label, control, control == Control::Commands && chat.commands.open, true);
+            }
             x += w + 4.0;
         }
         let y = r.y + if l.stacked { 28.0 } else { 1.0 };
@@ -409,11 +392,11 @@ impl Draw<'_> {
         let mut x = rsend.x - 4.0;
         if self.wide {
             x -= 58.0;
-            self.pill(p, Rect::new(x, y, 58.0, 24.0), "Details", Control::Panel, !chat.side_hidden, true);
+            self.toolbar_pill(p, Rect::new(x, y, 58.0, 24.0), "Details", Control::Panel, !chat.side_hidden, true);
             x -= 4.0;
         }
         x -= 82.0;
-        self.pill(
+        self.toolbar_pill(
             p,
             Rect::new(x, y, 82.0, 24.0),
             if chat.drawer == Drawer::Closed { "Terminal ▴" } else { "Terminal ▾" },
@@ -423,7 +406,50 @@ impl Draw<'_> {
         );
         x -= 63.0;
         let attach = Rect::new(x, y, 59.0, 24.0);
-        self.pill(p, attach, "Attach…", Control::Attach, false, !chat.locked());
+        self.toolbar_pill(p, attach, "Attach…", Control::Attach, false, !chat.locked());
+    }
+
+    fn effort_pill(&mut self, p: &mut Painter, r: Rect, label: &str, level: &str) {
+        let target = Target::Chat(Control::Effort);
+        p.rbox(r, 5.0, if self.hover == Some(target) { self.pal.hover } else { self.pal.field });
+        let active = commands::EFFORT.iter().position(|&name| name == level).map(|n| n + 1).unwrap_or(0);
+        for n in 0..5 {
+            let dot = Rect::new(r.x + 5.0 + n as f32 * 5.0, r.cy() - 2.0, 4.0, 4.0);
+            p.rbox(dot, 2.0, if n < active { self.pal.accent } else { self.pal.line });
+        }
+        debug_assert!(p.measure(Face::Semibold, PILL_FONT, label) <= r.w - 33.0);
+        p.text_center(Face::Semibold, PILL_FONT, Rect::new(r.x + 29.0, r.y, r.w - 31.0, r.h), label, self.pal.text);
+        self.hits.push((r, target));
+    }
+
+    fn toolbar_pill(&mut self, p: &mut Painter, r: Rect, label: &str, control: Control, picked: bool, enabled: bool) {
+        let target = Target::Chat(control);
+        let state = matches!(control, Control::Model | Control::Effort | Control::Context | Control::Mode);
+        let panel = matches!(control, Control::Attach | Control::Drawer | Control::Panel);
+        let fill = if enabled && self.hover == Some(target) {
+            self.pal.hover
+        } else if picked {
+            self.pal.on
+        } else if state {
+            self.pal.field
+        } else if panel {
+            self.pal.bar
+        } else {
+            self.pal.page
+        };
+        p.rbox(r, if state { 5.0 } else { 12.0 }, fill);
+        let ink = if !enabled {
+            self.pal.muted
+        } else if picked {
+            self.pal.accent
+        } else {
+            self.pal.text
+        };
+        debug_assert!(p.measure(Face::Semibold, PILL_FONT, label) <= r.w - 8.0, "{label} exceeds {}", r.w);
+        p.text_center(Face::Semibold, PILL_FONT, r, label, ink);
+        if enabled {
+            self.hits.push((r, target));
+        }
     }
 
     fn suggestions(&mut self, p: &mut Painter, chat: &Chat, plan: Suggestions) {
@@ -559,12 +585,12 @@ pub(super) fn toolbar_one_line(wide: bool) -> f32 {
 }
 
 fn model_label(p: &mut Painter, model: &str) -> String {
-    let mut name = compact_model(model);
-    let mut label = format!("{name} ▾");
-    while p.measure(Face::Semibold, PILL_FONT, &label) > MODEL_W - 10.0 && name.pop().is_some() {
-        label = format!("{name}… ▾");
+    let label = format!("{} ▾", compact_model(model));
+    if label.contains('…') || p.measure(Face::Semibold, PILL_FONT, &label) > MODEL_W - 10.0 {
+        "Model ▾".into()
+    } else {
+        label
     }
-    label
 }
 
 #[cfg(test)]
@@ -655,6 +681,31 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn changing_session_values_does_not_move_toolbar_controls() {
+        use crate::view::chat::effort::Start;
+        let mut gfx = Gfx::new();
+        let app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
+        let mut bitmap = Bitmap::new(1400, 480);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        for width in [760.0, 1400.0] {
+            let layout = Layout::new(Rect::new(0.0, 0.0, width, 480.0), true, false, None, false, false);
+            let mut positions = Vec::new();
+            for (level, context) in [("low", 1), ("medium", 999_999), ("max", u64::MAX)] {
+                let mut chat = Chat { layout, ..Default::default() };
+                chat.set_starting_effort(Start::Set(level));
+                let mut info = ChatInfo::default();
+                info.context = Some(context);
+                let mut hits = Vec::new();
+                Draw { pal: app.pal(), focused: false, wide: width >= 900.0, hover: None, hits: &mut hits, pins: &[] }
+                    .toolbar(&mut p, &chat, &info);
+                positions.push(hits);
+            }
+            assert_eq!(positions[0], positions[1]);
+            assert_eq!(positions[1], positions[2]);
         }
     }
 

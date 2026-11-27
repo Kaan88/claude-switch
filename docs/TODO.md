@@ -650,7 +650,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     mediu…"). Group them by kind (state the session is in: model, effort, context; actions: compact, clear;
     panels: terminal, details), show a value as a value (an effort level as a small meter or dots, context as a
     filling bar), never cut a label, and keep the row from jumping when a value changes. Item 43 covers the values
-    being stale; this is the look.
+    being stale; this is the look. **Done:** distinct state, action and panel surfaces, fixed-width values,
+    effort dots and two-row layout at narrow widths. Context remains a token count: no verified limit is
+    reported, so a filling bar would mislead. Owner question: should a trustworthy limit become available
+    from Claude Code, should it be used for a context bar? Unknown model names that do not fit show
+    "Model" rather than a cut label. Composer rendering and layout tests, workspace Clippy and tests
+    passed; visual inspection in a running app has not been checked.
 67. **Shift+Enter in the terminal sends instead of starting a new line** (owner, 2026-11-27). In Windows Terminal
     Shift+Enter gives Claude Code a new line; in Switch's terminal it reaches the CLI as a plain Enter. Send what
     Claude Code reads as Shift+Enter (check the key encoding it accepts: the win32 input mode or kitty keyboard
