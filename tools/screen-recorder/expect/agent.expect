@@ -1,0 +1,16 @@
+# The prompt says whose call it is; the card for it shows every row from the top rule down.
+[prompt]
+kind = permission
+title = Do you want to proceed?
+choices = Yes | Yes, and always allow access to * from this project*| No
+highlight = Yes
+body = Bash command · from the general-purpose agent*| mkdir sub_probe_dir
+request = Bash command · from the general-purpose agent | *mkdir sub_probe_dir*
+attention = yes
+send = no
+
+[done]
+kind = idle
+input =
+send = yes
+working = no

@@ -1,0 +1,25 @@
+[asked]
+kind = question
+title = Which colour do you prefer?
+choices = Red (warm) | Green (calm) | Blue (cool) | Type something. | Chat about this
+highlight = Red (warm)
+esc = yes
+send = no
+attention = no
+
+[other]
+kind = question
+title = Which colour do you prefer?
+highlight = Type something.
+
+[typed]
+kind = question
+title = Which colour do you prefer?
+choices = Red (warm) | Green (calm) | Blue (cool) | my own answer | Chat about this
+answer = my own answer
+
+[answered]
+kind = idle
+input =
+send = yes
+working = no

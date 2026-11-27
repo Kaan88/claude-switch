@@ -1,0 +1,25 @@
+# One question, the walk to its "Type something" row and a typed answer. Two model requests.
+#: args --permission-mode default
+#: seconds 20
+start
+send Use the AskUserQuestion tool now (no other tools) with one question: header "Colour", question "Which colour do you prefer?", options Red (warm), Green (calm), Blue (cool). multiSelect false.
+sleep 800
+send \r
+wait Chat about this 90000
+sleep 1500
+snap asked
+send \e[B
+sleep 500
+send \e[B
+sleep 500
+send \e[B
+sleep 500
+snap other
+send my own answer
+sleep 800
+snap typed
+send \r
+sleep 1500
+gone esc to interrupt 120000
+quiet 1500 60000
+snap answered

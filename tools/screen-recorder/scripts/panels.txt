@@ -1,0 +1,30 @@
+# The panels of /model, /config (two Esc to close) and /permissions. No model request.
+#: args --permission-mode default
+#: seconds 20
+start
+send /model
+sleep 800
+send \r
+sleep 2500
+snap model
+send \e
+sleep 1500
+snap model_closed
+send /config
+sleep 800
+send \r
+sleep 2500
+snap config
+send \e
+sleep 800
+send \e
+sleep 1500
+snap config_closed
+send /permissions
+sleep 800
+send \r
+sleep 2500
+snap permissions
+send \e
+sleep 1500
+snap permissions_closed

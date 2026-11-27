@@ -1,0 +1,36 @@
+# The row with "auto mode" is there only on accounts that offer it: the star takes it.
+[bash]
+kind = permission
+title = Do you want to proceed?
+choices = Yes | Yes, and always allow access to * from this project*| No
+highlight = Yes
+body = Bash command*| mkdir probe_no
+request = Bash command*mkdir probe_no*
+tell = -
+attention = yes
+send = no
+
+[bash_no]
+kind = permission
+title = Do you want to proceed?
+highlight = No
+
+[denied]
+kind = idle
+input =
+send = yes
+working = no
+
+[write]
+kind = permission
+title = Do you want to create notes.txt?
+choices = Yes | Yes, and switch to accept edits*| No
+highlight = Yes
+body = Create file | notes.txt | 1 hello
+attention = yes
+
+[declined]
+kind = idle
+input =
+send = yes
+working = no

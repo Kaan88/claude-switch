@@ -1,0 +1,14 @@
+# Several pasted lines and one long line on the input. No model request.
+#: args --permission-mode default
+#: seconds 10
+start
+send \e[200~line one\rline two\rline three\e[201~
+sleep 1200
+snap pasted
+# Ctrl+C empties an input that holds text.
+send \x03
+sleep 1200
+snap emptied
+send The quick brown fox jumps over the lazy dog while the river keeps moving past the old stone bridge and the children watch the little boats drift slowly toward the sea where gulls circle above the harbour walls and fishermen mend their nets in the warm afternoon light.
+sleep 1200
+snap long

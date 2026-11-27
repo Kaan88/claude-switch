@@ -1,0 +1,14 @@
+# The plan approval. One to three model requests.
+#: args --permission-mode plan
+#: seconds 20
+start
+send Plan how to add a subtract function to math_utils.py in at most three lines, then call ExitPlanMode right away. Read no files.
+sleep 800
+send \r
+wait Would you like to proceed? 180000
+sleep 1500
+snap plan
+send \e
+sleep 2000
+quiet 1500 30000
+snap kept

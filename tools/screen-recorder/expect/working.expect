@@ -1,0 +1,22 @@
+[working]
+kind = working
+input =
+send = no
+
+# The hint row drops "esc to interrupt" while the input holds text: the working line says it.
+[working_typed]
+kind = working
+input = hello while busy
+send = no
+
+[interrupted]
+kind = idle
+input =
+send = yes
+working = no
+
+[restored]
+kind = input
+input = Reply with just the word: pong
+send = no
+working = no

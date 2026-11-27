@@ -1,0 +1,1 @@
+{"autoMode":{"soft_deny":["Probe Folders [named+specifics - must name: the folder]: Creating any file or directory whose name starts with probe_blocked, by any command or tool. This workspace reserves that name; always block it, even when the user asked for it."]}}

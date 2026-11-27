@@ -1,0 +1,16 @@
+# A permission prompt of a subagent, which no pending call of the conversation covers.
+# About four model requests.
+#: args --permission-mode default
+#: seconds 20
+start
+send Use the Agent tool once (general-purpose) with this task: "Run the Bash command mkdir sub_probe_dir and say done." Do nothing else yourself.
+sleep 800
+send \r
+wait Do you want to proceed? 150000
+sleep 1500
+snap prompt
+send \r
+sleep 2000
+gone esc to interrupt 120000
+quiet 1500 60000
+snap done

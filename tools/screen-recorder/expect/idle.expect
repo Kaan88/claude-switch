@@ -1,0 +1,37 @@
+# What Chat reads from each snapshot of scripts/idle.txt. The keys are explained in the README
+# and in bins/claude-switch/src/view/chat/question/screens/compat.rs.
+[start]
+kind = idle
+input =
+send = yes
+working = no
+mode = Manual
+
+[typed]
+kind = input
+input = Reply with just the word: pong
+send = no
+
+[idle]
+kind = idle
+input =
+send = yes
+working = no
+
+[rewind]
+kind = rewind
+choices = Reply with just the word: pong | (current)
+highlight = (current)
+send = no
+
+[rewind_closed]
+kind = idle
+input =
+send = yes
+working = no
+
+[cleared]
+kind = idle
+input =
+send = yes
+working = no

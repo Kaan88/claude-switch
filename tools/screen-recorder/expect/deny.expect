@@ -1,0 +1,17 @@
+# No prompt is shown for a call a deny rule refuses: the turn ends and the input is idle.
+[refused]
+kind = idle
+input =
+send = yes
+working = no
+
+[permissions]
+kind = panel
+rows = Permissions*
+send = no
+
+[closed]
+kind = idle
+input =
+send = yes
+working = no

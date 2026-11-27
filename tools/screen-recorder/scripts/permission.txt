@@ -1,0 +1,28 @@
+# A Bash permission prompt answered No, then a Write prompt left with Esc. Two model requests.
+#: args --permission-mode default
+#: seconds 25
+start
+send Run exactly this with the Bash tool and nothing else: mkdir probe_no
+sleep 800
+send \r
+wait Do you want to proceed? 120000
+sleep 1500
+snap bash
+# Up from the first row goes round to the last one, "No".
+send \e[A
+sleep 600
+snap bash_no
+send \r
+sleep 2000
+quiet 1500 30000
+snap denied
+send Use the Write tool to create notes.txt containing the word hello. Nothing else.
+sleep 800
+send \r
+wait Do you want to create 120000
+sleep 1500
+snap write
+send \e
+sleep 2000
+quiet 1500 30000
+snap declined

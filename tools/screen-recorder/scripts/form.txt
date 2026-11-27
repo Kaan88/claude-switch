@@ -1,0 +1,41 @@
+# A form of two questions (the first with boxes), typed answers on both, and its review.
+# Two model requests.
+#: args --permission-mode default
+#: seconds 25
+start
+send Use the AskUserQuestion tool now (no other tools) with two questions at once: first header "Fruits", question "Which fruits do you like?", options Apple, Pear, Plum, multiSelect true; second header "Size", question "Which size?", options Small, Large, multiSelect false.
+sleep 800
+send \r
+wait Chat about this 90000
+sleep 1500
+snap page1
+send \e[B
+sleep 500
+send \e[B
+sleep 500
+send \e[B
+sleep 500
+send kiwi
+sleep 800
+snap page1_typed
+send \e[B
+sleep 500
+snap page1_next
+send \r
+sleep 1500
+snap page2
+send \e[B
+sleep 500
+send \e[B
+sleep 500
+send medium
+sleep 800
+snap page2_typed
+send \r
+sleep 1500
+snap review
+send \r
+sleep 1500
+gone esc to interrupt 120000
+quiet 1500 60000
+snap submitted

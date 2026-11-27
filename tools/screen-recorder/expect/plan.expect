@@ -1,0 +1,14 @@
+# The first choice names auto mode only on accounts that offer it.
+[plan]
+kind = plan
+title = *Would you like to proceed?
+choices = Yes, *| Yes, manually approve edits | Tell Claude what to change
+keep = Tell Claude what to change
+send = no
+
+[kept]
+kind = idle
+input =
+send = yes
+working = no
+mode = Plan
