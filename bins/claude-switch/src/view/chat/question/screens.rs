@@ -314,6 +314,41 @@ pub(super) fn permission(screen: &Screen) -> Option<Permission> {
     Some(Permission { question, body, tell, menu })
 }
 
+/// Every row of a permission prompt from its own top rule down to its question, as the CLI draws
+/// them (Claude Code 2.1.332, the `perm_agent_*` and `perm_two_*` fixtures): what is asked for and,
+/// when the screen says so, by whom ("Bash command · from the general-purpose agent"), then the
+/// tip, the description and the command or file between its dashed rules. The one column of margin
+/// is removed and blank rows are left out; a dashed rule stays a row of its own.
+///
+/// The top rule is the full-width solid rule over the prompt: no row of the prompt itself can be
+/// one, since every one of them starts after the margin. `None` when it is not on the screen (the
+/// prompt is taller than the terminal) or the rows do not end in the prompt's question: what
+/// cannot be read whole is not shown as whole.
+pub(super) fn permission_rows(screen: &Screen, prompt: &Permission) -> Option<Vec<String>> {
+    let first = prompt.menu.entries.first()?.row;
+    let top_rule = |row: usize| {
+        let text = screen.row_text(row);
+        let text = text.trim_end();
+        text.chars().count() >= screen.cols() && solid_rule(text)
+    };
+    let top = (0..first).rev().find(|&row| top_rule(row))?;
+    let mut rows: Vec<String> = (top + 1..first)
+        .map(|row| {
+            let text = screen.row_text(row);
+            let text = text.trim_end();
+            text.strip_prefix(' ').unwrap_or(text).to_owned()
+        })
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    let question = rows.pop()?;
+    (collapse(&question) == prompt.question && !rows.is_empty()).then_some(rows)
+}
+
+/// A dashed or solid rule row, as `permission_rows` keeps them.
+pub(super) fn is_rule(text: &str) -> bool {
+    rule(text.trim())
+}
+
 /// The permission mode the indicator under the input row names, if any.
 pub(in crate::view::chat) fn mode(screen: &Screen) -> Option<&'static str> {
     let row = screen.cursor().row;

@@ -94,8 +94,10 @@ impl AppState {
             && term.ended.is_none()
             && (pane.chat.is_demo() || term.running())
             && !term.screen.modes().alt_screen;
-        let waiting =
-            super::chat::question::waiting_label(&pane.model, &term.screen).or_else(|| pane.chat.menu_waiting());
+        let approval = pane.chat.prompt_waiting();
+        let waiting = super::chat::question::waiting_label(&pane.model, &term.screen)
+            .or(approval)
+            .or_else(|| pane.chat.menu_waiting());
         // A permission prompt hides the working line unless it is the pending call's own. So does
         // the CLI's idle input: the transcript's last record reads as a running turn after an
         // interruption, and nothing is working then.
@@ -103,7 +105,12 @@ impl AppState {
             && (waiting.is_some() || !crate::attention::screen_permission_prompt(&term.screen))
             && !pane.chat.screen_resting(term, now);
         let can_stop = allowed && pane.chat.stop_ready(&pane.model.chat, term, &tab.program_title, now);
-        let (footer, wake) = pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop, waiting);
+        let (footer, wake) = match approval.filter(|_| allowed) {
+            // A prompt read from the screen waits whatever the transcript says: a subagent's shows
+            // after the main turn has ended.
+            Some(label) => (Some(Footer { label: label.into(), stop: None }), None),
+            None => pane.working.update(now, &pane.model.chat, allowed, &term.screen, can_stop, waiting),
+        };
         if pane.ui.set_working(footer) {
             cx.request_redraw(area);
         }

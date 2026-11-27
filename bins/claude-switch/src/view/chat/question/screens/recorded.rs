@@ -126,6 +126,16 @@ pub(in crate::view::chat) const PROMPT_IDLE: &str = include_str!("../fixtures/pr
 pub(in crate::view::chat) const PROMPT_SUGGEST: &str = include_str!("../fixtures/prompt_suggest.ansi");
 pub(in crate::view::chat) const PROMPT_PASTED: &str = include_str!("../fixtures/prompt_pasted.ansi");
 pub(in crate::view::chat) const PROMPT_CLEARED: &str = include_str!("../fixtures/prompt_cleared.ansi");
+// Permission prompts no pending call of the main transcript covers (110 x 45, manual mode): a
+// subagent's, with the highlight on its first, second and last choice and after Esc declined it,
+// and the two prompts of two calls made in one message.
+pub(in crate::view::chat) const PERM_AGENT_BASH: &str = include_str!("../fixtures/perm_agent_bash.ansi");
+pub(in crate::view::chat) const PERM_AGENT_BASH_DOWN: &str = include_str!("../fixtures/perm_agent_bash_down.ansi");
+pub(in crate::view::chat) const PERM_AGENT_BASH_NO: &str = include_str!("../fixtures/perm_agent_bash_no.ansi");
+pub(in crate::view::chat) const PERM_AGENT_GONE: &str = include_str!("../fixtures/perm_agent_gone.ansi");
+pub(in crate::view::chat) const PERM_AGENT_WRITE: &str = include_str!("../fixtures/perm_agent_write.ansi");
+pub(in crate::view::chat) const PERM_TWO_FIRST: &str = include_str!("../fixtures/perm_two_first.ansi");
+pub(in crate::view::chat) const PERM_TWO_SECOND: &str = include_str!("../fixtures/perm_two_second.ansi");
 
 fn sends_blocked(screen: &Screen) -> bool {
     !crate::view::chat::submission::screen::clean_prompt(screen)
@@ -489,6 +499,88 @@ fn a_footer_with_rows_under_it_still_marks_a_menu_unless_an_input_row_is_under_i
             .as_bytes(),
     );
     assert!(panel(&old).is_none() && clean_prompt(&old));
+}
+
+#[test]
+fn a_subagents_prompt_reads_whole_from_its_top_rule_and_says_whose_call_it_is() {
+    let screen = recorded(PERM_AGENT_BASH);
+    assert!(crate::attention::screen_permission_prompt(&screen) && panel(&screen).is_none());
+    let prompt = permission(&screen).expect("a permission prompt");
+    let rows = permission_rows(&screen, &prompt).expect("its top rule is on the screen");
+    assert_eq!(rows.len(), 6);
+    assert_eq!(rows[0], "Bash command · from the general-purpose agent");
+    assert_eq!(rows[1], "Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below");
+    assert_eq!((rows[2].as_str(), rows[4].as_str()), ("Create directory sub_probe_five", "mkdir sub_probe_five"));
+    assert!(is_rule(&rows[3]) && is_rule(&rows[5]) && !is_rule(&rows[4]));
+    assert_eq!(prompt.question, "Do you want to proceed?");
+    let texts = prompt.menu.texts();
+    assert_eq!(texts.len(), 4);
+    assert_eq!(texts[1], "Yes, and always allow access to C:\\Users\\user\\work\\scratch from this project");
+    assert_eq!((texts[3].as_str(), prompt.menu.highlight()), ("No", Some(0)));
+    // Its footer names the background agents; on a choice that takes no comment it drops "Tab to
+    // amend". The rows are the same on every highlight.
+    assert!(prompt.menu.footer_text().contains("twice to stop background agents"));
+    for (fixture, highlight) in [(PERM_AGENT_BASH_DOWN, 1), (PERM_AGENT_BASH_NO, 3)] {
+        let screen = recorded(fixture);
+        let moved = permission(&screen).expect("the same prompt");
+        assert_eq!(moved.menu.highlight(), Some(highlight));
+        assert_eq!(permission_rows(&screen, &moved).as_ref(), Some(&rows));
+    }
+    assert!(!permission(&recorded(PERM_AGENT_BASH_DOWN)).unwrap().menu.footer_text().contains(AMEND));
+    assert!(permission(&recorded(PERM_AGENT_GONE)).is_none());
+
+    // A file: the path, then its content between the dashed rules, line numbers and all.
+    let screen = recorded(PERM_AGENT_WRITE);
+    let prompt = permission(&screen).expect("a permission prompt");
+    let rows = permission_rows(&screen, &prompt).expect("whole");
+    assert_eq!(rows[..2], ["Create file · from the general-purpose agent", "sub_note.txt"]);
+    assert_eq!(rows[3], " 1 hello", "the content keeps its own indent");
+    assert_eq!(prompt.question, "Do you want to create sub_note.txt?");
+}
+
+#[test]
+fn two_calls_of_one_message_ask_one_after_the_other_and_each_prompt_names_its_own() {
+    let rows = |fixture: &str| {
+        let screen = recorded(fixture);
+        let prompt = permission(&screen).expect("a permission prompt");
+        permission_rows(&screen, &prompt).expect("whole")
+    };
+    let (first, second) = (rows(PERM_TWO_FIRST), rows(PERM_TWO_SECOND));
+    assert_eq!((first[0].as_str(), first[4].as_str()), ("Bash command", "mkdir par_a"));
+    assert_eq!((second[0].as_str(), second[4].as_str()), ("Bash command", "mkdir par_b"));
+    assert_ne!(first, second);
+}
+
+#[test]
+fn a_prompt_without_its_top_rule_on_the_screen_is_not_read_as_whole() {
+    // Scrolled so that the rule and the prompt's first rows are above the screen.
+    let mut screen = Screen::new(110, 8, 0);
+    let rows = [
+        "╌".repeat(110),
+        " mkdir sub_probe_five".to_owned(),
+        "╌".repeat(110),
+        " Do you want to proceed?".to_owned(),
+        " ❯ 1. Yes".to_owned(),
+        "   2. No".to_owned(),
+        String::new(),
+        " Esc to cancel · Tab to amend".to_owned(),
+    ];
+    screen.feed(rows.join("\r\n").as_bytes());
+    let prompt = permission(&screen).expect("still a permission prompt");
+    assert_eq!(permission_rows(&screen, &prompt), None);
+    // A rule row inside the prompt starts after the margin, so it is never taken for the top.
+    let mut screen = Screen::new(110, 12, 0);
+    let mut rows = rows.to_vec();
+    rows.splice(0..0, ["─".repeat(110), " Bash command".to_owned(), format!(" {}", "─".repeat(109))]);
+    screen.feed(rows.join("\r\n").as_bytes());
+    let prompt = permission(&screen).expect("a permission prompt");
+    let whole = permission_rows(&screen, &prompt).expect("its top rule is on the screen");
+    assert_eq!(whole[0], "Bash command");
+    assert_eq!(whole.len(), 5, "the rule-like row is one of the prompt's rows");
+    // The main session's own prompt reads the same way: no source after the tool.
+    let main = recorded(PERM_BASH);
+    let rows = permission_rows(&main, &permission(&main).unwrap()).expect("whole");
+    assert_eq!((rows[0].as_str(), rows[4].as_str()), ("Bash command", "mkdir probe_dir_one"));
 }
 
 /// Prints what the gates make of every `.ansi` recording in the folder `CS_PROBE_DIR` names (the

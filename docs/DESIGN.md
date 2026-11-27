@@ -1251,7 +1251,8 @@ to" row, "Tab to amend", "don't ask again" or "tell Claude what to do", or Yes a
 "Esc to cancel". Only the menu's own rows are read for these: those below the nearest rule above
 the footer (the CLI draws its prompts and menus under one), so the same words in the conversation
 above do not count; with no rule in those 24 rows, all of them do. Unless a question card answers that menu, the gate treats it as a permission
-prompt left to the terminal (drawer, notice).
+prompt: one Chat recognises gets a permission card (see Permission prompts), one that only looks
+like a prompt is left to the terminal (drawer, notice).
 
 **Questions.** Claude Code 2.1.332 writes an `AskUserQuestion` call to the transcript only once it
 is answered or declined (checked with copies of the transcript while a question waited 30 s; a
@@ -1329,9 +1330,7 @@ prompt's own rows above the question (warnings and countdowns included), the que
 screen's choices, exactly as written. Clicks are answered only if the prompt names that call: the
 whole command as whole rows of the prompt (whitespace and wrapping aside), the file's full path or
 its path from the session folder, the MCP server and tool, or the fetched address or host, each as
-a whole word, never a part of a longer word or path. A prompt while a subagent may be asking (one
-is running, or this turn started one whose end is unknown), two pending calls, or any other prompt
-stays terminal-only with an Open terminal button. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
+a whole word, never a part of a longer word or path. A choice moves the highlight with arrow keys and Enter follows once the screen shows the
 highlight there with the same choices; nothing is pre-selected and nothing is answered without a
 click. A decline with text uses the prompt's Tab comment field when the footer offers "Tab to
 amend" (Tab; the text only once the screen shows the field open on that row, the choice followed by
@@ -1340,6 +1339,40 @@ whose text then goes to the composer. Shift+Tab is never sent at a prompt. The s
 fail-closed rules as questions apply. While the card can answer, sends are refused with "Answer
 Claude's request above", the drawer stays closed and the working line reads "Waiting for your
 approval".
+
+**A prompt the pending call does not cover.** A subagent's prompt, the prompts of several calls made
+in one message, and any prompt that does not name the pending call used to stay in the terminal.
+The owner decided otherwise (2026-11-27): show such a prompt exactly as Claude Code draws it, so
+that what is approved is what was seen. Recorded from Claude Code 2.1.332 (`perm_agent_*`,
+`perm_two_*`): a subagent's prompt says whose call it is in its first row ("Bash command · from the
+general-purpose agent", "Create file · from the general-purpose agent"), its footer adds "ctrl+x
+ctrl+k twice to stop background agents" and drops "Tab to amend" while the highlight is on a
+choice that takes no comment; the main transcript holds no pending call then, and may show the turn
+as ended. Two calls of one message are asked one after the other, each prompt for one call with no
+source in its header, and at the first prompt the transcript holds neither call. So the transcript
+cannot say what such a prompt is for, and the card is built from the screen alone
+(`question/prompt.rs`): every row from the prompt's own top rule down to its question (what is asked
+for and by whom, the tip, the description, the command or the file's content between its dashed
+rules, wrapped at the card's width), the question, the choices as buttons, Esc, and Open terminal.
+The top rule is the full-width solid rule the CLI draws over a prompt; a row of the prompt itself
+cannot be one, since each starts after a column of margin. The card may take up to 85 % of the
+conversation's height; a longer prompt scrolls (wheel, or the "n more" button), and its choices
+take a click only once every row has been in view. A choice also needs the card to have shown that
+prompt for half a second, so that a second click meant for one prompt cannot answer the next one,
+which Claude Code draws in the same place at once. Every key (the arrows, then Enter once the
+highlight is on the chosen row) is written only while the screen still shows exactly the same rows,
+question and choices; a prompt that changed gets no Enter, the step stops after two seconds with
+"The prompt changed in the terminal", and the card shows the new prompt, to be read again. Esc is
+written under the same check, without reading to the end. The gate reports such a prompt as it does
+the pending call's card: sends are refused with "Answer Claude's request above", the drawer stays
+closed and the working line reads "Waiting for your approval", also after the main turn's end. Left
+to the terminal: a prompt whose top rule is not on the screen (taller than the terminal: the card
+shows the rows it can read and says so), a row that does not fit the card even wrapped, and a
+decline with text (how the comment field draws was never recorded, and the transcript cannot
+confirm it for a call it does not hold). The pending call's own card stays as it was where it
+applies, and the plan approval is no such prompt (its menu has no "No" choice). Two identical
+prompts in a row cannot be told apart: the first answer then stops after eight seconds with "the
+prompt is still open", and the card answers the second on the next click.
 
 A card answers ahead of a queued draft: the queue waits for the turn to end, which waits for the
 answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer
@@ -1458,14 +1491,17 @@ readiness rules: the idle input after a turn, at the start, with the next-prompt
 background shell, after Esc, after a declined prompt, under one- and two-row status lines, at 40 to
 200 columns and 10 to 50 rows, after `/clear` and `/compact`; a running tool, agent and compaction
 (the screen changes at least every 229 ms while a turn runs); typed, pasted (`[Pasted text #1 +13
-lines]`), wrapped and queued input; questions, forms, permission prompts, plan approval, the
+lines]`), wrapped and queued input; questions, forms, permission prompts (the main session's, a
+subagent's with the highlight on each kind of choice and after Esc, and the two prompts of two
+calls made in one message), plan approval, the
 rewind list and the panels of `/model`, `/effort`, `/config` (which takes two Esc to close),
 `/status`, `/help`, `/mcp`, `/permissions`, `/resume` and `/theme`. Not recorded: a pasted
 picture's marker (the recorder does not touch the clipboard).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
-typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt that
-does not name the one pending call (a subagent's, or two calls); a dialog with no footer Chat knows (the drawer opens by itself after
+typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat
+cannot show whole (its top is above the terminal's screen, or a row does not fit the card), and a
+decline with text for a prompt the pending call does not cover; a dialog with no footer Chat knows (the drawer opens by itself after
 four silent seconds); Claude Code's full-screen renderer or another full-screen program; a session
 whose identity could not be verified; a card step whose screen did not follow within its deadline
 (the card says which, and Open terminal).

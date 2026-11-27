@@ -158,7 +158,7 @@ impl AppState {
             p.text(Face::Ui, 11.5, row.x, row.cy(), Reason::Tool.label(), pal.muted, (row.w - 122.0).max(0.0));
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
         }
-        super::question::Draw { pal, hover, focused }.card(p, chat, &pane.model, &mut self.hits);
+        super::question::Draw { pal, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
         if details_active {
             self.hits.extend(detail_hits);
         }

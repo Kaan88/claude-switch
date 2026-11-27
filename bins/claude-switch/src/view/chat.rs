@@ -399,8 +399,12 @@ impl Chat {
         if crate::attention::screen_permission_prompt(&term.screen)
             || !question_card && question::screens::permission_like(&term.screen)
         {
-            // The card answers it when it names the pending call; the terminal otherwise.
+            // The card answers it: the pending call's own card when the prompt names that call,
+            // else the card that shows the prompt as the screen has it. The terminal only for a
+            // prompt Chat cannot read whole.
             let card = info.pending.is_some() && self.question.approval && self.question.answerable == info.pending;
+            let card =
+                card || self.question.prompt_answers() && crate::attention::screen_permission_prompt(&term.screen);
             return (Gate::Check, Some(if card { Reason::Approval } else { Reason::Permission }));
         }
         if self.demo

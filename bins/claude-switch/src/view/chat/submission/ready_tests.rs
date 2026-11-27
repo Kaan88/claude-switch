@@ -18,15 +18,15 @@ use std::ops::Not;
 
 const SECOND: Duration = Duration::from_secs(1);
 
-struct Live {
-    app: AppState,
+pub(in crate::view::chat) struct Live {
+    pub(in crate::view::chat) app: AppState,
     tab: u64,
     /// The test's clock: past the real one, so that inputs noted with the real time have settled.
-    now: Instant,
+    pub(in crate::view::chat) now: Instant,
 }
 
 impl Live {
-    fn new() -> Self {
+    pub(in crate::view::chat) fn new() -> Self {
         let mut app = AppState::new(Source::Demo, Some(false), Default::default());
         let root = std::env::temp_dir();
         let mut pane = app.new_session_pane(crate::view::model::Source::File(root.join("ready.jsonl")), root);
@@ -42,23 +42,23 @@ impl Live {
         Self { app, tab, now: Instant::now() + SECOND }
     }
 
-    fn tab(&mut self) -> &mut Tab {
+    pub(in crate::view::chat) fn tab(&mut self) -> &mut Tab {
         self.app.tabs.get_mut(self.tab).unwrap()
     }
 
-    fn chat(&mut self) -> &mut Chat {
+    pub(in crate::view::chat) fn chat(&mut self) -> &mut Chat {
         &mut self.tab().pane.as_mut().unwrap().chat
     }
 
     /// The CLI drew this screen now.
-    fn show(&mut self, fixture: &str) {
+    pub(in crate::view::chat) fn show(&mut self, fixture: &str) {
         let now = self.now;
         self.tab().term.screen = recorded(fixture);
         self.chat().output(now, true, false);
     }
 
     /// Time passes and the window's tick runs.
-    fn pass(&mut self, time: Duration) -> (Gate, Option<Reason>) {
+    pub(in crate::view::chat) fn pass(&mut self, time: Duration) -> (Gate, Option<Reason>) {
         self.now += time;
         let now = self.now;
         self.app.progress_chat_tabs(now, true);
@@ -68,7 +68,7 @@ impl Live {
     }
 
     /// A turn the transcript shows running: a newer prompt and an unfinished answer.
-    fn turn(&mut self) {
+    pub(in crate::view::chat) fn turn(&mut self) {
         let pane = self.tab().pane.as_mut().unwrap();
         let at = pane.model.chat.prompt.unwrap_or(0) + 100;
         pane.model.chat.prompt = Some(at);
@@ -76,13 +76,13 @@ impl Live {
         pane.chat.fresh = true;
     }
 
-    fn send(&mut self, text: &str) {
+    pub(in crate::view::chat) fn send(&mut self, text: &str) {
         let now = self.now;
         self.chat().editor.set(text.into());
         AppState::chat_send(self.tab(), now, false);
     }
 
-    fn writes(&mut self) -> Vec<Vec<u8>> {
+    pub(in crate::view::chat) fn writes(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.chat().writes)
     }
 }
@@ -294,7 +294,7 @@ fn a_slash_command_waits_a_moment_for_the_prompt_to_go_quiet() {
     assert!(f.chat().staging.command.is_none() && f.writes().is_empty());
 }
 
-fn downs(n: usize) -> Vec<u8> {
+pub(in crate::view::chat) fn downs(n: usize) -> Vec<u8> {
     mdshared_term::input::encode_key(mdshared_term::Key::Down, mdshared_term::Mods::NONE, &Default::default()).repeat(n)
 }
 

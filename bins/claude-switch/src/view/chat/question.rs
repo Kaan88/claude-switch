@@ -12,6 +12,7 @@
 //! question or the review opened), and "Submit answers" only once the review reads every answer
 //! as picked.
 mod background;
+mod prompt;
 pub(in crate::view) mod rewind;
 pub(super) mod screens;
 
@@ -268,6 +269,8 @@ pub enum Hit {
     Next,
     /// Send the form's answers.
     Submit,
+    /// Scroll a long permission prompt on (nothing is sent).
+    More,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -319,6 +322,8 @@ enum Subject {
     Panel {
         rows: Vec<String>,
     },
+    /// A permission prompt read from the screen alone: its rows, question and choices.
+    Prompt(prompt::Prompt),
 }
 
 #[derive(Clone, Debug)]
@@ -397,6 +402,9 @@ pub(super) struct Card {
     failed: bool,
     rect: Rect,
     shown: Option<Shown>,
+    /// A permission prompt the pending call's card does not cover, read from the screen alone.
+    prompt: Option<prompt::Prompt>,
+    prompt_view: prompt::View,
     /// A CLI menu with no question or permission card for it.
     pub(super) menu: Option<MenuShown>,
     /// The running shell call the CLI offers to move to the background.
@@ -537,6 +545,7 @@ fn read(
             let empty = screens::Menu { entries: Vec::new(), lines: Vec::new(), footer: 0 };
             (panel.menu.is_none() && panel.rows == *rows).then_some((empty, None, None))
         }
+        Subject::Prompt(want) => prompt::still_shown(want, screen).map(|menu| (menu, None, None)),
     }
 }
 
@@ -973,17 +982,24 @@ impl Chat {
         let item = pending.as_ref().map(|p| p.item);
         let mut changed = false;
         if self.question.item != item {
-            if let Some(step) = self.question.step.take().filter(|step| step.stage == Stage::Sent) {
+            let step = self.question.step.take();
+            if let Some(step) = step.as_ref().filter(|step| step.stage == Stage::Sent) {
                 // "Chat about this" and "No, and tell Claude" return to the prompt; the text
                 // goes as the next message.
-                self.hold(&step);
+                self.hold(step);
             }
+            // A prompt read from the screen is not the transcript's call: its card and an answer
+            // in flight go on (each key still needs the same prompt on the screen).
+            let step = step.filter(|step| matches!(step.subject, Subject::Prompt(_)));
+            let prompt = self.question.prompt.take();
+            let prompt_view = std::mem::take(&mut self.question.prompt_view);
             let field = std::mem::take(&mut self.question.field);
             let held = self.question.held.take();
             let agent_step = self.question.agent_step.take();
             let rewind = self.question.rewind.take();
-            let error = self.question.error.filter(|_| agent_step.is_some());
-            self.question = Card { item, field, held, agent_step, rewind, error, ..Card::default() };
+            let error = self.question.error.filter(|_| agent_step.is_some() || step.is_some());
+            self.question =
+                Card { item, field, held, agent_step, rewind, error, step, prompt, prompt_view, ..Card::default() };
             if item.is_none() {
                 self.question.field.clear();
             }
@@ -995,6 +1011,18 @@ impl Chat {
             }
             _ => None,
         };
+        // A recognised prompt that card does not answer (no pending call, several, a subagent's,
+        // or a prompt that does not name the call) is read from the screen alone. The plan's own
+        // menu is no such prompt.
+        let covered = shown.as_ref().is_some_and(|s| s.matched)
+            || matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Tool(kind)) if is_plan(kind) && shown.is_some());
+        let prompt = (!self.menus_off && !covered).then(|| prompt::shown(screen)).flatten();
+        let shown = if prompt.is_some() { None } else { shown };
+        if self.question.prompt != prompt {
+            self.question.prompt_view = prompt::View::default();
+            self.question.prompt = prompt;
+            changed = true;
+        }
         changed |= self.question.shown != shown;
         self.question.approval = shown.is_some();
         let answerable = pending.as_ref().filter(|_| !self.question.failed).filter(|p| match p.kind {
@@ -1021,7 +1049,7 @@ impl Chat {
         .then(|| menu_shown(screen))
         .flatten();
         changed |= self.question.menu != menu;
-        let covered = shown.is_some() || menu.is_some();
+        let covered = shown.is_some() || menu.is_some() || self.question.prompt.is_some();
         let background = pending.as_ref().filter(|_| !covered).and_then(|p| background::shell_offer(Some(p), screen));
         let background_changed = self.question.background != background;
         changed |= background_changed;
@@ -1040,6 +1068,7 @@ impl Chat {
         // Only a question or permission card has a field: no hidden card keeps the keyboard.
         let typed = self.question.menu.as_ref().is_some_and(|menu| menu.question);
         let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some() || typed;
+        let field = field && self.question.prompt.is_none();
         if !field && std::mem::take(&mut self.question.focus) {
             changed = true;
         }
@@ -1083,6 +1112,7 @@ fn ready(tab: &Tab) -> bool {
 /// only while no question, permission prompt or CLI menu needs the card (they come first).
 fn rewind_shown(card: &Card, model: &Model) -> bool {
     let other = card.shown.is_some()
+        || card.prompt.is_some()
         || card.menu.is_some()
         || matches!(pending(model).map(|p| p.kind), Some(Kind::Question(_)));
     card.rewind.as_ref().is_some_and(|r| !r.failed() || !other)
@@ -1107,6 +1137,10 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         }
         _ if chat.question.step.is_some() => return false,
         _ => {}
+    }
+    // The screen's permission prompt comes before whatever the transcript's call would show.
+    if let Some(prompt) = chat.question.prompt.clone() {
+        return prompt::press(tab, now, hit, prompt);
     }
     // A form's picks stay in the card until Submit: nothing is written, so nothing waits for them.
     let form = pending(&pane.model).and_then(|p| match p.kind {
@@ -1565,7 +1599,7 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
         // A menu that moved on (closed, or opened the next one) is done at once.
         Stage::Sent
             if may_act
-                && matches!(step.subject, Subject::Menu { .. } | Subject::Panel { .. })
+                && matches!(step.subject, Subject::Menu { .. } | Subject::Panel { .. } | Subject::Prompt(_))
                 && read(&step.subject, screen, None).is_none() =>
         {
             Action::Closed
@@ -1704,8 +1738,13 @@ fn tool_title(kind: &ItemKind) -> String {
 /// Takes the card's room from the bottom of the conversation while a question or a permission
 /// prompt waits.
 pub(super) fn place(chat: &mut Chat, model: &Model) {
+    // A permission prompt read from the screen is shown whole: it may take more of the
+    // conversation's room than the other cards, and wraps its rows at the card's width.
+    let screen_prompt = chat.question.prompt.is_some() && !rewind_shown(&chat.question, model);
+    let card_w = (chat.layout.conversation.w - 24.0).clamp(0.0, 760.0);
     let wanted = match pending(model).map(|p| p.kind) {
         _ if rewind_shown(&chat.question, model) => chat.question.rewind.as_ref().map(rewind::height),
+        _ if screen_prompt => Some(prompt::height(&mut chat.question, card_w - 2.0 * PAD)),
         Some(Kind::Question(questions)) => {
             // A form keeps one height for all its questions.
             let options = questions.into_iter().flatten().map(|q| q.options.len()).max().unwrap_or(0);
@@ -1734,17 +1773,21 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     };
     let conversation = &mut chat.layout.conversation;
     let wanted = 2.0 * PAD + wanted + FIELD + STATUS;
-    let h = wanted.min((conversation.h * 0.6).floor()).max(0.0);
-    let w = (conversation.w - 24.0).clamp(0.0, 760.0);
+    let share = if screen_prompt { 0.85 } else { 0.6 };
+    let h = wanted.min((conversation.h * share).floor()).max(0.0);
+    let w = card_w;
     chat.question.rect =
         Rect::new(conversation.x + ((conversation.w - w) / 2.0).round(), conversation.bottom() - h - 8.0, w, h);
     conversation.h = (conversation.h - h - 16.0).max(0.0);
+    prompt::fit(&mut chat.question);
 }
 
 pub(super) struct Draw<'a> {
     pub pal: &'a Palette,
     pub hover: Option<Target>,
     pub focused: bool,
+    /// When this frame is painted: a prompt read from the screen notes when it was first shown.
+    pub now: Instant,
 }
 
 impl Draw<'_> {
@@ -1760,6 +1803,7 @@ impl Draw<'_> {
         let inner = r.inset(PAD);
         match pending(model).map(|p| p.kind) {
             _ if rewind_shown(&chat.question, model) => self.rewind(p, chat, inner, hits),
+            _ if chat.question.prompt.is_some() => self.prompt(p, chat, inner, hits),
             Some(Kind::Question(questions)) => self.question(p, chat, inner, questions, hits),
             Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
             _ if chat.question.menu.is_some() => self.menu(p, chat, inner, hits),
@@ -1768,6 +1812,8 @@ impl Draw<'_> {
         // Esc leaves a menu or declines what the card shows, under the same checks as a choice.
         let escape = match pending(model).map(|p| p.kind) {
             _ if chat.question.step.is_some() || rewind_shown(&chat.question, model) => false,
+            // Esc declines without reading on: the prompt's footer always offers it.
+            _ if chat.question.prompt.is_some() => chat.question.prompt_answers(),
             Some(Kind::Question(_)) => chat.question.answerable.is_some(),
             Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
             // A panel offers Close in its own footer instead.

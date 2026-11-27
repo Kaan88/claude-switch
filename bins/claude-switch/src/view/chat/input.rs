@@ -411,6 +411,8 @@ impl AppState {
         } else if chat.popups.open.is_some() && chat.layout.suggestions.contains(x, y) {
             let count = chat.popup_items(&pane.model).map_or(0, |(_, items)| items.len());
             chat.popups.step(count, dy < 0.0);
+        } else if chat.question_wheel(x, y, dy) {
+            // A permission prompt longer than its card scrolls.
         } else if chat.layout.editor.contains(x, y) {
             chat.editor.wheel(dy);
         } else if chat.layout.side.w > 0.0 && chat.layout.side.contains(x, y) {

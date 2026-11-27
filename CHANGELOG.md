@@ -21,6 +21,12 @@
 - Your own answer to a question: the question card has a field for it, also in forms with
   several questions. Chat types it on the CLI's "Type something" row and confirms only once the
   screen shows exactly that text.
+- A permission prompt from a subagent, or one of several tool calls made at once, no longer sends
+  you to the terminal. Chat shows the prompt as Claude Code draws it: the tool, whose call it is
+  ("from the general-purpose agent"), the command or file, the question and its choices. A long
+  one scrolls, and its choices can be clicked once you have seen all of it. Nothing is approved
+  that the card did not show: the keys go only while the terminal still shows that same prompt.
+  To decline with a comment, use Open terminal.
 - Stop before Claude answers: Claude Code puts the message back on its own input, which blocked
   the next send. Chat now clears it there and puts the text back in the message box.
 - More time for a pasted picture to show (20 s) and for a pasted message to appear (5 s).

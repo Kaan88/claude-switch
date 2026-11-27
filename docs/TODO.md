@@ -972,3 +972,22 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Up/Down and a click past a row's end stay on that row (before the space it broke at); Home, Right
     and selection cross soft breaks as before. Tests cover wrapping, long words, multi-byte characters,
     caret movement, selection across a soft break and reflow while typing.
+76. **Permission prompts Chat could not match to the one pending call** (owner, 2026-11-27: a card that
+    shows the prompt exactly as Claude Code draws it, so the user sees what they approve; never approve
+    something the card did not show). **Done.** A subagent's prompt, the prompts of several calls of one
+    message, and a prompt that does not name the pending call show as a card read from the screen alone
+    (DESIGN.md, "A prompt the pending call does not cover"; `view/chat/question/prompt.rs`): every row
+    from the prompt's top rule to its question, the question, the choices, Esc. Keys go only while the
+    screen shows exactly those rows, question and choices; a choice needs every row to have been in view
+    (a long prompt scrolls) and the card to have shown that prompt for half a second. The gate treats it
+    like the pending call's own card (no drawer, "Answer Claude's request above", "Waiting for your
+    approval"). Checked: recordings of Claude Code 2.1.332 (a subagent's Bash and Write prompts, the
+    highlight on each kind of choice, Esc, two parallel Bash calls) as fixtures; reader tests; state
+    tests on a tab gated like a real one, with the card painted (a click before the card showed the
+    prompt, rows that change between the click and the key, the next prompt taking the first one's
+    place, Esc, the setting off, a prompt longer than the card with the wheel and the "more" button);
+    the card's picture looked at in two window sizes. Not checked: nothing was tried in the running
+    app; a prompt with a diff (Edit) was not recorded, only Bash and Write; a prompt taller than the
+    terminal was built by hand, not recorded. Still the terminal's: a prompt whose top is above the
+    terminal's screen, a row wider than the card, and a decline with text (the comment field's drawing
+    is not recorded).

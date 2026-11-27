@@ -890,6 +890,6 @@ pub(super) fn stage_deadline(chat: &Chat) -> Option<Instant> {
 #[cfg(test)]
 mod identity_tests;
 #[cfg(test)]
-mod ready_tests;
+pub(in crate::view::chat) mod ready_tests;
 #[cfg(test)]
 mod tests;
