@@ -668,6 +668,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     uniform-default-background option on `BackgroundOpacity`: use `normal` on every default cell,
     retaining 255 for selection, block cursor, inverse and explicit backgrounds. Use that option
     here when available. No toolkit or pin change.
+    **Later (owner, 2026-11-27: "put 62 on for later"):** the toolkit option above is parked; ask the
+    toolkit session for it when this comes back, then move the pin and use it here.
 63. **Settings › Appearance: flexible, customizable colours and theming, and one kind of control per choice**
     (owner, 2026-11-27, screenshot of Appearance; "more flexible, customizable color and theming"). Today the dark
     palette is chosen with swatches and a dropdown ("Neutral") side by side, the light palette with swatches and a
