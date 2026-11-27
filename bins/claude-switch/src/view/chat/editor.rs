@@ -83,8 +83,14 @@ impl ComposerEditor {
         self.inner.set(text);
     }
 
+    /// Inserts typed or pasted text without control characters: Escape and other keys carry one as
+    /// their text, which would show as a box. Line breaks become `\n`; tabs stay.
     pub fn insert(&mut self, text: &str) {
-        self.inner.insert(text);
+        let text = typed(text);
+        if text.is_empty() {
+            return;
+        }
+        self.inner.insert(&text);
         self.row_hint = None;
         self.metrics = None;
     }
@@ -120,7 +126,7 @@ impl ComposerEditor {
             }
             _ if !mods.ctrl
                 && !mods.alt
-                && let Some(text) = text.filter(|s| !s.is_empty()) =>
+                && let Some(text) = text.filter(|s| !typed(s).is_empty()) =>
             {
                 self.insert(text);
                 return true;
@@ -308,9 +314,29 @@ fn wrap(text: &str, width: f32, hyphen: f32, mut advance: impl FnMut(char) -> f3
     rows
 }
 
+/// Text as the editor keeps it: `\r\n` and a lone `\r` as `\n`, tabs kept, other control
+/// characters dropped.
+fn typed(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t')) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    std::borrow::Cow::Owned(text.chars().filter(|&c| !c.is_control() || matches!(c, '\n' | '\t')).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_and_other_control_characters_never_reach_the_text() {
+        let mut editor = ComposerEditor::default();
+        editor.insert("another, ");
+        assert!(!editor.key(&KeyName::Escape, Mods::default(), Some("\u{1b}")));
+        editor.insert("\u{1b}\u{7f}\u{0}");
+        editor.insert("a\r\nb\rc\td");
+        assert_eq!(editor.text, "another, a\nb\nc\td");
+    }
 
     #[test]
     fn whole_words_move_to_the_next_row_and_only_long_words_split() {
