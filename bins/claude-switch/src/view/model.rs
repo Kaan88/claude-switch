@@ -222,6 +222,8 @@ pub struct Model {
     pub has_earlier: bool,
     pub earlier_version: u64,
     pub error: Option<String>,
+    /// The reader has delivered the transcript at least once (it may hold nothing).
+    pub loaded: bool,
     pub revision: u64,
     pub generation: u64,
     pub chat: claude_switch_core::transcript::ChatInfo,
@@ -309,6 +311,7 @@ impl Model {
             has_earlier: false,
             earlier_version: 0,
             error: None,
+            loaded: false,
             revision: 0,
             generation,
             chat: Default::default(),
@@ -341,6 +344,7 @@ impl Model {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Update(u) => {
+                    self.loaded = true;
                     if u.reset {
                         self.items.clear();
                         self.files.clear();

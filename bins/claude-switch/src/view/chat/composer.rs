@@ -20,6 +20,8 @@ pub(super) struct Draw<'a> {
     /// A turn is running, and whether Stop's checks pass now: Stop is on the Send button (or
     /// beside it, when there is a draft to send).
     pub stop: Option<bool>,
+    /// A new session before its first message: the box says what can be typed.
+    pub welcome: bool,
 }
 
 /// The chips in their default order.
@@ -340,7 +342,11 @@ impl Draw<'_> {
         let width = editor_text_width(e);
         let next_chip = chat.popups.next_prompt.clone().filter(|_| !chat.locked());
         // While a turn runs a message is queued, and the box says so.
-        let hint = if self.stop.is_some() && !chat.locked() { QUEUE_HINT } else { "Message Claude Code…" };
+        let hint = match () {
+            _ if self.stop.is_some() && !chat.locked() => QUEUE_HINT,
+            _ if self.welcome => super::welcome::HINT,
+            _ => "Message Claude Code…",
+        };
         let ed = &mut chat.editor;
         ed.flow(p, width, e.h);
         let selection = ed.selection();
@@ -834,6 +840,7 @@ mod tests {
                                 chips: &DEFAULT_CHIPS,
                                 own: &[],
                                 stop: None,
+                                welcome: false,
                             }
                             .toolbar(&mut p, &chat, &info);
                             let what = format!("{width} px at {scale}x, panel {panel}, {start:?} {model} {mode:?}");
@@ -865,7 +872,7 @@ mod tests {
         let area = Rect::new(0.0, 0.0, 1100.0, 480.0);
         let left = left_group(&chips);
         assert!(left < left_group(&DEFAULT_CHIPS));
-        let layout = Layout::with_shells(area, true, false, None, false, false, false, false, 1, left, None);
+        let layout = Layout::with_shells(area, true, false, None, false, false, false, false, 1, left, None, false);
         assert!(!layout.stacked);
         let chat = Chat { layout, ..Default::default() };
         let mut hits = Vec::new();
@@ -879,6 +886,7 @@ mod tests {
             chips: &chips,
             own: &own,
             stop: None,
+            welcome: false,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         let order: Vec<_> = hits.iter().map(|(_, t)| *t).collect();
@@ -905,6 +913,7 @@ mod tests {
             1,
             left_group(&DEFAULT_CHIPS),
             None,
+            false,
         );
         let chat = Chat { layout: narrow, ..Default::default() };
         let mut hits = Vec::new();
@@ -918,6 +927,7 @@ mod tests {
             chips: &DEFAULT_CHIPS,
             own: &own,
             stop: None,
+            welcome: false,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         for (r, t) in &hits {
@@ -955,6 +965,7 @@ mod tests {
                 chips: &DEFAULT_CHIPS,
                 own: &[],
                 stop: turn,
+                welcome: false,
             }
             .composer(&mut p, &mut chat, &ChatInfo::default(), None, None);
             let find = |t: Target| hits.iter().find_map(|(r, hit)| (*hit == t).then_some(*r));
@@ -1003,6 +1014,7 @@ mod tests {
                     chips: &DEFAULT_CHIPS,
                     own: &[],
                     stop: None,
+                    welcome: false,
                 }
                 .toolbar(&mut p, &chat, &info);
                 positions.push(hits);
@@ -1054,6 +1066,7 @@ mod tests {
                 chips: &DEFAULT_CHIPS,
                 own: &[],
                 stop: None,
+                welcome: false,
             }
             .composer(&mut p, &mut chat, &info, suggestions, None);
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();

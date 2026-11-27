@@ -21,6 +21,7 @@ mod shots;
 pub(super) mod side;
 pub(super) mod submission;
 mod undo;
+mod welcome;
 
 pub(crate) use commands::valid_name as valid_command_name;
 pub use input::Control;
@@ -521,6 +522,20 @@ impl Chat {
             && info.pending.is_none()
             && info.latest.is_some_and(|(_, phase)| phase == ChatPhase::Active)
             && info.prompt.is_some_and(|prompt| self.stopped != Some((info.generation, prompt)))
+    }
+
+    /// The session has no message yet and none on its way: Chat greets, with the message box in
+    /// the middle of the window.
+    pub(super) fn welcome(&self, model: &crate::view::model::Model) -> bool {
+        self.enabled
+            && model.agent.is_none()
+            && model.items.is_empty()
+            && !model.has_earlier
+            && model.error.is_none()
+            && (self.awaiting_transcript || model.loaded)
+            && !self.first_sent
+            && self.queue.is_none()
+            && self.waiting().is_none()
     }
 
     pub(super) fn is_demo(&self) -> bool {

@@ -52,6 +52,8 @@ pub enum Control {
     Remove(usize),
     MoreChips,
     Question(super::question::Hit),
+    /// A start under a new session's message box: it fills the box and sends nothing.
+    Start(super::welcome::Start),
 }
 
 impl AppState {
@@ -483,6 +485,13 @@ impl AppState {
                     pane.chat.fill_next_prompt();
                 }
                 return;
+            }
+            Control::Start(start) => {
+                if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+                    pane.chat.start(start);
+                }
+                // As after typing: a command's name opens the list of commands.
+                return self.chat_editor_changed();
             }
             _ => {}
         }

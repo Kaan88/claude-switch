@@ -45,6 +45,8 @@ impl AppState {
         // The draft's wrapped rows as last flowed; `draw_chat` flows again first and re-lays.
         let lines = chat.editor.rows.len().max(1);
         let left = composer::left_group(&composer::chips_of(&self.config.chat));
+        // A session with no message yet has its box in the middle, under a greeting.
+        let welcome = chat.welcome(&pane.model);
         // The composer and the cards go on the conversation's reading column.
         pane.ui.set_chat_reading(reading);
         let main_w = (area.w - Layout::panel_width(area, panel, reveal)).max(0.0);
@@ -61,6 +63,7 @@ impl AppState {
             lines,
             left,
             column,
+            welcome,
         );
         super::question::place(chat, &pane.model);
         self.session_view.pane_area = chat.layout.conversation;
@@ -104,6 +107,9 @@ impl AppState {
         if chat.editor.rows.len() != before {
             self.layout_chat(area);
         }
+        // A new session's greeting says what Claude Code's banner on the screen says.
+        let greets = |t: &&crate::tabs::Tab| t.pane.as_ref().is_some_and(|p| p.chat.layout.greeting.h > 0.0);
+        let banner = self.tabs.shown().filter(greets).and_then(|t| super::welcome::banner(&t.term.screen));
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
         let l = chat.layout;
@@ -126,6 +132,14 @@ impl AppState {
             || chat.last_gate == Some(super::Gate::Running) && chat.can_stop(info);
         let stop = running.then_some(stop_ready);
         pane.ui.set_offer(chat.question.background_inline());
+        // An empty conversation: the greeting of a new session (drawn below), or a quiet line
+        // while there is nothing to read yet.
+        let welcome = l.greeting.h > 0.0 && !docked;
+        pane.ui.set_empty_line(match () {
+            _ if welcome || pane.model.loaded || chat.awaiting_transcript => None,
+            _ if chat.identity_unverified => Some("The conversation appears here when its transcript is available."),
+            _ => Some("Reading the conversation…"),
+        });
         // With the panel closed the working line shows the task list's progress.
         pane.ui.show_progress(l.side.w <= 0.0);
         // The pending call the card asks about has not started: its line says it waits.
@@ -133,6 +147,16 @@ impl AppState {
         pane.ui.set_awaiting(super::question::pending(&pane.model).filter(|_| own).map(|p| p.item));
         pane.ui.set_diff_colours(diff);
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
+        if welcome {
+            super::welcome::Welcome::read(chat, &pane.cwd, banner.as_ref(), &self.win_file.chat_pins).draw(
+                p,
+                pal,
+                l.greeting,
+                l.starts,
+                hover,
+                &mut self.hits,
+            );
+        }
         if let Some(r) = pane.ui.progress_rect() {
             // "2 of 3" on the working line opens the panel, as its own button does.
             self.hits.push((r, Target::Chat(Control::Panel)));
@@ -230,6 +254,7 @@ impl AppState {
             chips: &composer::chips_of(&self.config.chat),
             own: &self.config.chat.commands,
             stop,
+            welcome,
         }
         .composer(p, chat, &pane.model.chat, suggestions, popup);
         frame

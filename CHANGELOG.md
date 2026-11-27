@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Chat: a new session before its first message shows a greeting in place of the grey "Waiting
+  for messages" card: the mark, "What should Claude do in <folder>?", the folder and, when
+  Claude Code's banner is on the terminal's screen, the model and plan it names. The message box
+  is in the middle of the window with a few starts under it: your starred slash commands, else
+  /init, /review and /resume, and "Paste a picture". A start fills the box; it sends nothing.
+  The Details panel stays closed until there is something to show. With the first message the
+  box goes to the foot of the window.
+- Chat: a conversation that is still being read shows one quiet line, "Reading the
+  conversation…", instead of the card.
+
 - Chat: the Details panel is one scrolling list of sections in place of its five tabs.
   **Progress** is the task list with "2 of 3", a thin bar and a mark per task (done, current,
   waiting). **Background** has the agents, the background shells with their output and the MCP

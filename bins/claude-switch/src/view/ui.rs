@@ -130,6 +130,9 @@ pub struct Ui {
     progress: bool,
     /// Where the last frame drew that progress.
     progress_rect: Option<Rect>,
+    /// What Chat says in place of an empty conversation: a quiet line, or nothing (a new
+    /// session's greeting is the host's).
+    empty_line: Option<&'static str>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -218,6 +221,12 @@ impl Ui {
     /// The colours of added and removed lines, from the window's terminal theme.
     pub fn set_diff_colours(&mut self, diff: super::look::Diff) {
         self.diff = Some(diff);
+    }
+
+    /// What Chat shows for a conversation with nothing in it: one quiet line (a transcript still
+    /// being read), or nothing at all. The Session view keeps its card.
+    pub(super) fn set_empty_line(&mut self, line: Option<&'static str>) {
+        self.empty_line = line;
     }
 
     /// Chat's Details panel is closed: the task list's progress ("2 of 3") stands at the right
@@ -408,6 +417,12 @@ impl Ui {
             self.layout(m, pal, p.scale);
             self.offer_rect = None;
             self.progress_rect = None;
+            if self.chat
+                && self.rows.is_empty()
+                && let Some(line) = self.empty_line
+            {
+                p.text(Face::Ui, 13.0, self.body.x, self.body.y + 14.0, line, pal.muted, self.body.w);
+            }
             self.paint_rows(p, pal, m);
             self.paint_working(p, pal, m);
             self.scrollbar =
@@ -507,7 +522,7 @@ impl Ui {
             match self.page {
                 Page::Conversation => {
                     r.conversation(m, &self.expanded, &self.tool_expanded);
-                    if r.list.is_empty() {
+                    if r.list.is_empty() && !self.chat {
                         r.empty(
                             "Waiting for messages",
                             "The conversation appears here when its transcript is available.",

@@ -1,6 +1,7 @@
 use mdshared_ui::gfx::Rect;
 
 use super::editor::LINE;
+use super::welcome::{GREETING, STARTS};
 use crate::view::look::INSET;
 
 /// The widest the composer's text and a card's get, whatever the reading width.
@@ -39,13 +40,17 @@ pub struct Layout {
     pub drawer: Rect,
     pub grip: Rect,
     pub shell_chip: Rect,
+    /// A new session: the room over the box for the greeting, and the row under it for the
+    /// starts. Both empty otherwise.
+    pub greeting: Rect,
+    pub starts: Rect,
 }
 
 impl Layout {
     #[cfg(test)]
     pub fn new(area: Rect, panel: bool, drawer: bool, height: Option<f32>, chips: bool, notice: bool) -> Self {
         let left = super::composer::left_group(&super::composer::DEFAULT_CHIPS);
-        Self::with_shells(area, panel, drawer, height, chips, notice, false, false, 1, left, None)
+        Self::with_shells(area, panel, drawer, height, chips, notice, false, false, 1, left, None, false)
     }
 
     /// The Details panel's width in `area`: nothing when it is hidden or the window too narrow.
@@ -74,6 +79,7 @@ impl Layout {
         lines: usize,
         left: f32,
         column: Option<(f32, f32)>,
+        welcome: bool,
     ) -> Self {
         let panel_w = Self::panel_width(area, panel, reveal);
         let main_w = (area.w - panel_w).max(0.0);
@@ -111,7 +117,11 @@ impl Layout {
         let grown = chrome + editor_height(lines);
         let cap = (upper * MAX_SHARE + 16.0).max(least);
         let composer_h = upper.min(grown.clamp(least, cap));
-        let conversation_h = upper - composer_h;
+        // A new session has its box in the middle of the window, under a greeting and over a
+        // row of starts, where the window has the room for them.
+        let group = GREETING + composer_h + STARTS;
+        let welcome = welcome && upper >= group + 24.0;
+        let conversation_h = if welcome { ((upper - group) * 0.42).round() + GREETING } else { upper - composer_h };
         let composer = Rect::new(area.x, area.y + conversation_h, main_w, composer_h);
         let box_frame = Rect::new(x, composer.y + 4.0, measure, (composer_h - 16.0).max(0.0));
         let inner = Rect::new(
@@ -126,6 +136,14 @@ impl Layout {
         let shell_chip = Rect::new(inner.x, notice.y - shell_h, inner.w, shell_h);
         let editor = Rect::new(inner.x, attachments.bottom(), inner.w, (shell_chip.y - attachments.bottom()).max(0.0));
         let popup_h = (conversation_h - 4.0).clamp(0.0, 224.0);
+        let (greeting, starts) = if welcome {
+            (
+                Rect::new(box_frame.x, area.y, box_frame.w, conversation_h),
+                Rect::new(box_frame.x, box_frame.bottom(), box_frame.w, STARTS),
+            )
+        } else {
+            Default::default()
+        };
         Self {
             conversation: Rect::new(area.x, area.y, main_w, conversation_h),
             composer,
@@ -140,6 +158,8 @@ impl Layout {
             drawer: Rect::new(area.x, area.bottom() - drawer_h, area.w, drawer_h),
             grip: Rect::new(area.x, area.y + upper, area.w, if drawer { area.h - upper - drawer_h } else { 0.0 }),
             shell_chip,
+            greeting,
+            starts,
         }
     }
 }
@@ -150,7 +170,31 @@ mod tests {
 
     fn box_for(area: Rect, drawer: bool, lines: usize) -> Layout {
         let left = super::super::composer::left_group(&super::super::composer::DEFAULT_CHIPS);
-        Layout::with_shells(area, false, drawer, None, false, false, false, false, lines, left, None)
+        Layout::with_shells(area, false, drawer, None, false, false, false, false, lines, left, None, false)
+    }
+
+    #[test]
+    fn a_new_sessions_box_is_in_the_middle_with_room_for_the_greeting_and_the_starts() {
+        let left = super::super::composer::left_group(&super::super::composer::DEFAULT_CHIPS);
+        let at =
+            |area: Rect| Layout::with_shells(area, false, false, None, false, false, false, false, 1, left, None, true);
+        let area = Rect::new(0.0, 80.0, 1100.0, 800.0);
+        let l = at(area);
+        let usual = box_for(area, false, 1);
+        assert_eq!(
+            (l.box_frame.x, l.box_frame.w, l.box_frame.h),
+            (usual.box_frame.x, usual.box_frame.w, usual.box_frame.h)
+        );
+        assert!(l.box_frame.bottom() < usual.box_frame.y, "the box is well above the foot of the window");
+        assert_eq!(l.conversation.bottom(), l.composer.y);
+        assert!(l.greeting.h >= GREETING && l.greeting.bottom() == l.composer.y);
+        assert_eq!((l.starts.y, l.starts.h), (l.box_frame.bottom(), STARTS));
+        assert!(l.starts.bottom() <= area.bottom());
+        // A window too short for all of it keeps the box at its foot, as in any session.
+        let short = Rect::new(0.0, 80.0, 1100.0, 300.0);
+        let l = at(short);
+        assert_eq!(l.composer.bottom(), short.bottom());
+        assert_eq!((l.greeting.h, l.starts.h), (0.0, 0.0));
     }
 
     #[test]
