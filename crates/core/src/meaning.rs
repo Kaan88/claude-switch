@@ -113,6 +113,12 @@ impl Digest {
     pub fn is_marker(&self) -> bool {
         self.summary.is_empty()
     }
+
+    /// A marker for a session the model `engine` has not been asked about: a different model left
+    /// it. Markers of sessions with no readable prompt stay, as no model can answer those.
+    fn retry_with(&self, engine: &str) -> bool {
+        self.is_marker() && self.engine != engine && self.basis != basis(&Excerpts::default())
+    }
 }
 
 /// A kept answer to a question.
@@ -219,9 +225,10 @@ impl Cache {
         crate::util::write_json(path, &json!({"version": 1, "digests": digests, "answers": answers}))
     }
 
-    /// No kept summary, or the session was active after it was made.
-    pub fn stale(&self, id: &str, last_active_ms: u64) -> bool {
-        self.digests.get(id).is_none_or(|d| d.active_ms < last_active_ms)
+    /// No kept summary, the session was active after it was made, or it is a "not answered"
+    /// marker left by another model than `engine` (see [`Engine::key`]), which may answer it.
+    pub fn stale(&self, id: &str, last_active_ms: u64, engine: &str) -> bool {
+        self.digests.get(id).is_none_or(|d| d.active_ms < last_active_ms || d.retry_with(engine))
     }
 
     /// The subjects of the sessions `keep` accepts, each once (case-insensitively), sorted.
@@ -364,8 +371,9 @@ pub struct IndexReport {
 /// Summarizes the sessions whose excerpts changed, in requests of [`BATCH`], calling `saved` with
 /// the cache after each request so a cancelled run keeps what was answered. Only the subjects of
 /// sessions `visible` accepts go along. A session with no readable prompt, or one the model did
-/// not answer, gets a marker (its basis and activity, no summary), so it is neither sent nor
-/// counted as stale again until its prompts change.
+/// not answer while answering others in the same request, gets a marker (its basis, activity and
+/// model, no summary), so it is neither sent nor counted as stale again until its prompts or the
+/// model change. A request whose answer gives nothing readable fails the run and marks nothing.
 pub fn index(
     cache: &mut Cache,
     items: Vec<Item>,
@@ -385,7 +393,7 @@ pub fn index(
             continue;
         }
         match cache.digests.get_mut(&item.id) {
-            Some(d) if d.basis == basis => {
+            Some(d) if d.basis == basis && !d.retry_with(&engine.key()) => {
                 d.active_ms = d.active_ms.max(item.active_ms);
                 report.unchanged += 1;
             }
@@ -408,6 +416,15 @@ pub fn index(
         report.sent += batch.len();
         let answer = submit(&index_request(&excerpts, &subjects))?;
         let mut answered = parse_index(&answer, batch.len(), &subjects);
+        if answered.is_empty() {
+            // Prose, a refusal, cut-off output: not an answer about these sessions, so mark none of
+            // them. Earlier requests of this run are already saved.
+            return Err(format!(
+                "The model's answer could not be read, so {} session(s) were left as they were \n                 ({} summarized before that). Try again, or choose another model in Settings.",
+                batch.len(),
+                report.summarized
+            ));
+        }
         for (i, (item, basis)) in batch.iter().enumerate() {
             let Some((summary, keywords, subject)) = answered.remove(&i) else {
                 report.skipped += 1;
@@ -438,6 +455,9 @@ fn mark(cache: &mut Cache, item: &Item, basis: u64, engine: &str) {
     });
     entry.basis = basis;
     entry.active_ms = entry.active_ms.max(item.active_ms);
+    if entry.is_marker() {
+        entry.engine = engine.to_owned();
+    }
 }
 
 /// The summaries a question goes over, as (session id, digest), newest sessions first.

@@ -175,9 +175,10 @@ impl AppState {
     }
 
     fn meaning_stale(&self) -> Vec<usize> {
+        let engine = self.config.meaning.engine.key();
         self.meaning_sessions()
             .into_iter()
-            .filter(|&i| self.meaning.cache.stale(&self.sessions[i].id, self.sessions[i].last_active_ms))
+            .filter(|&i| self.meaning.cache.stale(&self.sessions[i].id, self.sessions[i].last_active_ms, &engine))
             .take(meaning::RUN_LIMIT)
             .collect()
     }

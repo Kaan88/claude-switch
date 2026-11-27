@@ -106,8 +106,8 @@ fn indexing_sends_only_changed_sessions_in_batches_and_keeps_partial_work() {
     .unwrap();
     assert_eq!((report.sent, report.unchanged), (1, 1));
     assert!(requests.borrow()[0].contains("prompt 2 changed") && !requests.borrow()[0].contains("\"prompt 1\""));
-    assert!(!cache.stale("s1", 20));
-    assert!(cache.stale("s3", 20));
+    assert!(!cache.stale("s1", 20, "claude"));
+    assert!(cache.stale("s3", 20, "claude"));
 
     // A failing second request keeps the first request's answers.
     let mut fresh = Cache::default();
@@ -269,7 +269,7 @@ fn empty_and_unanswered_sessions_get_markers_and_are_not_sent_again_until_they_c
     assert_eq!((report.sent, report.summarized, report.skipped, report.empty), (2, 1, 1, 1));
     for id in ["empty", "skipped"] {
         assert!(cache.digests[id].is_marker(), "{id}");
-        assert!(!cache.stale(id, 5), "{id} is not offered again");
+        assert!(!cache.stale(id, 5, "claude"), "{id} is not offered again");
         assert!(score("never answered", &cache.digests[id]).is_none());
     }
     assert!(ask_set(&cache, ["empty", "skipped", "ok"]).iter().all(|(id, _)| *id == "ok"));
@@ -301,8 +301,72 @@ fn empty_and_unanswered_sessions_get_markers_and_are_not_sent_again_until_they_c
     )
     .unwrap();
     assert!(sent.is_empty() && report.unchanged == 1 && report.empty == 1);
-    assert!(!cache.stale("empty", 9) && !cache.stale("skipped", 9));
+    assert!(!cache.stale("empty", 9, "claude") && !cache.stale("skipped", 9, "claude"));
     index(&mut cache, vec![item("skipped", 12, "now changed")], |_| true, &Engine::Claude, fake, || false, |_| {})
         .unwrap();
     assert_eq!(cache.digests["skipped"].summary, "Worked on now changed");
+}
+
+#[test]
+fn an_unreadable_answer_fails_the_run_and_marks_nothing_and_another_model_retries_markers() {
+    let mut cache = Cache::default();
+    let items: Vec<_> = (0..25).map(|n| item(&format!("s{n}"), 1, &format!("p{n}"))).collect();
+    let mut calls = 0;
+    let mut saves = 0;
+    let err = index(
+        &mut cache,
+        items,
+        |_| true,
+        &Engine::Claude,
+        |r| {
+            calls += 1;
+            if calls == 1 { fake(r) } else { Ok("I'm sorry, I can't help with that.".into()) }
+        },
+        || false,
+        |_| saves += 1,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("could not be read") && err.contains("5 session(s)") && err.contains("20 summarized"),
+        "{err}"
+    );
+    assert_eq!(cache.digests.len(), 20, "the first request's answers are kept");
+    assert!((20..25).all(|n| !cache.digests.contains_key(&format!("s{n}"))), "no markers for the unread batch");
+    assert_eq!(saves, 1);
+    assert!(cache.stale("s22", 1, "claude"), "offered again on the next run");
+
+    // A marker the model left (it answered others in the same request) is retried by another model.
+    let empty = Item { id: "empty".into(), active_ms: 1, excerpts: Excerpts::default() };
+    let only_first = |r: &str| Ok(fake(r)?.lines().next().unwrap_or_default().to_owned());
+    index(
+        &mut cache,
+        vec![item("a", 1, "first"), item("b", 1, "second"), empty],
+        |_| true,
+        &Engine::Claude,
+        only_first,
+        || false,
+        |_| {},
+    )
+    .unwrap();
+    assert!(cache.digests["b"].is_marker() && !cache.stale("b", 1, "claude"));
+    let other = Engine::OpenCode("prov/model".into()).key();
+    assert!(cache.stale("b", 1, &other), "another model may answer it");
+    assert!(!cache.stale("empty", 1, &other), "no model can answer a session with no prompt");
+    assert!(!cache.stale("a", 1, &other), "a real summary is not redone for a model change");
+    let mut sent = String::new();
+    index(
+        &mut cache,
+        vec![item("b", 1, "second")],
+        |_| true,
+        &Engine::OpenCode("prov/model".into()),
+        |r| {
+            sent = r.to_owned();
+            fake(r)
+        },
+        || false,
+        |_| {},
+    )
+    .unwrap();
+    assert!(sent.contains("second"));
+    assert_eq!(cache.digests["b"].summary, "Worked on second");
 }
