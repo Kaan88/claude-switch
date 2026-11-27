@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Handover: the review's text wraps at word boundaries instead of in the middle of words.
+
 ## 0.1.2 (2026-11-27)
 
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and

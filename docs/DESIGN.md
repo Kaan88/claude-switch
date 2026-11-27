@@ -481,7 +481,9 @@ process on Cancel or after 120 seconds per request. Provider consent and the sel
 `config.json`. A CLI invocation without prior provider consent refuses before reading the transcript.
 Both routes recheck persisted consent before sending each part or merge.
 
-The preview is editable, with characters and approximate tokens (characters / 4). Previewing or
+The preview is editable, with characters and approximate tokens (characters / 4). Its text wraps at word
+boundaries (a word is cut only when it alone is longer than a row); End, Up/Down and a click past a
+row's end stay on that row. Previewing or
 canceling does not save a handover. Only an explicit Save As or Open writes the edited text.
 Local Markdown files live in `handover/<session-id>-<time>.md` beside config; the newest 20
 are kept per session. An opened edited handover is kept as a new revision. Save As never

@@ -931,3 +931,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     re-checks, mark and summary cleanup, copy and in-place deletion. Not checked: the real Recycle Bin call
     (`SHFileOperationW`) has not been run by a test or by hand, and the copy-written condition assumes Claude Code
     writes the copied conversation into the new transcript with its first message (not verified on a live fork).
+75. **The handover text editor wraps in the middle of words** (owner, 2026-11-27: "plu s", "back t o").
+    **Done.** Rows break after the spaces before a word that does not fit (the spaces hang past the edge)
+    and inside a word only when the word alone is longer than a row, as the Chat composer wraps. End,
+    Up/Down and a click past a row's end stay on that row (before the space it broke at); Home, Right
+    and selection cross soft breaks as before. Tests cover wrapping, long words, multi-byte characters,
+    caret movement, selection across a soft break and reflow while typing.
