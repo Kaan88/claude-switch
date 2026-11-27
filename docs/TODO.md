@@ -8,7 +8,13 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
   manual timing checks are ignored by the ordinary workspace test run.
 - `bins/claude-switch`: terminal tabs, session view and clipboard/file attachment input.
 - The toolkit (`markdown-shared-rs`) is a git dependency pinned to a revision of its `main`; raise the
-  revision in `bins/claude-switch/Cargo.toml` to take a newer toolkit.
+  revision in `bins/claude-switch/Cargo.toml` to take a newer toolkit. A new pin must also be audited
+  and added to `$reviewedGit` in `tools/write-third-party-notices.ps1` (licence still MIT, no new
+  embedded files in the crates Switch ships), or the release run stops at "Unaudited git source"
+  after the build, as 0.1.2's first run did. The script needs PowerShell 7 (`pwsh`).
+- Released: 0.1.2 on 2026-11-27 (tag `v0.1.2`, items 22, 47, 49, 53, 56, 59, 61-72 and the Chat
+  cards). Toolkit work is finished for now (owner, 2026-11-27): item 32 (fonts) and item 62's
+  single-opacity option wait for it.
 - Build: `cargo build -p claude-switch`.
 - Hidden flags for trying things: `--demo`, `--theme light|dark`, `--shell <program>`, `--type <text>`,
   `--sessions-tab`.
