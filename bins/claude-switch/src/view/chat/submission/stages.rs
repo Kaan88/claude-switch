@@ -100,6 +100,9 @@ pub(super) struct Takeback {
     pub epoch: u64,
     pub presses: u8,
     pub due: Instant,
+    /// The output epoch of a first reading of the input as empty while output still came: a
+    /// second one of newer output confirms it.
+    pub clean: Option<u64>,
 }
 
 /// A slash command held for a moment because the CLI's prompt was not quiet yet.

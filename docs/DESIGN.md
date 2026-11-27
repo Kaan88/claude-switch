@@ -1182,8 +1182,11 @@ the prompt back on its input, where it would block the next send. While that inp
 the message Chat last submitted, with no working line and no terminal input since, Chat empties it
 with Ctrl+U (one line a key, each after the screen showed the one before, two seconds a key, forty
 keys at most) and puts the text back in the message box; a picture has to be pasted again. Once
-the input reads empty the text comes back when the screen goes quiet, or at the key's deadline
-if output keeps coming. The take-back starts only when the message box is empty, with no
+the input reads empty the text comes back when the screen goes quiet. While output keeps coming
+(a turn starting by itself, a redraw) one empty reading may be a screen caught half way, so it
+takes two in a row, each of newer output than the last Ctrl+U's; without them by the key's
+deadline the text still comes back (no Enter went, so it was not sent), with a notice to check
+that the CLI input is empty before sending. The take-back starts only when the message box is empty, with no
 attachments and no held draft: otherwise the message stays on the CLI input, with a notice to send
 or clear it in the terminal (which lets a held draft go, back to the box) and then send the draft.
 Text the user typed in the terminal is never cleared, and no text is cleared without a place to go.

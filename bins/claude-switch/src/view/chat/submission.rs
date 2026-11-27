@@ -36,6 +36,8 @@ const TAKEBACK_FAILED: &str =
     "Claude Code put your last message back on its input and Chat could not clear it. Clear it in the terminal.";
 const TAKEBACK_HELD: &str = "Claude Code put your last message back on its input. Chat left it there, as the message \
      box holds a draft: send or clear it in the terminal, then send the draft.";
+const TAKEBACK_UNSURE: &str = "Stopped before Claude answered. Your message is back in the box, but Claude Code kept \
+     drawing: check that its input is empty before you send.";
 const IMAGE_KEY: &[u8] = b"\x1bv";
 pub(super) const CHECK: &str = "Open the terminal to check";
 pub(super) const NO_QUIET_PROMPT: &str = "No quiet, empty Claude Code prompt is visible. Check the terminal.";
@@ -624,7 +626,7 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         if box_free {
             let epoch = chat.output_epoch.wrapping_sub(1);
-            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP });
+            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP, clean: None });
         } else {
             // The message stays where the user can see it, and the box keeps its draft (a held
             // one is let go when the user types in the terminal, and stays in the box).
@@ -634,26 +636,34 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         return true;
     };
     if clean_prompt(screen) {
-        // The input is empty and no Enter went with the keys, so the message was not sent: it
-        // comes back once the screen settles, or at the step's deadline if output keeps coming.
-        if !chat.quiet(now) && now < step.due && !screen::working(screen) {
-            return false;
+        // The input reads empty. Settled (quiet), that is so. With output still coming (a turn
+        // that starts by itself, a redraw) one reading may be a screen caught half way, with
+        // part of the message still on the input: it counts once a second reading of newer
+        // output, both after the last Ctrl+U's, reads empty too.
+        let epoch = chat.output_epoch;
+        let fresh = epoch != step.epoch;
+        let confirmed = chat.quiet(now) || fresh && step.clean.is_some_and(|first| first != epoch);
+        if confirmed {
+            give_back(&mut tab.pane.as_mut().unwrap().chat, false);
+            return true;
         }
-        let chat = &mut tab.pane.as_mut().unwrap().chat;
-        let sent = chat.staging.sent.take().unwrap();
-        chat.staging.takeback = None;
-        // Nothing can be typed or queued while the take-back runs (the composer is locked), but
-        // should the box hold text after all, the message goes in front of it, never away.
-        chat.queue = None;
-        let text = match chat.editor.text.trim().is_empty() {
-            true => sent.text,
-            false => format!("{}\n\n{}", sent.text, chat.editor.text),
-        };
-        chat.editor.set(text);
-        chat.error = Some(if sent.picture { TAKEN_BACK_PICTURE } else { TAKEN_BACK });
-        chat.retry = None;
-        return true;
+        if now >= step.due {
+            // No Enter went with the keys, so the message was not sent: it comes back to the
+            // box rather than nowhere, with a word to check what the CLI input still holds.
+            give_back(&mut tab.pane.as_mut().unwrap().chat, true);
+            return true;
+        }
+        if fresh && step.clean.is_none() {
+            tab.pane.as_mut().unwrap().chat.staging.takeback.as_mut().unwrap().clean = Some(epoch);
+        }
+        return false;
     }
+    if step.clean.is_some() {
+        // Not two readings in a row.
+        tab.pane.as_mut().unwrap().chat.staging.takeback.as_mut().unwrap().clean = None;
+    }
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    let Some(step) = &chat.staging.takeback else { return false };
     let input = prompt(screen).is_some() || screen::shows_some_input(screen);
     if step.presses >= TAKEBACK_KEYS || now >= step.due || screen::working(screen) || !input {
         let chat = &mut tab.pane.as_mut().unwrap().chat;
@@ -670,7 +680,8 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let chat = &mut tab.pane.as_mut().unwrap().chat;
     match written {
         Ok(()) => {
-            chat.staging.takeback = Some(Takeback { epoch: chat.output_epoch, presses, due: now + TAKEBACK_STEP })
+            chat.staging.takeback =
+                Some(Takeback { epoch: chat.output_epoch, presses, due: now + TAKEBACK_STEP, clean: None })
         }
         Err(error) => {
             (chat.staging.sent, chat.staging.takeback) = (None, None);
@@ -678,6 +689,26 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         }
     }
     true
+}
+
+/// The take-back is over: the message goes back to the box (in front of anything there, which
+/// the locked composer should never hold), with a word to check the terminal when the CLI input
+/// could not be read as empty for sure.
+fn give_back(chat: &mut Chat, unsure: bool) {
+    let sent = chat.staging.sent.take().unwrap();
+    chat.staging.takeback = None;
+    chat.queue = None;
+    let text = match chat.editor.text.trim().is_empty() {
+        true => sent.text,
+        false => format!("{}\n\n{}", sent.text, chat.editor.text),
+    };
+    chat.editor.set(text);
+    chat.error = Some(match (unsure, sent.picture) {
+        (true, _) => TAKEBACK_UNSURE,
+        (false, true) => TAKEN_BACK_PICTURE,
+        (false, false) => TAKEN_BACK,
+    });
+    chat.retry = None;
 }
 
 fn clear_recovery(tab: &mut Tab, now: Instant) -> bool {

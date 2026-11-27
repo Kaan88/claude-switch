@@ -291,8 +291,8 @@ fn a_put_back_message_stays_on_the_cli_input_while_the_message_box_holds_a_draft
     assert_eq!(chat.error, Some(TAKEBACK_HELD));
 }
 
-#[test]
-fn a_take_back_ends_at_its_deadline_while_output_keeps_coming() {
+/// A take-back up to its first Ctrl+U, which the screen has not answered yet.
+fn one_ctrl_u() -> Live {
     let mut f = Live::new();
     f.show(PLAIN_IDLE);
     f.pass(SECOND);
@@ -305,10 +305,75 @@ fn a_take_back_ends_at_its_deadline_while_output_keeps_coming() {
     f.pass(SECOND);
     f.pass(SECOND / 10);
     assert_eq!(f.writes(), [b"\x15".to_vec()]);
-    // The input is empty, but the screen never goes quiet.
+    f
+}
+
+#[test]
+fn while_output_keeps_coming_an_empty_input_counts_once_two_newer_screens_read_empty() {
+    let mut f = one_ctrl_u();
+    // The CLI draws the emptied input, and keeps drawing: no quiet.
+    f.show(PLAIN_EMPTIED);
+    f.pass(SECOND / 10);
+    assert!(f.chat().staging.takeback.is_some(), "one reading may be a redraw caught half way");
+    // The same screen, with nothing drawn since, is not a second reading.
+    f.pass(SECOND / 10);
+    assert!(f.chat().staging.takeback.is_some());
+    f.show(PLAIN_EMPTIED);
+    f.pass(SECOND / 10);
+    let chat = f.chat();
+    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_none() && !chat.locked());
+    assert_eq!(chat.editor.text, RESTORED);
+    assert_eq!(chat.error, Some(TAKEN_BACK));
+    assert!(f.writes().is_empty());
+}
+
+#[test]
+fn an_empty_reading_between_two_that_still_show_the_message_does_not_end_the_take_back() {
+    let mut f = one_ctrl_u();
+    // A turn starts by itself and redraws: the input reads empty half way through the redraw,
+    // then shows the message again.
+    f.show(PLAIN_EMPTIED);
+    f.pass(SECOND / 10);
+    f.show(PLAIN_RESTORED);
+    f.pass(SECOND / 10);
+    assert!(f.chat().staging.takeback.is_some() && f.chat().editor.text.is_empty());
+    // Newer output, so the next Ctrl+U goes; a single empty reading after it counts for nothing
+    // yet, as the one before it was not empty.
+    assert_eq!(f.writes(), [b"\x15".to_vec()]);
+    f.show(PLAIN_EMPTIED);
+    f.pass(SECOND / 10);
+    assert!(f.chat().staging.takeback.is_some());
+    f.show(PLAIN_EMPTIED);
+    f.pass(SECOND / 10);
+    assert_eq!(f.chat().editor.text, RESTORED);
+    assert_eq!(f.chat().error, Some(TAKEN_BACK));
+}
+
+#[test]
+fn a_working_line_over_an_empty_input_is_one_reading_not_the_end() {
+    let mut f = one_ctrl_u();
+    // A turn starts by itself: its working line over the input, which reads empty.
+    assert!(clean_prompt(&recorded(WORKING_TOOL)), "the fixture's input reads empty");
+    f.show(WORKING_TOOL);
+    f.pass(SECOND / 10);
+    assert!(f.chat().staging.takeback.is_some() && f.chat().editor.text.is_empty());
+    f.show(WORKING_TOOL);
+    f.pass(SECOND / 10);
+    assert_eq!(f.chat().editor.text, RESTORED);
+    assert_eq!(f.chat().error, Some(TAKEN_BACK));
+}
+
+#[test]
+fn an_empty_input_never_confirmed_gives_the_message_back_at_the_deadline_with_a_warning() {
+    let mut f = one_ctrl_u();
+    f.show(PLAIN_EMPTIED);
+    f.pass(SECOND / 10);
+    // Nothing newer is drawn, and the screen is never quiet: the clock keeps output recent.
     let mut ticks = 0;
     while f.chat().staging.takeback.is_some() {
-        f.show(PLAIN_EMPTIED);
+        let now = f.now;
+        // Output just now (no quiet), but no newer screen.
+        f.chat().last_output = Some(now);
         f.pass(SECOND / 10);
         let now = f.now;
         assert!(stage_deadline(f.chat(), now).is_none_or(|due| due > now), "a past deadline re-armed");
@@ -316,8 +381,8 @@ fn a_take_back_ends_at_its_deadline_while_output_keeps_coming() {
         assert!(ticks <= 25, "the take-back has no deadline");
     }
     let chat = f.chat();
-    assert_eq!(chat.editor.text, RESTORED);
-    assert_eq!(chat.error, Some(TAKEN_BACK));
+    assert_eq!(chat.editor.text, RESTORED, "not cleared and dropped: no Enter went, so it was not sent");
+    assert_eq!(chat.error, Some(TAKEBACK_UNSURE));
     assert!(chat.staging.sent.is_none() && !chat.locked() && f.writes().is_empty());
 }
 
