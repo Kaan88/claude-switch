@@ -164,17 +164,26 @@ pub fn show(text: &str, error: bool) {
         }
         return;
     }
+    message_box(text, error);
+}
+
+/// A message box with no owner window (a background process has nobody reading its output).
+pub fn message_box(text: &str, error: bool) {
     #[cfg(windows)]
     {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MessageBoxW,
+        };
         let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
         let (body, title) = (wide(text), wide("Claude Switch"));
         let icon = if error { MB_ICONERROR } else { MB_ICONINFORMATION };
         // SAFETY: both strings are NUL-terminated and outlive the call; no owner window.
         unsafe {
-            MessageBoxW(std::ptr::null_mut(), body.as_ptr(), title.as_ptr(), MB_OK | icon);
+            MessageBoxW(std::ptr::null_mut(), body.as_ptr(), title.as_ptr(), MB_OK | icon | MB_SETFOREGROUND);
         }
     }
+    #[cfg(not(windows))]
+    eprintln!("{text}");
 }
 
 /// Whether standard output reaches someone: inherited redirects, or the parent's console. A

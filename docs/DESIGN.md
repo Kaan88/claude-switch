@@ -492,13 +492,17 @@ window that cannot create the channel says so. Known limit: another local user c
 name first (a pipe name is first come). The owner check then stops every client from writing to
 it, so no request leaks, but each window starts as a second window: it restores no tabs and
 handovers sent with `--open` fail. That is a local denial of service only, needs a second local
-account, and is not worked around. It carries one
-request kind only: a versioned list of the same validated words as the window arguments (session
+account, and is not worked around. It carries two
+request kinds. A handover is a versioned list of the same validated words as the window arguments (session
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
 decoded and revalidated by the window, which then continues in place when one of its tabs runs
 the session (see "Continuing in place"; with `--as`, only a tab of that account) and otherwise
 opens only an app-owned saved handover in a new tab. The answer is `continuing`, `opened` or the
-window's error. When no window listens, the CLI starts Claude Switch
+window's error, which the window also shows as an error notice (including a request it could not
+decode or load). A failure notice (`claude-switch-handover-failed-1`, then one line of at most
+1,500 bytes with no control characters) is shown as an error notice and brings the window to the
+front; it acts on nothing, and the answer is `shown`. A client that gets no answer (refused, busy,
+closed or timed out) knows the window may have shown nothing. When no window listens, the CLI starts Claude Switch
 itself as the normal window (saved tabs, then the handover tab), which first offers the request
 to a window that started meanwhile. On Windows, that window is
 ShellExecuted through a fixed non-interactive PowerShell bootstrap run without a console window, so it
@@ -521,6 +525,24 @@ the outcome is unknown: check for the tab before retrying. Tab creation is not
 confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
 1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no
 handover request and launches no Claude process.
+
+`compact --open --background` (what `/switch-compact` runs) returns within seconds so the chat
+that asked is not blocked, and nothing about the outcome goes back into that chat as a tool
+result its agent could act on. It runs the quick checks first (provider consent, OpenCode, the
+session, the account; an error there is the command's one line), reads the focus file at once
+(the plugin removes it when the command returns), and writes a job, the same options as words
+with the session fixed to the ID found, the focus text and the session's name, to a new
+app-named file `cs-handover-job-<pid>-<nanos>.json` in the user's temporary folder. It then starts
+`claude-switch compact --background-job <that name>` through the same fixed PowerShell
+ShellExecute bootstrap as the handover window: a GUI process with no console window and none of
+the caller's handles, so the caller's shell call ends and the process is not its child. That
+process reads and removes the job, parses its words with the same parser and limits as typed
+options (a job cannot name a file, a working folder or another job), and runs `compact --open`.
+Success shows as the tab or the continuation in place. A failure the window answered is already
+on screen; any other failure (the transcript, the summary, no answer from the window, the new
+window not confirming) goes to the running window as a failure notice, and when no window takes
+it, to a message box. A job file stays behind only if that process dies before reading it. The
+notice that a Settings default agent was dropped is not shown in this mode.
 
 Setup's optional **Add Claude Switch to PATH** task is checked by default. It appends the install
 folder to `HKCU\Environment\Path` without changing the existing value type or claiming an

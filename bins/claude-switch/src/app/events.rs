@@ -258,6 +258,12 @@ impl App for AppState {
                 cx.request_redraw_all();
                 self.timers(cx);
             }
+            Msg::HandoverFailed(text) => {
+                self.error("Could not open handover", text);
+                crate::tray::show(cx.window());
+                cx.request_redraw_all();
+                self.timers(cx);
+            }
             Msg::ArchiveReportSaved(result) => {
                 self.report_saved(result);
                 cx.request_redraw_all();
