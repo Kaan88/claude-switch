@@ -258,8 +258,11 @@ impl App for AppState {
                 cx.request_redraw_all();
                 self.timers(cx);
             }
-            Msg::HandoverFailed(text) => {
-                self.error("Could not open handover", text);
+            Msg::HandoverNotice(notice) => {
+                match notice {
+                    crate::compact_cli::Notice::Failed(text) => self.error("Could not open handover", text),
+                    crate::compact_cli::Notice::Note(text) => self.note("Handover opened", text),
+                }
                 crate::tray::show(cx.window());
                 cx.request_redraw_all();
                 self.timers(cx);

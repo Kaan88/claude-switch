@@ -127,6 +127,10 @@ fn main() {
         }
         claim = handover_pipe::claim(); // The holder went away meanwhile.
     }
+    if !demo {
+        // Background handover jobs a process never read (it died first); off the startup path.
+        std::thread::spawn(compact_cli::clean_old_jobs);
+    }
     let mut win_file = winfile::load(source.window_file().as_deref());
     if demo && demo_offscreen {
         win_file.place = Some(winfile::demo_offscreen());

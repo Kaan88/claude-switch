@@ -42,9 +42,9 @@ pub enum Msg {
     Tray(crate::tray::Event),
     /// Another process of this user asked to open a handover tab (`handover_pipe`).
     Handover(Box<crate::compact_cli::Loaded>, std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>),
-    /// A handover from another process failed: a background `/switch-compact`'s reason, or a
-    /// request the pipe thread could not load. Shown as an error notice only.
-    HandoverFailed(String),
+    /// A handover from another process failed (a background `/switch-compact`'s reason, or a
+    /// request the pipe thread could not load), or opened with a note. Shown as a notice only.
+    HandoverNotice(crate::compact_cli::Notice),
 }
 
 /// The height of a folder heading and of a session row in the list.
@@ -602,6 +602,10 @@ impl AppState {
 
     pub fn error(&mut self, title: &str, text: String) {
         self.info = Some(InfoBar::new(Severity::Error, title, text).closable(true));
+    }
+
+    pub fn note(&mut self, title: &str, text: String) {
+        self.info = Some(InfoBar::new(Severity::Info, title, text).closable(true));
     }
 
     pub fn warn(&mut self, title: &str, text: String) {

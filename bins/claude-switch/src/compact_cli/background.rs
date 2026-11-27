@@ -1,8 +1,8 @@
 //! `compact --open --background`, what `/switch-compact` runs: the quick checks run at once, then
 //! a detached Claude Switch process (no console window, none of the caller's handles, so the
 //! caller's shell call ends) makes and opens the handover, and the caller returns. Nothing is
-//! reported back into the old chat: the running window shows the tab, or the failure as a
-//! notice; with no window to show it, a message box does.
+//! reported back into the old chat: the running window shows the tab, the failure or a note (the
+//! Settings default agent was dropped) as a notice; with no window to show it, a message box does.
 use super::{Failed, Options};
 use crate::handover_pipe::{self, Outcome, Sent};
 use std::io::Read as _;
@@ -15,6 +15,7 @@ const PREFIX: &str = "cs-handover-job-";
 const MAX_JOB: u64 = 256 * 1024;
 const MAX_ARGS: usize = 16;
 const FAILED_VERSION: &str = "claude-switch-handover-failed-1";
+const NOTE_VERSION: &str = "claude-switch-handover-note-1";
 /// The notice's text, in bytes (the request stays under `handover_pipe::MAX_REQUEST`).
 const MAX_NOTICE: usize = 1500;
 
@@ -48,7 +49,8 @@ pub(super) fn start(options: Options) -> Result<String, String> {
     ))
 }
 
-/// The detached process: runs the job and shows a failure the window has not shown.
+/// The detached process: runs the job and shows a failure the window has not shown, or the
+/// note that the Settings default agent was dropped.
 pub(super) fn run_job(mut args: impl Iterator<Item = String>) -> i32 {
     let (key, extra) = (args.next(), args.next());
     let job = match key.filter(|_| extra.is_none()) {
@@ -58,18 +60,46 @@ pub(super) fn run_job(mut args: impl Iterator<Item = String>) -> i32 {
     let (options, label) = match job {
         Ok(job) => job,
         Err(e) => {
-            report(&e);
+            report(Notice::Failed(e));
             return 2;
         }
     };
     match super::run(options) {
-        Ok(()) => 0,
+        Ok(None) => 0,
+        Ok(Some(note)) => {
+            report(Notice::Note(format!("\u{201c}{label}\u{201d}: {note}")));
+            0
+        }
         Err(Failed { shown: true, .. }) => 1,
         Err(Failed { message, .. }) => {
-            report(&format!("\u{201c}{label}\u{201d}: {message}"));
+            report(Notice::Failed(format!("\u{201c}{label}\u{201d}: {message}")));
             1
         }
     }
+}
+
+/// Removes job files older than a day from the user's temporary folder: only names of the
+/// job pattern, only plain files (not links or folders), nothing else.
+pub fn clean_old_jobs() {
+    let _ = clean_jobs_in(&std::env::temp_dir(), std::time::SystemTime::now(), Duration::from_secs(24 * 3600));
+}
+
+fn clean_jobs_in(dir: &Path, now: std::time::SystemTime, age: Duration) -> std::io::Result<usize> {
+    let mut removed = 0;
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let name = entry.file_name();
+        let Some(key) = name.to_str().and_then(|n| n.strip_suffix(".json")) else { continue };
+        if !valid_key(key) {
+            continue;
+        }
+        // `symlink_metadata`: a link is never followed or removed.
+        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else { continue };
+        let old = meta.modified().ok().and_then(|at| now.duration_since(at).ok()).is_some_and(|d| d > age);
+        if meta.file_type().is_file() && old && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 /// The same options as given, with the session fixed to the one found (`latest` could change)
@@ -119,26 +149,45 @@ fn parse_job(bytes: &[u8]) -> Result<(Options, String), String> {
     Ok((options, label))
 }
 
-/// Shows a failure in the running window, or in a message box when no window can show it.
-fn report(text: &str) {
-    match handover_pipe::send(&encode_failure(text)) {
-        Sent::Answered(Ok(Outcome::Shown)) => {}
-        _ => crate::cli_args::message_box(&format!("The handover did not finish.\n\n{text}"), true),
+/// What a background handover tells the running window. Shown only; it acts on nothing.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Notice {
+    /// The handover did not finish, and why (an error notice).
+    Failed(String),
+    /// It opened, with something to know (an info notice): a Settings default agent was dropped.
+    Note(String),
+}
+
+/// Shows a notice in the running window, or in a message box when no window takes it.
+fn report(notice: Notice) {
+    if let Sent::Answered(Ok(Outcome::Shown)) = handover_pipe::send(&encode_notice(&notice)) {
+        return;
+    }
+    match notice {
+        Notice::Failed(text) => crate::cli_args::message_box(&format!("The handover did not finish.\n\n{text}"), true),
+        Notice::Note(text) => crate::cli_args::message_box(&text, false),
     }
 }
 
-/// The failure notice request: the version line, then one line of text.
-pub(super) fn encode_failure(text: &str) -> Vec<u8> {
-    format!("{FAILED_VERSION}\n{}", one_line(text, MAX_NOTICE)).into_bytes()
+/// The notice request: its version line, then one line of text.
+pub(super) fn encode_notice(notice: &Notice) -> Vec<u8> {
+    let (version, text) = match notice {
+        Notice::Failed(text) => (FAILED_VERSION, text),
+        Notice::Note(text) => (NOTE_VERSION, text),
+    };
+    format!("{version}\n{}", one_line(text, MAX_NOTICE)).into_bytes()
 }
 
-/// `None` when the request is not a failure notice; otherwise its text, revalidated.
-pub fn decode_failure(bytes: &[u8]) -> Option<Result<String, String>> {
-    let rest = bytes.strip_prefix(format!("{FAILED_VERSION}\n").as_bytes())?;
+/// `None` when the request is not a notice; otherwise the notice, its text revalidated.
+pub fn decode_notice(bytes: &[u8]) -> Option<Result<Notice, String>> {
+    let (kind, rest): (fn(String) -> Notice, _) = match bytes.strip_prefix(format!("{FAILED_VERSION}\n").as_bytes()) {
+        Some(rest) => (Notice::Failed, rest),
+        None => (Notice::Note, bytes.strip_prefix(format!("{NOTE_VERSION}\n").as_bytes())?),
+    };
     let text = std::str::from_utf8(rest).ok().filter(|t| {
         t.len() <= MAX_NOTICE && !t.trim().is_empty() && !t.chars().any(|c| c.is_control() || is_separator(c))
     });
-    Some(text.map(str::to_owned).ok_or_else(|| "Invalid handover notice.".into()))
+    Some(text.map(|t| kind(t.to_owned())).ok_or_else(|| "Invalid handover notice.".into()))
 }
 
 fn is_separator(c: char) -> bool {
@@ -289,12 +338,20 @@ mod tests {
     }
 
     #[test]
-    fn failure_notices_round_trip_as_one_bounded_line() {
-        let bytes = encode_failure("“Work”: Could not read the transcript:\nline two\x1b[2J");
-        assert_eq!(decode_failure(&bytes).unwrap().unwrap(), "“Work”: Could not read the transcript: line two [2J");
-        let long = encode_failure(&"😺".repeat(1000));
+    fn notices_round_trip_as_one_bounded_line_of_their_kind() {
+        let bytes = encode_notice(&Notice::Failed("“Work”: Could not read the transcript:\nline two\x1b[2J".into()));
+        assert_eq!(
+            decode_notice(&bytes).unwrap().unwrap(),
+            Notice::Failed("“Work”: Could not read the transcript: line two [2J".into())
+        );
+        let note = "“Work”: The default agent “review” in Settings was not found for work, so the new chat starts as plain Claude.";
+        assert_eq!(
+            decode_notice(&encode_notice(&Notice::Note(note.into()))).unwrap().unwrap(),
+            Notice::Note(note.into())
+        );
+        let long = encode_notice(&Notice::Failed("😺".repeat(1000)));
         assert!(long.len() <= handover_pipe::MAX_REQUEST);
-        assert!(decode_failure(&long).unwrap().is_ok());
+        assert!(decode_notice(&long).unwrap().is_ok());
         let request = super::super::encode_request(&super::super::Handoff {
             id: ID.into(),
             account: "work".into(),
@@ -305,17 +362,48 @@ mod tests {
             basis: None,
         })
         .unwrap();
-        assert!(decode_failure(&request).is_none(), "a handover request is not a notice");
-        for bad in [
-            format!("{FAILED_VERSION}\n"),
-            format!("{FAILED_VERSION}\n  "),
-            format!("{FAILED_VERSION}\na\nb"),
-            format!("{FAILED_VERSION}\na\u{2028}b"),
-            format!("{FAILED_VERSION}\n{}", "x".repeat(MAX_NOTICE + 1)),
-        ] {
-            assert!(decode_failure(bad.as_bytes()).unwrap().is_err(), "{bad:?}");
+        assert!(decode_notice(&request).is_none(), "a handover request is not a notice");
+        assert!(decode_notice(b"claude-switch-handover-note-2\nx").is_none());
+        for version in [FAILED_VERSION, NOTE_VERSION] {
+            for bad in [
+                format!("{version}\n"),
+                format!("{version}\n  "),
+                format!("{version}\na\nb"),
+                format!("{version}\na\u{2028}b"),
+                format!("{version}\n{}", "x".repeat(MAX_NOTICE + 1)),
+            ] {
+                assert!(decode_notice(bad.as_bytes()).unwrap().is_err(), "{bad:?}");
+            }
+            assert!(decode_notice(format!("{version}\n\u{ff}").as_bytes()).unwrap().is_ok());
+            assert!(decode_notice(&[version.as_bytes(), b"\n\xff"].concat()).unwrap().is_err());
         }
-        assert!(decode_failure(format!("{FAILED_VERSION}\n\u{ff}").as_bytes()).unwrap().is_ok());
-        assert!(decode_failure(&[FAILED_VERSION.as_bytes(), b"\n\xff"].concat()).unwrap().is_err());
+    }
+
+    #[test]
+    fn startup_cleanup_removes_only_old_job_files() {
+        let dir = std::env::temp_dir().join(format!("cs-job-clean-{}", new_key().unwrap()));
+        std::fs::create_dir(&dir).unwrap();
+        let job = |name: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, b"{}").unwrap();
+            path
+        };
+        let old_job = job("cs-handover-job-12-34.json");
+        let other = [
+            job("cs-handover-job-12-34.txt"),
+            job("cs-handover-job-12.json"),
+            job("cs-handover-12-34.json"),
+            job("notes.json"),
+        ];
+        let folder = dir.join("cs-handover-job-56-78.json");
+        std::fs::create_dir(&folder).unwrap();
+        let day = Duration::from_secs(24 * 3600);
+        let now = std::time::SystemTime::now();
+        assert_eq!(clean_jobs_in(&dir, now, day).unwrap(), 0, "nothing is a day old yet");
+        assert!(old_job.exists());
+        assert_eq!(clean_jobs_in(&dir, now + day + Duration::from_secs(60), day).unwrap(), 1);
+        assert!(!old_job.exists());
+        assert!(other.iter().all(|p| p.exists()) && folder.is_dir(), "only the job pattern, only files");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

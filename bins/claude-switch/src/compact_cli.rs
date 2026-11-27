@@ -10,7 +10,7 @@ use std::path::Path;
 mod background;
 mod window;
 
-pub use background::decode_failure;
+pub use background::{Notice, clean_old_jobs, decode_notice};
 
 const USAGE: &str = "Usage: claude-switch compact --session <id|latest> [--cwd <folder>] \
     [--model <provider/model>] [--as <account>] [--focus-file <file>] \
@@ -180,7 +180,9 @@ fn ready(options: &Options) -> Result<Ready, String> {
     Ok(Ready { roots, config, model, program, session, account })
 }
 
-fn run(options: Options) -> Result<(), Failed> {
+/// The note that the Settings default agent was dropped, for a new tab, is returned for the
+/// background process to show; the foreground has printed it.
+fn run(options: Options) -> Result<Option<String>, Failed> {
     let Ready { roots, config, model, program, session, account } = ready(&options)?;
     let account = account.as_str();
     let data = compact::Handover::read(session.clone(), name_of(&roots, &session))
@@ -196,7 +198,8 @@ fn run(options: Options) -> Result<(), Failed> {
     };
     let text = compact_runner::make(&roots, &program, &model, &data, &focus, || false)?;
     if !options.open {
-        return Ok(print(&roots, &session.id, &text, options.save, io::stdout().lock())?);
+        print(&roots, &session.id, &text, options.save, io::stdout().lock())?;
+        return Ok(None);
     }
     compact_open::validate_prompt(&text)?;
     let file = compact::save(&roots, &session.id, &text).map_err(|e| format!("Could not keep the handover: {e}"))?;
@@ -220,7 +223,8 @@ fn run(options: Options) -> Result<(), Failed> {
         handover_pipe::Sent::Answered(Ok(handover_pipe::Outcome::InPlace)) => {
             eprintln!(
                 "Claude Switch: continuing in this session's tab (/clear, then the handover as the first message)."
-            )
+            );
+            return Ok(None);
         }
         handover_pipe::Sent::Answered(Ok(handover_pipe::Outcome::Shown)) => {
             return Err("The running Claude Switch did not confirm opening a Claude tab.".into());
@@ -231,7 +235,7 @@ fn run(options: Options) -> Result<(), Failed> {
             eprintln!("Claude Switch: started Claude Switch with the handover tab.{}", note(dropped.as_deref()));
         }
     }
-    Ok(())
+    Ok(dropped)
 }
 
 fn note(dropped: Option<&str>) -> String {
@@ -283,7 +287,7 @@ pub fn entry(args: impl Iterator<Item = String>) -> i32 {
             }
         },
         Ok(options) => match run(options) {
-            Ok(()) => 0,
+            Ok(_) => 0,
             Err(e) => {
                 eprintln!("claude-switch compact: {}", e.message);
                 1

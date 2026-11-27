@@ -222,16 +222,16 @@ impl AppState {
                 proxy.lock().map_err(|_| "Claude Switch is closing.")?.send(msg);
                 Ok(())
             };
-            // A background handover's failure: shown as a notice, nothing else.
-            if let Some(notice) = crate::compact_cli::decode_failure(&bytes) {
-                let result = notice.and_then(|text| post(Msg::HandoverFailed(text)).map(|()| Outcome::Shown));
+            // A background handover's failure or note: shown as a notice, nothing else.
+            if let Some(notice) = crate::compact_cli::decode_notice(&bytes) {
+                let result = notice.and_then(|n| post(Msg::HandoverNotice(n)).map(|()| Outcome::Shown));
                 return crate::handover_pipe::reply(&result);
             }
             let result =
                 match crate::compact_cli::decode_request(&bytes).and_then(|a| crate::compact_cli::load(&roots, a)) {
                     // Shown here as well, so every `failed:` answer is on screen (the caller may run
                     // in the background, with nobody reading its output).
-                    Err(e) => post(Msg::HandoverFailed(e.clone())).and(Err(e)),
+                    Err(e) => post(Msg::HandoverNotice(crate::compact_cli::Notice::Failed(e.clone()))).and(Err(e)),
                     Ok(request) => (|| {
                         let (tx, rx) = std::sync::mpsc::channel();
                         post(Msg::Handover(Box::new(request), tx))?;

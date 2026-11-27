@@ -499,9 +499,9 @@ decoded and revalidated by the window, which then continues in place when one of
 the session (see "Continuing in place"; with `--as`, only a tab of that account) and otherwise
 opens only an app-owned saved handover in a new tab. The answer is `continuing`, `opened` or the
 window's error, which the window also shows as an error notice (including a request it could not
-decode or load). A failure notice (`claude-switch-handover-failed-1`, then one line of at most
-1,500 bytes with no control characters) is shown as an error notice and brings the window to the
-front; it acts on nothing, and the answer is `shown`. A client that gets no answer (refused, busy,
+decode or load). A notice is a version line, `claude-switch-handover-failed-1` (shown as an error notice) or
+`claude-switch-handover-note-1` (an info notice), then one line of at most 1,500 bytes with no
+control characters; it brings the window to the front, acts on nothing, and the answer is `shown`. A client that gets no answer (refused, busy,
 closed or timed out) knows the window may have shown nothing. When no window listens, the CLI starts Claude Switch
 itself as the normal window (saved tabs, then the handover tab), which first offers the request
 to a window that started meanwhile. On Windows, that window is
@@ -541,8 +541,12 @@ options (a job cannot name a file, a working folder or another job), and runs `c
 Success shows as the tab or the continuation in place. A failure the window answered is already
 on screen; any other failure (the transcript, the summary, no answer from the window, the new
 window not confirming) goes to the running window as a failure notice, and when no window takes
-it, to a message box. A job file stays behind only if that process dies before reading it. The
-notice that a Settings default agent was dropped is not shown in this mode.
+it, to a message box. When the Settings default agent was dropped for a new tab, the same
+sentence the foreground prints (the agent was not found for that account, so the new chat starts
+as plain Claude) goes to the window as an info notice, or to an information message box. A job
+file stays behind only if that process dies before reading it; each Claude Switch window start
+(not `--demo`) removes, off the startup path, plain files in the temporary folder whose names match
+the job pattern exactly and that are more than a day old, and nothing else.
 
 Setup's optional **Add Claude Switch to PATH** task is checked by default. It appends the install
 folder to `HKCU\Environment\Path` without changing the existing value type or claiming an
