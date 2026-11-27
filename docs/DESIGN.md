@@ -1459,9 +1459,11 @@ visible, not hidden sessions, so groups stay stable. Each answer line gives a su
 subject (a topic-shaped label); invalid, repeated and out-of-range ids are dropped. They are kept
 in `meaning.json` beside `config.json` with an FNV-1a fingerprint of the exact payload: a session
 whose prompts did not change is not sent again, and the file is written after every request, so a
-cancelled or failed run keeps what was answered. A session with no readable prompt, or one the
-model did not answer, is kept as a marker (fingerprint and activity, no summary): it is not sent or
-counted again until its prompts change (an earlier real summary of it stays), and markers are
+cancelled or failed run keeps what was answered. A request whose answer gives nothing readable
+(prose, a refusal, cut-off output) fails the run and marks none of its sessions. A session with no
+readable prompt, or one the model left out while answering others, is kept as a marker
+(fingerprint, activity and model, no summary): it is not sent or counted again until its prompts
+change or, for a left-out one, another model is chosen (an earlier real summary of it stays), and markers are
 never searched, asked over, counted as kept summaries or used for subjects. A missing or damaged file is an empty cache;
 **Forget** removes it. While the setting is on, the list's search also matches a session when
 every meaningful word of the search (one may miss from three or more; stop words and simple
