@@ -1,0 +1,11 @@
+# The idle input at the start and after one turn.
+start
+snap start
+send Reply with just the word: pong
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1000 30000
+snap idle
+idle 5000 idle_later
