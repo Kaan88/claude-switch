@@ -118,5 +118,5 @@ fn a_desktop_session_opened_in_the_cli_asks_first_and_a_cli_one_does_not() {
     assert!(s.info.is_none());
     // Enter chooses the primary button: Cancel for closing, Continue for opening.
     assert!(!Pending::Quit.ok_is_primary() && !Pending::CloseTab(1).ok_is_primary());
-    assert!(Pending::Copy { id: cli.clone(), account: "main".into() }.ok_is_primary());
+    assert!(Pending::Copy { id: cli.clone(), account: "main".into(), delete: false }.ok_is_primary());
 }

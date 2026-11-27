@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and
+  its own folder (subagents, tool results) to the Recycle Bin and removes its Claude Switch marks and
+  summary. It is unavailable, with the reason, while the session runs, is open in a tab or is pinned,
+  and checks again when you press Delete. The desktop app's own record is left alone. **Open a copy,
+  then delete the original…** deletes the original once the copy is written, and the handover dialog
+  has **Delete the original session afterwards** (off by default). The Delete key still hides.
 - Handover: continues in place by default. When a Claude Switch tab runs the session (dialog,
   automatic handover, `compact --open` and `/switch-compact`), Switch sends `/clear` there, follows
   the tab to the new session and sends the handover as its first message, through the Chat view's

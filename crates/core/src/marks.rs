@@ -243,6 +243,16 @@ impl Marks {
         }
     }
 
+    /// Forgets session `id`: its own entry (name, topic, pin, hide, archive, seen time,
+    /// handover links) goes. Other sessions' entries are kept, even those that name it. True
+    /// when there was an entry.
+    pub fn forget(&mut self, id: &str) -> bool {
+        let Some(sessions) = self.data["sessions"].as_object_mut() else { return false };
+        let before = sessions.len();
+        sessions.retain(|key, _| !key.eq_ignore_ascii_case(id));
+        sessions.len() != before
+    }
+
     pub fn pinned(&self, id: &str) -> bool {
         self.data["sessions"][id]["pinned"] == true
     }
@@ -500,6 +510,35 @@ mod tests {
         two.hide("a", &file, true);
         two.save(&roots).expect("after a conflict the next change saves");
         assert!(Marks::load(&roots).unwrap().hidden("a"));
+    }
+
+    #[test]
+    fn forgetting_a_session_removes_only_its_own_entry_and_saves_over_another_windows_change() {
+        let t = TempDir::new("marks-forget");
+        let roots = t.roots();
+        let (gone, kept) = ("aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002");
+        let file = t.0.join("a.jsonl");
+        let mut m = Marks::default();
+        m.rename(gone, &file, "Gone");
+        m.pin(gone, &file, true);
+        m.set_topic(gone, &file, "Build");
+        m.set_handed_over_to(gone, kept);
+        m.set_parent(kept, gone);
+        m.rename(kept, &file, "Kept");
+        m.hide_folder("C:/w", true);
+        m.save(&roots).unwrap();
+        let mut other = Marks::load(&roots).unwrap();
+        assert!(m.forget(&gone.to_ascii_uppercase()), "ids compare without case");
+        assert!(!m.forget(gone), "nothing left to forget");
+        assert!(!m.pinned(gone) && m.name(gone).is_none() && m.topic(gone).is_none());
+        assert_eq!((m.name(kept), m.parent(kept)), (Some("Kept"), Some(gone)), "the other session's marks stay");
+        other.hide("cccccccc-0000-4000-8000-000000000003", &file, true);
+        other.save(&roots).unwrap();
+        m.save(&roots).expect("another window's change elsewhere merges");
+        let disk = Marks::load(&roots).unwrap();
+        assert!(disk.data["sessions"].get(gone).is_none());
+        assert!(disk.hidden("cccccccc-0000-4000-8000-000000000003") && disk.folder_hidden("C:/w"));
+        assert_eq!(disk.name(kept), Some("Kept"));
     }
 
     #[test]

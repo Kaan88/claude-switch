@@ -279,7 +279,7 @@ mod tests {
         app.tab_menu_chosen(now, tab, COPY_BASE + 1);
         assert!(matches!(
             app.dialog,
-            Some(Dialog::Confirm { then: Pending::Copy { id: ref got, ref account }, .. }) if got == &id && account == "work"
+            Some(Dialog::Confirm { then: Pending::Copy { id: ref got, ref account, .. }, .. }) if got == &id && account == "work"
         ));
         app.tab_menu_chosen(now, tab, COMPACT);
         assert!(matches!(app.dialog, Some(Dialog::Compact(_))));

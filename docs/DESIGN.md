@@ -922,7 +922,8 @@ pins, live sessions, embedded tabs, recent launch reservations and transcript mo
 times, then saves the marks as one update. An incomplete running scan refuses the operation.
 Archived rows are omitted from ordinary views but found in searches; the Archived here chip
 appears only while there are archived sessions in the index. Unarchiving preserves Hide marks.
-No archive operation relocates, deletes, or edits a transcript.
+No archive operation relocates, deletes, or edits a transcript (deleting is separate: see
+[Deleting a session](#deleting-a-session)).
 The session menu explains why a pinned or running row cannot be archived. Folder archive
 remains available because its preview can include other eligible rows.
 
@@ -932,6 +933,55 @@ the latest local handover filename if present, and the local stats reader for tu
 context/output tokens (`~` denotes an estimate). Unknown dates or statistics are shown as
 `—`. Rendering is pure; Save As warns about conversation text, writes a new file without
 replacing an existing destination, and offers to open it explicitly. No AI or network is used.
+
+## Deleting a session
+
+**Delete session…** in a session row's menu (right after Archive session…) moves the session to
+the Windows Recycle Bin; nothing is deleted permanently by Switch. It moves the one real
+transcript `<config dir>/projects/<encoded folder>/<session id>.jsonl` and, when present, the
+`<session id>/` folder beside it (subagents, tool results), which belong only to that session.
+The path is followed to the real file first, so a transcript reached from several accounts
+through the shared `projects` junction is moved once. The transcript must be a plain file named
+after the session inside a `projects/<folder>/` folder; a session folder that is itself a link is
+left in place (and said so), never followed. The transcript goes first: if it does not move,
+nothing does. A folder that then does not move is reported as a partial deletion with its path
+and reason, never silently. The desktop app's records (`claude-code-sessions/…/local_*.json`)
+are not touched; when the session has one, the confirmation says the desktop app may still list
+it. The move uses the shell (`SHFileOperationW`, `FOF_ALLOWUNDO`, no confirmation and no error
+UI, with `FOF_WANTNUKEWARNING`: where the drive has no Recycle Bin or the file is too large for
+it, the shell asks before deleting permanently, and declining keeps it). Switch checks that each
+path is gone afterwards.
+
+Afterwards the session's own entry in `marks.json` (name, topic, pin, hide, archive, seen time,
+handover links) is removed through the marks' merge, so another window's changes elsewhere are
+kept; other sessions' entries, including links that name it, are kept. Its summary in
+`meaning.json` is removed. (A summarizing run already going when the session is deleted can write
+its summary back; it names a session no longer listed and is never shown.)
+
+It is refused, with the item disabled and the reason as its hint (Running, Open in a tab,
+Pinned), while the session runs (a live pid in any account's `sessions/`, including the
+desktop app's), while a tab of this window shows it, or while it is pinned. The confirmation
+names the title, folder and "moved to the Recycle Bin"; **Delete** is not the default button
+(Enter and Escape cancel). Pressing it checks again: the window's own state, the saved pin (another
+window may have pinned it), then, under the launch reservation lock, the running sessions of every
+account and launches reserved a moment ago; an incomplete running check refuses. `--demo` deletes
+nothing and says so. The Delete key still toggles **Session hidden**.
+
+**Delete the original afterwards.** The row menu's **Open a copy, then delete the original…**
+(after Open a copy) opens a copy as the current account after one confirmation (which carries the
+cold-cache warning when it applies) and deletes the original once Claude Code has written the
+copy's transcript (a record of the copy's session id at its head; Claude Code writes it with the
+copy's first message). Until then the original is kept; if the copy's tab ends first, it is kept
+and a notice says why (a copy in an external terminal is waited for while the window runs). The check runs with the running poll. Plain **Open a copy** is unchanged and
+deletes nothing. The handover dialog's review step has a checkbox **Delete the original session
+afterwards** (Alt+D), off each time the dialog opens. It acts only after the handover fully
+succeeded: a new handover tab (or OpenCode tab) started, or, continuing in place, the first
+message taken and the tab following the new session; there it also refuses unless the tab follows a
+session other than the original. Every case uses the same checks, Recycle Bin path and mark
+cleanup as Delete session…; when a check fails then, the original is kept with a notice naming
+the reason (a handover opened in a new tab from the session's own tab therefore keeps it until that
+tab is closed and it is deleted by hand). `/switch-compact`, `compact --open` and automatic handover
+have no such option.
 
 ## Background notices and notification area
 

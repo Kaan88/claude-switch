@@ -130,6 +130,33 @@ pub fn with_archive_check<T>(
     Ok(commit(&busy))
 }
 
+/// Deleting a session: under the same lock as a launch reservation, the running sessions of
+/// every account are read again. `id` running anywhere, or reserved a moment ago, refuses;
+/// so does a running check that could not finish. Then `commit` runs, still under the lock, so
+/// no Claude Switch window can start the session in between.
+pub fn with_delete_check<T>(
+    roots: &Roots,
+    config: &Config,
+    id: &str,
+    commit: impl FnOnce() -> Result<T, Refusal>,
+) -> Result<T, Refusal> {
+    let path = history_file(roots);
+    let _lock = lock_beside(&path)?;
+    let (running, complete) = crate::running::scan_checked(roots, config);
+    if let Some(r) = crate::running::find(&running, id) {
+        return Err(Refusal::AlreadyRunning(r.clone()));
+    }
+    if !complete {
+        return Err(Refusal::Invalid(
+            "Could not verify that the session is closed in every account. Nothing was deleted.".into(),
+        ));
+    }
+    if read_entries(&path)?.iter().any(|(key, value)| key.eq_ignore_ascii_case(id) && recent(value) == Some(true)) {
+        return Err(Refusal::Invalid("This session was opened a moment ago. Nothing was deleted.".into()));
+    }
+    commit()
+}
+
 fn reserve_with(
     roots: &Roots,
     id: &str,

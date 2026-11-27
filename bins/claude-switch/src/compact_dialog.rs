@@ -34,6 +34,7 @@ const NEXT: u32 = 18;
 const AGENT: u32 = 19;
 pub(crate) const NAME_FIELD: u32 = 20;
 const OPENCODE: u32 = 21;
+pub(crate) const DELETE_ORIGINAL: u32 = 22;
 const OPTION: u32 = 100;
 const PAGE: usize = 7;
 
@@ -114,6 +115,8 @@ pub struct Compact {
     job: Option<Work>,
     saving: Option<mpsc::Receiver<Result<Option<()>, String>>>,
     message: Option<(String, bool)>,
+    /// "Delete the original session afterwards": off each time the dialog opens.
+    pub(crate) delete_original: bool,
 }
 
 impl Drop for Compact {
@@ -359,6 +362,7 @@ impl Compact {
             job: None,
             saving: None,
             message: None,
+            delete_original: false,
         };
         this.reset_agents();
         this.check_in_place(st);
@@ -533,7 +537,8 @@ impl Compact {
             names::validate(self.new_name.text())?.to_owned()
         };
         let Source::Real(roots) = &st.source else {
-            st.toast(format!("Demo: would open “{name}”"), now);
+            let deleted = if self.delete_original { "; the original would be deleted (nothing was)" } else { "" };
+            st.toast(format!("Demo: would open “{name}”{deleted}"), now);
             return Ok(());
         };
         compact_open::validate_prompt(&self.preview.text)?;
@@ -543,7 +548,12 @@ impl Compact {
             self.saved = Some(saved.clone());
             let names = (self.name.clone(), name);
             let text = self.preview.text.clone();
-            return st.continue_in_place(tab, &self.session.clone(), names, &text, (saved, basis));
+            st.continue_in_place(tab, &self.session.clone(), names, &text, (saved, basis))?;
+            // Deleted once the tab has followed Claude Code to the new session (`in_place_done`).
+            if let Some(job) = st.tabs.get_mut(tab).and_then(|t| t.in_place.as_mut()) {
+                job.delete_original = self.delete_original;
+            }
+            return Ok(());
         }
         let request = compact_open::prepare(
             roots,
@@ -556,7 +566,17 @@ impl Compact {
         )?
         .with_agent(self.agent_name())?;
         self.saved = Some(saved);
-        st.open_handover_tab(request)
+        st.open_handover_tab(request)?;
+        self.delete_original_now(st, now);
+        Ok(())
+    }
+
+    /// After a handover that started a new session: the original, if the box was ticked.
+    fn delete_original_now(&self, st: &mut AppState, now: Instant) {
+        if self.delete_original {
+            let result = st.delete_session(&self.session.id);
+            st.report_delete(now, &self.name, result, Some("The handover session started."));
+        }
     }
 
     /// The handover as the first prompt of a new OpenCode tab in the session's folder, kept as
@@ -571,7 +591,9 @@ impl Compact {
             }
             Source::Demo => PathBuf::from("demo-handover.md"),
         };
-        st.continue_in_opencode(&self.session, &self.preview.text, &saved).map(drop)
+        st.continue_in_opencode(&self.session, &self.preview.text, &saved)?;
+        self.delete_original_now(st, Instant::now());
+        Ok(())
     }
 
     /// The new session name takes the mouse only where a click would focus it.
@@ -619,6 +641,9 @@ impl Compact {
                 self.message = Some(("Handover copied.".into(), false));
             }
             SAVE if self.phase == Phase::Preview => self.export(st),
+            DELETE_ORIGINAL if self.phase == Phase::Preview && self.choice.is_none() => {
+                self.delete_original = !self.delete_original;
+            }
             REFRESH if self.phase == Phase::Setup => self.load(st, true),
             MODEL if self.phase == Phase::Setup && self.job.is_none() => self.pick(Choice::Model, st),
             ACCOUNT if matches!(self.phase, Phase::Setup | Phase::Preview) && self.job.is_none() => {
@@ -676,6 +701,8 @@ impl Compact {
             }
         } else if self.phase == Phase::Preview && matches!(k, KeyName::Char('a' | 'A')) && mods.alt && !mods.ctrl {
             return Some(AGENT);
+        } else if self.phase == Phase::Preview && matches!(k, KeyName::Char('d' | 'D')) && mods.alt && !mods.ctrl {
+            return Some(DELETE_ORIGINAL);
         } else if self.phase == Phase::Preview && *k == KeyName::Tab && !mods.ctrl && !mods.alt {
             self.name_focused = !self.name_focused;
             if self.name_focused {
