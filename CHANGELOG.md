@@ -7,6 +7,11 @@
   view's divider, a terminal selection, a scrollbar thumb or the Markdown panel's divider in the
   session view, the palette's field and the colour picker in Settings kept following the pointer
   after coming back, with no button held. Each now ends where it was dragged to.
+- Chat: the answer field of a question or permission card ("Type something…", "Tell Claude what
+  to do instead…") takes the mouse as the other text boxes do: a click puts the caret where it
+  lands (in the box's padding too), a drag, a double or triple click or Shift+click selects, the
+  right button opens Cut, Copy, Paste and Select all, and the pointer is an I-beam over it. A
+  click only gave it the keyboard before, with the caret left where it was.
 
 ## 0.1.4 (2026-11-27)
 

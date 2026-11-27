@@ -25,7 +25,7 @@ use claude_switch_core::transcript::{ItemId, ItemKind, Question, ToolCard, ToolS
 use mdshared_term::Screen;
 use mdshared_ui::gfx::{Face, Painter, Rect, Rgb};
 use mdshared_ui::keys::{KeyName, Mods};
-use mdshared_ui::textfield::{FieldColors, TextField};
+use mdshared_ui::textfield::{FieldColors, FieldHit, TextField};
 use mdshared_ui::theme::Palette;
 
 use super::{Chat, Control, Drawer};
@@ -415,6 +415,8 @@ pub(super) struct Shown {
 #[derive(Default)]
 pub(super) struct Card {
     pub(super) field: TextField,
+    /// The field's text rectangle as last drawn, for the pointer.
+    hit: Option<FieldHit>,
     pub(super) focus: bool,
     step: Option<Step>,
     error: Option<&'static str>,
@@ -519,6 +521,16 @@ impl Card {
     /// The card has room in the conversation.
     pub(super) fn visible(&self) -> bool {
         self.rect.h > 0.0
+    }
+
+    /// The answer field and where it was last drawn, for the pointer.
+    pub(super) fn field_parts(&mut self) -> (&mut TextField, Option<FieldHit>) {
+        (&mut self.field, self.hit)
+    }
+
+    /// The answer field's text changed through its menu: what an edit by a key does next.
+    pub(super) fn field_edited(&mut self) {
+        self.error = None;
     }
 
     pub(super) fn deadline(&self) -> Option<Instant> {
@@ -1991,6 +2003,7 @@ impl Draw<'_> {
                 focus,
                 focus,
             );
+            chat.question.hit = crate::fieldmouse::hit(p, field.inset(6.0), 12.0);
             hits.push((field, Target::Chat(Control::Question(Hit::Field))));
             let answer = Rect::new(field.right() + 8.0, row.y, 104.0, row.h);
             let target = Target::Chat(Control::Question(Hit::Answer));
@@ -2162,6 +2175,7 @@ impl Draw<'_> {
             let colors =
                 FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
             chat.question.field.draw(p, field.inset(6.0), Face::Ui, 12.0, &colors, "Type something…", focus, focus);
+            chat.question.hit = crate::fieldmouse::hit(p, field.inset(6.0), 12.0);
             hits.push((field, Target::Chat(Control::Question(Hit::Field))));
             let mut x = field.right() + 8.0;
             if page > 0 {
@@ -2251,6 +2265,7 @@ impl Draw<'_> {
                 FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
             let placeholder = if approval { "Tell Claude what to do instead…" } else { "Type something…" };
             chat.question.field.draw(p, field.inset(6.0), Face::Ui, 12.0, &colors, placeholder, focus, focus);
+            chat.question.hit = crate::fieldmouse::hit(p, field.inset(6.0), 12.0);
             hits.push((field, Target::Chat(Control::Question(Hit::Field))));
             let x = field.right() + 8.0;
             if approval {

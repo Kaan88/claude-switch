@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use mdshared_ui::host::{Cx, KeyPress};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::platform;
+use mdshared_ui::textfield::{FieldHit, TextField};
 
 use super::{Chat, Chip, Drawer, Side, clipboard, submission};
 use crate::state::{AppState, Msg, Target};
@@ -323,6 +324,31 @@ impl AppState {
         true
     }
 
+    /// Whether `target` is the answer field of the question or permission card.
+    pub(crate) fn is_question_field(target: Target) -> bool {
+        target == Target::Chat(Control::Question(super::question::Hit::Field))
+    }
+
+    /// The card's answer field and where it was last drawn, while the card is shown.
+    pub(crate) fn question_field_parts(&mut self) -> Option<(&mut TextField, Option<FieldHit>)> {
+        let chat = &mut self.tabs.shown_mut()?.pane.as_mut()?.chat;
+        (chat.enabled && chat.question.visible()).then(|| chat.question.field_parts())
+    }
+
+    /// Gives the answer field the keyboard, as a click on it does.
+    pub(crate) fn focus_question_field(&mut self) {
+        if let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) {
+            pane.chat.question.focus = true;
+        }
+    }
+
+    /// The answer field's text changed through its menu.
+    pub(crate) fn question_field_edited(&mut self) {
+        if let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) {
+            pane.chat.question.field_edited();
+        }
+    }
+
     pub fn note_chat_terminal_input(&mut self) {
         if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
             pane.note_terminal_input();
@@ -374,6 +400,11 @@ impl AppState {
                 true
             }
             Some(Target::Chat(Control::CommandBackground)) => true,
+            // The answer field places its caret and selects as the app's other fields do.
+            Some(t) if Self::is_question_field(t) => {
+                self.field_press(x, y, cx.mods(), cx.now());
+                true
+            }
             Some(Target::Chat(_)) => {
                 self.pressed = target;
                 true

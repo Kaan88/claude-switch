@@ -259,6 +259,60 @@ fn text_for_the_composer_is_kept_until_it_lands_there() {
 }
 
 #[test]
+fn the_answer_field_takes_clicks_drags_shift_clicks_and_its_edit_menu() {
+    use crate::fieldmouse::FieldId;
+    let mut f = Fixture::tool("cargo test --workspace");
+    let now = Instant::now();
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    f.chat().question.rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+    f.chat().question.field.set_text("alpha beta gamma");
+    // As the card draws it: the box is the target, its text rectangle 6 px inside.
+    let frame = Rect::new(100.0, 200.0, 260.0, 26.0);
+    let area = frame.inset(6.0);
+    f.chat().question.hit = Some(FieldHit { area, face: Face::Ui, size: 12.0, scale: 1.0 });
+    f.app.hits = vec![(frame, Target::Chat(Control::Question(Hit::Field)))];
+    let plain = Mods::default();
+    assert!(f.app.over_field(frame.x + 2.0, frame.cy()), "the I-beam, padding included");
+
+    // A press in the left padding puts the caret at the start and gives the field the keyboard.
+    assert!(f.app.field_press(frame.x + 2.0, frame.cy(), plain, now));
+    assert!(f.chat().question.focus);
+    assert_eq!(f.chat().question.field.caret(), (0, 0));
+    assert_eq!(f.app.field_drag(area.right() - 1.0, area.cy(), now), Some(true), "a drag selects");
+    assert!(f.app.field_release(area.right() - 1.0, area.cy(), now));
+    assert_eq!(f.chat().question.field.selected_text(), "alpha beta gamma");
+    assert_eq!(f.app.field_drag(area.x, area.cy(), now), None, "no drag after the release");
+
+    // Shift+click extends from where the last click put the anchor.
+    let later = now + Duration::from_secs(5);
+    f.app.field_press(area.x, area.cy(), plain, later);
+    f.app.field_release(area.x, area.cy(), later);
+    let shift = Mods { shift: true, ..plain };
+    f.app.field_press(area.right() - 1.0, area.cy(), shift, later + Duration::from_secs(5));
+    assert_eq!(f.chat().question.field.selected_text(), "alpha beta gamma");
+
+    // The right button opens the field's own menu; Select all works through it.
+    f.app.field_release(0.0, 0.0, later);
+    f.chat().question.field.set_text("one two");
+    assert!(f.app.field_menu(area.x + 2.0, area.cy(), later));
+    assert!(matches!(f.app.menu, Some((crate::state::MenuKind::Field(FieldId::Question), _))));
+    f.app.menu = None;
+    f.app.field_menu_chosen(FieldId::Question, 3);
+    assert_eq!(f.chat().question.field.selected_text(), "one two");
+    // A menu edit counts as typing: the card's last error goes, as a key's edit clears it.
+    f.chat().question.error = Some(UNANSWERED);
+    f.app.question_field_edited();
+    assert_eq!(f.chat().question.error, None);
+
+    // The card going away under a drag ends it.
+    f.app.field_press(area.x, area.cy(), plain, later + Duration::from_secs(9));
+    f.chat().question.rect = Rect::default();
+    assert_eq!(f.app.field_drag(area.right() - 1.0, area.cy(), later), Some(false));
+    assert_eq!(f.app.field_drag(area.right() - 1.0, area.cy(), later), None);
+}
+
+#[test]
 fn a_card_that_goes_away_gives_the_keyboard_back() {
     let mut f = Fixture::tool("cargo test --workspace");
     let now = Instant::now();

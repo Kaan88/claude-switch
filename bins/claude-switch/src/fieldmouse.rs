@@ -1,6 +1,7 @@
 //! Mouse selection and the right-click menu for the app's single-line text fields: the session
 //! search box, the name dialogs (account, tab, handover agent, the handover's new session name),
-//! the new-session folder box and the quick switcher's and rename dialog's boxes.
+//! the new-session folder box, the quick switcher's and rename dialog's boxes and the answer field
+//! of Chat's question and permission cards.
 //!
 //! The toolkit's `textfield::Pointer` does the hit testing, the double click (a word), triple
 //! click (everything), Shift+click and drag, with horizontal edge scrolling. This module finds the
@@ -36,6 +37,8 @@ pub enum FieldId {
     SessionTopic,
     /// The handover dialog's new session name.
     CompactName,
+    /// The answer field of Chat's question or permission card.
+    Question,
     /// A text row of the Settings form, by its setting id.
     Settings(u32),
 }
@@ -172,6 +175,7 @@ impl AppState {
             {
                 Some(FieldId::CompactName)
             }
+            (None, target) if Self::is_question_field(target) => Some(FieldId::Question),
             _ => None,
         }
     }
@@ -192,6 +196,7 @@ impl AppState {
                 let (field, hit) = compact.name_parts();
                 Some(f(field, hit))
             }
+            (FieldId::Question, None) => self.question_field_parts().map(|(field, hit)| f(field, hit)),
             _ => None,
         }
     }
@@ -205,6 +210,7 @@ impl AppState {
                 panel.focus_topic(id == FieldId::SessionTopic);
             }
             (FieldId::CompactName, Some(Dialog::Compact(compact))) => compact.focus_name(),
+            (FieldId::Question, None) => self.focus_question_field(),
             _ => {} // The Settings form focuses its own rows.
         }
     }
@@ -222,6 +228,7 @@ impl AppState {
                 }
                 self.dialog = Some(dialog);
             }
+            FieldId::Question => self.question_field_edited(),
             FieldId::Name | FieldId::CompactName | FieldId::Settings(_) => {}
         }
     }
