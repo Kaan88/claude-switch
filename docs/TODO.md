@@ -600,6 +600,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     that leaves a prompt out stops instead of taking an earlier prompt worded alike.
     A key held back (a dialog over the window) no longer waits forever: the step's deadline still holds, and a second
     Esc that cannot go within about 0.75 s of the first stops the rewind rather than going late.
+    "Rewind to here…" is offered only on prompts the list shows (not on slash commands such as `/context`, which
+    Claude Code 2.1.332 leaves out of it). A rewind that stops with its list on screen closes it with one checked Esc
+    and says so, or says the rewind screen is still open (its choices are on screen, or no key could go). A question,
+    permission prompt or CLI menu takes the card from a stopped rewind, whose notice comes back afterwards.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).

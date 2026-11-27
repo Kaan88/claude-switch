@@ -948,11 +948,11 @@ impl Chat {
         });
         let answerable = answerable.map(|p| p.item.offset);
         // Any other menu the screen shows, unless a question or prompt card already covers it.
-        // A Stop agent or a rewind drives the CLI's list itself.
+        // A Stop agent or a rewind drives the CLI's list itself (a stopped rewind no longer does).
         let menu = (!self.menus_off
             && shown.is_none()
             && self.question.agent_step.is_none()
-            && self.question.rewind.is_none()
+            && self.question.rewind.as_ref().is_none_or(rewind::Rewind::failed)
             && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
         .then(|| menu_shown(screen))
         .flatten();
@@ -997,6 +997,15 @@ fn ready(tab: &Tab) -> bool {
         && (pane.chat.demo || tab.term.running())
 }
 
+/// The rewind's card is the one shown: while it runs or offers its choices, and once it stopped
+/// only while no question, permission prompt or CLI menu needs the card (they come first).
+fn rewind_shown(card: &Card, model: &Model) -> bool {
+    let other = card.shown.is_some()
+        || card.menu.is_some()
+        || matches!(pending(model).map(|p| p.kind), Some(Kind::Question(_)));
+    card.rewind.as_ref().is_some_and(|r| !r.failed() || !other)
+}
+
 /// A click in the card. Writes nothing unless the screen shows the same prompt.
 pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     let pane = tab.pane.as_mut().expect("Chat pane");
@@ -1011,7 +1020,7 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             chat.open_drawer();
             return true;
         }
-        Hit::Option(_) | Hit::Escape | Hit::Close if chat.question.rewind.is_some() => {
+        Hit::Option(_) | Hit::Escape | Hit::Close if rewind_shown(&chat.question, &pane.model) => {
             return rewind::press(tab, now, hit);
         }
         _ if chat.question.step.is_some() => return false,
@@ -1584,7 +1593,7 @@ fn tool_title(kind: &ItemKind) -> String {
 /// prompt waits.
 pub(super) fn place(chat: &mut Chat, model: &Model) {
     let wanted = match pending(model).map(|p| p.kind) {
-        _ if chat.question.rewind.is_some() => chat.question.rewind.as_ref().map(rewind::height),
+        _ if rewind_shown(&chat.question, model) => chat.question.rewind.as_ref().map(rewind::height),
         Some(Kind::Question(questions)) => {
             // A form keeps one height for all its questions.
             let options = questions.into_iter().flatten().map(|q| q.options.len()).max().unwrap_or(0);
@@ -1638,7 +1647,7 @@ impl Draw<'_> {
         p.frame(r, 8.0, pal.popup, pal.popup_line);
         let inner = r.inset(PAD);
         match pending(model).map(|p| p.kind) {
-            _ if chat.question.rewind.is_some() => self.rewind(p, chat, inner, hits),
+            _ if rewind_shown(&chat.question, model) => self.rewind(p, chat, inner, hits),
             Some(Kind::Question(questions)) => self.question(p, chat, inner, questions, hits),
             Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
             _ if chat.question.menu.is_some() => self.menu(p, chat, inner, hits),
@@ -1646,7 +1655,7 @@ impl Draw<'_> {
         }
         // Esc leaves a menu or declines what the card shows, under the same checks as a choice.
         let escape = match pending(model).map(|p| p.kind) {
-            _ if chat.question.step.is_some() || chat.question.rewind.is_some() => false,
+            _ if chat.question.step.is_some() || rewind_shown(&chat.question, model) => false,
             Some(Kind::Question(_)) => chat.question.answerable.is_some(),
             Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
             // A panel offers Close in its own footer instead.

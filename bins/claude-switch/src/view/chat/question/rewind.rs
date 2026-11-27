@@ -25,7 +25,11 @@ const ESC_LATEST: Duration = Duration::from_millis(600);
 
 pub(super) const NOT_IDLE: &str =
     "Claude Code is not at an idle, empty prompt, so nothing was sent. Rewind once the turn has ended.";
-pub(super) const NOT_PROMPT: &str = "Only a prompt you typed can be rewound to.";
+pub(super) const NOT_PROMPT: &str =
+    "Only a prompt you typed can be rewound to: Claude Code's rewind list does not show slash commands.";
+/// After a stop with the rewind list on screen, one Esc (screen-checked) closes it again.
+pub(super) const CLOSED: &str = "Chat closed the terminal's rewind list again.";
+pub(super) const LEFT_OPEN: &str = "The terminal's rewind screen is still open: press Esc there to leave it.";
 pub(super) const NOT_OPENED: &str =
     "The terminal did not open its rewind list, so nothing more was sent. Check the terminal.";
 pub(super) const NOT_LISTED: &str =
@@ -62,6 +66,8 @@ enum Stage {
     Confirming,
     /// Esc went from the choices (`true`: the list must show) or from the list (the prompt).
     Cancelling(bool),
+    /// It stopped with the list on screen, and Esc went to close it: the input must be back.
+    Leaving,
     /// Stopped; the card says why until it is closed.
     Failed,
 }
@@ -78,6 +84,8 @@ pub(super) struct Rewind {
     /// The choices as last read, for the card.
     pub(super) actions: Option<RewindActions>,
     pub(super) error: Option<&'static str>,
+    /// Once stopped: whether the rewind screen was closed again or is still open.
+    pub(super) note: Option<&'static str>,
     pub(super) due: Option<Instant>,
     epoch: u64,
 }
@@ -128,7 +136,8 @@ pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
         return;
     }
     let items = &pane.model.items;
-    let prompt = items.get(&item).and_then(crate::view::chat::recall::prompt_text).map(str::to_owned);
+    let prompt =
+        items.get(&item).and_then(crate::view::chat::recall::prompt_text).filter(|p| listed(p)).map(str::to_owned);
     let later: Vec<String> = items
         .range(ItemId { offset: item.offset.saturating_add(1), block: 0 }..)
         .filter_map(|(_, item)| crate::view::chat::recall::prompt_text(item))
@@ -142,6 +151,7 @@ pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
         stage: Stage::Failed,
         actions: None,
         error: None,
+        note: None,
         due: None,
         epoch,
     };
@@ -170,6 +180,8 @@ enum Next {
     /// The choices show; the card offers them.
     Choose(RewindActions),
     Done,
+    /// The list it stopped on is closed again.
+    Closed,
     Fail(&'static str),
 }
 
@@ -219,6 +231,7 @@ fn look(tab: &Tab, now: Instant, rewind: &Rewind) -> Next {
             None => Next::Wait,
         },
         Stage::Cancelling(false) if back() => Next::Done,
+        Stage::Leaving if back() => Next::Closed,
         _ => Next::Wait,
     }
 }
@@ -312,7 +325,17 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             }
             return true;
         }
+        Next::Closed => {
+            rewind.stage = Stage::Failed;
+            rewind.note = Some(CLOSED);
+            rewind.due = None;
+        }
         Next::Fail(why) => fail(&mut rewind, why),
+        Next::Wait if deadline && rewind.stage == Stage::Leaving => {
+            rewind.stage = Stage::Failed;
+            rewind.note = Some(LEFT_OPEN);
+            rewind.due = None;
+        }
         Next::Wait if deadline => {
             let why = match rewind.stage {
                 _ if held => HELD_BACK,
@@ -327,12 +350,34 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         }
         Next::Wait => return false,
     }
+    if rewind.failed() && rewind.note.is_none() {
+        leave(tab, &mut rewind, may_write, now);
+    }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
-    if rewind.failed() && chat.drawer == Drawer::Closed {
+    if (rewind.failed() || rewind.stage == Stage::Leaving) && chat.drawer == Drawer::Closed {
         chat.drawer = Drawer::Manual;
     }
     chat.question.rewind = Some(rewind);
     true
+}
+
+/// A rewind that just stopped: with the list on screen, one Esc to close it (checked on the next
+/// screen, `Stage::Leaving`); with the choices on screen, or no key allowed now, the card says
+/// that the rewind screen is still open.
+fn leave(tab: &mut Tab, rewind: &mut Rewind, may_write: bool, now: Instant) {
+    let screen = &tab.term.screen;
+    let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
+    if screens::rewind_list(screen).is_some() {
+        if may_write && ready(tab) && write(tab, ESC).is_ok() {
+            rewind.stage = Stage::Leaving;
+            rewind.due = Some(now + STEP);
+            rewind.epoch = epoch;
+            return;
+        }
+        rewind.note = Some(LEFT_OPEN);
+    } else if screens::rewind_actions(screen).is_some() {
+        rewind.note = Some(LEFT_OPEN);
+    }
 }
 
 fn fail(rewind: &mut Rewind, why: &'static str) {
@@ -384,10 +429,13 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             rewind.epoch = epoch;
             rewind.error = None;
         }
-        Err(why) => fail(&mut rewind, why),
+        Err(why) => {
+            fail(&mut rewind, why);
+            leave(tab, &mut rewind, true, now);
+        }
     }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
-    if rewind.failed() && chat.drawer == Drawer::Closed {
+    if (rewind.failed() || rewind.stage == Stage::Leaving) && chat.drawer == Drawer::Closed {
         chat.drawer = Drawer::Manual;
     }
     chat.question.rewind = Some(rewind);
@@ -399,7 +447,8 @@ pub(super) fn height(rewind: &Rewind) -> f32 {
     let actions = rewind.actions.as_ref().filter(|_| rewind.choosing());
     let rows = actions.map_or(0, |a| a.body.len().min(BODY_LINES + 2));
     let choices = actions.map_or(0, |a| a.choices.len());
-    HEADER + LINE + 6.0 + rows as f32 * LINE + choices as f32 * (CHOICE + 4.0)
+    let note = if rewind.note.is_some() { LINE } else { 0.0 };
+    HEADER + LINE + 6.0 + rows as f32 * LINE + choices as f32 * (CHOICE + 4.0) + note
 }
 
 impl Draw<'_> {
@@ -427,6 +476,10 @@ impl Draw<'_> {
                 hits.push((row, target));
                 y += CHOICE + 4.0;
             }
+        }
+        if let Some(note) = rewind.note {
+            p.text(Face::Ui, 11.5, inner.x, y + LINE / 2.0, note, pal.muted, inner.w);
+            y += LINE;
         }
         let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
         let status = rewind.error.or_else(|| rewind.in_flight().then_some(WAITING)).unwrap_or("");
@@ -460,6 +513,7 @@ impl Rewind {
             stage: Stage::Entering,
             actions: None,
             error: None,
+            note: None,
             due: None,
             epoch: u64::MAX,
         }
