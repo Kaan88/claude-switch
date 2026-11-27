@@ -235,3 +235,15 @@ fn a_panel_is_read_from_its_own_top() {
     let rows = panel(&screen).expect("a panel").rows;
     assert_eq!((rows.len(), rows[0].as_str()), (14, "row 6"));
 }
+
+#[test]
+fn a_status_line_that_reads_like_a_menu_hint_under_the_idle_input_is_not_a_menu() {
+    let mut screen = recorded(IDLE_NBSP);
+    // The idle screen's last row replaced by a custom status line with a footer-like hint.
+    screen.feed("\x1b[39;1H\x1b[2K  ⏸ manual mode on · ctrl+g to edit in Notepad\x1b[36;3H".as_bytes());
+    assert!(!crate::view::chat::submission::screen::menu(&screen));
+    assert!(crate::view::chat::submission::screen::clean_prompt(&screen));
+    assert!(panel(&screen).is_none() && !permission_like(&screen));
+    // A real menu with the same hint still counts.
+    assert!(crate::view::chat::submission::screen::menu(&recorded(PLAN)));
+}

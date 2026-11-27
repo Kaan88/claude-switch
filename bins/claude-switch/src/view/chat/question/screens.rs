@@ -104,11 +104,28 @@ fn solid_rule(text: &str) -> bool {
 /// cleaned rows; the last row is found on the screen itself, where an empty input (`❯`) counts.
 fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
     let last = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty())?;
-    if menu_footer(&rows[last]) {
-        return Some(last);
-    }
-    let prev = last.checked_sub(1)?;
-    (menu_footer(&rows[prev]) && rows[prev].ends_with('·')).then_some(prev)
+    let footer = if menu_footer(&rows[last]) {
+        last
+    } else {
+        let prev = last.checked_sub(1)?;
+        (menu_footer(&rows[prev]) && rows[prev].ends_with('·')).then_some(prev)?
+    };
+    (!input_box_above(screen, footer)).then_some(footer)
+}
+
+/// The CLI's input box (a `❯` row right under a solid rule, closed by another rule) sits just above
+/// `row`: `row` is then a status line under the idle input (a custom status line or a tip that
+/// happens to read like a menu hint), not a menu's footer.
+pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> bool {
+    let text = |r: usize| screen.row_text(r).trim().to_owned();
+    let Some(bottom) = (row.saturating_sub(8)..row).rev().find(|&r| solid_rule(&text(r))) else {
+        return false;
+    };
+    let Some(top) = (bottom.saturating_sub(12)..bottom).rev().find(|&r| solid_rule(&text(r))) else {
+        return false;
+    };
+    let first = text(top + 1);
+    first.starts_with('❯') && numbered(first.trim_start_matches('❯').trim()).is_none()
 }
 
 pub(super) fn numbered(text: &str) -> Option<(usize, &str)> {
