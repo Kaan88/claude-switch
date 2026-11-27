@@ -110,6 +110,9 @@ pub struct Ui {
     panel_area: Option<Rect>,
     /// The panel's width or reading width changed here, for the host to keep.
     panel_changed: bool,
+    /// The left edge and width of the conversation's text in the last frame (Chat's reading
+    /// column), which the lines above and below the conversation follow.
+    column: (f32, f32),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -160,8 +163,29 @@ impl Ui {
         }
     }
 
+    /// The left edge and width of the conversation's text between `x` and `x + width`: in Chat,
+    /// the reading column beside the docked panel; elsewhere the whole width.
+    fn text_column(&self, x: f32, width: f32) -> (f32, f32) {
+        if !self.chat {
+            return (x, width);
+        }
+        let row = Rect::new(x, 0.0, width, 1.0);
+        let content = if self.markdown.is_some() { self.panel.split(row).0 } else { row };
+        if content.w <= GUTTER {
+            return (x, width);
+        }
+        let column = self.chat_reading.place(Rect::new(content.x, 0.0, content.w - GUTTER, 1.0));
+        (column.x, column.w)
+    }
+
+    /// Where the last frame put the conversation's text: `(left, width)`.
+    pub(super) fn column(&self) -> (f32, f32) {
+        self.column
+    }
+
     pub(super) fn footer_height(&self, width: f32, main: bool) -> f32 {
-        if self.page == Page::Conversation && main && self.working.is_some() && width - 2.0 * PAD < 440.0 {
+        let width = if self.chat && self.column.1 > 0.0 { self.column.1 } else { width - 2.0 * PAD };
+        if self.page == Page::Conversation && main && self.working.is_some() && width < 440.0 {
             49.0
         } else if self.chat {
             25.0
@@ -241,6 +265,9 @@ impl Ui {
             return;
         }
         let mut top = if self.chat { area.y + 7.0 } else { tabs_y + 38.0 };
+        // Lines above and below the conversation start where its text does.
+        self.column = self.text_column(x, width);
+        let (cx, cw) = self.column;
         if self.page == Page::Conversation
             && let Some(agent) = &m.agent
         {
@@ -251,7 +278,7 @@ impl Ui {
             top += 34.0;
         }
         if let Some(error) = &m.error {
-            p.text(Face::Ui, 12.0, x, top + 10.0, error, pal.warn, width);
+            p.text(Face::Ui, 12.0, cx, top + 10.0, error, pal.warn, cw);
             top += 24.0;
         }
         // The track must retain its length when paging or dragging toggles follow.
@@ -261,7 +288,7 @@ impl Ui {
         let footer = area.bottom() - self.footer_height(area.w, m.agent.is_none()) - shell_h;
         if self.page == Page::Conversation && m.has_earlier && !(self.markdown.is_some() && width < 640.0) {
             let h = if self.chat { 21.0 } else { 26.0 };
-            self.button(p, pal, Rect::new(x, top, 106.0, h), "Load earlier", Action::Earlier, false);
+            self.button(p, pal, Rect::new(cx, top, 106.0, h), "Load earlier", Action::Earlier, false);
             top += h + 6.0;
         }
         let full = Rect::new(x, top, width, (footer - top).max(0.0));
@@ -317,7 +344,7 @@ impl Ui {
             self.conversation_footer(
                 p,
                 pal,
-                Rect::new(x, footer, width, area.bottom() - footer - shell_h),
+                Rect::new(cx, footer, cw, area.bottom() - footer - shell_h),
                 visible,
                 m.agent.is_none(),
             );

@@ -540,6 +540,62 @@ mod tests {
     }
 
     #[test]
+    fn the_working_line_and_the_error_line_start_at_the_reading_column() {
+        let demo = crate::demo::Transcript::new().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let mut model = Model::new(source, demo.cwd().into(), || {});
+        model.error = Some("The transcript could not be read.".into());
+        let pal = mdshared_ui::theme::DARK;
+        let mut gfx = Gfx::new();
+        // The leftmost and rightmost drawn pixel in rows `y0..y1`.
+        let ink = |bitmap: &Bitmap, y0: f32, y1: f32, width: f32| {
+            let mut span = (f32::MAX, 0.0_f32);
+            for y in y0 as u32..y1 as u32 {
+                for x in 0..width as u32 {
+                    let i = (y * bitmap.width + x) as usize * 4;
+                    if [bitmap.pixels[i + 2], bitmap.pixels[i + 1], bitmap.pixels[i]] != pal.page {
+                        span = (span.0.min(x as f32), span.1.max(x as f32));
+                    }
+                }
+            }
+            span
+        };
+        for width in [520.0, 900.0, 1400.0] {
+            for reading in Reading::ALL {
+                let mut bitmap = Bitmap::new(1400, 400);
+                let mut ui = Ui::default();
+                ui.set_chat(true);
+                ui.set_chat_reading(reading);
+                ui.set_working(Some(Footer {
+                    label: "✶ Sprouting… (40s · ↓ 3.2k tokens)".into(),
+                    stop: Some(Turn(1, 2)),
+                }));
+                let area = Rect::new(0.0, 0.0, width, 400.0);
+                let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+                ui.draw(&mut p, &pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+                let body = ui.body;
+                assert_eq!(ui.column(), (body.x, body.w), "{width} {reading:?}");
+                let footer = area.bottom() - ui.footer_height(width, true);
+                let (left, right) = ink(&bitmap, footer + 3.0, area.bottom(), width);
+                assert!(
+                    left >= body.x && left <= body.x + 8.0,
+                    "{width} {reading:?}: the working line starts at {left}, the text at {}",
+                    body.x
+                );
+                assert!(
+                    right <= body.right() + 1.0,
+                    "{width} {reading:?}: the footer ends at {right}, the column at {}",
+                    body.right()
+                );
+                let stop = ui.hits.iter().find_map(|(r, a)| matches!(a, Action::Stop(_)).then_some(*r)).unwrap();
+                assert!(stop.x > left && stop.right() <= body.right() + 1.0);
+                let (left, _) = ink(&bitmap, 9.0, 24.0, width);
+                assert!(left >= body.x && left <= body.x + 4.0, "{width} {reading:?}: the error at {left}");
+            }
+        }
+    }
+
+    #[test]
     fn conversation_scrollbar_pages_drags_resumes_follow_and_releases_outside() {
         let demo = crate::demo::Transcript::new().unwrap();
         let source = crate::view::model::Source::File(demo.path().into());

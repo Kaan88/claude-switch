@@ -146,10 +146,12 @@ impl AppState {
                 self.hits.push((r, target));
             }
         } else if chat.reason == Some(Reason::Tool) && !chat.question.visible() && l.conversation.h > 25.0 {
+            // In the conversation's reading column, like the working line under it.
+            let (x, w) = pane.ui.column();
             let row = Rect::new(
-                l.conversation.x + 12.0,
+                x,
                 l.conversation.bottom() - pane.ui.footer_height(l.conversation.w, pane.model.agent.is_none()) - 26.0,
-                (l.conversation.w - 24.0).max(0.0),
+                w.max(0.0),
                 24.0,
             );
             p.fill(row, pal.page);

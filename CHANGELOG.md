@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Chat: the working line ("✶ Sprouting… (40s · ↓ 3.2k tokens)"), "Waiting for your answer/approval",
+  the terminal-answer hint, a read error and Load earlier line up with the conversation's reading
+  column instead of the window's left edge.
+
 ## 0.1.2 (2026-11-27)
 
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and

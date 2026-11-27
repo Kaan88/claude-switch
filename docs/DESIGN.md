@@ -406,6 +406,8 @@ with its default association. Ctrl+click on an inline file link instead reveals 
 in answers still open in the browser; transcript attachments still use the picture pipeline.
 Chat's conversation has its own Narrow, Medium, Wide or Full reading width in Settings → Sessions,
 stored per window in `window.ini` (`chat_reading`); it uses the same column sizes as the viewer.
+The lines above and below the conversation (a read error, Load earlier, the working or waiting line
+with Stop and Jump to latest, the terminal-answer hint) share the column's left edge and width.
 The composer stays centred and capped independently. Conversation and Markdown scrollbars appear
 on scrolling or hover, hold briefly, then fade; with reduced motion they disappear without a fade.
 Their tracks remain interactive even when hidden.
