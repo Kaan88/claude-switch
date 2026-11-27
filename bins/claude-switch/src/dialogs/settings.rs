@@ -11,6 +11,7 @@ use mdshared_ui::settings::{Form, Outcome, Row, Value};
 
 mod appearance;
 mod chat_page;
+mod claude_code;
 mod meaning;
 mod pages;
 pub(crate) mod peek;
@@ -32,6 +33,7 @@ const PAGES: &[Page] = &[
     (TERMINAL, terminal),
     (SESSIONS, sessions),
     (CHAT, chat_page::rows),
+    (claude_code::CLAUDE_CODE, claude_code::rows),
     ("Usage", usage),
     (HANDOVERS, handovers),
     (OPENCODE, opencode),
@@ -429,6 +431,7 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
         Outcome::Changed { id, value } if chat_page::owns(id) => {
             chat_page::apply(st, id, Some(value));
         }
+        Outcome::Changed { id, value } if claude_code::owns(id) => claude_code::apply(st, id, value),
         Outcome::Action(id) if chat_page::owns(id) => {
             chat_page::apply(st, id, None);
         }
@@ -763,6 +766,15 @@ mod tests {
                 chat_page::RESET_CHIPS,
                 chat_page::SET_ANSWER_MENUS,
             ],
+            &[
+                claude_code::SET_MODEL,
+                claude_code::SET_EFFORT,
+                claude_code::SET_MODE,
+                claude_code::SET_THEME,
+                claude_code::SET_CHROME,
+                claude_code::SET_COMPACT,
+                claude_code::SET_VERBOSE,
+            ],
             &[SET_USAGE, SET_USAGE_WARNINGS],
             &[
                 SET_CONTINUE_IN,
@@ -790,6 +802,18 @@ mod tests {
             expected.iter().flat_map(|ids| ids.iter()).collect::<std::collections::HashSet<_>>().len(),
             expected.iter().map(|ids| ids.len()).sum::<usize>(),
         );
+    }
+
+    #[test]
+    fn the_claude_code_page_shows_defaults_in_the_demo_and_keeps_an_unknown_saved_value() {
+        let mut st = AppState::new(Source::Demo, Some(true), WindowFile::default());
+        st.dialog = Some(settings(&mut st, Some(claude_code::CLAUDE_CODE)));
+        let rows = current(&st).form.rows();
+        let model = rows.iter().find(|r| r.id() == Some(claude_code::SET_MODEL)).unwrap();
+        assert!(format!("{model:?}").contains("Claude Code's default"), "{model:?}");
+        // A change in the demo saves nothing and keeps the page open.
+        claude_code::apply(&mut st, claude_code::SET_EFFORT, Value::Choice(3));
+        assert!(matches!(st.dialog, Some(Dialog::Settings(_))));
     }
 
     #[test]
@@ -931,9 +955,10 @@ mod tests {
         assert!(!config::load(&roots).embedded_terminal);
         st.dialog = Some(settings(&mut st, Some(TERMINAL)));
         assert_eq!(current(&st).form.value(SET_TERM_FONT), Some(Value::Number(21)));
-        navigate(&mut st, KeyName::Down);
-        navigate(&mut st, KeyName::Down);
-        navigate(&mut st, KeyName::Down);
+        // Down the rail: Sessions, Chat, Claude Code, Usage.
+        for _ in 0..4 {
+            navigate(&mut st, KeyName::Down);
+        }
         assert_eq!(current(&st).form.value(SET_USAGE), Some(Value::Bool(false)));
         let compact = config::load(&roots).compact;
         assert_eq!(compact.model, "fixture/model");

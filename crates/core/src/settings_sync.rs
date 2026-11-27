@@ -367,3 +367,134 @@ mod tests {
         assert_eq!(read_json(&main_json).unwrap()["claudeInChromeDefaultEnabled"], false);
     }
 }
+
+/// A Claude Code setting the app's own page edits. It is saved in the master account and goes
+/// to every sharing account through [`sync`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setting {
+    Model,
+    Effort,
+    PermissionMode,
+    Theme,
+    Chrome,
+    AutoCompact,
+    Verbose,
+}
+
+impl Setting {
+    /// Where it lives: in `settings.json` (true) or `.claude.json`, and its path there.
+    fn place(self) -> (bool, &'static [&'static str]) {
+        match self {
+            Setting::Model => (true, &["model"]),
+            Setting::Effort => (true, &["effortLevel"]),
+            Setting::PermissionMode => (true, &["permissions", "defaultMode"]),
+            Setting::Theme => (true, &["theme"]),
+            Setting::Chrome => (false, &["claudeInChromeDefaultEnabled"]),
+            Setting::AutoCompact => (false, &["autoCompactEnabled"]),
+            Setting::Verbose => (false, &["verbose"]),
+        }
+    }
+}
+
+/// The account whose settings win a tie: the chosen master, or the first account.
+pub fn master_account<'a>(config: &'a Config, share: &Share) -> Option<&'a Account> {
+    config.accounts.iter().find(|a| a.slug == share.master).or_else(|| config.accounts.iter().find(|a| a.primary))
+}
+
+fn file_of(roots: &Roots, account: &Account, in_settings: bool) -> PathBuf {
+    if in_settings { account.cli_dir.join("settings.json") } else { crate::accounts::claude_json(roots, account) }
+}
+
+/// The setting's value in the master account, if it is set.
+pub fn get(roots: &Roots, config: &Config, setting: Setting) -> Option<Value> {
+    let account = master_account(config, &config.settings_share)?;
+    let (in_settings, path) = setting.place();
+    let mut value = &read_json(&file_of(roots, account, in_settings))?;
+    for key in path {
+        value = value.get(key)?;
+    }
+    Some(value.clone()).filter(|v| !v.is_null())
+}
+
+/// Sets (or, with `None`, removes) the setting in the master account, then brings the sharing
+/// accounts in line. A file that is not a JSON object is refused, never replaced.
+pub fn set(roots: &Roots, config: &Config, setting: Setting, value: Option<Value>) -> Result<Report, Refusal> {
+    let account = master_account(config, &config.settings_share)
+        .ok_or_else(|| Refusal::Invalid("There is no account to save Claude Code's settings in.".into()))?;
+    let (in_settings, path) = setting.place();
+    let file = file_of(roots, account, in_settings);
+    let mut root = match std::fs::read(&file) {
+        Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(v @ Value::Object(_)) => v,
+            _ => {
+                return Err(Refusal::Invalid(format!(
+                    "{} is not valid JSON, so it was left as it is. Fix it or remove it first.",
+                    file.display()
+                )));
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Value::Object(Map::new()),
+        Err(e) => return Err(io_refusal("read", &file, &e)),
+    };
+    let (last, parents) = path.split_last().expect("a path");
+    let mut node = &mut root;
+    for key in parents {
+        if !node.get(*key).is_some_and(Value::is_object) {
+            node[*key] = Value::Object(Map::new());
+        }
+        node = node.get_mut(*key).expect("just made");
+    }
+    let map = node.as_object_mut().expect("an object");
+    match value {
+        Some(value) => _ = map.insert((*last).to_owned(), value),
+        None => _ = map.remove(*last),
+    }
+    if in_settings {
+        backup(roots, account, &file)?;
+    }
+    write_json(&file, &root)?;
+    sync(roots, config, &config.settings_share)
+}
+
+#[cfg(test)]
+mod setting_tests {
+    use super::*;
+    use crate::util::testing::{TempDir, config_with, put};
+    use serde_json::json;
+
+    #[test]
+    fn a_setting_is_saved_in_the_master_and_reaches_every_sharing_account() {
+        let t = TempDir::new("sync-set");
+        let roots = t.roots();
+        let mut config = config_with(&roots, &[("work", "Work"), ("home", "Home")]);
+        config.settings_share = Share { master: "work".into(), off: vec!["home".into()] };
+        let [main, work, home] = [&config.accounts[0], &config.accounts[1], &config.accounts[2]];
+        put(&home.cli_dir.join("settings.json"), r#"{"model":"haiku"}"#);
+        put(&crate::accounts::claude_json(&roots, main), r#"{"numStartups":3}"#);
+        put(&crate::accounts::claude_json(&roots, work), r#"{"numStartups":9}"#);
+
+        set(&roots, &config, Setting::PermissionMode, Some(json!("acceptEdits"))).unwrap();
+        set(&roots, &config, Setting::Model, Some(json!("opus"))).unwrap();
+        set(&roots, &config, Setting::Chrome, Some(json!(true))).unwrap();
+        assert_eq!(get(&roots, &config, Setting::Model), Some(json!("opus")));
+        let main_settings = read_json(&main.cli_dir.join("settings.json")).unwrap();
+        assert_eq!(main_settings["permissions"]["defaultMode"], "acceptEdits");
+        assert_eq!(main_settings["model"], "opus");
+        assert_eq!(read_json(&work.cli_dir.join("settings.json")).unwrap(), main_settings);
+        assert_eq!(read_json(&home.cli_dir.join("settings.json")).unwrap()["model"], "haiku", "keeps its own");
+        let main_json = read_json(&crate::accounts::claude_json(&roots, main)).unwrap();
+        assert_eq!(
+            (main_json["claudeInChromeDefaultEnabled"].clone(), main_json["numStartups"].clone()),
+            (json!(true), json!(3))
+        );
+
+        // Back to Claude Code's default: the key goes, everywhere.
+        set(&roots, &config, Setting::Model, None).unwrap();
+        assert_eq!(get(&roots, &config, Setting::Model), None);
+        assert!(read_json(&main.cli_dir.join("settings.json")).unwrap().get("model").is_none());
+
+        put(&work.cli_dir.join("settings.json"), "{ broken");
+        assert!(set(&roots, &config, Setting::Theme, Some(json!("light"))).is_err());
+        assert_eq!(std::fs::read_to_string(work.cli_dir.join("settings.json")).unwrap(), "{ broken");
+    }
+}

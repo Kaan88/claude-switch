@@ -208,6 +208,31 @@ impl Source {
         }
     }
 
+    /// A Claude Code setting as the master account has it (`settings_sync::get`).
+    pub fn claude_setting(
+        &self,
+        c: &Config,
+        s: claude_switch_core::settings_sync::Setting,
+    ) -> Option<serde_json::Value> {
+        match self {
+            Source::Real(roots) => claude_switch_core::settings_sync::get(roots, c, s),
+            Source::Demo => None,
+        }
+    }
+
+    /// Saves a Claude Code setting in the master account and shares it (`settings_sync::set`).
+    pub fn set_claude_setting(
+        &self,
+        c: &Config,
+        s: claude_switch_core::settings_sync::Setting,
+        value: Option<serde_json::Value>,
+    ) -> Result<claude_switch_core::settings_sync::Report, Refusal> {
+        match self {
+            Source::Real(roots) => claude_switch_core::settings_sync::set(roots, c, s, value),
+            Source::Demo => Ok(Default::default()),
+        }
+    }
+
     pub fn share_apply(&self, a: &Account) -> Result<Vec<ShareState>, Refusal> {
         match self {
             Source::Real(roots) => share::apply(roots, a),

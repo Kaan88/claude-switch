@@ -17,6 +17,8 @@
   Accounts shows the master and lets an account keep its own settings. A few preferences of
   `/config` kept in `.claude.json` (such as Chrome) are shared the same way. Replaced files are
   backed up in `%APPDATA%\claude-switch\settings-backups`.
+- Settings › Claude Code: the model, effort, permission mode and theme, and Chrome by default,
+  auto-compact and verbose output, saved in the master account and shared with the others.
 - Sessions and tabs: "Open working folder" in their menus.
 - Sessions: "Continue in another folder…" resumes a session in a folder you pick. Claude Code
   writes on into the same transcript; the app remembers the folder, so the list, its group and
