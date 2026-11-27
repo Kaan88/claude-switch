@@ -1018,6 +1018,8 @@ pub(super) fn review(screen: &Screen) -> Option<Review> {
 }
 
 #[cfg(test)]
+mod compat;
+#[cfg(test)]
 pub(in crate::view::chat) mod recorded;
 
 #[cfg(test)]
