@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Settings › Appearance: the dark and light palettes (and the Terminal page's colour presets) are a
+  grid of equal cards, five across, each a small window in that palette: title bar, side pane, text,
+  accent button and a terminal with its colours. Names sit whole inside the card; a long custom name
+  is shortened, with the full name on hover. The chosen card has an accent border and a check, the
+  hovered one a lighter fill, and the keyboard's ring sits outside the card. Dark and light share
+  one column grid, custom themes wrap to a further line, and nothing runs into the next setting.
+
 ## 0.1.2 (2026-11-27)
 
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and

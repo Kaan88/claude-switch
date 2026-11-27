@@ -723,8 +723,15 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 The Appearance page controls the window. The window theme is System, Light or Dark;
 `--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
-(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as named swatches.
-A click on the preview or caption chooses it; Tab focuses a row and Left/Right or Home/End changes
+(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as a grid of equal cards,
+five across at every Settings width: a small window drawn in the palette (title bar, side pane,
+text, accent button, and a terminal with five of its ANSI colours) above the whole name. A custom
+name too long for its card is elided, with the full name in a tooltip on hover. The chosen card has
+an accent border and a check; hover lightens a card; the keyboard ring is the toolkit's, outside the
+card (or round the whole line when its choice is on another line). Each line of cards is one form
+choice row plus empty spacer rows (`tiles::line`), so the next setting starts below the cards; a
+press between cards does nothing, and keyboard focus scrolls the whole line into view.
+A click on the card chooses it; Tab focuses a row and Left/Right or Home/End changes
 the choice. On a row without the current selection, Right starts at the first swatch, Left at the
 last, and Enter or Space leaves the selection alone. Terminal presets use the same control.
 Dark: Neutral (the toolkit's dark), Near black, Warm,

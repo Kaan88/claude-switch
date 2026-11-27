@@ -281,12 +281,17 @@ impl Settings {
             && self.form.colour_open().is_none()
             && let Some(outcome) = tiles::key(&mut self.form, config, key)
         {
+            tiles::reveal(&mut self.form);
             return SettingsEvent::Form(outcome);
         }
         let first = self.first_row();
         let was_first = self.form.focus_id() == first;
         let was_close = self.form.focus_on_close();
+        let was = self.form.focus_id();
         let outcome = self.form.key(key, mods, text);
+        if self.has_palettes() && self.form.focus_id() != was {
+            tiles::reveal(&mut self.form);
+        }
         // Insert the rail between Close and the first control in the form's Tab ring.
         // A first Tab that only reveals focus or dismisses a popup hasn't moved focus.
         if *key == KeyName::Tab
@@ -356,6 +361,10 @@ impl Settings {
             self.rail_focus = false;
             self.form.focus_row(id);
             return SettingsEvent::Form(Outcome::Redraw);
+        }
+        if self.has_palettes() && tiles::covers(&self.form, x, y) {
+            // Between the cards: the grid row's own dropdown is under them and stays shut.
+            return SettingsEvent::Form(Outcome::None);
         }
         let outcome = press(&mut self.form);
         if self.layout.rail.contains(x, y) && outcome == Outcome::Closed {
@@ -535,6 +544,8 @@ mod tests {
 
         let swatch_index =
             settings.form.rows().iter().position(|r| r.id() == Some(super::super::SET_ACCENT_COLOUR)).unwrap();
+        // Below the palette cards at this size: scroll it into view as Tab would.
+        settings.form.focus_row(super::super::SET_ACCENT_COLOUR);
         let swatch = settings.form.swatch_rect(swatch_index);
         settings.press(swatch.cx(), swatch.cy(), mods, 1);
         settings.release(swatch.cx(), swatch.cy());
@@ -565,6 +576,8 @@ mod tests {
         let id = super::super::SET_ACCENT_COLOUR;
         let before = settings.form.colour(id);
         let index = settings.form.rows().iter().position(|r| r.id() == Some(id)).unwrap();
+        // Below the palette cards at this size: scroll it into view as Tab would.
+        settings.form.focus_row(id);
         let open = |settings: &mut Settings, p: &mut Painter| {
             let opened = settings.form.colour(id);
             let swatch = settings.form.swatch_rect(index);
