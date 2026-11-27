@@ -175,11 +175,12 @@ impl AppState {
             if let Some(deadline) = submission::stage_deadline(&pane.chat) {
                 cx.wake_at(deadline);
             }
+            // The gate reads the screen's rest: look again when the quiet time is up.
             if Some(tab.id) == active
-                && pane.chat.recovery_notice().is_some()
-                && let Some(quiet) = pane.chat.last_output.map(|at| at + super::QUIET).filter(|at| *at > now)
+                && pane.chat.enabled
+                && let Some(settled) = pane.chat.next_settle(now)
             {
-                cx.wake_at(quiet);
+                cx.wake_at(settled);
             }
         }
     }
@@ -224,6 +225,7 @@ impl AppState {
             let suggested = shown && chat.popups.read_next_prompt(&tab.term.screen);
             // The card first: the gate asks it whether it answers the pending call's menu.
             let card = chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
+            chat.settle(chat.screen_idle(&tab.term, now));
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let changed = card | chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);

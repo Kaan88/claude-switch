@@ -3,6 +3,8 @@
 //! live session. A screen that does not match exactly is not answered.
 use mdshared_term::Screen;
 
+use crate::view::chat::submission::screen::prompt_mark;
+
 /// Footer hints under a CLI menu, picker or dialog (the last non-empty row), lower case.
 const MENU_FOOTERS: [&str; 9] = [
     "esc to cancel",
@@ -89,6 +91,8 @@ const MODES: [(&str, &str); 6] = [
 const MODE_ROWS: usize = 4;
 /// How far above a menu's footer its rows may start.
 const MENU_ROWS: usize = 60;
+/// How many rows above its first choice a question's tab row and text may use.
+const FORM_ABOVE: usize = 20;
 /// How many rows above a permission question its tool description may use.
 const BODY_ROWS: usize = 16;
 
@@ -121,18 +125,40 @@ fn solid_rule(text: &str) -> bool {
     text.chars().count() >= 20 && text.chars().all(|c| matches!(c, '─' | '━' | '═'))
 }
 
+/// How many rows with text under a menu's footer are passed over to find it.
+const UNDER_FOOTER: usize = 6;
+
 /// The footer of whatever the CLI draws at the bottom: the last non-empty row, or the row right
 /// above it when the footer wrapped (it then ends with its `·` separator). `rows` are the screen's
 /// cleaned rows; the last row is found on the screen itself, where an empty input (`❯`) counts.
+/// A menu takes the input box's place, so while no input row is under it a footer a few rows up
+/// still counts, whatever the CLI or a redraw left under it (a rule, a notice): the
+/// conversation's own words are above the input row, never under it.
 fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
     let last = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty())?;
     let footer = if menu_footer(&rows[last]) {
         last
     } else {
         let prev = last.checked_sub(1)?;
-        (menu_footer(&rows[prev]) && rows[prev].ends_with('·')).then_some(prev)?
+        if menu_footer(&rows[prev]) && rows[prev].ends_with('·') {
+            prev
+        } else {
+            let mut texts = (0..last).rev().filter(|&row| !rows[row].is_empty()).take(UNDER_FOOTER);
+            let footer = texts.find(|&row| menu_footer(&rows[row]))?;
+            let input = |row| crate::view::chat::submission::screen::marks_input(screen, row);
+            if (footer + 1..=last).any(input) {
+                return None;
+            }
+            footer
+        }
     };
     (!input_box_above(screen, footer)).then_some(footer)
+}
+
+/// The row of the footer of a menu, picker or dialog that has the screen, if one shows.
+pub(in crate::view) fn live_footer(screen: &Screen) -> Option<usize> {
+    let rows: Vec<String> = (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1).collect();
+    footer_row(screen, &rows)
 }
 
 /// The CLI's input box (a `❯` row right under a solid rule, closed by another rule) sits just above
@@ -147,7 +173,7 @@ pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> boo
         return false;
     };
     let first = text(top + 1);
-    first.starts_with('❯') && numbered(first.trim_start_matches('❯').trim()).is_none()
+    first.starts_with(prompt_mark) && numbered(first.trim_start_matches(prompt_mark).trim()).is_none()
 }
 
 pub(super) fn numbered(text: &str) -> Option<(usize, &str)> {
@@ -306,6 +332,51 @@ pub(super) struct Panel {
     pub rows: Vec<String>,
     /// The footer offers Esc.
     pub esc: bool,
+    /// For a question Claude asks: what the screen shows under each choice (its description),
+    /// one text per menu entry; empty for any other menu.
+    pub notes: Vec<String>,
+    /// The menu is a question of Claude's (`AskUserQuestion`), known by its tab row.
+    pub question: bool,
+}
+
+/// The first row of a question Claude asks: its header with a box (" ☐ Colour"), or a form's row
+/// of tabs. Boxes are drawn `[ ]` and `[×]` where Claude Code draws without Unicode.
+fn question_tabs(text: &str) -> bool {
+    tab_bar(text) || ["☐ ", "☒ ", "[ ] ", "[×] ", "[x] "].iter().any(|b| text.starts_with(b))
+}
+
+/// The numbered menu with the rows the arrow keys also stop on: a multi-select question's
+/// unnumbered Submit or Next row, after its "Type something" row.
+pub(super) fn walk_menu(screen: &Screen) -> Option<Menu> {
+    let mut menu = menu(screen)?;
+    let other = menu.entries.iter().position(|e| checkbox(&e.text).is_some_and(|(_, text)| text.starts_with(OTHER)));
+    if let Some(other) = other
+        && let Some(entry) = submit_row(screen, &menu, other)
+    {
+        menu.entries.insert(other + 1, entry);
+    }
+    Some(menu)
+}
+
+/// The review of a form's answers as a menu of its two entries. It has no footer; it is known by
+/// its own rows (`review`).
+fn review_panel(screen: &Screen) -> Option<Panel> {
+    let review = review(screen)?;
+    let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
+    let last = rows.iter().rposition(|(_, text)| !text.is_empty())?;
+    let entries = (last - 1..=last)
+        .map(|row| Entry { row, highlighted: rows[row].0, text: numbered(&rows[row].1).map_or("", |n| n.1).to_owned() })
+        .collect();
+    let answers: Vec<String> = review.answers.iter().map(|(q, a)| format!("{q} → {a}")).collect();
+    let menu = Menu { entries, lines: rows.into_iter().map(|(_, text)| text).collect(), footer: last + 1 };
+    Some(Panel {
+        title: format!("{REVIEW}: {}", answers.join("; ")),
+        menu: Some(menu),
+        rows: Vec::new(),
+        esc: false,
+        notes: Vec::new(),
+        question: true,
+    })
 }
 
 /// The screen may show a permission prompt: recognised, or a menu with a permission prompt's rows
@@ -340,13 +411,36 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
     if permission_like(screen) || screen.modes().alt_screen {
         return None;
     }
+    if let Some(review) = review_panel(screen) {
+        return Some(review);
+    }
     let lines: Vec<String> = (0..screen.rows()).map(|row| clean(&screen.row_text(row)).1).collect();
     // Only a footer at the bottom of what the CLI draws: an old menu left in the output above has
     // the input and its status rows under it. The cursor is no guide (see `permission_like`).
     let footer = footer_row(screen, &lines)?;
     let esc = lines[footer].to_lowercase().contains("esc");
-    let menu = menu(screen);
+    let menu = walk_menu(screen);
     let mut title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
+    // A question Claude asks: its text is every row between its tab row and its choices, and
+    // each choice has its description under it.
+    let (mut notes, mut question) = (Vec::new(), false);
+    if let Some(menu) = &menu {
+        let above = menu.above_box(FORM_ABOVE);
+        if let Some((first, text)) = above.split_first().filter(|(first, _)| question_tabs(first)) {
+            question = true;
+            if !text.is_empty() {
+                title = collapse(&text.join(" "));
+            } else if !tab_bar(first) {
+                title = (*first).to_owned();
+            }
+            notes = (0..menu.entries.len())
+                .map(|i| {
+                    let end = menu.entries.get(i + 1).map_or(menu.footer, |e| e.row);
+                    rows_between(menu, menu.entries[i].row + 1, end)
+                })
+                .collect();
+        }
+    }
     let top = panel_top(screen, &lines, footer);
     let mut rows: Vec<(usize, &String)> =
         (top..footer).map(|row| (row, &lines[row])).filter(|(_, text)| !text.is_empty() && !rule(text)).collect();
@@ -359,7 +453,7 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
         rows.remove(0);
     }
     let rows = rows.into_iter().map(|(_, text)| text.clone()).collect();
-    Some(Panel { title, menu, rows, esc })
+    Some(Panel { title, menu, rows, esc, notes, question })
 }
 
 /// Where a panel starts: under the nearest full-width solid rule above its footer. A panel
@@ -374,7 +468,7 @@ fn panel_top(screen: &Screen, lines: &[String], footer: usize) -> usize {
     let conversation = (0..footer).any(|row| {
         let text = screen.row_text(row);
         let text = text.trim_start();
-        text.starts_with(['❯', '●', '⎿'])
+        text.starts_with(['❯', '●', '⎿']) || text.starts_with("> ")
     });
     if conversation { footer.saturating_sub(PANEL_ROWS) } else { 0 }
 }
@@ -399,7 +493,7 @@ pub(super) fn input_row(screen: &Screen) -> Option<usize> {
     let text = |r: usize| screen.row_text(r).trim().to_owned();
     (1..screen.rows().saturating_sub(1))
         .rev()
-        .find(|&r| text(r).starts_with('❯') && solid_rule(&text(r - 1)) && solid_rule(&text(r + 1)))
+        .find(|&r| text(r).starts_with(prompt_mark) && solid_rule(&text(r - 1)) && solid_rule(&text(r + 1)))
 }
 
 /// The row that opens a tool call's block, `Tool(summary)`, with or without its bullet (it blinks
@@ -485,8 +579,8 @@ impl AgentList {
 
 fn agent_row(row: &str) -> Option<(bool, AgentRow)> {
     let row = row.trim();
-    let highlighted = row.starts_with('❯');
-    let row = row.trim_start_matches('❯').trim_start();
+    let highlighted = row.starts_with(prompt_mark);
+    let row = row.trim_start_matches(prompt_mark).trim_start();
     let rest = row.strip_prefix(['●', '◯'])?.strip_prefix(' ')?;
     if rest == "main" {
         let main = AgentRow { name: "main".into(), description: String::new(), state: AgentState::Other };
@@ -688,7 +782,9 @@ const REVIEW_ENTRIES: [&str; 2] = ["Submit answers", "Cancel"];
 
 /// A multi-select entry's box and the text after it.
 pub(super) fn checkbox(text: &str) -> Option<(bool, &str)> {
-    text.strip_prefix("[✔] ").map(|rest| (true, rest)).or_else(|| text.strip_prefix("[ ] ").map(|rest| (false, rest)))
+    // The tick is `√` where Claude Code draws without Unicode.
+    let ticked = text.strip_prefix("[✔] ").or_else(|| text.strip_prefix("[√] "));
+    ticked.map(|rest| (true, rest)).or_else(|| text.strip_prefix("[ ] ").map(|rest| (false, rest)))
 }
 
 /// The row of question tabs over a form: "←  ☐ Size  ☐ Speed  ✔ Submit  →".

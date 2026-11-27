@@ -1,0 +1,26 @@
+cursor 21 169
+@size 170 22
+@wrapped 3
+@modes paste
+ [0;38;2;215;119;87m [0m   probe_dir_one
+     [0;2m… +5 lines (ctrl+o to expand)[0m
+[0;38;2;153;153;153m  ⎿  Allowed by auto mode[0m
+[0;38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0;38;2;0;0;0;48;2;177;185;249m [ ] Agent [0m
+
+[0;2m│[0m [0;1;38;2;255;255;255mWhich agent should do the translation for episode 1035634? The last two episodes used astra at high effort.[0m
+
+[0;38;2;177;185;249m> [0;38;2;153;153;153m1. [0;38;2;177;185;249mAstra, high (Recommended)[0m
+     [0;38;2;153;153;153mastra at high effort, as for 1035632. Parallel jobs, then one fix job for the boxes that fail.[0m
+  [0;38;2;153;153;153m2.[0m Astra, medium
+     [0;38;2;153;153;153mastra at medium effort.[0m
+  [0;38;2;153;153;153m3. [0mSol
+     [0;38;2;153;153;153msol, high effort.[0m
+  [0;38;2;153;153;153m4. [0mClaude
+     [0;38;2;153;153;153mI translate it myself in this conversation.[0m
+  [0;38;2;153;153;153m5. Type something.[0m
+[0;38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  6. Chat about this
+
+[0;38;2;153;153;153mEnter to select · ↑/↓ to navigate · Esc to cancel[0m
+

@@ -35,8 +35,15 @@ fn slash_prompt_evidence_needs_quiet_and_rejects_existing_input_or_busy_footer()
     assert!(!idle_slash_prompt(&screen, false));
     screen.feed(b"existing");
     assert!(!idle_slash_prompt(&screen, true));
-    screen.feed("\r\nesc to interrupt\r\n❯ ".as_bytes());
+    // The words alone, in what Claude wrote above the input, are not a running turn.
+    screen.feed("\x1b[2K\r  Press esc to interrupt a turn.\r\n❯ ".as_bytes());
+    assert!(idle_slash_prompt(&screen, true));
+    // The CLI's working line above the input is, and so is the hint under it.
+    screen.feed("\x1b[2K\r✽ Befuddling… (8s · ↓ 101 tokens)\r\n❯ ".as_bytes());
     assert!(!idle_slash_prompt(&screen, true));
+    let mut hinted = Screen::new(80, 12, 0);
+    hinted.feed("❯ \r\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt\x1b[1;3H".as_bytes());
+    assert!(!idle_slash_prompt(&hinted, true));
 }
 
 #[test]
@@ -131,7 +138,7 @@ fn a_wrapped_rule_above_the_prompt_is_the_input_box_not_earlier_text() {
     let mut screen = Screen::new(12, 8, 0);
     screen.feed(
         "────────────❯ 
-────────────[2;3H"
+────────────\x1b[2;3H"
             .as_bytes(),
     );
     assert!(screen.line(0).unwrap().wrapped());

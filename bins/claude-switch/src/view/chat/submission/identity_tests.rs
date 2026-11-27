@@ -63,10 +63,15 @@ impl Fixture {
         chat.writes.clear();
         AppState::chat_send(self.tab(), now, false);
         let chat = self.chat();
-        assert_eq!(chat.writes.is_empty(), chat.error.is_some(), "{:?}", chat.error);
-        chat.error
+        // A draft that only has to wait is held, not refused.
+        let queued = chat.queue.take().is_some();
+        assert_eq!(chat.writes.is_empty(), chat.error.is_some() || queued, "{:?}", chat.error);
+        if queued { Some(QUEUED) } else { chat.error }
     }
 }
+
+/// What `Fixture::send` returns for a draft that was queued.
+const QUEUED: &str = "queued";
 
 fn discover(root: &std::path::Path) -> model::Source {
     model::Source::Discover {
@@ -91,7 +96,8 @@ fn a_new_chat_sends_its_first_message_before_its_transcript_exists() {
     assert_eq!(tab.resume_id, None, "nothing to resume yet");
     assert_eq!(f.send("hello", now), None, "the first message goes with an ordinary Send");
     assert!(f.chat().writes.last().is_some_and(|w| w == b"\r"));
-    assert_eq!(f.send("again", now), Some(NO_TRANSCRIPT), "later sends wait for the transcript");
+    assert_eq!(f.send("again", now), Some(QUEUED), "later sends wait for the transcript");
+    assert_eq!(blocked(f.tab(), now, Intent::Draft), Some(NO_TRANSCRIPT));
     assert_eq!(f.chat().editor.text, "again");
 
     // Another session named before the first message's transcript appeared is refused.
@@ -285,7 +291,7 @@ fn a_command_that_may_start_a_turn_counts_as_a_new_chats_first_send() {
         assert!(AppState::advance_submission(f.tab(), now, true), "{:?}", f.chat().error);
         assert!(f.chat().writes.last().is_some_and(|w| w == b"\r"), "{line} was entered");
         assert_eq!(f.chat().first_sent, starts, "{line}");
-        let expected = if starts { Some(NO_TRANSCRIPT) } else { None };
+        let expected = if starts { Some(QUEUED) } else { None };
         assert_eq!(f.send("hello", now), expected, "{line}");
     }
 }
