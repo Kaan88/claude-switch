@@ -644,27 +644,93 @@ fn run_script(setup: &Setup, run: &Run, i: usize) {
     }
 }
 
-fn report(shared: &Shared) -> String {
-    let (pass, fail, skipped) = shared.counts();
+/// The report goes into an issue and the run's summary on GitHub, and what it quotes comes from
+/// outside (the screens read, error text, log tails): none of it may end a code span or block,
+/// start Markdown of its own or mention anyone.
+mod markdown {
+    /// The longest run of backticks in `text`.
+    fn ticks(text: &str) -> usize {
+        text.split(|c| c != '`').map(str::len).max().unwrap_or(0)
+    }
+
+    /// `text` as inline code that nothing in it can end: a fence longer than any backtick run in
+    /// it, and its line breaks shown as ⏎. GitHub mentions no one inside code.
+    pub fn code(text: &str) -> String {
+        if text.is_empty() {
+            return "(nothing)".to_owned();
+        }
+        let text = text.replace("\r\n", "⏎").replace(['\n', '\r'], "⏎");
+        let fence = "`".repeat(ticks(&text) + 1);
+        // Padded on both sides: CommonMark takes one space off each, so text that starts or
+        // ends with a backtick or a space stays as it is.
+        format!("{fence} {text} {fence}")
+    }
+
+    /// `text` as a fenced block, each line indented by `indent` (to sit under a list item).
+    pub fn block(text: &str, indent: &str) -> String {
+        let fence = "`".repeat(ticks(text).max(2) + 1);
+        let mut s = format!("{indent}{fence}text\n");
+        for line in text.lines() {
+            s.push_str(indent);
+            s.push_str(line);
+            s.push('\n');
+        }
+        s.push_str(indent);
+        s.push_str(&fence);
+        s.push('\n');
+        s
+    }
+
+    /// `text` as plain words on one line: Markdown's marks escaped and every `@` kept from
+    /// mentioning anyone.
+    pub fn plain(text: &str) -> String {
+        let mut s = String::with_capacity(text.len());
+        for c in text.chars() {
+            match c {
+                '\n' | '\r' => s.push(' '),
+                '@' => s.push_str("@\u{200b}"),
+                '\\' | '`' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#' | '!' | '~' | '&' => {
+                    s.push('\\');
+                    s.push(c);
+                }
+                c => s.push(c),
+            }
+        }
+        s
+    }
+}
+
+/// The run's outcome in one line, as plain text.
+fn verdict(shared: &Shared) -> String {
+    let (_, fail, skipped) = shared.counts();
     let states: usize = shared.rows.iter().map(|r| r.states.len()).sum();
     let bad: usize = shared.rows.iter().map(|r| r.failed().len()).sum();
-    let mut s = format!("# Chat and Claude Code {}\n\n", shared.version);
-    let verdict = match (&shared.fatal, fail) {
-        (Some(why), _) => format!("The check could not run: {why}"),
+    match (&shared.fatal, fail) {
+        (Some(why), _) => format!("The check could not run: {}", why.lines().next().unwrap_or_default()),
         (None, 0) if skipped == 0 => format!("All {states} states read as expected."),
         (None, 0) => format!("{states} states read as expected; {skipped} scripts were skipped."),
         (None, _) => {
             format!("{bad} of {states} states do not read as expected ({fail} of {} scripts).", shared.rows.len())
         }
-    };
-    let _ = writeln!(s, "**{verdict}**\n");
+    }
+}
+
+fn report(shared: &Shared) -> String {
+    use markdown::{block, code, plain};
+    let (pass, fail, skipped) = shared.counts();
+    let bad: usize = shared.rows.iter().map(|r| r.failed().len()).sum();
+    let mut s = format!("# Chat and Claude Code {}\n\n", plain(&shared.version));
+    let _ = writeln!(s, "**{}**\n", plain(&verdict(shared)));
+    if let Some(why) = shared.fatal.as_ref().filter(|why| why.lines().count() > 1) {
+        let _ = writeln!(s, "{}", block(why, ""));
+    }
     let _ = writeln!(
         s,
         "- Claude Code: {} (last checked: {})",
-        shared.version,
-        shared.last_tested.as_deref().unwrap_or("never")
+        plain(&shared.version),
+        plain(shared.last_tested.as_deref().unwrap_or("never"))
     );
-    let _ = writeln!(s, "- Account: {} · model: {}", shared.account, shared.model);
+    let _ = writeln!(s, "- Account: {} · model: {}", plain(&shared.account), plain(&shared.model));
     let took = shared.took.unwrap_or_else(|| shared.started.elapsed());
     let _ = writeln!(
         s,
@@ -674,26 +740,30 @@ fn report(shared: &Shared) -> String {
         shared.cost.dollars
     );
     let _ = writeln!(s, "- Scripts: {pass} passed, {fail} failed, {skipped} skipped");
-    let _ = writeln!(s, "- Recordings: `{}`", shared.out.display());
+    let _ = writeln!(s, "- Recordings: {}", code(&shared.out.display().to_string()));
     if bad > 0 || shared.rows.iter().any(|r| matches!(r.status, Status::Error(_))) {
         s.push_str("\n## What no longer matches\n\n");
         for row in &shared.rows {
+            let name = &row.script.name;
             if let Status::Error(why) = &row.status {
-                let _ = writeln!(s, "- `{}`: {}", row.script.name, why.replace('\n', "\n  "));
+                let _ = write!(s, "- {}: could not record or check it\n\n{}", code(name), block(why, "  "));
             }
             for state in row.failed() {
-                let _ = writeln!(
-                    s,
-                    "- `{}/{}` (screen: `{}/{}.txt`)",
-                    row.script.name, state.name, row.script.name, state.name
-                );
+                let (at, screen) = (format!("{name}/{}", state.name), format!("{name}/{}.txt", state.name));
+                let _ = writeln!(s, "- {} (screen: {})", code(&at), code(&screen));
                 for d in &state.diffs {
-                    let _ = writeln!(s, "  - `{}`: expected `{}`, read `{}`", d.key, d.expected, d.got);
+                    let _ = writeln!(s, "  - {}: expected {}, read {}", code(&d.key), code(&d.expected), code(&d.got));
                 }
             }
             if !row.note.is_empty() {
-                let _ =
-                    writeln!(s, "- `{}`: {} (screen: `{}/aborted.txt`)", row.script.name, row.note, row.script.name);
+                let screen = format!("{name}/aborted.txt");
+                let _ = write!(
+                    s,
+                    "- {}: ended early (screen: {})\n\n{}",
+                    code(name),
+                    code(&screen),
+                    block(&row.note, "  ")
+                );
             }
         }
     }
@@ -702,14 +772,14 @@ fn report(shared: &Shared) -> String {
         let result = match &row.status {
             Status::Pass => "pass".to_owned(),
             Status::Fail => "FAIL".to_owned(),
-            Status::Skipped(why) => format!("skipped ({why})"),
+            Status::Skipped(why) => format!("skipped ({})", plain(why)),
             Status::Error(_) => "ERROR".to_owned(),
             _ => "not run".to_owned(),
         };
         let ok = row.states.len() - row.failed().len();
         let time = row.took.map(mmss).unwrap_or_default();
-        let _ =
-            writeln!(s, "| {} | {result} | {ok}/{} | {} | {time} |", row.script.name, row.states.len(), row.attempt);
+        let name = plain(&row.script.name);
+        let _ = writeln!(s, "| {name} | {result} | {ok}/{} | {} | {time} |", row.states.len(), row.attempt);
     }
     s.push_str(
         "\nHow to read this and what to do next: `tools/screen-recorder/README.md`, \"After a Claude Code update\".\n",
@@ -939,7 +1009,7 @@ pub fn main(args: &[String]) -> i32 {
     if plain {
         println!();
     }
-    println!("{}", report(&shared).lines().nth(2).unwrap_or_default().trim_matches('*'));
+    println!("{}", verdict(&shared));
     println!(
         "{pass} passed, {fail} failed, {skipped} skipped · {} · about ${:.3}",
         mmss(shared.took.unwrap_or_default()),
@@ -1032,6 +1102,98 @@ mod tests {
             )
             .unwrap_or(recording.len());
         assert!(recording[..step_end].contains("recorder.exe compat"), "the key goes to the recording step");
+    }
+
+    /// What GitHub would read as Markdown outside code: the text left once fenced blocks and
+    /// code spans are taken out.
+    fn outside_code(markdown: &str) -> String {
+        let run = |s: &str| s.chars().take_while(|&c| c == '`').count();
+        let mut out = String::new();
+        let mut open: Option<usize> = None;
+        for line in markdown.lines() {
+            let start = line.trim_start();
+            match open {
+                Some(n) if run(start) >= n && start.trim_matches('`').trim().is_empty() => open = None,
+                Some(_) => {}
+                None if run(start) >= 3 => open = Some(run(start)),
+                None => {
+                    let mut rest = line;
+                    while let Some(at) = rest.find('`') {
+                        out.push_str(&rest[..at]);
+                        let n = run(&rest[at..]);
+                        let after = &rest[at + n..];
+                        // The closing run is exactly as long as the opening one.
+                        let close = (0..after.len()).find(|&i| {
+                            after.is_char_boundary(i) && run(&after[i..]) == n && (i == 0 || !after[..i].ends_with('`'))
+                        });
+                        let Some(close) = close else { panic!("an unclosed code span: {line}") };
+                        rest = &after[close + n..];
+                    }
+                    out.push_str(rest);
+                    out.push('\n');
+                }
+            }
+        }
+        assert!(open.is_none(), "an unclosed fence");
+        out
+    }
+
+    #[test]
+    fn the_report_quotes_what_it_read_so_that_nothing_in_it_is_markdown_or_a_mention() {
+        let script = |name: &str| Script {
+            name: name.to_owned(),
+            body: String::new(),
+            args: Vec::new(),
+            cols: 100,
+            rows: 40,
+            seconds: 1,
+        };
+        let row = |name: &str, status: Status| Row {
+            script: script(name),
+            status,
+            attempt: 1,
+            started: None,
+            took: None,
+            states: Vec::new(),
+            note: String::new(),
+        };
+        let mut failed = row("ask", Status::Fail);
+        let got = "x\n@octocat ```";
+        let diff = Diff { key: "menu".into(), expected: "a`b".into(), got: got.into() };
+        failed.states.push(StateResult { name: "open".into(), diffs: vec![diff] });
+        failed.note = "ended: ``\n# @someone".into();
+        let error = row("deny", Status::Error("the check does not build:\n```\n@octocat look | here".into()));
+        let shared = Shared {
+            rows: vec![failed, error, row("plain", Status::Skipped("@me *now*".into()))],
+            queue: VecDeque::new(),
+            phase: String::new(),
+            version: "2.1.400".into(),
+            last_tested: None,
+            account: "@team".into(),
+            model: "haiku".into(),
+            started: Instant::now(),
+            took: Some(Duration::from_secs(61)),
+            cost: Cost::default(),
+            out: PathBuf::from("C:/runs/a`b"),
+            report: None,
+            fatal: None,
+            done: true,
+            lines: Vec::new(),
+            check: None,
+        };
+        let report = report(&shared);
+        assert!(report.contains("  - ` menu `: expected `` a`b ``, read ```` x⏎@octocat ``` ````\n"), "{report}");
+        assert!(
+            report.contains("  ````text\n  the check does not build:\n  ```\n  @octocat look | here\n  ````\n"),
+            "{report}"
+        );
+        assert!(report.contains("  ```text\n  ended: ``\n  # @someone\n  ```\n"), "{report}");
+        assert!(report.contains("- Account: @\u{200b}team"), "{report}");
+        assert!(report.contains("| plain | skipped (@\u{200b}me \\*now\\*) |"), "{report}");
+        let words = outside_code(&report);
+        assert!(!words.contains("octocat") && !words.contains("someone"), "{words}");
+        let mentions = words.match_indices('@').filter(|(at, _)| !words[at + 1..].starts_with('\u{200b}')).count();
+        assert_eq!(mentions, 0, "{words}");
     }
 
     #[test]
