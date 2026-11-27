@@ -8,9 +8,13 @@ use crate::tabs::NewTab;
 use crate::term::Term;
 use crate::view::chat::QUIET;
 use crate::view::chat::question::screens::recorded::{
+    ASK_OTHER, ASK_OTHER_FIRST, ASK_OTHER_LONG, ASK_OTHER_TYPED, FORM_OTHER, FORM_OTHER_FIRST, FORM_OTHER_TYPED,
+};
+use crate::view::chat::question::screens::recorded::{
     PLAIN_EMPTIED, PLAIN_IDLE, PLAIN_INTERRUPTED, PLAIN_QUESTION, PLAIN_RESTORED, PLAIN_TYPED, WORKING_TOOL, recorded,
 };
 use crate::view::chat::question::{self, Hit};
+use std::ops::Not;
 
 const SECOND: Duration = Duration::from_secs(1);
 
@@ -288,4 +292,105 @@ fn a_slash_command_waits_a_moment_for_the_prompt_to_go_quiet() {
     f.pass(COMMAND_WAIT);
     assert_eq!(f.chat().error, Some(NO_QUIET_PROMPT));
     assert!(f.chat().staging.command.is_none() && f.writes().is_empty());
+}
+
+fn downs(n: usize) -> Vec<u8> {
+    mdshared_term::input::encode_key(mdshared_term::Key::Down, mdshared_term::Mods::NONE, &Default::default()).repeat(n)
+}
+
+impl Live {
+    /// The user types into the card's field and presses Enter there.
+    fn answer(&mut self, text: &str) {
+        let now = self.now;
+        self.chat().question.field.insert(text);
+        assert!(question::press(self.tab(), now, Hit::Answer));
+    }
+}
+
+#[test]
+fn a_typed_answer_goes_on_the_type_something_row_and_enter_only_once_it_reads_exactly() {
+    let mut f = Live::new();
+    f.turn();
+    f.show(ASK_OTHER_FIRST);
+    assert_eq!(f.pass(QUIET), (Gate::Check, Some(Reason::Menu)));
+    // The highlight first: three rows down, and no text before the screen shows it there.
+    f.answer("my own answer");
+    assert_eq!(f.writes(), [downs(3)]);
+    f.pass(SECOND / 10);
+    assert!(f.writes().is_empty());
+    f.show(ASK_OTHER);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"my own answer".to_vec()]);
+    // Other text on the row (here: more than was typed) is not the answer: no Enter.
+    f.show(ASK_OTHER_LONG);
+    f.pass(SECOND / 10);
+    assert!(f.writes().is_empty() && f.chat().question.probe().0);
+    f.show(ASK_OTHER_TYPED);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+#[test]
+fn a_long_typed_answer_is_read_across_the_rows_it_wraps_onto() {
+    const LONG: &str = "my own answer and it goes on with many more words so that the text is longer than one row \
+        of the terminal and has to wrap onto the next row of the screen";
+    let mut f = Live::new();
+    f.turn();
+    f.show(ASK_OTHER_FIRST);
+    f.pass(QUIET);
+    f.answer(LONG);
+    f.writes();
+    f.show(ASK_OTHER);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [LONG.as_bytes().to_vec()]);
+    // Only part of it shown yet: wait.
+    f.show(ASK_OTHER_TYPED);
+    f.pass(SECOND / 10);
+    assert!(f.writes().is_empty());
+    f.show(ASK_OTHER_LONG);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    // A typed answer that never shows stops with a notice and no Enter.
+    let mut f = Live::new();
+    f.turn();
+    f.show(ASK_OTHER_FIRST);
+    f.pass(QUIET);
+    f.answer("something else");
+    f.show(ASK_OTHER);
+    f.pass(SECOND / 10);
+    f.show(ASK_OTHER_TYPED);
+    f.pass(SECOND * 3);
+    assert!(f.chat().question.probe().0.not() && f.chat().question.probe().1.is_some());
+    assert!(!f.writes().iter().any(|w| w == b"\r"));
+    // A digit first could pick a choice: refused before any key.
+    let mut f = Live::new();
+    f.turn();
+    f.show(ASK_OTHER_FIRST);
+    f.pass(QUIET);
+    f.answer("2 of them");
+    assert!(f.writes().is_empty() && f.chat().question.probe().1.is_some());
+}
+
+#[test]
+fn a_forms_typed_answer_ticks_its_box_and_is_left_for_next_or_submit() {
+    let mut f = Live::new();
+    f.turn();
+    f.show(FORM_OTHER_FIRST);
+    f.pass(QUIET);
+    f.answer("kiwi");
+    assert_eq!(f.writes(), [downs(3)]);
+    f.show(FORM_OTHER);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"kiwi".to_vec()]);
+    f.show(FORM_OTHER_TYPED);
+    f.pass(SECOND / 10);
+    // No Enter: on a multi-select's row it would clear the box again. The card now offers the
+    // page with the answer ticked, and Next as a choice.
+    assert!(f.writes().is_empty());
+    let chat = f.chat();
+    assert!(chat.question.probe().0.not() && chat.question.probe().1.is_none());
+    assert!(chat.question.field.text().is_empty());
+    let now = f.now;
+    assert!(question::press(f.tab(), now, Hit::Option(4)));
+    assert_eq!(f.writes(), [downs(1)]);
 }

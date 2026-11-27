@@ -1262,8 +1262,16 @@ choices), each choice with the description the screen shows under it, a form pag
 Next or Submit row where the arrow keys reach it, and the review ("Review your answers", which has
 no footer) as its two entries with the answers in the title. A click moves the highlight and
 presses Enter under the menu card's checks; a box is ticked the same way. The working line reads
-"Waiting for your answer" while that card shows, whatever the transcript says. A typed answer
-needs the transcript's card below (or the terminal) and is the open gap.
+"Waiting for your answer" while that card shows, whatever the transcript says. The user's own answer goes
+through the card's field while the question's "Type something" row is as the CLI first draws it
+("Type something.", or "[ ] Type something" in a multi-select): arrows to that row, the text only
+once the screen shows the highlight there, and Enter only once that row reads exactly the text,
+the rows it wraps onto included ("4. my own answer"; recorded 2026-11-27, also without Unicode). In
+a multi-select the row's box ticks itself as text is typed and Enter would clear it again, so the
+step ends once the row reads "[x] text" with its tick, and the form's Next or Submit row sends it.
+A text starting with a digit is refused (digits pick choices), as is one with control characters;
+a row that does not show the text within two seconds stops with a notice and no Enter. Text
+already typed on that row is a choice like any other and is not edited from Chat.
 A pending `AskUserQuestion` call that the main transcript does hold is shown as a card built from
 the call's input (header, question, options with descriptions), never from the screen. A lone
 single-choice question is answered by one click: before any key it requires the live screen to show a menu footer,
@@ -1457,8 +1465,7 @@ picture's marker (the recorder does not touch the clipboard).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt that
-does not name the one pending call (a subagent's, or two calls); a typed answer to a question the
-transcript does not hold yet; a dialog with no footer Chat knows (the drawer opens by itself after
+does not name the one pending call (a subagent's, or two calls); a dialog with no footer Chat knows (the drawer opens by itself after
 four silent seconds); Claude Code's full-screen renderer or another full-screen program; a session
 whose identity could not be verified; a card step whose screen did not follow within its deadline
 (the card says which, and Open terminal).

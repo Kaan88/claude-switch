@@ -275,6 +275,9 @@ enum Then {
     Choose,
     /// Type on the target row, then Enter.
     Type(String),
+    /// Type on the target row and leave it there: a multi-select's "Type something" row, where
+    /// Enter would clear its box again. The form's Next or Submit row sends it.
+    Fill(String),
     /// Choose the row, then put the text in the composer for the next message.
     Chat(String),
     /// Tab to open the prompt's comment field on the row, type, then Enter.
@@ -345,6 +348,8 @@ pub(super) struct MenuShown {
     notes: Vec<String>,
     /// It is a question Claude asks, read from the screen.
     question: bool,
+    /// A question's "Type something" row, and whether it has a box (a multi-select question).
+    other: Option<(usize, bool)>,
 }
 
 impl MenuShown {
@@ -363,7 +368,10 @@ fn menu_shown(screen: &Screen) -> Option<MenuShown> {
     let panel = screens::panel(screen)?;
     let choices = panel.menu.as_ref().map(screens::Menu::texts).unwrap_or_default();
     let (notes, question) = (panel.notes, panel.question);
-    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc, notes, question })
+    // Only the row as the CLI first draws it: once it holds text it is an answer, not the field.
+    let other = choices.iter().position(|c| pristine(false, c) || pristine(true, c)).filter(|_| question);
+    let other = other.map(|at| (at, screens::checkbox(&choices[at]).is_some()));
+    Some(MenuShown { title: panel.title, choices, rows: panel.rows, esc: panel.esc, notes, question, other })
 }
 
 /// A permission prompt as last read from the screen, for the card.
@@ -519,7 +527,10 @@ fn read(
         Subject::Menu { title, choices } => {
             let panel = screens::panel(screen)?;
             let menu = panel.menu?;
-            (panel.title == *title && menu.texts() == *choices).then_some((menu, None, None))
+            let texts = menu.texts();
+            let same = texts.len() == choices.len()
+                && texts.iter().zip(choices).enumerate().all(|(i, (a, b))| a == b || typing == Some(i));
+            (panel.title == *title && same).then_some((menu, None, None))
         }
         Subject::Panel { rows } => {
             let panel = screens::panel(screen)?;
@@ -527,6 +538,20 @@ fn read(
             (panel.menu.is_none() && panel.rows == *rows).then_some((empty, None, None))
         }
     }
+}
+
+/// Entry `i` of the menu reads exactly `text`, the rows it wraps onto included, in its ticked box
+/// when it has one.
+fn entry_shows(menu: &screens::Menu, i: usize, text: &str) -> bool {
+    let Some(entry) = menu.entries.get(i) else { return false };
+    let end = menu.entries.get(i + 1).map_or(menu.footer, |e| e.row);
+    let shown = collapse(&format!("{} {}", entry.text, screens::rows_between(menu, entry.row + 1, end)));
+    let shown = match screens::checkbox(&shown) {
+        Some((true, rest)) => rest,
+        Some((false, _)) => return false,
+        None => shown.as_str(),
+    };
+    squash(shown) == squash(text)
 }
 
 fn names(prompt: &screens::Permission, needles: &[Needle]) -> bool {
@@ -823,7 +848,7 @@ fn write(tab: &mut Tab, bytes: &[u8]) -> Result<(), &'static str> {
     let chat = &mut tab.pane.as_mut().expect("Chat pane").chat;
     #[cfg(test)]
     chat.writes.push(bytes.to_vec());
-    if !chat.demo {
+    if !chat.demo && !chat.scripted() {
         let pty =
             tab.term.pty.as_ref().filter(|p| tab.term.ended.is_none() && p.running()).ok_or("The session ended.")?;
         pty.write(bytes).map_err(|_| "The terminal write failed. Check the terminal.")?;
@@ -1013,9 +1038,14 @@ impl Chat {
             changed = true;
         }
         // Only a question or permission card has a field: no hidden card keeps the keyboard.
-        let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some();
+        let typed = self.question.menu.as_ref().is_some_and(|menu| menu.question);
+        let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some() || typed;
         if !field && std::mem::take(&mut self.question.focus) {
             changed = true;
+        }
+        // A screen question's own answer goes with it.
+        if self.question.item.is_none() && self.question.menu.is_none() && self.question.step.is_none() {
+            self.question.field.clear();
         }
         self.question.shown = shown;
         changed |= std::mem::replace(&mut self.question.answerable, answerable) != answerable;
@@ -1376,9 +1406,27 @@ fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
         };
         return escape(tab, now, None, subject);
     }
-    let Hit::Option(target) = hit else { return false };
-    if target >= shown.choices.len() {
-        return false;
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    let (target, then) = match (hit, shown.other) {
+        (Hit::Option(target), _) if target < shown.choices.len() => (target, Then::Choose),
+        // The user's own answer, typed on the question's "Type something" row.
+        (Hit::Answer, Some((other, boxed))) => match answer_text(&chat.question.field) {
+            // The row shows no field of its own: a leading digit could pick a choice instead.
+            Ok(text) if text.starts_with(|c: char| c.is_ascii_digit()) => {
+                chat.question.error = Some(DIGIT_FIRST);
+                return true;
+            }
+            Ok(text) if boxed => (other, Then::Fill(text)),
+            Ok(text) => (other, Then::Type(text)),
+            Err(error) => {
+                chat.question.error = Some(error);
+                return true;
+            }
+        },
+        _ => return false,
+    };
+    if busy(chat) {
+        return true;
     }
     if !ready(tab) {
         tab.pane.as_mut().unwrap().chat.question_failed(BLOCKED);
@@ -1393,7 +1441,7 @@ fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
     };
     chat.question.error = None;
     let epoch = chat.output_epoch;
-    let step = Step { item: None, subject, target, then: Then::Choose, stage: Stage::Moving, due: now + STEP, epoch };
+    let step = Step { item: None, subject, target, then, stage: Stage::Moving, due: now + STEP, epoch };
     start(tab, now, step, from)
 }
 
@@ -1401,7 +1449,7 @@ fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
 fn arrived(tab: &mut Tab, step: &mut Step, now: Instant) -> Result<(), &'static str> {
     let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
     match &step.then {
-        Then::Type(text) => {
+        Then::Type(text) | Then::Fill(text) => {
             write(tab, text.as_bytes())?;
             step.stage = Stage::Typing;
             step.due = now + STEP;
@@ -1449,6 +1497,10 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             let chat = &mut tab.pane.as_mut().unwrap().chat;
             chat.question.step = None;
             chat.hold(&step);
+            // A screen question's typed answer has gone: the next question starts empty.
+            if step.item.is_none() && matches!(step.then, Then::Type(_) | Then::Fill(_)) {
+                chat.question.field.clear();
+            }
             return true;
         }
         Action::Arrive => arrived(tab, &mut step, now),
@@ -1506,7 +1558,7 @@ fn comment(subject: &Subject, screen: &Screen, target: usize) -> Option<String> 
 fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
     let late = now >= step.due;
     let typed_text = match &step.then {
-        Then::Type(text) | Then::Amend(text) => Some(text.as_str()),
+        Then::Type(text) | Then::Fill(text) | Then::Amend(text) => Some(text.as_str()),
         Then::Choose | Then::Chat(_) => None,
     };
     match step.stage {
@@ -1537,13 +1589,21 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
             let text = typed_text.unwrap_or_default();
             let typed = if matches!(step.then, Then::Amend(_)) {
                 comment(&step.subject, screen, step.target).is_some_and(|typed| typed.contains(text))
+            } else if matches!(step.subject, Subject::Menu { .. }) {
+                // A question read from the screen: the row must read exactly the text, the rows
+                // it wraps onto included, with the highlight still on it.
+                read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
+                    menu.highlight() == Some(step.target) && entry_shows(&menu, step.target, text)
+                })
             } else {
                 read(&step.subject, screen, Some(step.target)).is_some_and(|(menu, ..)| {
                     menu.highlight() == Some(step.target)
                         && menu.rows_from(step.target).is_some_and(|rows| rows.contains(text))
                 })
             };
-            if typed && may_act {
+            if typed && may_act && matches!(step.then, Then::Fill(_)) {
+                Action::Closed
+            } else if typed && may_act {
                 Action::Enter
             } else if late {
                 Action::Fail(NOT_TYPED)
@@ -1757,13 +1817,42 @@ impl Draw<'_> {
             hits.push((row, target));
             y += row.h + 4.0;
         }
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
+        let mut row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
         let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or("");
-        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
+        if menu.other.is_some() {
+            // The user's own answer: typed on the question's "Type something" row.
+            let field = Rect::new(row.x, row.y, (row.w - 104.0 - 8.0 - 120.0 - 8.0).max(0.0), row.h);
+            let focus = chat.question.focus && self.focused;
+            p.frame(field, 5.0, pal.field, if focus { pal.accent } else { pal.line });
+            let colors =
+                FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
+            chat.question.field.draw(
+                p,
+                field.inset(6.0),
+                Face::Ui,
+                12.0,
+                &colors,
+                "Type your own answer…",
+                focus,
+                focus,
+            );
+            hits.push((field, Target::Chat(Control::Question(Hit::Field))));
+            let answer = Rect::new(field.right() + 8.0, row.y, 104.0, row.h);
+            let target = Target::Chat(Control::Question(Hit::Answer));
+            let label = if menu.other.is_some_and(|(_, boxed)| boxed) { "Add answer" } else { "Answer" };
+            super::paint::button(p, pal, answer, label, self.hover == Some(target), false);
+            hits.push((answer, target));
+        } else {
+            p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
+        }
         let open = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
         let target = Target::Chat(Control::Question(Hit::Open));
         super::paint::button(p, pal, open, "Open terminal", self.hover == Some(target), false);
         hits.push((open, target));
+        if menu.other.is_some() {
+            row.y += FIELD;
+            p.text(Face::Ui, 11.5, row.x, row.y + STATUS / 2.0 - 4.0, status, pal.muted, row.w);
+        }
     }
 
     /// A CLI panel that only shows information (/usage, /status): its rows, usage bars drawn as
@@ -2028,3 +2117,11 @@ impl Draw<'_> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+impl Card {
+    /// For tests outside this module: whether a step is in flight, and the card's notice.
+    pub(in crate::view::chat) fn probe(&self) -> (bool, Option<&'static str>) {
+        (self.step.is_some(), self.error)
+    }
+}

@@ -349,7 +349,8 @@ fn question_tabs(text: &str) -> bool {
 /// unnumbered Submit or Next row, after its "Type something" row.
 pub(super) fn walk_menu(screen: &Screen) -> Option<Menu> {
     let mut menu = menu(screen)?;
-    let other = menu.entries.iter().position(|e| checkbox(&e.text).is_some_and(|(_, text)| text.starts_with(OTHER)));
+    // The last row with a box is "Type something", whatever was typed on it since.
+    let other = menu.entries.iter().rposition(|e| checkbox(&e.text).is_some());
     if let Some(other) = other
         && let Some(entry) = submit_row(screen, &menu, other)
     {

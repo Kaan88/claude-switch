@@ -25,8 +25,7 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
   Checked by tests over screens recorded from Claude Code 2.1.332 and never in the running app:
   the first things to try there are a plain send in a resumed tab, a send while a turn runs, Stop
   right after a send, a question from Claude, and a pasted picture (its marker was not recorded).
-  Open: a typed answer to a question the transcript does not hold yet (the screen card only
-  clicks); the composer's notice for text on the CLI's input has no "clear it" button; a new
+  Open: the composer's notice for text on the CLI's input has no "clear it" button; a new
   Claude Code version needs the recordings again (`probe_recordings`).
 
 ## Completed follow-ups

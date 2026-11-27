@@ -18,6 +18,9 @@
   only after the answer): its text, choices and their descriptions, a form's pages and its review,
   with "Waiting for your answer" instead of "Working…". When the terminal is silent for seconds
   with nothing Chat can read, the terminal drawer opens by itself.
+- Your own answer to a question: the question card has a field for it, also in forms with
+  several questions. Chat types it on the CLI's "Type something" row and confirms only once the
+  screen shows exactly that text.
 - Stop before Claude answers: Claude Code puts the message back on its own input, which blocked
   the next send. Chat now clears it there and puts the text back in the message box.
 - More time for a pasted picture to show (20 s) and for a pasted message to appear (5 s).

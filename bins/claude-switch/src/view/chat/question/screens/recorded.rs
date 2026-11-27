@@ -113,6 +113,15 @@ pub(in crate::view::chat) const PLAIN_COMPACTING: &str = include_str!("../fixtur
 pub(in crate::view::chat) const PLAIN_PLAN: &str = include_str!("../fixtures/plain_plan.ansi");
 pub(in crate::view::chat) const PLAIN_RESTORED: &str = include_str!("../fixtures/plain_restored.ansi");
 pub(in crate::view::chat) const PLAIN_EMPTIED: &str = include_str!("../fixtures/plain_emptied.ansi");
+pub(in crate::view::chat) const ASK_OTHER_FIRST: &str = include_str!("../fixtures/ask_other_first.ansi");
+pub(in crate::view::chat) const ASK_OTHER: &str = include_str!("../fixtures/ask_other.ansi");
+pub(in crate::view::chat) const ASK_OTHER_TYPED: &str = include_str!("../fixtures/ask_other_typed.ansi");
+pub(in crate::view::chat) const ASK_OTHER_LONG: &str = include_str!("../fixtures/ask_other_long.ansi");
+pub(in crate::view::chat) const FORM_OTHER_FIRST: &str = include_str!("../fixtures/form_other_first.ansi");
+pub(in crate::view::chat) const FORM_OTHER: &str = include_str!("../fixtures/form_other.ansi");
+pub(in crate::view::chat) const FORM_OTHER_TYPED: &str = include_str!("../fixtures/form_other_typed.ansi");
+pub(in crate::view::chat) const PLAIN_ASK_OTHER_TYPED: &str = include_str!("../fixtures/plain_ask_other_typed.ansi");
+pub(in crate::view::chat) const PLAIN_FORM_OTHER_TYPED: &str = include_str!("../fixtures/plain_form_other_typed.ansi");
 pub(in crate::view::chat) const PROMPT_IDLE: &str = include_str!("../fixtures/prompt_idle.ansi");
 pub(in crate::view::chat) const PROMPT_SUGGEST: &str = include_str!("../fixtures/prompt_suggest.ansi");
 pub(in crate::view::chat) const PROMPT_PASTED: &str = include_str!("../fixtures/prompt_pasted.ansi");
@@ -509,4 +518,27 @@ fn probe_recordings() {
             mode(&s),
         );
     }
+}
+
+#[test]
+fn a_typed_answer_reads_exactly_on_its_row_with_or_without_unicode() {
+    let shows = crate::view::chat::question::entry_shows;
+    for (fixture, text) in [
+        (ASK_OTHER_TYPED, "my own answer"),
+        (PLAIN_ASK_OTHER_TYPED, "my own answer"),
+        (FORM_OTHER_TYPED, "kiwi"),
+        (PLAIN_FORM_OTHER_TYPED, "kiwi"),
+    ] {
+        let menu = walk_menu(&recorded(fixture)).expect("the question");
+        assert_eq!(menu.highlight(), Some(3));
+        assert!(shows(&menu, 3, text), "{text}");
+        assert!(!shows(&menu, 3, &text[..text.len() - 1]) && !shows(&menu, 3, &format!("{text} more")));
+        // A row that was not typed on is never the answer.
+        assert!(!shows(&menu, 0, text));
+    }
+    // The untouched rows: a pristine "Type something" row is not text, and an empty box is not ticked.
+    let pristine = walk_menu(&recorded(ASK_OTHER)).unwrap();
+    assert!(!shows(&pristine, 3, "my own answer"));
+    let form = walk_menu(&recorded(FORM_OTHER)).unwrap();
+    assert!(!shows(&form, 3, "Type something") && !shows(&form, 3, "kiwi"));
 }
