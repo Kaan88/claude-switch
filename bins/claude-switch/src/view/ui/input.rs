@@ -688,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn jumping_to_an_edit_expands_its_group_and_scrolls_to_the_exact_tool() {
+    fn jumping_to_an_edit_opens_it_and_jumping_to_a_step_opens_its_run() {
         let demo = crate::demo::Transcript::new_chat().unwrap();
         let source = crate::view::model::Source::File(demo.path().into());
         let (wake, events) = std::sync::mpsc::channel();
@@ -715,8 +715,9 @@ mod tests {
         let mut ui = Ui::default();
         ui.set_chat(true);
         ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
-        assert!(ui.rows.iter().any(|row| row.style == Style::Group && row.title == "4 tool calls"));
-        assert!(!ui.rows.iter().any(|row| row.id == Id::Tool(id)));
+        // An edit is a row of its own: there before the jump, closed.
+        let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
+        assert!(row.style == Style::Edit && !row.open);
         assert!(ui.jump_to_tool(&m, id));
         ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
         let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
@@ -727,5 +728,34 @@ mod tests {
         let offset = ui.offset;
         assert!(!ui.jump_to_tool(&m, ItemId { offset: 0, block: 1000 }));
         assert_eq!(ui.offset, offset);
+
+        // A call inside a run is not shown until its run opens: the jump opens both.
+        let demo = crate::demo::Transcript::new_showcase(None).unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut m = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        m.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(m.collect());
+        let id = m
+            .items
+            .iter()
+            .find_map(|(&id, item)| match &item.kind {
+                claude_switch_core::transcript::ItemKind::Tool { id: tool, .. } if tool == "grep" => Some(id),
+                _ => None,
+            })
+            .unwrap();
+        let mut ui = Ui::default();
+        ui.set_chat(true);
+        ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
+        assert!(ui.rows.iter().any(|row| row.style == Style::Group && row.title.starts_with("Ran a command, read 3")));
+        assert!(!ui.rows.iter().any(|row| row.id == Id::Tool(id)));
+        assert!(ui.jump_to_tool(&m, id));
+        ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
+        let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
+        assert!(row.open && row.step == Some((false, true)));
+        assert_eq!(ui.tool_jump, Some((id, false)));
     }
 }

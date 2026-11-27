@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Chat and the Session view: a run of tool calls between two answers is one quiet line in words
+  ("Ran a command, read 3 files, searched the code"), at the column's edge. A single call reads as
+  itself ("Ran cargo test -p tiles"). The line opens into a timeline: an icon per kind of call,
+  what it did, its target in the monospace font, the time it took, and the output of an opened
+  step in a box. A failure is counted in the line in the warning colour ("· 1 failed"), without
+  the coloured wash; a refused call still says who refused it. While a call runs the line names
+  it ("Running cargo bench …"), and "Waiting to run …" while a card asks about it. A thought is a
+  step of the run. Results of slash commands and of shell mode keep their open output.
+- Chat and the Session view: a file edit is a row of its own with the path and the lines added
+  (green) and removed (red). It opens into a diff with tinted lines; with line numbers and the
+  lines around the change when Claude Code recorded them with the edit, else the changed lines
+  alone. The green and red are the terminal theme's. A long line is cut at the row's edge.
+
 - Chat: the working line ("✻ Shimmying… 12s · ↓ 1.2k tokens") is the last line of the
   conversation, where the next text will appear, with the mark in the accent colour. The strip
   between the conversation and the message box is gone.

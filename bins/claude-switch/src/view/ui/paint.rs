@@ -1,7 +1,7 @@
 use mdshared_ui::gfx::mix;
 use mdshared_ui::tokens::legible;
 
-use super::rows::{CHIP_H, TOOL_H, Thumb, chip_rect, chips_height, thumb_rect, thumbs_height};
+use super::rows::{CHIP_H, Thumb, chip_rect, chips_height, thumb_rect, thumbs_height};
 use super::*;
 
 impl Ui {
@@ -30,7 +30,7 @@ impl Ui {
         }
     }
 
-    pub(super) fn paint_rows(&mut self, p: &mut Painter, pal: &Palette, m: &mut Model, phase: f32, motion: bool) {
+    pub(super) fn paint_rows(&mut self, p: &mut Painter, pal: &Palette, m: &mut Model) {
         let body = self.body;
         let clip = p.clip(body);
         let start = self.rows.partition_point(|r| r.top + r.h < self.offset);
@@ -43,7 +43,6 @@ impl Ui {
             }
             let geo = row.geo;
             let frame = Rect::new(body.x + geo.x, y, geo.w, row.h);
-            let header = Rect::new(frame.x, frame.y, frame.w, TOOL_H);
             let tone = match row.tone {
                 Tone::Accent => pal.accent,
                 Tone::Normal => pal.text,
@@ -61,71 +60,52 @@ impl Ui {
                 // A neutral bubble; answers have no mark and no bubble.
                 Style::Prompt => p.rbox(frame, 16.0_f32.min(frame.h / 2.0), crate::view::look::bubble(pal)),
                 Style::Answer => {}
-                Style::Tool | Style::Group => {
+                Style::Tool | Style::Group | Style::Edit => {
                     let action = match &row.id {
                         Id::Tool(id) => Action::Tool(*id),
                         Id::Group(id) => Action::Group(*id),
                         _ => unreachable!("tool rows have tool identities"),
                     };
-                    let color = if row.busy && motion {
-                        mix(tone, pal.muted, 0.21 * (1.0 + (phase * 4.0).sin()))
-                    } else {
-                        tone
-                    };
-                    let hot = frame_hit(header, action);
-                    // Tool rows recede behind the answers: no box, only a soft fill when opened,
-                    // hovered or failed, and an accent outline while a jump points at the row.
-                    let failed = matches!(row.tone, Tone::Warning);
+                    let head = Rect::new(frame.x, frame.y, frame.w, row.head);
+                    let hot = frame_hit(head, action);
                     let jumped = self.tool_jump.is_some_and(|(id, _)| row.id == Id::Tool(id));
-                    let panel = if pal.dark { pal.field } else { pal.pane };
-                    let wash = mix(pal.page, pal.warn_bg, 0.75);
-                    let fill = match (row.open, failed) {
-                        (true, true) => Some(mix(panel, pal.warn_bg, 0.5)),
-                        (true, false) => Some(panel),
-                        (false, true) => Some(wash),
-                        (false, false) => None,
-                    };
-                    if jumped {
-                        p.frame(frame, 5.0, fill.unwrap_or(pal.page), pal.accent);
-                    } else if let Some(fill) = fill {
-                        p.rbox(frame, 5.0, fill);
-                    }
-                    let mut ground = fill.unwrap_or(pal.page);
-                    if hot {
-                        p.rbox(header, 5.0, pal.hover);
-                        ground = pal.hover;
-                    }
-                    // The CLI's own "ctrl+b" offer, on the running command's line.
-                    let offered = match (&row.id, self.offer) {
-                        (Id::Tool(id), Some((offer, busy))) if *id == offer => Some(busy),
-                        (Id::Group(_), Some((_, busy))) if row.offer => Some(busy),
-                        _ => None,
-                    };
-                    let mut offer_w = 0.0;
-                    if let Some(busy) = offered.filter(|_| header.w >= 260.0) {
-                        let label = if busy { "Moving to background…" } else { "Run in background" };
-                        let w = p.measure(Face::Ui, 12.0, label) + 22.0;
-                        let pill = Rect::new(header.right() - w, header.cy() - 12.0, w, 24.0);
-                        let over = !busy && pill.contains(mouse.0, mouse.1);
-                        let edge = crate::view::look::edge(pal);
-                        p.frame(pill, 12.0, if over { pal.hover } else { pal.page }, edge);
-                        p.text_center(Face::Ui, 12.0, pill, label, if busy { pal.muted } else { pal.text });
-                        self.offer_rect = intersection(pill, body);
-                        offer_w = w + 8.0;
-                    }
-                    let badge = if row.background && header.w >= 120.0 + offer_w {
-                        let badge = Rect::new(header.right() - offer_w - 76.0, header.y + 3.0, 68.0, header.h - 6.0);
-                        let Id::Tool(id) = row.id else { unreachable!() };
-                        let hot = frame_hit(badge, Action::Shell(id));
-                        p.rbox(badge, 4.0, if hot { pal.hover } else { pal.on });
-                        p.text_center(Face::Semibold, 10.5, badge, "background", pal.accent);
-                        76.0
+                    if row.style == Style::Edit {
+                        let colours = self.diff.unwrap_or_else(|| crate::view::look::Diff::fallback(pal));
+                        draw_edit(p, pal, colours, frame, row, hot, jumped);
                     } else {
-                        0.0
-                    };
-                    let badge = badge + offer_w;
-                    draw_tool_line(p, pal, header, row, color, ground, badge);
-                    self.busy_visible |= row.busy && header.bottom() > body.y;
+                        // The CLI's own "ctrl+b" offer, on the running command's line.
+                        let offered = match (&row.id, self.offer) {
+                            (Id::Tool(id), Some((offer, busy))) if *id == offer => Some(busy),
+                            (Id::Group(_), Some((_, busy))) if row.offer => Some(busy),
+                            _ => None,
+                        };
+                        let mut reserve = 0.0;
+                        if let Some(busy) = offered.filter(|_| head.w >= 260.0) {
+                            let label = if busy { "Moving to background…" } else { "Run in background" };
+                            let w = p.measure(Face::Ui, 12.0, label) + 22.0;
+                            let pill = Rect::new(head.right() - w, head.cy() - 12.0, w, 24.0);
+                            let over = !busy && pill.contains(mouse.0, mouse.1);
+                            let edge = crate::view::look::edge(pal);
+                            p.frame(pill, 12.0, if over { pal.hover } else { pal.page }, edge);
+                            p.text_center(Face::Ui, 12.0, pill, label, if busy { pal.muted } else { pal.text });
+                            self.offer_rect = intersection(pill, body);
+                            reserve = w + 8.0;
+                        }
+                        if row.background && head.w >= 120.0 + reserve {
+                            let badge = Rect::new(head.right() - reserve - 76.0, head.cy() - 8.0, 68.0, 16.0);
+                            let Id::Tool(id) = row.id else { unreachable!() };
+                            let hot = frame_hit(badge, Action::Shell(id));
+                            p.rbox(badge, 4.0, if hot { pal.hover } else { pal.on });
+                            p.text_center(Face::Semibold, 10.5, badge, "background", pal.accent);
+                            reserve += 76.0;
+                        }
+                        let look = ToolLook { chat: self.chat, hot, jumped, reserve };
+                        if row.step.is_some() {
+                            draw_step(p, pal, frame, row, look);
+                        } else {
+                            draw_line(p, pal, head, row, look);
+                        }
+                    }
                 }
                 Style::Files => {
                     for (index, file) in row.files.iter().enumerate() {
@@ -182,7 +162,18 @@ impl Ui {
             }
             if let Some(text) = &row.body {
                 let range = ends.and_then(|ends| select::Selection::range_in(ends, index, text.text()));
+                if row.boxed {
+                    // What a call printed: in a box of its own under the call's line.
+                    let (px, py_) = super::rows::BOX_PAD;
+                    let r = Rect::new(tx - px, py - py_, geo.tw + 2.0 * px, text.height() + 2.0 * py_);
+                    p.frame(r, 8.0, pal.field, pal.line);
+                }
+                // A diff's lines are never wrapped: its row cuts them.
+                let cut = (row.style == Style::Edit).then(|| p.clip(Rect::new(tx, py, geo.tw, text.height())));
                 text.draw(p, Rect::new(tx, py, geo.tw, text.height()), body, range, pal);
+                if let Some(cut) = cut {
+                    p.restore(cut);
+                }
                 for (top, h, code) in text.code_blocks() {
                     let r = Rect::new(tx + geo.tw - 60.0, py + top + 5.0, 54.0, 20.0);
                     if h < 30.0 || geo.tw < 120.0 || intersection(r, body).is_none() {
@@ -202,6 +193,7 @@ impl Ui {
             if row.style == Style::Tool
                 && let Some(id) = &row.agent
             {
+                let py = py + if row.boxed { super::rows::BOX_PAD.1 } else { 0.0 };
                 let r = Rect::new(tx, py + 3.0, geo.tw.min(164.0), CHIP_H - 4.0);
                 let hot = frame_hit(r, Action::Agent(id.clone()));
                 p.frame(r, 5.0, if hot { pal.hover } else { pal.bar }, pal.line);
@@ -264,41 +256,196 @@ fn thumb_fit(w: f32, h: f32, slot: Rect, scale: f32) -> Rect {
     Rect::new(slot.x, slot.y, (w * k).max(1.0), (h * k).max(1.0))
 }
 
-/// One quiet line: a chevron, the status, the tool's name and its target, all in the muted
-/// colours (the duration fainter still), set close after each other like a note. A failure keeps
-/// its status in the warning colour; a running call keeps the pulsing accent.
-fn draw_tool_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, status: [u8; 3], ground: [u8; 3], badge: f32) {
-    let (face, size) = (Face::Ui, 11.5);
+/// How a tool row is drawn this frame.
+#[derive(Clone, Copy)]
+struct ToolLook {
+    chat: bool,
+    /// The pointer is over its line.
+    hot: bool,
+    /// A jump from the Details panel points at it.
+    jumped: bool,
+    /// Room taken at the line's right end (a badge, "Run in background").
+    reserve: f32,
+}
+
+/// A run of calls, or one call or notice by itself: one quiet line in words at the column's
+/// edge, with what failed in the warning colour and a chevron after it. It is in the text colour
+/// while a call runs, and under the pointer.
+fn draw_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, look: ToolLook) {
+    let size = if look.chat { 13.5 } else { 12.0 };
+    let ground = if look.jumped { pal.on } else { pal.page };
+    if look.jumped {
+        p.rbox(Rect::new(r.x - 4.0, r.y + 1.0, r.w + 4.0, r.h - 2.0), 5.0, ground);
+    }
     let quiet = legible(pal.muted, ground, 4.5);
     let faint = legible(pal.faint, ground, 3.0);
-    let status = if matches!(row.tone, Tone::Muted) { faint } else { legible(status, ground, 4.5) };
-    let pad = 6.0_f32.min(r.w * 0.1);
-    let cy = r.cy();
-    let arrow = if row.open { "⌄" } else { "›" };
-    p.text_center(Face::Ui, 12.0, Rect::new(r.x + pad, r.y, 10.0, r.h), arrow, faint);
-    let mut x = r.x + pad + 15.0;
-    let end = (r.right() - pad - badge).max(x);
-    let gap = 7.0;
-    if row.style == Style::Group {
-        let shown = p.text(face, size, x, cy, &row.title, quiet, ((end - x) * 0.7).max(0.0));
-        x += shown + gap;
-        p.text(face, size, x, cy, &row.stamp, status, (end - x).max(0.0));
-        return;
-    }
-    let available = end - x;
-    let duration_w = if row.duration.is_empty() { 0.0 } else { p.measure(face, 11.0, &row.duration) + gap };
-    if !row.stamp.is_empty() {
-        x += p.text(face, size, x, cy, &row.stamp, status, available * 0.4) + gap;
-    }
+    let warn = legible(pal.warn, ground, 4.5);
+    let ink = if row.running || look.hot { pal.text } else { quiet };
     // A notice has no status: its title carries a warning or accent tone.
-    let name = if row.stamp.is_empty() && !matches!(row.tone, Tone::Muted) { status } else { quiet };
-    let room = (end - x - duration_w).max(0.0);
-    let name_max = if row.target.is_empty() { room } else { room * 0.6 };
-    x += p.text(face, size, x, cy, &row.title, name, name_max) + gap;
+    let title = match row.tone {
+        Tone::Warning if row.stamp.is_empty() => warn,
+        Tone::Accent if row.stamp.is_empty() => legible(pal.accent, ground, 4.5),
+        _ => ink,
+    };
+    let cy = r.cy();
+    let end = (r.right() - look.reserve).max(r.x);
+    let stamp = if row.stamp.is_empty() { String::new() } else { format!("· {}", row.stamp) };
+    let stamp_w = if stamp.is_empty() { 0.0 } else { p.measure(Face::Ui, size - 0.5, &stamp) + 8.0 };
+    let duration = if row.open { row.duration.as_str() } else { "" };
+    let duration_w = if duration.is_empty() { 0.0 } else { p.measure(Face::Ui, size - 2.0, duration) + 10.0 };
+    let room = (end - r.x - stamp_w - 18.0 - duration_w).max(0.0);
+    let mut x = r.x;
+    let title_max = if row.target.is_empty() { room } else { room * 0.6 };
+    x += p.text(Face::Ui, size, x, cy, &row.title, title, title_max);
     if !row.target.is_empty() {
-        x += p.text(face, size, x, cy, &row.target, quiet, (end - x - duration_w).max(0.0)) + gap;
+        let gap = p.measure(Face::Ui, size, " ");
+        x += gap + p.text(Face::Ui, size, x + gap, cy, &row.target, ink, (r.x + room - x - gap).max(0.0));
     }
-    p.text(face, 11.0, x.min(end - duration_w), cy, &row.duration, faint, duration_w);
+    x += 8.0;
+    if !stamp.is_empty() {
+        x += p.text(Face::Ui, size - 0.5, x, cy, &stamp, warn, stamp_w) + 8.0;
+    }
+    let chevron = if row.open { mdshared_ui::glyph::DOWN } else { mdshared_ui::glyph::RIGHT };
+    p.icon(chevron, 11.0, x + 3.0, cy + 0.5, faint);
+    if !duration.is_empty() {
+        p.text_right(Face::Ui, size - 2.0, end, cy, duration, faint);
+    }
+}
+
+/// A step of an open run, on its timeline: an icon for what it was on a thin line, the verb, the
+/// target in the mono face, what went wrong in the warning colour, and how long it took at the
+/// right.
+fn draw_step(p: &mut Painter, pal: &Palette, frame: Rect, row: &Row, look: ToolLook) {
+    use crate::view::ui::rows::STEP_INDENT;
+    let (size, mono) = if look.chat { (13.0, 12.0) } else { (11.5, 11.0) };
+    let head = Rect::new(frame.x, frame.y, frame.w, row.head);
+    let cy = head.cy();
+    let indent = STEP_INDENT.min(frame.w * 0.1);
+    let (first, last) = row.step.unwrap_or((true, true));
+    let top = if first { cy } else { frame.y };
+    let bottom = if last { cy } else { frame.bottom() };
+    if indent >= 20.0 {
+        p.fill(Rect::new(frame.x + 7.0, top, p.px(), (bottom - top).max(0.0)), pal.line);
+        // The page under the icon, so the line does not cross it.
+        p.rbox(Rect::new(frame.x - 1.0, cy - 9.0, 18.0, 18.0), 9.0, pal.page);
+        let failed = matches!(row.tone, Tone::Warning) && !row.stamp.is_empty();
+        let (icon, tone) = match () {
+            _ if failed => (mdshared_ui::glyph::CLOSE, pal.warn),
+            _ if row.running => (row.kind.icon(), pal.text),
+            _ => (row.kind.icon(), pal.muted),
+        };
+        p.icon(icon, 13.0, frame.x + 7.5, cy, tone);
+    }
+    let tx = frame.x + indent;
+    let end = (head.right() - look.reserve).max(tx);
+    let ground = match (look.jumped, look.hot) {
+        (true, _) => pal.on,
+        (false, true) => pal.hover,
+        _ => pal.page,
+    };
+    if look.jumped || look.hot {
+        p.rbox(Rect::new(tx - 6.0, head.y + 2.0, end - tx + 6.0, head.h - 4.0), 5.0, ground);
+    }
+    let quiet = legible(pal.muted, ground, 4.5);
+    let faint = legible(pal.faint, ground, 3.0);
+    let warn = legible(pal.warn, ground, 4.5);
+    let soft = legible(crate::view::look::soft(pal), ground, 4.5);
+    let duration_w = if row.duration.is_empty() { 0.0 } else { p.measure(Face::Ui, size - 1.5, &row.duration) + 10.0 };
+    let stamp_w = if row.stamp.is_empty() { 0.0 } else { p.measure(Face::Ui, size - 1.0, &row.stamp) + 8.0 };
+    let room = (end - tx - duration_w - stamp_w - 6.0).max(0.0);
+    let verb = match row.tone {
+        Tone::Warning if row.stamp.is_empty() => warn,
+        Tone::Accent if row.stamp.is_empty() => legible(pal.accent, ground, 4.5),
+        _ if row.running => pal.text,
+        _ => quiet,
+    };
+    let mut x = tx;
+    x += p.text(Face::Ui, size, x, cy, &row.title, verb, if row.target.is_empty() { room } else { room * 0.6 }) + 6.0;
+    if !row.target.is_empty() {
+        let (face, at) = if row.mono { (Face::Mono, mono) } else { (Face::Ui, size) };
+        x += p.text(face, at, x, cy + 0.5, &row.target, soft, (tx + room - x).max(0.0)) + 8.0;
+    }
+    if !row.stamp.is_empty() {
+        p.text(Face::Ui, size - 1.0, x, cy, &row.stamp, warn, stamp_w);
+    }
+    if !row.duration.is_empty() {
+        p.text_right(Face::Ui, size - 1.5, end - 4.0, cy, &row.duration, faint);
+    }
+}
+
+/// A file edit: a row with a thin border (a pencil, the path, the lines added in green and
+/// removed in red, a chevron) that opens into the diff: tinted lines with their signs, and line
+/// numbers when the transcript has them. The lines' text is the row's body, drawn by the caller.
+fn draw_edit(
+    p: &mut Painter,
+    pal: &Palette,
+    colours: crate::view::look::Diff,
+    frame: Rect,
+    row: &Row,
+    hot: bool,
+    jumped: bool,
+) {
+    use mdshared_ui::glyph;
+    let ground = match (row.open, hot) {
+        (true, _) => pal.field,
+        (false, true) => pal.hover,
+        _ => pal.page,
+    };
+    p.frame(frame, 9.0, ground, if jumped { pal.accent } else { pal.line });
+    let head = Rect::new(frame.x, frame.y, frame.w, row.head);
+    let cy = head.cy();
+    let ink = colours.on(ground);
+    p.icon(glyph::EDIT, 13.0, frame.x + 16.0, cy, legible(pal.muted, ground, 4.5));
+    let plus = format!("+{}", row.counts.0);
+    let minus = format!("−{}", row.counts.1);
+    let counts_w = p.measure(Face::Semibold, 12.0, &plus) + 6.0 + p.measure(Face::Semibold, 12.0, &minus);
+    let stamp_w = if row.stamp.is_empty() { 0.0 } else { p.measure(Face::Ui, 12.0, &row.stamp) + 10.0 };
+    let mut x = frame.x + 32.0;
+    let room = (frame.right() - 30.0 - counts_w - stamp_w - 12.0 - x).max(0.0);
+    let path = row.target.replace('\\', "/");
+    x += p.text(Face::Mono, 12.5, x, cy + 0.5, &path, pal.text, room) + 12.0;
+    if frame.right() - 30.0 - x >= counts_w {
+        x += p.text(Face::Semibold, 12.0, x, cy, &plus, ink.add, 80.0) + 6.0;
+        x += p.text(Face::Semibold, 12.0, x, cy, &minus, ink.del, 80.0) + 10.0;
+        if !row.stamp.is_empty() {
+            p.text(Face::Ui, 12.0, x, cy, &row.stamp, legible(pal.muted, ground, 4.5), stamp_w);
+        }
+    }
+    p.icon(if row.open { glyph::DOWN } else { glyph::RIGHT }, 11.0, frame.right() - 16.0, cy + 0.5, pal.faint);
+    let Some(text) = row.body.as_ref().filter(|_| row.open && !row.diff.lines.is_empty()) else { return };
+    p.fill(Rect::new(frame.x + 1.0, head.bottom(), frame.w - 2.0, p.px()), pal.line);
+    let clip = p.clip(Rect::new(frame.x + 1.0, head.bottom() + 1.0, frame.w - 2.0, frame.h - row.head - 2.0));
+    let line = text.height() / row.diff.lines.len() as f32;
+    let top = frame.y + row.geo.ty;
+    let gutter = row.geo.tx - row.geo.x;
+    let faint = legible(pal.faint, ground, 3.0);
+    for (i, diff) in row.diff.lines.iter().enumerate() {
+        let r = Rect::new(frame.x + 1.0, top + i as f32 * line, frame.w - 2.0, line);
+        let tone = match diff.sign {
+            '+' => Some(ink.add),
+            '-' => Some(ink.del),
+            _ => None,
+        };
+        if let Some(tone) = tone {
+            p.fill(r, mix(ground, tone, if pal.dark { 0.17 } else { 0.13 }));
+        }
+        if row.diff.breaks.contains(&i) {
+            p.fill(Rect::new(r.x, r.y, r.w, p.px()), pal.line);
+        }
+        if let Some(number) = diff.number {
+            p.text_right(Face::Mono, 11.0, frame.x + gutter - 26.0, r.cy(), &number.to_string(), faint);
+        }
+        if let Some(tone) = tone {
+            let sign = if diff.sign == '+' { "+" } else { "−" };
+            p.text(Face::Mono, 12.0, frame.x + gutter - 16.0, r.cy(), sign, tone, 12.0);
+        }
+    }
+    if row.diff.more > 0 {
+        let y = top + text.height() + 10.0;
+        let more = format!("{} more lines in the file's change", row.diff.more);
+        p.text(Face::Ui, 11.5, frame.x + 16.0, y, &more, faint, frame.w - 32.0);
+    }
+    p.restore(clip);
 }
 
 #[cfg(test)]

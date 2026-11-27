@@ -1,11 +1,12 @@
-//! Tool rows recede behind the answers in every theme: no accent and no full-strength text on a
-//! finished call or a group of calls, while a failure keeps the warning colour.
+//! Tool lines recede behind the answers in every theme: no accent and no full-strength text on a
+//! finished run of calls, while a failure is counted in the warning colour, without a wash.
 use std::io::Write;
 
 use mdshared_text::Bitmap;
 use mdshared_ui::gfx::Gfx;
 use serde_json::{Value, json};
 
+use super::super::rows::CHAT_TOOL_H;
 use super::*;
 
 fn record(file: &mut std::fs::File, sec: u8, role: &str, content: Value) {
@@ -24,7 +25,7 @@ fn result(id: &str, text: &str, error: bool) -> Value {
     json!({"type":"tool_result", "tool_use_id":id, "content":text, "is_error":error})
 }
 
-/// A transcript with two single calls (one failed), a group of five and answers between them.
+/// A transcript with a run of two calls (one failed), a run of five and answers between them.
 pub(super) fn fixture(dir: &std::path::Path, extra: &[Value]) -> std::path::PathBuf {
     std::fs::create_dir_all(dir).unwrap();
     let path = dir.join("quiet.jsonl");
@@ -137,7 +138,7 @@ fn user_theme(dark: bool, page: [u8; 3], text: [u8; 3], muted: [u8; 3], accent: 
 }
 
 #[test]
-fn tool_rows_are_quiet_in_light_dark_and_custom_themes_and_failures_still_show() {
+fn runs_of_calls_are_quiet_in_light_dark_and_custom_themes_and_failures_still_show() {
     let scratch = crate::testing::Scratch::new("cs-quiet-rows");
     let dir = scratch.to_path_buf();
     let path = fixture(&dir, &[]);
@@ -162,52 +163,60 @@ fn tool_rows_are_quiet_in_light_dark_and_custom_themes_and_failures_still_show()
         let mut ui = Ui::default();
         let bmp = paint(&mut ui, &mut model, &pal, &name);
         let rows = |style| ui.rows.iter().filter(move |r| r.style == style);
-        let tools = rows(Style::Tool).collect::<Vec<_>>();
-        let groups = rows(Style::Group).collect::<Vec<_>>();
-        assert_eq!((tools.len(), groups.len()), (2, 1), "{name}: two single calls and one group");
-        assert!(tools.iter().chain(&groups).all(|r| r.h == TOOL_H && !r.open), "{name}: one closed line each");
+        let runs = rows(Style::Group).collect::<Vec<_>>();
+        assert_eq!((rows(Style::Tool).count(), runs.len()), (0, 2), "{name}: two runs, each one line");
+        assert!(runs.iter().all(|r| r.h == CHAT_TOOL_H && !r.open), "{name}: one closed line each");
+        assert_eq!((runs[0].title.as_str(), runs[0].stamp.as_str()), ("Read a file, ran a command", "1 failed"));
+        assert_eq!((runs[1].title.as_str(), runs[1].stamp.as_str()), ("Read 5 files", ""));
         let (body, offset) = (ui.body, ui.offset);
-        let header = |row: &Row| Rect::new(body.x + row.geo.x, body.y + row.top - offset, row.geo.w, TOOL_H);
+        let header = |row: &Row| Rect::new(body.x + row.geo.x, body.y + row.top - offset, row.geo.w, row.head);
         let answer = rows(Style::Answer).next().unwrap();
+        assert_eq!(runs[1].geo.x, answer.geo.x, "{name}: a run starts at the column's edge, as the answers do");
         let answer_px = pixels(&bmp, Rect::new(body.x + answer.geo.tx, body.y + answer.top, 200.0, 19.0));
         let loudest = answer_px.iter().map(|&c| reach(c, pal.page)).max().unwrap();
-        for row in [tools[0], groups[0]] {
-            let px = pixels(&bmp, header(row));
-            assert!(!px.iter().any(|&c| near(c, pal.accent) && !near(pal.accent, pal.muted)), "{name}: no accent");
-            assert!(
-                px.iter().all(|&c| reach(c, pal.page) < loudest),
-                "{name}: {} stays quieter than the answer text",
-                row.title
-            );
-            assert!(px.iter().any(|&c| reach(c, pal.page) > 30), "{name}: {} is still readable", row.title);
-            // No box: the row's edges are the page itself.
-            let r = header(row);
-            let edge = pixels(&bmp, Rect::new(r.x, r.y, r.w, 1.0));
-            assert!(edge.iter().all(|&c| c == pal.page), "{name}: no border on {}", row.title);
-        }
-        let failed = tools[1];
+        let px = pixels(&bmp, header(runs[1]));
+        assert!(!px.iter().any(|&c| near(c, pal.accent) && !near(pal.accent, pal.muted)), "{name}: no accent");
+        assert!(px.iter().all(|&c| reach(c, pal.page) < loudest), "{name}: a run stays quieter than the answer text");
+        assert!(px.iter().any(|&c| reach(c, pal.page) > 30), "{name}: a run is still readable");
+        // No box: the line's edges are the page itself.
+        let r = header(runs[1]);
+        let edge = pixels(&bmp, Rect::new(r.x, r.y, r.w, 1.0));
+        assert!(edge.iter().all(|&c| c == pal.page), "{name}: no border on a run");
+        // The failure is counted in the warning colour, on the page: no wash.
+        let failed = runs[0];
         assert!(matches!(failed.tone, Tone::Warning));
-        let wash = mix(pal.page, pal.warn_bg, 0.75);
-        let warn = legible(pal.warn, wash, 4.5);
+        let warn = legible(pal.warn, pal.page, 4.5);
         let px = pixels(&bmp, header(failed));
         assert!(
             px.iter()
-                .any(|&c| distance(c, warn) < distance(c, pal.muted).min(distance(c, wash)) && distance(c, warn) < 90),
+                .any(|&c| distance(c, warn) < distance(c, pal.muted).min(distance(c, pal.page))
+                    && distance(c, warn) < 90),
             "{name}: a failure shows in the warning colour"
         );
-        assert!(px.iter().filter(|&&c| c == wash).count() > px.len() / 2, "{name}: on a soft warning wash");
+        assert!(px.iter().filter(|&&c| c == pal.page).count() > px.len() * 3 / 4, "{name}: on the page, no wash");
 
-        // Opened, a call and a group stay clickable lines over their details.
-        let Id::Tool(failed_id) = failed.id else { unreachable!() };
-        let Id::Group(group_id) = groups[0].id else { unreachable!() };
+        // Opened, a run shows its steps; the failed one has its word and opens to what it printed.
+        let Id::Group(first) = failed.id else { unreachable!() };
+        let Id::Group(second) = runs[1].id else { unreachable!() };
+        ui.expanded.insert(first);
+        paint(&mut ui, &mut model, &pal, &format!("{name}-steps"));
+        let steps = ui.rows.iter().filter(|r| r.style == Style::Tool).collect::<Vec<_>>();
+        assert_eq!(steps.len(), 2, "{name}: the run shows its two steps");
+        assert_eq!(
+            steps.iter().map(|r| (r.title.as_str(), r.stamp.as_str(), r.step)).collect::<Vec<_>>(),
+            [("Read", "", Some((true, false))), ("Ran", "failed", Some((false, true)))]
+        );
+        assert!(steps[0].target.ends_with("field-notes.md") && steps[1].target == "cargo test --workspace");
+        let Id::Tool(failed_id) = steps[1].id else { unreachable!() };
         ui.tool_expanded.insert(failed_id);
-        ui.expanded.insert(group_id);
+        ui.expanded.insert(second);
         paint(&mut ui, &mut model, &pal, &format!("{name}-open"));
         let open = ui.rows.iter().find(|r| r.id == Id::Tool(failed_id)).unwrap();
-        assert!(open.open && open.h > TOOL_H && open.body.is_some(), "{name}: the failed call opens");
-        assert_eq!(ui.rows.iter().filter(|r| r.style == Style::Tool).count(), 7, "{name}: the group shows its calls");
-        let header = ui.rows.iter().find(|r| r.id == Id::Group(group_id)).map(header).unwrap();
-        assert!(ui.hits.iter().any(|(r, a)| *a == Action::Group(group_id) && r.contains(header.cx(), header.cy())));
+        assert!(open.open && open.h > open.head && open.boxed, "{name}: the failed call opens");
+        assert_eq!(open.body.as_ref().unwrap().text(), "exit 101", "{name}: its box holds what it printed");
+        assert_eq!(ui.rows.iter().filter(|r| r.style == Style::Tool).count(), 7, "{name}: both runs show their calls");
+        let header = ui.rows.iter().find(|r| r.id == Id::Group(first)).map(header).unwrap();
+        assert!(ui.hits.iter().any(|(r, a)| *a == Action::Group(first) && r.contains(header.cx(), header.cy())));
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -253,7 +262,7 @@ fn command_results_and_shell_mode_are_quiet_mono_cards_under_their_command() {
         let tools = ui.rows.iter().filter(|r| r.style == Style::Tool).collect::<Vec<_>>();
         let titles = tools.iter().map(|r| (r.title.as_str(), r.target.as_str())).collect::<Vec<_>>();
         assert_eq!(
-            titles[2..],
+            titles[..],
             [
                 ("/model", "Set model to `Opus 5.5` and saved as your default for new sessions"),
                 ("/context", ""),
@@ -262,11 +271,11 @@ fn command_results_and_shell_mode_are_quiet_mono_cards_under_their_command() {
             ],
             "{name}"
         );
-        let context = tools[3];
+        let context = tools[1];
         assert!(context.body.as_ref().unwrap().text().contains("Free space: 159k"), "{name}: escapes stripped, kept");
         assert!(!context.body.as_ref().unwrap().text().contains('\u{1b}'));
-        assert_eq!(tools[4].body.as_ref().unwrap().text(), " M docs/TODO.md\n?? notes.txt", "{name}: indent kept");
-        assert!(matches!(tools[5].tone, Tone::Warning), "{name}: stderr alone is a failure");
+        assert_eq!(tools[2].body.as_ref().unwrap().text(), " M docs/TODO.md\n?? notes.txt", "{name}: indent kept");
+        assert!(matches!(tools[3].tone, Tone::Warning), "{name}: stderr alone is a failure");
         // The card's text is muted like its row: quieter than the answers.
         let card = Rect::new(
             ui.body.x + context.geo.tx,

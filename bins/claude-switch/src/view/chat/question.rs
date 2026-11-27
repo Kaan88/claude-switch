@@ -1809,7 +1809,7 @@ fn detail(kind: &ItemKind) -> Vec<String> {
     }
     let mut lines: Vec<String> = match card {
         Some(ToolCard::Shell { command, .. }) => command.lines().map(str::to_owned).collect(),
-        Some(ToolCard::Edit { path, added, removed, lines }) => {
+        Some(ToolCard::Edit { path, added, removed, lines, .. }) => {
             std::iter::once(format!("{path}  +{added} −{removed}")).chain(lines.iter().cloned()).collect()
         }
         _ => file_path.iter().cloned().chain(std::iter::once(summary.clone()).filter(|s| !s.is_empty())).collect(),

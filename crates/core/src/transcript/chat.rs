@@ -173,6 +173,10 @@ pub enum ToolCard {
         added: usize,
         removed: usize,
         lines: Vec<String>,
+        /// The edit as Claude Code recorded it with the call's result: line numbers and the
+        /// lines around the change. None until the result is read, and when it has none.
+        /// Boxed: most cards have none, and an item stays small.
+        patch: Option<Box<Patch>>,
     },
     Shell {
         command: String,
@@ -184,6 +188,73 @@ pub enum ToolCard {
     Plan(String),
     /// What a slash command or a shell-mode command printed, as mono text.
     Output(String),
+}
+
+/// An edit's recorded patch (`toolUseResult.structuredPatch`), bounded.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Patch {
+    pub hunks: Vec<Hunk>,
+}
+
+impl ToolCard {
+    /// The hunks of an edit's recorded patch; none for any other card and before the result.
+    pub fn hunks(&self) -> &[Hunk] {
+        match self {
+            Self::Edit { patch: Some(patch), .. } => &patch.hunks,
+            _ => &[],
+        }
+    }
+}
+
+/// One hunk of an edit's recorded patch.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hunk {
+    /// The first line's number in the file before the edit and after it.
+    pub old_start: usize,
+    pub new_start: usize,
+    /// The hunk's lines, each starting with a space (unchanged), `-` or `+`.
+    pub lines: Vec<String>,
+    /// How many further lines of the patch were not kept.
+    pub more: usize,
+}
+
+/// The most lines of a patch that are kept.
+const MAX_PATCH_LINES: usize = 60;
+
+/// The patch of an `Edit` or `Write` result, bounded; empty when the record has none or it is not
+/// in the shape Claude Code 2.1 writes.
+pub(super) fn patch(structured: &Value) -> Vec<Hunk> {
+    let Some(hunks) = structured["structuredPatch"].as_array() else { return Vec::new() };
+    let mut out: Vec<Hunk> = Vec::new();
+    let mut kept = 0;
+    for hunk in hunks {
+        let (Some(old_start), Some(new_start), Some(lines)) =
+            (hunk["oldStart"].as_u64(), hunk["newStart"].as_u64(), hunk["lines"].as_array())
+        else {
+            return Vec::new();
+        };
+        let mut texts = Vec::new();
+        for line in lines {
+            let Some(line) = line.as_str().filter(|l| l.starts_with([' ', '-', '+'])) else { return Vec::new() };
+            texts.push(line);
+        }
+        let room = MAX_PATCH_LINES - kept;
+        if room == 0 {
+            if let Some(last) = out.last_mut() {
+                last.more += texts.len();
+            }
+            continue;
+        }
+        let more = texts.len().saturating_sub(room);
+        kept += texts.len().min(room);
+        out.push(Hunk {
+            old_start: old_start as usize,
+            new_start: new_start as usize,
+            lines: texts.into_iter().take(room).map(|line| short(line, 240)).collect(),
+            more,
+        });
+    }
+    out
 }
 
 /// One question of an `AskUserQuestion` call. Its texts are whole: the window matches them
@@ -275,7 +346,7 @@ impl ToolCard {
                     .chain(new.take(10).map(|s| format!("+ {}", short(s, 180))))
                     .collect();
                 // Never turn a shortened display string into a different actionable filename.
-                (path.len() <= 4096).then(|| Self::Edit { path: path.to_owned(), added, removed, lines })
+                (path.len() <= 4096).then(|| Self::Edit { path: path.to_owned(), added, removed, lines, patch: None })
             }
             "Bash" | "PowerShell" => {
                 Some(Self::Shell { command: short(input["command"].as_str()?, 500), result: Vec::new() })
@@ -335,12 +406,75 @@ mod tests {
                 path: "src/a.rs".into(),
                 added: 2,
                 removed: 1,
-                lines: ["− old", "+ new", "+ more"].map(str::to_owned).into()
+                lines: ["− old", "+ new", "+ more"].map(str::to_owned).into(),
+                patch: None,
             })
         );
         let input = json!({"file_path":"a","content":"hello\n".repeat(100)});
         assert!(matches!(ToolCard::from_input("Write", &input),
             Some(ToolCard::Edit { added: 100, removed: 0, lines, .. }) if lines.len() == 10));
+    }
+
+    #[test]
+    fn a_recorded_patch_keeps_its_line_numbers_and_context_and_is_bounded() {
+        // As Claude Code 2.1.332 writes an Edit's result.
+        let result = json!({"filePath":"src/a.rs","oldString":"old","newString":"new\nmore","structuredPatch":[
+            {"oldStart":86,"oldLines":3,"newStart":86,"newLines":4,"lines":[" start","-old","+new","+more"," end"]},
+            {"oldStart":120,"oldLines":1,"newStart":121,"newLines":1,"lines":["-x","+y"]}
+        ]});
+        let hunks = patch(&result);
+        assert_eq!(hunks.len(), 2);
+        assert_eq!((hunks[0].old_start, hunks[0].new_start, hunks[0].more), (86, 86, 0));
+        assert_eq!(hunks[0].lines, [" start", "-old", "+new", "+more", " end"]);
+        assert_eq!((hunks[1].old_start, hunks[1].new_start), (120, 121));
+        // Not a patch, or not in the shape known: none, never a guess.
+        assert!(patch(&json!({"stdout":""})).is_empty());
+        assert!(patch(&json!("User rejected tool use")).is_empty());
+        assert!(patch(&json!({"structuredPatch":[{"oldStart":1,"newStart":1,"lines":["no prefix"]}]})).is_empty());
+        assert!(patch(&json!({"structuredPatch":[{"oldStart":1,"lines":[" a"]}]})).is_empty());
+        assert!(patch(&json!({"structuredPatch":[]})).is_empty());
+        let long: Vec<String> = (0..100).map(|i| format!("+line {i}")).collect();
+        let big = patch(&json!({"structuredPatch":[
+            {"oldStart":1,"newStart":1,"lines":long},
+            {"oldStart":300,"newStart":400,"lines":[" tail","+one"]}
+        ]}));
+        assert_eq!((big.len(), big[0].lines.len(), big[0].more), (1, 60, 42));
+    }
+
+    #[test]
+    fn an_edits_card_gets_the_patch_of_its_own_result_once_it_succeeded() {
+        use super::super::{ItemKind, Reader};
+        let dir = crate::util::testing::TempDir::new("chat-patch");
+        let path = dir.0.join("chat.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        let call = |id: &str| {
+            json!({"type":"tool_use","id":id,"name":"Edit",
+                "input":{"file_path":"src/a.rs","old_string":"old","new_string":"new"}})
+        };
+        let result =
+            |id: &str, error: bool| json!({"type":"tool_result","tool_use_id":id,"content":"done","is_error":error});
+        let patch = json!({"filePath":"src/a.rs","structuredPatch":[
+            {"oldStart":7,"oldLines":3,"newStart":7,"newLines":3,"lines":[" a","-old","+new"," b"]}]});
+        for row in [
+            json!({"type":"assistant","message":{"role":"assistant","content":[call("e1"), call("e2"), call("e3")]}}),
+            json!({"type":"user","message":{"role":"user","content":[result("e1", false)]},"toolUseResult":patch}),
+            // A failed edit changed nothing: its record's patch, if any, is not shown as one.
+            json!({"type":"user","message":{"role":"user","content":[result("e2", true)]},"toolUseResult":patch}),
+        ] {
+            writeln!(file, "{row}").unwrap();
+        }
+        let reader = Reader::open(&path, 8192).unwrap();
+        let patches: Vec<_> = reader
+            .items()
+            .filter_map(|(_, item)| match &item.kind {
+                ItemKind::Tool { card: Some(card @ ToolCard::Edit { .. }), .. } => Some(card.hunks().to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(patches.len(), 3);
+        assert_eq!(patches[0].len(), 1);
+        assert_eq!((patches[0][0].old_start, patches[0][0].lines.len()), (7, 4));
+        assert!(patches[1].is_empty() && patches[2].is_empty(), "a failed and a running edit have none");
     }
 
     #[test]

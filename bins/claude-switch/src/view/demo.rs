@@ -356,14 +356,22 @@ fn seed_showcase(file: &mut File, cwd: &Path) -> io::Result<()> {
             tool("run2", "Bash", json!({"command":"cargo test -p tiles"})),
         ]),
     )?;
-    record(
+    record(file, 8, "user", json!([result("run2", json!("test result: ok. 48 passed; 0 failed"))]))?;
+    // The edit's result in a record of its own, with the patch Claude Code writes beside it.
+    writeln!(
         file,
-        8,
-        "user",
-        json!([
-            result("edit", json!("The file has been updated.")),
-            result("run2", json!("test result: ok. 48 passed; 0 failed"))
-        ]),
+        "{}",
+        json!({"timestamp": stamp(8), "type":"user",
+            "message":{"role":"user", "content":[result("edit", json!("The file has been updated."))]},
+            "toolUseResult":{"filePath":"src/tiles/cache.rs", "structuredPatch":[{
+                "oldStart":86, "oldLines":5, "newStart":86, "newLines":6, "lines":[
+                    "     fn touch(&mut self, id: TileId) {",
+                    "         if let Some(entry) = self.entries.get_mut(&id) {",
+                    "-            entry.used = SystemTime::now();",
+                    "+            self.clock += 1;",
+                    "+            entry.used = self.clock;",
+                    "         }",
+                    "     }"]}]}})
     )?;
     writeln!(
         file,

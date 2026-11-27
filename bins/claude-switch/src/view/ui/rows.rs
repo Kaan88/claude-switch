@@ -29,15 +29,261 @@ pub(super) enum Id {
 pub(super) enum Style {
     Prompt,
     Answer,
+    /// One call, or a notice: a line of its own, or a step of an open run.
     Tool,
+    /// A run of calls: one line in words that opens into its steps.
     Group,
+    /// A file edit: its path and counts, opening into the diff.
+    Edit,
     Files,
     Card,
 }
 
+/// What a call was, for the words of a run and a step's icon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Command,
+    Read,
+    Search,
+    Web,
+    Agent,
+    Tasks,
+    Edit,
+    Thought,
+    Other,
+}
+
+impl Kind {
+    pub fn icon(self) -> &'static str {
+        use mdshared_ui::glyph;
+        match self {
+            Kind::Command => crate::view::look::TERMINAL,
+            Kind::Read => glyph::DOC,
+            Kind::Search => glyph::SEARCH,
+            Kind::Web => glyph::GLOBE,
+            Kind::Agent => crate::view::look::AGENT,
+            Kind::Tasks => glyph::TASK,
+            Kind::Edit => glyph::EDIT,
+            Kind::Thought => glyph::INFO,
+            Kind::Other => glyph::SLIDERS,
+        }
+    }
+}
+
+/// How a call reads: what it did, what it is doing, and what it waits to do.
+struct Words {
+    kind: Kind,
+    done: String,
+    doing: String,
+    base: String,
+    /// Its target is a command, a path or a pattern: set in the mono face on a step.
+    mono: bool,
+    /// The words say it all: no target after them.
+    bare: bool,
+}
+
+fn words(name: &str) -> Words {
+    let w = |kind, done: &str, doing: &str, base: &str, mono| Words {
+        kind,
+        done: done.into(),
+        doing: doing.into(),
+        base: base.into(),
+        mono,
+        bare: false,
+    };
+    match name {
+        "Bash" | "PowerShell" => w(Kind::Command, "Ran", "Running", "run", true),
+        "Read" | "NotebookRead" => w(Kind::Read, "Read", "Reading", "read", true),
+        "Grep" => w(Kind::Search, "Searched for", "Searching for", "search for", true),
+        "Glob" => w(Kind::Search, "Listed", "Listing", "list", true),
+        "WebFetch" => w(Kind::Web, "Fetched", "Fetching", "fetch", false),
+        "WebSearch" => w(Kind::Web, "Searched the web for", "Searching the web for", "search the web for", false),
+        "Agent" | "Task" => w(Kind::Agent, "Agent", "Agent", "start agent", false),
+        "TodoWrite" | "TaskCreate" | "TaskUpdate" | "mcp__ccd_turn__update_plan" => Words {
+            bare: true,
+            ..w(Kind::Tasks, "Updated the task list", "Updating the task list", "update the task list", false)
+        },
+        "Edit" | "MultiEdit" | "NotebookEdit" => w(Kind::Edit, "Edited", "Editing", "edit", true),
+        "Write" => w(Kind::Edit, "Wrote", "Writing", "write", true),
+        "AskUserQuestion" => {
+            Words { bare: true, ..w(Kind::Other, "Asked a question", "Asking a question", "ask a question", false) }
+        }
+        _ => {
+            let name = one_line(name, 160);
+            w(Kind::Other, &name, &name, &format!("use {name}"), false)
+        }
+    }
+}
+
+/// "Ran a command, read 3 files, searched the code": what a run of calls did, by kind, in the
+/// order the kinds first came.
+fn summary(kinds: &[Kind]) -> String {
+    let only_tasks = kinds.iter().all(|k| *k == Kind::Tasks);
+    let mut parts: Vec<String> = Vec::new();
+    let mut seen: Vec<Kind> = Vec::new();
+    for &kind in kinds {
+        // The task list has the panel; beside other work it is not worth a word here. Nor is a
+        // thought beside the calls it led to.
+        let aside = matches!(kind, Kind::Tasks | Kind::Thought) && !only_tasks;
+        if seen.contains(&kind) || aside && kinds.iter().any(|k| !matches!(k, Kind::Tasks | Kind::Thought)) {
+            continue;
+        }
+        seen.push(kind);
+        let n = kinds.iter().filter(|k| **k == kind).count();
+        parts.push(match (kind, n) {
+            (Kind::Command, 1) => "ran a command".into(),
+            (Kind::Command, n) => format!("ran {n} commands"),
+            (Kind::Read, 1) => "read a file".into(),
+            (Kind::Read, n) => format!("read {n} files"),
+            (Kind::Search, 1) => "searched the code".into(),
+            (Kind::Search, n) => format!("searched the code {n} times"),
+            (Kind::Web, 1) => "looked at a web page".into(),
+            (Kind::Web, n) => format!("looked at {n} web pages"),
+            (Kind::Agent, 1) => "ran an agent".into(),
+            (Kind::Agent, n) => format!("ran {n} agents"),
+            (Kind::Edit, 1) => "edited a file".into(),
+            (Kind::Edit, n) => format!("edited {n} files"),
+            (Kind::Tasks, _) => "updated the task list".into(),
+            (Kind::Thought, _) => "thought".into(),
+            (Kind::Other, 1) => "used a tool".into(),
+            (Kind::Other, n) => format!("used {n} tools"),
+        });
+    }
+    let mut text = parts.join(", ");
+    if let Some(first) = text.chars().next() {
+        text = first.to_uppercase().collect::<String>() + &text[first.len_utf8()..];
+    }
+    text
+}
+
+/// A part of a group of tool calls as the conversation shows it.
+pub(super) enum Part<'a> {
+    /// Calls (and thoughts) said in one line; a single call reads as itself.
+    Run(&'a [ItemId]),
+    /// A row of its own: a file edit, a plan, what a slash or shell command printed.
+    Solo(&'a [ItemId]),
+}
+
+/// Splits a group of tool calls into runs and the rows that stand alone between them.
+pub(super) fn parts<'a>(items: &BTreeMap<ItemId, Item>, ids: &'a [ItemId]) -> Vec<Part<'a>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, id) in ids.iter().enumerate() {
+        // A call that is not loaded (it cannot be, in a group) would only be skipped when drawn.
+        if items.get(id).is_some_and(solo) {
+            if start < i {
+                out.push(Part::Run(&ids[start..i]));
+            }
+            out.push(Part::Solo(&ids[i..=i]));
+            start = i + 1;
+        }
+    }
+    if start < ids.len() {
+        out.push(Part::Run(&ids[start..]));
+    }
+    out
+}
+
+/// The call is a row of its own: an edit that went through (or waits), a plan, and what a slash
+/// command or a shell-mode command printed, which keep their open output.
+fn solo(item: &Item) -> bool {
+    match &item.kind {
+        ItemKind::Tool { card: Some(ToolCard::Edit { .. }), state, denial, .. } => {
+            *state != ToolState::Failed && denial.is_none()
+        }
+        ItemKind::Tool { card: Some(ToolCard::Plan(_) | ToolCard::Output(_)), .. } => true,
+        _ => false,
+    }
+}
+
+/// The row starts open and a click folds it: longer output of a slash or shell-mode command.
+pub(super) fn starts_open(item: &Item) -> bool {
+    matches!(&item.kind, ItemKind::Tool { card: Some(ToolCard::Output(text)), summary, file_path, .. }
+        if !text.trim().is_empty() && !(file_path.is_none() && summary.is_empty() && one_liner(text)))
+}
+
+/// One line of a diff: its number in the file (the old file's for a removed line), its sign and
+/// its text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct DiffLine {
+    pub number: Option<usize>,
+    pub sign: char,
+}
+
+/// A hunk's first line in the diff is marked so a gap can be drawn before it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Diff {
+    pub lines: Vec<DiffLine>,
+    /// Where hunks after the first begin.
+    pub breaks: Vec<usize>,
+    /// Lines of the patch that are not shown.
+    pub more: usize,
+}
+
+/// The most lines an open diff shows.
+const DIFF_LINES: usize = 60;
+
+/// An edit's diff: from the patch Claude Code recorded with the result when there is one (line
+/// numbers, lines around the change), else the changed lines alone. Returns the lines' text too.
+fn diff_of(card: &ToolCard) -> (Diff, Vec<String>) {
+    let ToolCard::Edit { added, removed, lines, .. } = card else { return Default::default() };
+    let patch = card.hunks();
+    let mut diff = Diff::default();
+    let mut texts = Vec::new();
+    if patch.is_empty() {
+        // The reader's preview: "− old" and "+ new", at most ten of each.
+        for line in lines.iter().take(DIFF_LINES) {
+            let mut chars = line.chars();
+            let sign = if chars.next() == Some('+') { '+' } else { '-' };
+            let text = chars.as_str();
+            texts.push(text.strip_prefix(' ').unwrap_or(text).to_owned());
+            diff.lines.push(DiffLine { number: None, sign });
+        }
+        diff.more = (added + removed).saturating_sub(diff.lines.len());
+        return (diff, texts);
+    }
+    for hunk in patch {
+        if !diff.lines.is_empty() {
+            diff.breaks.push(diff.lines.len());
+        }
+        let (mut old, mut new) = (hunk.old_start, hunk.new_start);
+        for line in &hunk.lines {
+            let sign = line.chars().next().unwrap_or(' ');
+            let number = if sign == '-' { old } else { new };
+            old += usize::from(sign != '+');
+            new += usize::from(sign != '-');
+            if diff.lines.len() < DIFF_LINES {
+                texts.push(line[sign.len_utf8()..].to_owned());
+                diff.lines.push(DiffLine { number: Some(number), sign });
+            } else {
+                diff.more += 1;
+            }
+        }
+        diff.more += hunk.more;
+    }
+    (diff, texts)
+}
+
 pub(super) const HEAD: f32 = 31.0;
-/// A tool row's one line: low, so a run of calls reads as a few quiet notes.
+/// A tool line in the Session view: low, so a run of calls reads as a quiet note.
 pub(super) const TOOL_H: f32 = 22.0;
+/// A tool line in Chat.
+pub(super) const CHAT_TOOL_H: f32 = 26.0;
+/// An edit's row: its path and counts.
+pub(super) const EDIT_H: f32 = 34.0;
+/// A step's text and an opened call's detail start this far in: past the timeline's icons.
+pub(super) const STEP_INDENT: f32 = 26.0;
+/// The padding of the box around an opened call's output.
+pub(super) const BOX_PAD: (f32, f32) = (12.0, 8.0);
+/// A diff's rows, as a multiple of its text's size.
+const DIFF_SPACING: f32 = 1.6;
+/// Where a diff's text starts in its row, after the line number and the sign.
+pub(super) const DIFF_TEXT: f32 = 66.0;
+
+/// The height of a tool line.
+pub(super) fn tool_h(chat: bool) -> f32 {
+    if chat { CHAT_TOOL_H } else { TOOL_H }
+}
 /// A thumbnail's slot: a picture keeps its aspect within it, about 240 px on the long side.
 pub(super) const THUMB_W: f32 = 240.0;
 pub(super) const THUMB_H: f32 = 180.0;
@@ -50,7 +296,8 @@ const INSET: f32 = 12.0;
 const BUBBLE_PAD: f32 = 14.0;
 const BUBBLE_TOP: f32 = 10.0;
 const AFTER_TOOLS: f32 = 8.0;
-const TUCK_UNDER_ANSWER: f32 = 6.0;
+/// A little more air between an answer and the tool lines under it.
+const UNDER_ANSWER: f32 = 3.0;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Geometry {
@@ -71,8 +318,8 @@ impl Geometry {
                 (w - width, width, BUBBLE_PAD, BUBBLE_TOP)
             }
             Style::Answer => (0.0, w, 0.0, 0.0),
-            Style::Tool => (0.0, w, 8.0, TOOL_H + 6.0),
-            Style::Group => (0.0, w, 8.0, TOOL_H),
+            // A tool row's text is placed when its row is made (`Rows::place_detail`).
+            Style::Tool | Style::Group | Style::Edit => (0.0, w, 0.0, 0.0),
             Style::Files => (0.0, w, 0.0, 0.0),
             Style::Card => (0.0, w, INSET, HEAD),
         };
@@ -157,6 +404,21 @@ pub(super) struct Row {
     pub tone: Tone,
     /// A folded group that holds the call the CLI offers to run in the background.
     pub offer: bool,
+    /// What the call was: a step's icon.
+    pub kind: Kind,
+    /// A step of an open run, on its timeline: whether it is the first and the last.
+    pub step: Option<(bool, bool)>,
+    /// The target is a command, a path or a pattern.
+    pub mono: bool,
+    /// The call runs (or waits to): its line is in the text colour.
+    pub running: bool,
+    /// The detail is command output or the like: drawn in a box.
+    pub boxed: bool,
+    /// The height of the row's first line.
+    pub head: f32,
+    /// An edit's lines added and removed, and its diff when open.
+    pub counts: (usize, usize),
+    pub diff: Diff,
 }
 
 /// Reuse unchanged shaping across appends and prepended history.
@@ -176,6 +438,8 @@ enum BodyKind {
     Markdown,
     Mono,
     Shell,
+    /// A diff's lines: mono, in the text colour, never wrapped (its row clips them).
+    Diff,
 }
 
 enum Layout {
@@ -271,6 +535,8 @@ pub(super) struct Rows<'a> {
     pub chat: bool,
     /// The running shell call the CLI offers to move to the background.
     pub offer: Option<ItemId>,
+    /// The pending call a card asks about: it has not started, it waits for the answer.
+    pub awaiting: Option<ItemId>,
 }
 
 impl Rows<'_> {
@@ -301,14 +567,21 @@ impl Rows<'_> {
                 Some(files.unwrap_or(&empty)),
             )))
         } else {
-            let mono = matches!(kind, BodyKind::Mono | BodyKind::Shell);
+            let mono = matches!(kind, BodyKind::Mono | BodyKind::Shell | BodyKind::Diff);
+            let literal = matches!(kind, BodyKind::Shell | BodyKind::Diff);
+            if kind == BodyKind::Diff {
+                // Never wrapped (its row cuts a long line), and spaced as rows.
+                let layout = TextLayout::spaced(raw, self.pal, self.scale, 100_000.0, 12.0, DIFF_SPACING);
+                let files = files.cloned().unwrap_or_default();
+                return Body { raw: raw.to_owned(), kind, width, layout: Layout::Plain(Box::new(layout)), files };
+            }
             Layout::Plain(Box::new(TextLayout::new(
                 raw,
                 if mono { &quiet } else { self.pal },
                 self.scale,
                 width,
                 if mono { 12.0 } else { size },
-                if kind == BodyKind::Shell { None } else { Some(files.unwrap_or(&empty)) },
+                if literal { None } else { Some(files.unwrap_or(&empty)) },
                 mono,
             )))
         };
@@ -337,15 +610,23 @@ impl Rows<'_> {
             agent: None,
             tone: Tone::Normal,
             offer: false,
+            kind: Kind::Other,
+            step: None,
+            mono: false,
+            running: false,
+            boxed: false,
+            head: 0.0,
+            counts: (0, 0),
+            diff: Diff::default(),
         }
     }
 
     fn put(&mut self, mut row: Row) {
-        // Tool lines sit close together and close under the answer that announced them; whatever
-        // follows a run of them gets a little air back.
-        let tool = |style| matches!(style, Style::Tool | Style::Group);
+        // Tool lines sit close together; an answer before them and whatever follows them get a
+        // little air.
+        let tool = |style| matches!(style, Style::Tool | Style::Group | Style::Edit);
         match (self.list.last().map(|last| last.style), tool(row.style)) {
-            (Some(Style::Answer), true) => self.end -= TUCK_UNDER_ANSWER,
+            (Some(Style::Answer), true) => self.end += UNDER_ANSWER,
             (Some(last), false) if tool(last) => self.end += AFTER_TOOLS,
             _ => {}
         }
@@ -360,10 +641,15 @@ impl Rows<'_> {
         let (h, gap) = match row.style {
             Style::Prompt => (row.geo.ty + content + BUBBLE_TOP, 18.0),
             Style::Answer => (content.max(19.0), 7.0),
-            Style::Tool if row.open => {
-                (row.geo.ty + content + 6.0 + if row.agent.is_some() { CHIP_H } else { 0.0 }, 4.0)
+            Style::Tool | Style::Edit if row.open && (row.body.is_some() || pictures > 0 || row.agent.is_some()) => {
+                let pad = if row.boxed || row.style == Style::Edit { BOX_PAD.1 } else { 2.0 };
+                let more = if row.diff.more > 0 { 20.0 } else { 0.0 };
+                let chip = if row.agent.is_some() { CHIP_H } else { 0.0 };
+                (row.geo.ty + content + pad + more + chip + 4.0, if row.step.is_some() { 0.0 } else { 4.0 })
             }
-            Style::Tool | Style::Group => (TOOL_H, 1.0),
+            // Steps of a run follow each other on its timeline without a gap.
+            Style::Tool if row.step.is_some() => (row.head, 0.0),
+            Style::Tool | Style::Group | Style::Edit => (row.head, 4.0),
             Style::Files => (chips_height(&row) + thumbs_height(row.geo.w, pictures) + 3.0, 12.0),
             Style::Card => (HEAD + content + 12.0, 7.0),
         };
@@ -395,44 +681,39 @@ impl Rows<'_> {
                 Group::One(id) => std::slice::from_ref(id),
                 Group::Tools(ids) => ids.as_slice(),
             };
-            // Thoughts ride along in a group of tool calls but are not counted as calls.
-            let calls = ids
-                .iter()
-                .filter(|id| matches!(m.items.get(id), Some(Item { kind: ItemKind::Tool { .. }, .. })))
-                .count();
-            if let [first, ..] = ids
-                && collapsible(calls)
-            {
-                let mut row = self.row(Id::Group(*first), Style::Group);
-                row.open = expanded.contains(first);
-                row.title = format!("{calls} tool calls");
-                let mut failed = 0;
-                let mut denied = 0;
-                let mut running = 0;
-                for id in ids {
-                    if let Some(Item { kind: ItemKind::Tool { state, denial, .. }, .. }) = m.items.get(id) {
-                        // A denied call did not fail: it never ran.
-                        denied += usize::from(denial.is_some());
-                        failed += usize::from(*state == ToolState::Failed && denial.is_none());
-                        running += usize::from(*state == ToolState::Running);
-                    }
-                }
-                row.stamp = group_status(denied, failed, running);
-                row.tone = if failed + denied > 0 { Tone::Warning } else { Tone::Muted };
-                row.busy = running > 0;
-                // Folded, the group's line stands for the call.
-                row.offer = !row.open && self.offer.is_some_and(|offer| ids.contains(&offer));
-                self.put(row);
-            }
             for &id in ids {
                 let Some(item) = m.items.get(&id) else { continue };
-                let files = m.files.get(&id);
                 if matches!(item.kind, ItemKind::Prompt { synthetic: false, .. }) {
                     self.put_files(&mut writes);
                 }
-                writes.observe(id, item, files);
-                if !collapsible(calls) || expanded.contains(&ids[0]) {
-                    self.item(id, item, tool_expanded.contains(&id), files, backgrounds.contains(&id));
+                writes.observe(id, item, m.files.get(&id));
+            }
+            let line = Line { step: None, open: false, background: false };
+            match group {
+                Group::One(id) => {
+                    if let Some(item) = m.items.get(id) {
+                        let line = Line { open: tool_expanded.contains(id), ..line };
+                        self.item(*id, item, line, m.files.get(id));
+                    }
+                }
+                Group::Tools(ids) => {
+                    for part in parts(&m.items, ids) {
+                        let (run, alone) = match part {
+                            Part::Solo(one) => (one, true),
+                            Part::Run(run) => (run, run.len() == 1),
+                        };
+                        let shown = alone || self.run(m, run, expanded);
+                        let last = run.len() - 1;
+                        for (n, &id) in run.iter().enumerate().filter(|_| shown) {
+                            let Some(item) = m.items.get(&id) else { continue };
+                            let line = Line {
+                                step: (!alone).then_some((n == 0, n == last)),
+                                open: tool_expanded.contains(&id),
+                                background: backgrounds.contains(&id),
+                            };
+                            self.item(id, item, line, m.files.get(&id));
+                        }
+                    }
                 }
             }
             if let Some(first) = ids.first() {
@@ -455,6 +736,62 @@ impl Rows<'_> {
         self.put_files(&mut writes);
     }
 
+    /// The line of a run of calls: what they did, in words; what is running, while one is; how
+    /// many failed or were refused. Returns whether the run is open.
+    fn run(&mut self, m: &Model, run: &[ItemId], expanded: &BTreeSet<ItemId>) -> bool {
+        let first = run[0];
+        let mut row = self.row(Id::Group(first), Style::Group);
+        row.head = tool_h(self.chat);
+        row.open = expanded.contains(&first);
+        let (mut failed, mut denied) = (0, 0);
+        let mut kinds = Vec::new();
+        let mut active = None;
+        for id in run {
+            match m.items.get(id).map(|item| &item.kind) {
+                Some(ItemKind::Tool { name, state, denial, .. }) => {
+                    // A denied call did not fail: it never ran.
+                    denied += usize::from(denial.is_some());
+                    failed += usize::from(*state == ToolState::Failed && denial.is_none());
+                    kinds.push(words(name).kind);
+                    if *state == ToolState::Running && active.is_none() {
+                        active = Some(*id);
+                    }
+                }
+                Some(ItemKind::Notice { .. }) => kinds.push(Kind::Thought),
+                _ => {}
+            }
+        }
+        row.title = summary(&kinds);
+        if let Some(id) = active
+            && let Some(ItemKind::Tool { name, summary, file_path, .. }) = m.items.get(&id).map(|item| &item.kind)
+        {
+            let target = one_line(file_path.as_deref().unwrap_or(summary), 320);
+            let (title, target) = self.active_words(id, name, &target);
+            row.title = title;
+            row.target = target;
+            row.running = true;
+        }
+        row.stamp = group_status(denied, failed);
+        row.tone = if failed + denied > 0 { Tone::Warning } else { Tone::Muted };
+        // Folded, the run's line stands for the call the CLI offers to run in the background.
+        row.offer = !row.open && self.offer.is_some_and(|offer| run.contains(&offer));
+        let open = row.open;
+        self.put(row);
+        open
+    }
+
+    /// A running call's words: "Running cargo bench", or "Waiting to run cargo bench" while a
+    /// card asks about it.
+    fn active_words(&self, id: ItemId, name: &str, target: &str) -> (String, String) {
+        let words = words(name);
+        let target = if words.bare || target == name { String::new() } else { target.to_owned() };
+        if self.awaiting == Some(id) && !words.bare {
+            (format!("Waiting to {}", words.base), target)
+        } else {
+            (words.doing, target)
+        }
+    }
+
     fn put_files(&mut self, turn: &mut TurnFiles) {
         if let Some((id, files)) = turn.take() {
             let mut row = self.row(Id::Files(id), Style::Files);
@@ -463,7 +800,18 @@ impl Rows<'_> {
         }
     }
 
-    fn item(&mut self, id: ItemId, item: &Item, open: bool, files: Option<&Files>, background: bool) {
+    /// Where an opened row's detail goes: under its first line, past the timeline when it is a
+    /// step, inside a box when it is output.
+    fn place_detail(&self, row: &mut Row) {
+        let indent = if row.step.is_some() { STEP_INDENT.min(self.width * 0.1) } else { 0.0 };
+        let (px, py) = if row.boxed { BOX_PAD } else { (0.0, 2.0) };
+        row.geo.tx = row.geo.x + indent + px;
+        row.geo.tw = (row.geo.w - indent - 2.0 * px).max(1.0);
+        row.geo.ty = row.head + 2.0 + py;
+    }
+
+    fn item(&mut self, id: ItemId, item: &Item, line: Line, files: Option<&Files>) {
+        let open = line.open;
         let row = match &item.kind {
             ItemKind::Prompt { text, pictures, .. } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
@@ -488,12 +836,43 @@ impl Rows<'_> {
                 let stamp = item.timestamp.as_deref().and_then(|s| s.get(11..19)).unwrap_or("");
                 self.card(Id::Message(id), title, stamp, text, tone, files)
             }
-            ItemKind::Notice { kind, text } => self.notice(id, *kind, text, open, files),
+            ItemKind::Notice { kind, text } => self.notice(id, *kind, text, line, files),
+            ItemKind::Tool { card: Some(card @ ToolCard::Edit { path, added, removed, .. }), state, .. }
+                if solo(item) =>
+            {
+                let mut row = self.row(Id::Tool(id), Style::Edit);
+                row.head = EDIT_H;
+                row.kind = Kind::Edit;
+                row.target = one_line(path, 320);
+                row.counts = (*added, *removed);
+                row.running = *state == ToolState::Running;
+                if row.running {
+                    row.stamp = if self.awaiting == Some(id) { "waiting" } else { "running" }.into();
+                }
+                row.open = open;
+                if open {
+                    let (diff, texts) = diff_of(card);
+                    // An empty line keeps its row.
+                    let text = texts.iter().map(|t| if t.is_empty() { " " } else { t }).collect::<Vec<_>>().join("\n");
+                    row.diff = diff;
+                    // Without line numbers the gutter holds only the sign.
+                    let numbered = row.diff.lines.iter().any(|line| line.number.is_some());
+                    row.geo.tx = row.geo.x + if numbered { DIFF_TEXT } else { 30.0 };
+                    row.geo.tw = (row.geo.w - (row.geo.tx - row.geo.x) - 8.0).max(1.0);
+                    row.geo.ty = EDIT_H + 5.0;
+                    row.body = (!text.is_empty()).then(|| self.shape(&row.id, &text, row.geo.tw, BodyKind::Diff, None));
+                }
+                row
+            }
             ItemKind::Tool {
                 name, summary, file_path, state, pictures, subagent, card, duration_ms, denial, ..
             } => {
                 let mut row = self.row(Id::Tool(id), Style::Tool);
-                row.title = one_line(name, 160);
+                row.head = tool_h(self.chat);
+                row.step = line.step;
+                let words = words(name);
+                row.kind = words.kind;
+                row.mono = words.mono;
                 let target = file_path.as_deref().unwrap_or(summary);
                 row.target = one_line(target, 320);
                 // A command's one-line reply ("Set model to …", "Settings dialog dismissed") reads on
@@ -504,20 +883,27 @@ impl Rows<'_> {
                 };
                 if let Some(text) = reply {
                     row.target = one_line(text, 320);
+                    row.mono = false;
                 }
-                if row.target == row.title {
+                if words.bare || row.target == *name {
                     row.target.clear();
                 }
+                row.title = words.done;
                 let (label, tone) = match (state, denial) {
                     // Who refused it, instead of "failed": the call never ran.
                     (_, Some(denial)) => (crate::view::chat::question::denials::label(denial.kind), Tone::Warning),
-                    (ToolState::Running, _) => ("◌ running", Tone::Accent),
-                    (ToolState::Ok, _) => ("✓", Tone::Muted),
-                    (ToolState::Failed, _) => ("✗ failed", Tone::Warning),
+                    (ToolState::Running, _) => ("", Tone::Normal),
+                    (ToolState::Ok, _) => ("", Tone::Muted),
+                    (ToolState::Failed, _) => ("failed", Tone::Warning),
                 };
-                row.stamp = label.into();
+                row.stamp = label.trim_start_matches(['✗', ' ']).into();
                 row.tone = tone;
-                row.busy = *state == ToolState::Running;
+                row.running = *state == ToolState::Running;
+                if row.running {
+                    let (title, target) = self.active_words(id, name, &row.target);
+                    row.title = title;
+                    row.target = target;
+                }
                 row.duration = duration_ms.map(duration).unwrap_or_default();
                 // A plan is read before it is approved: always open. Command output starts open and a
                 // click folds it; everything else starts folded.
@@ -526,18 +912,22 @@ impl Rows<'_> {
                     Some(ToolCard::Output(text)) if reply.is_none() && !text.trim().is_empty() => !open,
                     _ => open,
                 };
-                row.background = background;
+                row.background = line.background;
                 if row.open {
-                    let (mut detail, kind) = tool_detail(card.as_ref(), target);
+                    // The row itself shows a one-line command: its box holds what it printed.
+                    let shown = row.target == one_line(target, 320) && !target.contains('\n');
+                    let (mut detail, kind) = tool_detail(card.as_ref(), target, shown);
                     if let Some(denial) = denial {
                         // Why it did not run, under what was asked for.
                         let why = crate::view::chat::question::denials::why(denial);
-                        detail = format!("{}\n\n{why}", detail.trim_end());
+                        detail = format!("{}\n\n{why}", detail.trim_end()).trim_start().to_owned();
                     }
+                    row.boxed = matches!(kind, BodyKind::Mono | BodyKind::Shell);
+                    self.place_detail(&mut row);
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
                     row.agent.clone_from(subagent);
                     let count = pictures.len();
-                    let title = row.title.clone();
+                    let title = one_line(name, 160);
                     row.pictures.extend(thumbs(id, count, move |i| {
                         if count > 1 { format!("{title} · picture {}", i + 1) } else { format!("{title} · picture") }
                     }));
@@ -549,15 +939,21 @@ impl Rows<'_> {
     }
 
     /// A small notice: one line like a tool row (its kind and the text's first line) that
-    /// expands to the whole text.
-    fn notice(&mut self, id: ItemId, kind: NoticeKind, text: &str, open: bool, files: Option<&Files>) -> Row {
+    /// expands to the whole text. A thought in a run is one of its steps.
+    fn notice(&mut self, id: ItemId, kind: NoticeKind, text: &str, line: Line, files: Option<&Files>) -> Row {
         let (title, tone, body) = notice_look(kind);
         let mut row = self.row(Id::Tool(id), Style::Tool);
+        row.head = tool_h(self.chat);
+        row.step = line.step;
+        row.kind = if kind == NoticeKind::Thought { Kind::Thought } else { Kind::Other };
         row.title = title.into();
-        row.target = one_line(text.lines().find(|l| !l.trim().is_empty()).unwrap_or(""), 320);
+        if kind != NoticeKind::Thought {
+            row.target = one_line(text.lines().find(|l| !l.trim().is_empty()).unwrap_or(""), 320);
+        }
         row.tone = tone;
-        row.open = open;
-        if open {
+        row.open = line.open;
+        if line.open {
+            self.place_detail(&mut row);
             row.body = Some(self.shape(&row.id, text, row.geo.tw, body, files));
         }
         row
@@ -674,12 +1070,16 @@ fn notice_look(kind: NoticeKind) -> (&'static str, Tone, BodyKind) {
     }
 }
 
-const fn collapsible(count: usize) -> bool {
-    count >= 4
+/// How a tool row is placed: a line of its own or a step of an open run, opened or not.
+#[derive(Clone, Copy)]
+struct Line {
+    step: Option<(bool, bool)>,
+    open: bool,
+    background: bool,
 }
 
-fn group_status(denied: usize, failed: usize, running: usize) -> String {
-    let parts = [(denied, "denied"), (failed, "failed"), (running, "running")];
+fn group_status(denied: usize, failed: usize) -> String {
+    let parts = [(denied, "denied"), (failed, "failed")];
     let parts: Vec<String> = parts.iter().filter(|(n, _)| *n > 0).map(|(n, what)| format!("{n} {what}")).collect();
     parts.join(" · ")
 }
@@ -710,19 +1110,20 @@ fn one_line(s: &str, cap: usize) -> String {
     out
 }
 
-fn tool_detail(card: Option<&ToolCard>, summary: &str) -> (String, BodyKind) {
+/// An opened call's detail. `shown` says the row already shows the whole command.
+fn tool_detail(card: Option<&ToolCard>, summary: &str, shown: bool) -> (String, BodyKind) {
     match card {
-        Some(ToolCard::Edit { path, added, removed, lines }) => (
+        Some(ToolCard::Edit { path, added, removed, lines, .. }) => (
             format!(
                 "{path}\n+{added} −{removed}\n{}",
                 lines.iter().take(20).map(String::as_str).collect::<Vec<_>>().join("\n")
             ),
             BodyKind::Mono,
         ),
-        Some(ToolCard::Shell { command, result }) => (
-            format!("{command}\n\n{}", if result.is_empty() { "No text result.".into() } else { result.join("\n") }),
-            BodyKind::Shell,
-        ),
+        Some(ToolCard::Shell { command, result }) => {
+            let result = if result.is_empty() { "No text result.".into() } else { result.join("\n") };
+            (if shown { result } else { format!("{command}\n\n{result}") }, BodyKind::Shell)
+        }
         Some(ToolCard::Plan(plan)) => (plan.clone(), BodyKind::Markdown),
         Some(ToolCard::Output(text)) => (text.clone(), BodyKind::Mono),
         Some(ToolCard::Questions(_)) | None => (summary.into(), BodyKind::Mono),

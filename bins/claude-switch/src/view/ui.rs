@@ -98,7 +98,6 @@ pub struct Ui {
     focused: bool,
     agent_origin: Option<Page>,
     busy_visible: bool,
-    epoch: Option<Instant>,
     mouse: (f32, f32),
     working: Option<Footer>,
     /// The code block copied last, so its button can say so.
@@ -122,6 +121,10 @@ pub struct Ui {
     offer: Option<(ItemId, bool)>,
     /// Where the last frame drew that button.
     offer_rect: Option<Rect>,
+    /// The pending call a card asks about: its line says it waits, not that it runs.
+    awaiting: Option<ItemId>,
+    /// The colours of added and removed lines, from the terminal's theme.
+    diff: Option<super::look::Diff>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -199,6 +202,19 @@ impl Ui {
         self.offer = offer;
     }
 
+    /// The pending call a card asks about (it waits; it does not run yet).
+    pub(super) fn set_awaiting(&mut self, item: Option<ItemId>) {
+        if self.awaiting != item {
+            self.awaiting = item;
+            self.cache = None;
+        }
+    }
+
+    /// The colours of added and removed lines, from the window's terminal theme.
+    pub fn set_diff_colours(&mut self, diff: super::look::Diff) {
+        self.diff = Some(diff);
+    }
+
     /// Where the last frame drew "Run in background", for the host to take its click.
     pub(super) fn offer_rect(&self) -> Option<Rect> {
         self.offer_rect.filter(|_| self.offer.is_some_and(|(_, busy)| !busy))
@@ -269,7 +285,6 @@ impl Ui {
     ) {
         self.mouse = mouse;
         self.busy_visible = false;
-        let phase = now.duration_since(*self.epoch.get_or_insert(now)).as_secs_f32();
         if self.generation.replace(m.generation).is_some_and(|g| g != m.generation) {
             self.expanded.clear();
             self.tool_expanded.clear();
@@ -374,7 +389,7 @@ impl Ui {
             self.body = if self.chat { self.chat_reading.place(body) } else { body };
             self.layout(m, pal, p.scale);
             self.offer_rect = None;
-            self.paint_rows(p, pal, m, phase, motion);
+            self.paint_rows(p, pal, m);
             self.paint_working(p, pal, m);
             self.scrollbar =
                 Scrollbar::new(Rect::new(self.body.right() + 1.0, top, GUTTER - 1.0, self.body.h), self.max);
@@ -468,6 +483,7 @@ impl Ui {
                 scale,
                 chat: self.chat,
                 offer: self.offer.map(|(id, _)| id),
+                awaiting: self.awaiting,
             };
             match self.page {
                 Page::Conversation => {
@@ -527,19 +543,30 @@ impl Ui {
     }
 
     pub(super) fn jump_to_tool(&mut self, model: &Model, id: ItemId) -> bool {
-        let Some(first) = model.groups.iter().find_map(|group| match group {
-            Group::Tools(ids) if ids.binary_search(&id).is_ok() => ids.first(),
+        let Some(ids) = model.groups.iter().find_map(|group| match group {
+            Group::Tools(ids) if ids.binary_search(&id).is_ok() => Some(ids),
             _ => None,
         }) else {
             return false;
         };
+        // The run the call is a step of opens; a call that is a line of its own has none.
+        let run = rows::parts(&model.items, ids).into_iter().find_map(|part| match part {
+            rows::Part::Run(run) if run.len() > 1 && run.contains(&id) => run.first().copied(),
+            _ => None,
+        });
         if self.page != Page::Conversation {
             self.show(Page::Conversation);
         } else {
             self.close_markdown();
         }
-        self.expanded.insert(*first);
-        self.tool_expanded.insert(id);
+        self.expanded.extend(run);
+        // Command output starts open, and a mark in the set folds it: leave such a row as it is.
+        let starts_open = model.items.get(&id).is_some_and(rows::starts_open);
+        if starts_open {
+            self.tool_expanded.remove(&id);
+        } else {
+            self.tool_expanded.insert(id);
+        }
         self.tool_jump = Some((id, true));
         self.cache = None;
         self.selection = None;
@@ -572,7 +599,8 @@ impl Ui {
         p.shadow_with(r, JUMP / 2.0, pal.dark, 0.9);
         p.frame(r, JUMP / 2.0, fill, super::look::edge(pal));
         p.icon(mdshared_ui::glyph::DOWN, 15.0, r.cx(), r.cy() + 0.5, pal.text);
-        if newest > self.seen {
+        // Before the view ever followed, nothing counts as new.
+        if self.seen.is_some_and(|seen| newest > Some(seen)) {
             let dot = Rect::new(r.right() - 10.0, r.y + 1.0, 9.0, 9.0);
             p.rbox(dot, 4.5, pal.page);
             p.rbox(dot.inset(1.5), 3.0, pal.accent);

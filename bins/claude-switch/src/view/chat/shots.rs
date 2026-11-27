@@ -194,3 +194,45 @@ fn chat_shots() {
         }
     }
 }
+
+/// The Session view (the panel beside a terminal) draws the conversation with the same code at
+/// its own size: the showcase with its run and its edit opened, into `CS_CHAT_SHOTS`.
+#[test]
+#[ignore = "writes pictures of the Session view; run by hand"]
+fn session_view_shots() {
+    use mdshared_ui::gfx::{Gfx, Painter, Rect};
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = std::env::var_os("CS_CHAT_SHOTS").map(|d| workspace.join(PathBuf::from(d)));
+    let scratch = crate::testing::Scratch::created("cs-session-shots");
+    let dir = dir.as_deref().unwrap_or(&scratch);
+    std::fs::create_dir_all(dir).unwrap();
+    let demo = Transcript::new_showcase(None).unwrap();
+    for (pal, theme) in [(mdshared_ui::theme::DARK, "dark"), (mdshared_ui::theme::LIGHT, "light")] {
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = crate::view::model::Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(Duration::from_secs(5)).expect("the transcript was read");
+        assert!(model.collect());
+        let mut ui = crate::view::ui::Ui::default();
+        let ids: Vec<_> = model
+            .items
+            .iter()
+            .filter(|(_, item)| {
+                matches!(&item.kind, ItemKind::Tool { state: ToolState::Failed, .. })
+                    || matches!(&item.kind, ItemKind::Tool { card: Some(ToolCard::Edit { .. }), .. })
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids.into_iter().rev() {
+            ui.jump_to_tool(&model, id);
+        }
+        let (w, h, scale) = (380.0, 900.0, 1.5);
+        let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new((w * scale) as u32, (h * scale) as u32));
+        let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+        ui.draw(&mut p, &pal, Rect::new(0.0, 0.0, w, h), &mut model, (-1.0, -1.0), Instant::now(), false);
+        bmp.write_png(&dir.join(format!("8-session-view-{theme}.png"))).unwrap();
+    }
+}

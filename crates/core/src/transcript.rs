@@ -20,7 +20,7 @@ pub use denial::{Denial, DenialKind};
 mod local;
 mod native_tasks;
 mod notices;
-pub use chat::{ChatInfo, Phase as ChatPhase, Question, QuestionOption, ToolCard};
+pub use chat::{ChatInfo, Hunk, Patch, Phase as ChatPhase, Question, QuestionOption, ToolCard};
 mod tail;
 use decode::*;
 pub(crate) use decode::{LineKind, line_kind};
@@ -415,6 +415,8 @@ struct ToolResult {
     ended_ms: Option<i64>,
     pictures: Vec<Picture>,
     lines: Vec<String>,
+    /// An edit's recorded patch, when the record holds this one result.
+    patch: Vec<chat::Hunk>,
     details: ResultDetails,
 }
 
@@ -524,7 +526,8 @@ impl View {
                                     timestamp: timestamp.filter(|s| s.len() <= 64).map(str::to_owned),
                                 };
                                 let denial = denial::from_record(&value, block);
-                                let result = ToolResult { state, denial, ended_ms, pictures, lines, details };
+                                let patch = Vec::new();
+                                let result = ToolResult { state, denial, ended_ms, pictures, lines, patch, details };
                                 results.push((tool, id(i), result));
                             }
                         }
@@ -563,6 +566,9 @@ impl View {
                 for (tool, at, mut result) in results {
                     if !lone {
                         result.denial = None;
+                    } else if result.state == ToolState::Ok {
+                        // The record's structured result is about its one result too.
+                        result.patch = chat::patch(structured);
                     }
                     if self.results.get(tool).is_none_or(|(previous, _)| *previous < at) {
                         self.background.result(tool, at, &result.details, structured, result.state == ToolState::Ok);
@@ -717,6 +723,14 @@ impl View {
             let new = result.map_or(&[][..], |r| r.lines.as_slice());
             if *lines != new {
                 *lines = new.to_vec();
+                true
+            } else {
+                false
+            }
+        } else if let Some(ToolCard::Edit { patch, .. }) = card {
+            let new = result.map_or(&[][..], |r| r.patch.as_slice());
+            if patch.as_deref().map_or(&[][..], |p| p.hunks.as_slice()) != new {
+                *patch = (!new.is_empty()).then(|| Box::new(chat::Patch { hunks: new.to_vec() }));
                 true
             } else {
                 false
