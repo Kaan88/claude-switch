@@ -135,7 +135,7 @@ impl AppState {
         if !self.config.meaning.on() {
             return None;
         }
-        self.meaning.cache.digests.get(id).map(|d| d.summary.as_str())
+        self.meaning.cache.digests.get(id).filter(|d| !d.is_marker()).map(|d| d.summary.as_str())
     }
 
     pub fn meaning_engine_label(&self) -> String {
@@ -278,6 +278,9 @@ impl AppState {
         if sessions.is_empty() {
             return;
         }
+        // Subjects go along only from sessions that may be sent now (not hidden since).
+        let visible: std::collections::HashSet<String> =
+            self.meaning_sessions().into_iter().map(|i| self.sessions[i].id.clone()).collect();
         let engine = self.config.meaning.engine.clone();
         self.start_meaning_job(move |route, cancel, cache, saved| {
             let mut items = Vec::new();
@@ -295,8 +298,17 @@ impl AppState {
                 items.push(meaning::Item { id, active_ms, excerpts });
             }
             let cancelled = || cancel.cancelled();
-            meaning::index(cache, items, &engine, |request| route.submit(request, &cancelled), cancelled, saved)
-                .map(Done::Indexed)
+            let visible = |id: &str| visible.contains(id);
+            meaning::index(
+                cache,
+                items,
+                visible,
+                &engine,
+                |request| route.submit(request, &cancelled),
+                cancelled,
+                saved,
+            )
+            .map(Done::Indexed)
         });
     }
 
@@ -408,6 +420,10 @@ impl AppState {
                 }
                 if report.empty > 0 {
                     text.push_str(&format!(" {} without a readable prompt.", report.empty));
+                }
+                if report.skipped > 0 {
+                    let n = report.skipped;
+                    text.push_str(&format!(" {n} not answered (not sent again until their prompts change)."));
                 }
                 self.note("Sessions summarized", text);
             }

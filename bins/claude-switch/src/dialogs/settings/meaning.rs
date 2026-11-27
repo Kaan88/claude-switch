@@ -25,7 +25,7 @@ pub(super) fn rows(st: &AppState) -> Vec<Row> {
     let labels: Vec<String> = engines.iter().map(|e| e.label(worker)).collect();
     let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     let value = engines.iter().position(|e| *e == prefs.engine).unwrap_or(0);
-    let kept = st.meaning.cache.digests.len();
+    let kept = st.meaning.cache.digests.values().filter(|d| !d.is_marker()).count();
     let listing = if st.meaning.listing_models() { "Listing…" } else { "List models" };
     vec![
         Row::header("Search by meaning"),

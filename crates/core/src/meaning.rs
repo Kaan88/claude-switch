@@ -107,6 +107,14 @@ pub struct Digest {
     pub subject: Option<String>,
 }
 
+impl Digest {
+    /// A checked session with nothing to show: no readable prompt, or the model gave no answer.
+    /// Never searched, asked over or used for subjects.
+    pub fn is_marker(&self) -> bool {
+        self.summary.is_empty()
+    }
+}
+
 /// A kept answer to a question.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Answer {
@@ -142,7 +150,8 @@ impl Cache {
             .into_iter()
             .flatten()
             .filter_map(|(id, d)| {
-                let summary = clean(d["summary"].as_str()?, SUMMARY_MAX)?;
+                // An empty summary is a marker: checked, nothing to show (see [`Digest::is_marker`]).
+                let summary = clean(d["summary"].as_str()?, SUMMARY_MAX).unwrap_or_default();
                 Some((
                     id.clone(),
                     Digest {
@@ -215,10 +224,10 @@ impl Cache {
         self.digests.get(id).is_none_or(|d| d.active_ms < last_active_ms)
     }
 
-    /// The subjects in use, each once (case-insensitively), sorted.
-    pub fn subjects(&self) -> Vec<String> {
+    /// The subjects of the sessions `keep` accepts, each once (case-insensitively), sorted.
+    pub fn subjects(&self, keep: impl Fn(&str) -> bool) -> Vec<String> {
         let mut unique = BTreeMap::new();
-        for subject in self.digests.values().filter_map(|d| d.subject.as_deref()) {
+        for subject in self.digests.iter().filter(|(id, _)| keep(id)).filter_map(|(_, d)| d.subject.as_deref()) {
             unique.entry(subject.to_lowercase()).or_insert_with(|| subject.to_owned());
         }
         unique.into_values().collect()
@@ -348,13 +357,19 @@ pub struct IndexReport {
     pub unchanged: usize,
     /// Sessions without a readable prompt.
     pub empty: usize,
+    /// Sessions sent but not answered: kept as markers until their prompts change.
+    pub skipped: usize,
 }
 
 /// Summarizes the sessions whose excerpts changed, in requests of [`BATCH`], calling `saved` with
-/// the cache after each request so a cancelled run keeps what was answered.
+/// the cache after each request so a cancelled run keeps what was answered. Only the subjects of
+/// sessions `visible` accepts go along. A session with no readable prompt, or one the model did
+/// not answer, gets a marker (its basis and activity, no summary), so it is neither sent nor
+/// counted as stale again until its prompts change.
 pub fn index(
     cache: &mut Cache,
     items: Vec<Item>,
+    visible: impl Fn(&str) -> bool,
     engine: &Engine,
     mut submit: impl FnMut(&str) -> Result<String, String>,
     cancelled: impl Fn() -> bool,
@@ -363,11 +378,12 @@ pub fn index(
     let mut report = IndexReport::default();
     let mut todo = Vec::new();
     for item in items.into_iter().take(RUN_LIMIT) {
+        let basis = basis(&item.excerpts);
         if item.excerpts.first.is_none() && item.excerpts.last.is_empty() {
             report.empty += 1;
+            mark(cache, &item, basis, &engine.key());
             continue;
         }
-        let basis = basis(&item.excerpts);
         match cache.digests.get_mut(&item.id) {
             Some(d) if d.basis == basis => {
                 d.active_ms = d.active_ms.max(item.active_ms);
@@ -376,7 +392,7 @@ pub fn index(
             _ => todo.push((item, basis)),
         }
     }
-    if report.unchanged > 0 {
+    if report.unchanged + report.empty > 0 {
         saved(cache);
     }
     let key = engine.key();
@@ -384,15 +400,20 @@ pub fn index(
         if cancelled() {
             return Err("Cancelled".into());
         }
-        let subjects = cache.subjects();
+        let subjects = cache.subjects(&visible);
         let excerpts: Vec<_> = batch
             .iter()
             .map(|(item, _)| Excerpts { first: item.excerpts.first.clone(), last: item.excerpts.last.clone() })
             .collect();
         report.sent += batch.len();
         let answer = submit(&index_request(&excerpts, &subjects))?;
-        for (i, (summary, keywords, subject)) in parse_index(&answer, batch.len(), &subjects) {
-            let (item, basis) = &batch[i];
+        let mut answered = parse_index(&answer, batch.len(), &subjects);
+        for (i, (item, basis)) in batch.iter().enumerate() {
+            let Some((summary, keywords, subject)) = answered.remove(&i) else {
+                report.skipped += 1;
+                mark(cache, item, *basis, &key);
+                continue;
+            };
             cache.digests.insert(
                 item.id.clone(),
                 Digest { basis: *basis, active_ms: item.active_ms, engine: key.clone(), summary, keywords, subject },
@@ -404,9 +425,28 @@ pub fn index(
     Ok(report)
 }
 
+/// Notes that a session was checked at these prompts. A real summary from earlier prompts stays
+/// (it is still the best description there is); otherwise the entry is an empty marker.
+fn mark(cache: &mut Cache, item: &Item, basis: u64, engine: &str) {
+    let entry = cache.digests.entry(item.id.clone()).or_insert_with(|| Digest {
+        basis,
+        active_ms: 0,
+        engine: engine.to_owned(),
+        summary: String::new(),
+        keywords: Vec::new(),
+        subject: None,
+    });
+    entry.basis = basis;
+    entry.active_ms = entry.active_ms.max(item.active_ms);
+}
+
 /// The summaries a question goes over, as (session id, digest), newest sessions first.
 pub fn ask_set<'a>(cache: &'a Cache, newest_first: impl IntoIterator<Item = &'a str>) -> Vec<(&'a str, &'a Digest)> {
-    newest_first.into_iter().filter_map(|id| Some((id, cache.digests.get(id)?))).take(ASK_LIMIT).collect()
+    newest_first
+        .into_iter()
+        .filter_map(|id| Some((id, cache.digests.get(id).filter(|d| !d.is_marker())?)))
+        .take(ASK_LIMIT)
+        .collect()
 }
 
 /// Fingerprint of a question over a set of summaries and a model.
@@ -505,7 +545,7 @@ fn words(text: &str) -> Vec<String> {
 /// or subject, or the other way round. Higher is better; `None` is no match.
 pub fn score(query: &str, digest: &Digest) -> Option<usize> {
     let wanted = words(query);
-    if wanted.is_empty() {
+    if wanted.is_empty() || digest.is_marker() {
         return None;
     }
     let mut have = words(&digest.summary);

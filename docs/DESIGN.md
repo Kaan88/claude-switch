@@ -290,8 +290,13 @@ handover file; OpenCode may ask permission to read it, since it is outside the p
 session is left as it is and nothing is recorded in `marks.json`. Whether `--prompt` submits at once or
 waits for Enter was not checked (that would need a model request). Saved tabs keep a running OpenCode
 tab as `{"kind":"opencode","folder","active"}` beside the Claude rows in `terminal-tabs.json`
-(older builds skip such rows); restoring reopens it in that folder with `--continue`, OpenCode's
-last session there, which can be a later one started elsewhere, and never repeats a first prompt.
+(older builds skip such rows). Restoring reopens the first such tab of a folder with `--continue`,
+OpenCode's last session there (possibly a later one started elsewhere, or an older one when that tab
+was never used), and further tabs of the same folder fresh, so two tabs never show one session; a
+first prompt is never repeated. OpenCode's own session id is not kept: `--session <id>` with a new id
+does not create the session at startup (checked with `--standalone` in a scratch folder), and
+whether a later first message keeps that id could only be seen with a model request, so it is not
+relied on.
 A folder that is gone is listed in the "Tabs not reopened" notice.
 
 **Not there:** more than one terminal in a tab, search or links in the terminal,
@@ -1433,12 +1438,15 @@ choices on a worker; the list is shared with the handover dialog. The palette's 
 sessions for search by meaning…** confirms first, naming the model, the count and what is sent:
 the payload of a name suggestion (numeric ids, the first and up to three recent prompts, 500
 characters each) for visible, not hidden sessions with no summary or activity since it, newest
-first, at most 100 a run in requests of 20, plus the subjects already in use so groups stay
-stable. Each answer line gives a summary of at most 200 characters, up to eight keywords and a
+first, at most 100 a run in requests of 20, plus the subjects already in use among those
+visible, not hidden sessions, so groups stay stable. Each answer line gives a summary of at most 200 characters, up to eight keywords and a
 subject (a topic-shaped label); invalid, repeated and out-of-range ids are dropped. They are kept
 in `meaning.json` beside `config.json` with an FNV-1a fingerprint of the exact payload: a session
 whose prompts did not change is not sent again, and the file is written after every request, so a
-cancelled or failed run keeps what was answered. A missing or damaged file is an empty cache;
+cancelled or failed run keeps what was answered. A session with no readable prompt, or one the
+model did not answer, is kept as a marker (fingerprint and activity, no summary): it is not sent or
+counted again until its prompts change (an earlier real summary of it stays), and markers are
+never searched, asked over, counted as kept summaries or used for subjects. A missing or damaged file is an empty cache;
 **Forget** removes it. While the setting is on, the list's search also matches a session when
 every meaningful word of the search (one may miss from three or more; stop words and simple
 suffixes ignored) begins a word of its summary, keywords or subject, locally; Details shows the

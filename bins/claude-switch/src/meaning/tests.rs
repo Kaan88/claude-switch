@@ -95,6 +95,7 @@ fn summaries_make_search_and_topics_work_by_meaning_without_another_request() {
         finish(&mut st);
     }
     assert!(st.meaning.cache.digests.len() > before.digests.len());
+    assert!(st.info.as_ref().is_some_and(|i| i.title() == "Nothing to summarize"), "every run ends");
     assert_eq!(st.meaning.cache.digests[&id], before.digests[&id], "a current summary is not redone");
 }
 
@@ -153,4 +154,29 @@ fn the_demo_model_answers_both_kinds_of_request() {
     let index = demo_answer(&meaning::index_request(&items, &[]));
     let parsed = meaning::parse_index(&index, 1, &[]);
     assert_eq!(parsed[&0].2.as_deref(), Some("Gestures"));
+}
+
+#[test]
+fn a_session_hidden_after_it_was_summarized_lends_no_subject_to_the_next_request() {
+    let mut st = demo();
+    st.config.meaning.enabled = true;
+    let hidden = st.sessions[0].clone();
+    let shown = st.sessions[1].clone();
+    let kept = |subject: &str| meaning::Digest {
+        basis: 1,
+        active_ms: u64::MAX,
+        engine: "claude".into(),
+        summary: "kept".into(),
+        keywords: vec![],
+        subject: Some(subject.into()),
+    };
+    st.meaning.cache.digests.insert(hidden.id.clone(), kept("Secret area"));
+    st.meaning.cache.digests.insert(shown.id.clone(), kept("Open area"));
+    st.marks.hide(&hidden.id, &hidden.file, true);
+    assert!(st.hidden_session(&hidden));
+    let visible: std::collections::HashSet<_> =
+        st.meaning_sessions().into_iter().map(|i| st.sessions[i].id.clone()).collect();
+    assert!(!visible.contains(&hidden.id) && visible.contains(&shown.id));
+    let subjects = st.meaning.cache.subjects(|id| visible.contains(id));
+    assert_eq!(subjects, ["Open area"]);
 }

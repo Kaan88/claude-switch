@@ -650,6 +650,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     agent's config, fmt, clippy and the workspace tests. Not checked: any real Claude or OpenCode request (none was
     made during development), answer quality of a real model, the dialogs and the Settings rows by eye in the
     running app, and timing with a large `meaning.json`.
+    Review fixes (`fix/review-meaning`): the subjects sent with a Summarize request now come only from visible, not
+    hidden sessions (they came from every kept summary); sessions with no readable prompt or no answer get a
+    marker, so they are no longer re-sent and offered on every run and "Nothing to summarize" is reached.
     Original request: **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
     later item. not now."). Today search is literal text and Related is word overlap (DESIGN.md, Session
     organization). Wanted: a search that finds a session by what it was about ("where we fixed push"), questions
@@ -702,6 +705,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     (only `--help` was run, in a scratch folder), whether `--prompt` submits at once or waits for Enter, how
     `--continue` behaves in a folder with no OpenCode session, the button and dialog by eye, and the `compact
     --open` CLI and auto-handover, which still continue only in Claude.
+    Review fix (`fix/review-meaning`): two OpenCode tabs of one folder both reopened `--continue` onto the same
+    session; now only the first per folder does, the others start fresh (OpenCode's session id could not be learned
+    without a model request; see DESIGN.md). A never-used tab that is first in its folder still reopens the
+    folder's last session.
     Original idea: **Maybe, idea only: OpenCode as a tab type, and as a handover target** (owner, 2026-11-27: "opencode makes more
     sense as a tab ... leave this as a maybe idea"). A "New OpenCode tab" entry with the folder picker, running the
     owner's normal OpenCode (Magic Context enabled, unlike the bridge's jobs), and "Continue in OpenCode" sending the
