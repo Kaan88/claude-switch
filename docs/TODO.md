@@ -644,6 +644,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     (window background, surfaces, text, dim text, accent, selection, and the terminal's 16 ANSI colours and its
     background and foreground), starting from any built-in palette or generated from a base colour and an accent;
     contrast checked as the user edits; import and export of a theme as a file.
+    **Storage and rendering done.** Versioned theme JSON, named dark/light palettes and independent
+    automatic terminal colours. Temporary-folder tests cover bounded import, export and additive
+    migration, including stale writers and unknown settings. Settings controls and editor follow.
 64. **A scrollbar that fades, and page width options** (owner, 2026-11-27). Scrollbars show while scrolling or
     under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
     the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide).

@@ -640,6 +640,13 @@ or picked), dialog and menu corners, optional soft shadows, and the system-aware
 Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
 compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
 
+Named palettes are stored by stable `user-` id under `appearance.themes`. The existing
+`darkTheme` and `lightTheme` keys select them as well as built-ins; no settings rewrite is
+needed to upgrade. The name is display text, never a path. Window surfaces and automatic
+terminal colours resolve by id, even when two palettes have identical window colours.
+Theme files are versioned JSON containing only a name, base palette and `#RRGGBB` colours.
+Import validates the whole file including all 16 ANSI colours; export creates a new file.
+
 Automatic terminal colours use the chosen palette's terminal colours (Neutral is `#101010`).
 Match window uses the window bar background. Custom uses the background, text and accent picked on
 the Terminal page; the renderer adjusts pairs below 7:1. An applied colour takes effect at once, and 9–24 logical px font-size

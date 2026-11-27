@@ -382,3 +382,9 @@ goes from 60% to 100% (the default) when Mica or Acrylic is active on Windows 11
 These settings apply to open tabs and to Chat’s terminal drawer. **Ctrl+Shift+E** opens or closes
 the drawer in Chat. Translucent terminals use grayscale text edges. Dim text can still have a
 darker cell background because the toolkit raises its opacity for contrast.
+
+## Named themes
+
+Named palettes live alongside the built-ins. Each has its own window colours, selection,
+terminal foreground and background, and 16 ANSI colours. **Automatic** terminal colours
+follow the selected palette; choosing a specific terminal scheme still overrides it.

@@ -453,6 +453,7 @@ dependencies = [
 name = "claude-switch-core"
 version = "0.1.1"
 dependencies = [
+ "serde",
  "serde_json",
  "windows-sys 0.61.2",
 ]
