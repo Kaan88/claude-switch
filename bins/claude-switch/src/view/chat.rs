@@ -15,6 +15,7 @@ mod rename;
 mod shortcuts;
 pub(super) mod side;
 pub(super) mod submission;
+mod undo;
 
 pub(crate) use commands::valid_name as valid_command_name;
 pub use input::Control;

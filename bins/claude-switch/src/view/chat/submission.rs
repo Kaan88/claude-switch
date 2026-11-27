@@ -164,6 +164,7 @@ impl Chat {
         self.retry = None;
         self.queue = None;
         self.editor.set(String::new());
+        self.editor.clear_history();
         self.commands.open = false;
         self.chips.clear();
         self.chip_page = 0;

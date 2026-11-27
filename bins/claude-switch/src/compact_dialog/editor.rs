@@ -20,6 +20,11 @@ impl Editor {
         *self = Self { text, ..Self::default() };
     }
 
+    /// The fixed end of the selection; the caret is the moving one.
+    pub fn anchor(&self) -> usize {
+        self.anchor
+    }
+
     pub fn selection(&self) -> Range<usize> {
         self.anchor.min(self.caret)..self.anchor.max(self.caret)
     }

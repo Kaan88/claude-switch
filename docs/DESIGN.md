@@ -1413,7 +1413,14 @@ view share the Shells and Outputs Details rendering.
 Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
-overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+overlong words, and uses the toolkit context menu for Undo, Redo, Cut, Copy, Paste and Select all.
+The composer has undo (Ctrl+Z) and redo (Ctrl+Y, Ctrl+Shift+Z) in `view/chat/undo.rs`, recorded
+inside the composer's editor, so every way the draft changes is covered. Typing is one step per
+word or after a one-second pause, a run of Backspace or Delete is one step, and a paste, a cut, a
+completion, a recalled prompt (and leaving it) or a filled chip is a step of its own. A step brings
+back the text with its caret and selection. At most 100 steps are kept; sending a message clears
+them. Neither the toolkit's single-line `TextField` (search box, dialog fields, Settings) nor the
+handover dialog's editor has undo.
 The composer toolbar separates session values, actions and panels by their surfaces. Fixed-width
 value controls keep their neighbours still as values change; effort is a five-dot scale and
 context remains a token count, not a filled bar, because the transcript supplies no verified limit.

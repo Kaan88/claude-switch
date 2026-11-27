@@ -9,6 +9,10 @@ use crate::dialogs::{Dialog, Pending};
 use crate::state::{AppState, MenuKind, Msg, Target};
 use crate::tabs::Tab;
 
+/// The editor menu's Undo and Redo ids; Cut, Copy, Paste and Select all are 0 to 3.
+const UNDO: u32 = 4;
+const REDO: u32 = 5;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuMode {
     Editor,
@@ -45,7 +49,11 @@ impl AppState {
             chat.editor.point(fx, fy, false);
         }
         let selected = !chat.editor.selection().is_empty();
+        let editable = !chat.locked();
+        // As in Windows text boxes: Undo and Redo first, then the clipboard.
         let items = vec![
+            Item::new(UNDO, "Undo").hint("Ctrl+Z").enabled(editable && chat.editor.history.can_undo()),
+            Item::new(REDO, "Redo").hint("Ctrl+Y").enabled(editable && chat.editor.history.can_redo()).sep(),
             Item::new(0, "Cut").enabled(selected && !chat.locked()),
             Item::new(1, "Copy").enabled(selected),
             Item::new(2, "Paste").enabled(!chat.locked()),
@@ -80,9 +88,12 @@ impl AppState {
                     1 => chat.editor_copy(false),
                     2 if !chat.locked() => chat.paste_clipboard(false),
                     3 => chat.editor.select_all(),
+                    UNDO | REDO if !chat.locked() => {
+                        chat.undo_or_redo(index == REDO);
+                    }
                     _ => (),
                 }
-                if matches!(index, 0 | 2) {
+                if matches!(index, 0 | 2 | UNDO | REDO) {
                     self.chat_editor_changed();
                 }
             }

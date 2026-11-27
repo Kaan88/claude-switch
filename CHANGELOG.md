@@ -7,6 +7,9 @@
   column instead of the window's left edge.
 - Chat: Cut in the message box (right-click › Cut and Ctrl+X) removes the selected text after copying
   it; before, it only copied.
+- Chat: undo and redo in the message box: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Undo and Redo in its
+  right-click menu. Typing undoes a word at a time; a paste, a cut, a run of deletions, a completion,
+  a recalled prompt or a filled chip is one step each. Sending a message clears the history.
 
 ## 0.1.2 (2026-11-27)
 

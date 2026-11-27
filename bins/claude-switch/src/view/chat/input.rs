@@ -296,6 +296,11 @@ impl AppState {
                 chat.editor.select_all();
             }
             _ if chat.locked() => {}
+            Some(KeyName::Char(c @ ('z' | 'Z' | 'y' | 'Y'))) if mods.ctrl && !mods.alt => {
+                // Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo, as in Windows text boxes.
+                let redo = matches!(c, 'y' | 'Y') || mods.shift;
+                changed = chat.undo_or_redo(redo);
+            }
             Some(KeyName::Char('x' | 'X')) if mods.ctrl && !mods.alt => {
                 chat.editor_copy(true);
                 changed = true;
@@ -643,7 +648,8 @@ impl Chat {
         picture: impl FnOnce() -> Option<clipboard::Picture>,
     ) {
         if !picture_only && let Some(text) = text().filter(|s| !s.is_empty()) {
-            self.insert_text(&text);
+            self.recall.end();
+            self.editor.paste(&text);
         } else if let Some(picture) = picture() {
             self.recall.end();
             self.chips.retain(|c| !matches!(c, Chip::Clipboard(_)));
@@ -656,6 +662,16 @@ impl Chat {
             self.retry = None;
         }
         self.recall.cancel_load();
+    }
+
+    /// Ctrl+Z, or redo. The restored draft is the one to send, so prompt browsing ends.
+    pub(super) fn undo_or_redo(&mut self, redo: bool) -> bool {
+        self.recall.cancel_load();
+        let changed = if redo { self.editor.redo() } else { self.editor.undo() };
+        if changed {
+            self.recall.end();
+        }
+        changed
     }
 
     pub(super) fn editor_copy(&mut self, cut: bool) {
