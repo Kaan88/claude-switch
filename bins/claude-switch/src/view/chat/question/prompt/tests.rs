@@ -13,7 +13,7 @@ const TICK: Duration = Duration::from_millis(100);
 
 impl Live {
     /// Lays Chat out in a window of this size and paints the card: what can be clicked.
-    fn paint(&mut self, w: f32, h: f32) -> Vec<Hit> {
+    pub(in crate::view::chat::question) fn paint(&mut self, w: f32, h: f32) -> Vec<Hit> {
         use mdshared_text::Bitmap;
         use mdshared_ui::gfx::Gfx;
         let now = self.now;
@@ -43,18 +43,18 @@ impl Live {
     }
 
     /// The card paints the prompt in a roomy window, and the moment a click needs passes.
-    fn read_card(&mut self) -> Vec<Hit> {
+    pub(in crate::view::chat::question) fn read_card(&mut self) -> Vec<Hit> {
         let hits = self.paint(1000.0, 900.0);
         self.pass(SEEN);
         hits
     }
 
-    fn click(&mut self, hit: Hit) -> bool {
+    pub(in crate::view::chat::question) fn click(&mut self, hit: Hit) -> bool {
         let now = self.now;
         crate::view::chat::question::press(self.tab(), now, hit)
     }
 
-    fn card(&mut self) -> &Card {
+    pub(in crate::view::chat::question) fn card(&mut self) -> &Card {
         &self.chat().question
     }
 }

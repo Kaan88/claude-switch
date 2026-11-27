@@ -362,6 +362,7 @@ mod tests {
                 duration_ms: None,
                 pictures: Vec::new(),
                 subagent: None,
+                denial: None,
                 card: None,
             },
         };

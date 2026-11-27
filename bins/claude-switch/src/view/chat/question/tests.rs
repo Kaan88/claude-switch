@@ -57,6 +57,7 @@ impl Fixture {
             duration_ms: None,
             pictures: vec![],
             subagent: None,
+            denial: None,
             card: Some(ToolCard::Questions(questions)),
         };
         pane.model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });
@@ -338,6 +339,7 @@ fn shell(id: &str, command: &str) -> ItemKind {
         duration_ms: None,
         pictures: vec![],
         subagent: None,
+        denial: None,
         card: Some(ToolCard::Shell { command: command.into(), result: vec![] }),
     }
 }
@@ -594,6 +596,7 @@ fn a_path_or_host_matches_only_as_a_whole_word() {
         duration_ms: None,
         pictures: vec![],
         subagent: None,
+        denial: None,
         card: None,
     };
     let root = std::env::temp_dir().join("proj");
@@ -687,6 +690,7 @@ fn a_plan_is_approved_from_the_card_only_while_its_menu_shows() {
         duration_ms: None,
         pictures: vec![],
         subagent: None,
+        denial: None,
         card: Some(ToolCard::Plan("# Build the parser\n\n1. Tokens\n2. Tree".into())),
     };
     f.tab().pane.as_mut().unwrap().model.items.insert(ItemId { offset: AT, block: 0 }, Item { kind, timestamp: None });

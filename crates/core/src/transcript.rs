@@ -15,6 +15,8 @@ mod background;
 mod chat;
 pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellStatus};
 mod decode;
+mod denial;
+pub use denial::{Denial, DenialKind};
 mod local;
 mod native_tasks;
 mod notices;
@@ -90,6 +92,9 @@ pub enum ItemKind {
         pictures: Vec<Picture>,
         subagent: Option<String>,
         card: Option<ToolCard>,
+        /// Claude Code refused the call (the user's No, a rule, auto mode): it never ran. Boxed:
+        /// few calls are denied, and every item would carry the room.
+        denial: Option<Box<Denial>>,
     },
     Notice {
         kind: NoticeKind,
@@ -406,6 +411,7 @@ struct View {
 
 struct ToolResult {
     state: ToolState,
+    denial: Option<Denial>,
     ended_ms: Option<i64>,
     pictures: Vec<Picture>,
     lines: Vec<String>,
@@ -507,7 +513,9 @@ impl View {
                                     text: background::bounded_text(&block["content"]),
                                     timestamp: timestamp.filter(|s| s.len() <= 64).map(str::to_owned),
                                 };
-                                results.push((tool, id(i), ToolResult { state, ended_ms, pictures, lines, details }));
+                                let denial = denial::from_record(&value, block);
+                                let result = ToolResult { state, denial, ended_ms, pictures, lines, details };
+                                results.push((tool, id(i), result));
                             }
                         }
                         _ => (),
@@ -540,7 +548,12 @@ impl View {
                     self.chat.observe(offset, ChatPhase::Active);
                 }
                 let structured = if results.len() == 1 { &value["toolUseResult"] } else { &Value::Null };
-                for (tool, at, result) in results {
+                // The record's denial is about its one result: with several, none can be named.
+                let lone = results.len() == 1;
+                for (tool, at, mut result) in results {
+                    if !lone {
+                        result.denial = None;
+                    }
                     if self.results.get(tool).is_none_or(|(previous, _)| *previous < at) {
                         self.background.result(tool, at, &result.details, structured, result.state == ToolState::Ok);
                         changes.background_changed = true;
@@ -581,6 +594,7 @@ impl View {
                             pictures: Vec::new(),
                             subagent: None,
                             card: ToolCard::from_input(name, input),
+                            denial: None,
                         };
                         self.add(id(i), timestamp, item, changes);
                         self.tools.insert(tool.into(), id(i));
@@ -674,7 +688,7 @@ impl View {
 
     fn update_tool(&mut self, tool: &str, changes: &mut Changes) {
         let Some(&id) = self.tools.get(tool) else { return };
-        let Some(Item { kind: ItemKind::Tool { state, duration_ms, pictures, subagent, card, .. }, timestamp }) =
+        let Some(Item { kind: ItemKind::Tool { state, duration_ms, pictures, subagent, card, denial, .. }, timestamp }) =
             self.items.get_mut(&id)
         else {
             return;
@@ -688,6 +702,7 @@ impl View {
             .and_then(|(start, end)| u64::try_from(end - start).ok());
         let new_pictures = result.map_or(&[][..], |r| r.pictures.as_slice());
         let new_agent = self.links.get(tool);
+        let new_denial = result.and_then(|r| r.denial.as_ref());
         let changed_result = if let Some(ToolCard::Shell { result: lines, .. }) = card {
             let new = result.map_or(&[][..], |r| r.lines.as_slice());
             if *lines != new {
@@ -703,9 +718,11 @@ impl View {
             || *duration_ms != new_duration
             || *pictures != new_pictures
             || subagent.as_ref() != new_agent
+            || denial.as_deref() != new_denial
             || changed_result
         {
             *state = new_state;
+            *denial = new_denial.cloned().map(Box::new);
             *duration_ms = new_duration;
             *pictures = new_pictures.to_vec();
             *subagent = new_agent.cloned();

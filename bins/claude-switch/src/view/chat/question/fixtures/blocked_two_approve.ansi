@@ -1,0 +1,50 @@
+cursor 33 58
+@size 110 46
+@wrapped 13
+@modes paste
+  for [0;38;2;177;185;249mmkdir [0min your settings. If you'd like, I can retry it once you've changed the permission.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mSautéed for 5s · done 6:29 PM[0m
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mNow run exactly this with the Bash tool and nothing else: mkdir probe_blocked_b                             [0m
+
+[0;38;2;255;107;128m●[0;38;2;215;119;87m [0;1mBash[0m(mkdir probe_blocked_b)
+[0;38;2;153;153;153m  ⎿  Blocked by auto mode · /permissions to review · see https://code.claude.com/docs/s/claude-code-auto-mode[0m
+     [0;2m│[0m [0;38;2;153;153;153mAuto mode: No reason provided[0m
+
+[0;38;2;255;255;255m●[0;38;2;215;119;87m [0mThe Bash call [0;38;2;177;185;249mmkdir probe_blocked_b[0m was denied by the auto mode classifier, with no reason given. This is
+  the same denial as [0;38;2;177;185;249mprobe_blocked_a[0m.
+
+  I haven't tried another way to make the directory, since you asked for the Bash tool only. To get it to run,
+  approve the command if a prompt appears, or add a Bash permission rule for [0;38;2;177;185;249mmkdir[0m in your settings, then I
+  can retry.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mBaked for 5s · done 6:29 PM[0m
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55m/permissions                                                                                                [0m
+
+[0;38;2;177;185;249m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0;1;38;2;177;185;249mPermissions[0m [0;1;7m Recently blocked [0m  Allow   Ask   Deny   Auto mode   Workspace
+
+  Commands auto mode recently blocked. Approving adds no rule.
+
+  [0;38;2;177;185;249m❯ [0;38;2;153;153;153m1. [0;38;2;78;186;101m✔ [0;38;2;177;185;249mCreate directory probe_blocked_b[0m  [0;38;2;153;153;153mAuto mode: No reason provided[0m
+    [0;38;2;153;153;153m2. [0;38;2;255;107;128m✘ [0mCreate directory probe_blocked_a  [0;38;2;153;153;153mAuto mode: No reason provided[0m
+  [0;38;2;153;153;153m   Esc will approve 1 blocked call[0m
+  [0;38;2;80;80;80m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌[0m
+   mkdir probe_blocked_b
+  [0;38;2;80;80;80m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌[0m
+
+  [0;3;38;2;153;153;153mr to retry · Enter to approve · Esc to approve 1 blocked[0m
+
+
+
+
+
+
+
+
+
+
+
+

@@ -452,7 +452,7 @@ impl Chat {
             decision.1 = Some(if self.question.approval { Reason::Approval } else { Reason::Question });
         }
         // A CLI menu shows as a card: nothing is sent past it and the drawer stays closed.
-        if self.question.menu.is_some()
+        if (self.question.menu.is_some() || self.question.blocked_shown())
             && decision.0 != Gate::Ended
             && decision.1.is_none_or(|r| matches!(r, Reason::Slash | Reason::Tool | Reason::Bell))
         {

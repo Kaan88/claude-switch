@@ -27,6 +27,13 @@
   one scrolls, and its choices can be clicked once you have seen all of it. Nothing is approved
   that the card did not show: the keys go only while the terminal still shows that same prompt.
   To decline with a comment, use Open terminal.
+- Denied permissions are said out loud. A tool call that auto mode blocked, a rule denied or you
+  declined now reads "blocked by auto mode", "denied by a rule" or "you said no" in the
+  conversation instead of "failed", and a card under the conversation counts the current turn's
+  denials and lists what was denied and why. **Review blocked calls…** opens Claude Code's own
+  list of calls auto mode blocked (`/permissions`), which Chat shows as a card: choose a call, see
+  its command, **Approve** or **Retry now**, then apply. **Ask Claude to retry** puts a sentence
+  in the message box and sends nothing.
 - Stop before Claude answers: Claude Code puts the message back on its own input, which blocked
   the next send. Chat now clears it there and puts the text back in the message box.
 - More time for a pasted picture to show (20 s) and for a pasted message to appear (5 s).

@@ -394,15 +394,18 @@ impl Rows<'_> {
                 row.open = expanded.contains(first);
                 row.title = format!("{calls} tool calls");
                 let mut failed = 0;
+                let mut denied = 0;
                 let mut running = 0;
                 for id in ids {
-                    if let Some(Item { kind: ItemKind::Tool { state, .. }, .. }) = m.items.get(id) {
-                        failed += usize::from(*state == ToolState::Failed);
+                    if let Some(Item { kind: ItemKind::Tool { state, denial, .. }, .. }) = m.items.get(id) {
+                        // A denied call did not fail: it never ran.
+                        denied += usize::from(denial.is_some());
+                        failed += usize::from(*state == ToolState::Failed && denial.is_none());
                         running += usize::from(*state == ToolState::Running);
                     }
                 }
-                row.stamp = group_status(failed, running);
-                row.tone = if failed > 0 { Tone::Warning } else { Tone::Muted };
+                row.stamp = group_status(denied, failed, running);
+                row.tone = if failed + denied > 0 { Tone::Warning } else { Tone::Muted };
                 row.busy = running > 0;
                 self.put(row);
             }
@@ -471,7 +474,9 @@ impl Rows<'_> {
                 self.card(Id::Message(id), title, stamp, text, tone, files)
             }
             ItemKind::Notice { kind, text } => self.notice(id, *kind, text, open, files),
-            ItemKind::Tool { name, summary, file_path, state, pictures, subagent, card, duration_ms, .. } => {
+            ItemKind::Tool {
+                name, summary, file_path, state, pictures, subagent, card, duration_ms, denial, ..
+            } => {
                 let mut row = self.row(Id::Tool(id), Style::Tool);
                 row.title = one_line(name, 160);
                 let target = file_path.as_deref().unwrap_or(summary);
@@ -488,10 +493,12 @@ impl Rows<'_> {
                 if row.target == row.title {
                     row.target.clear();
                 }
-                let (label, tone) = match state {
-                    ToolState::Running => ("◌ running", Tone::Accent),
-                    ToolState::Ok => ("✓", Tone::Muted),
-                    ToolState::Failed => ("✗ failed", Tone::Warning),
+                let (label, tone) = match (state, denial) {
+                    // Who refused it, instead of "failed": the call never ran.
+                    (_, Some(denial)) => (crate::view::chat::question::denials::label(denial.kind), Tone::Warning),
+                    (ToolState::Running, _) => ("◌ running", Tone::Accent),
+                    (ToolState::Ok, _) => ("✓", Tone::Muted),
+                    (ToolState::Failed, _) => ("✗ failed", Tone::Warning),
                 };
                 row.stamp = label.into();
                 row.tone = tone;
@@ -506,7 +513,12 @@ impl Rows<'_> {
                 };
                 row.background = background;
                 if row.open {
-                    let (detail, kind) = tool_detail(card.as_ref(), target);
+                    let (mut detail, kind) = tool_detail(card.as_ref(), target);
+                    if let Some(denial) = denial {
+                        // Why it did not run, under what was asked for.
+                        let why = crate::view::chat::question::denials::why(denial);
+                        detail = format!("{}\n\n{why}", detail.trim_end());
+                    }
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
                     row.agent.clone_from(subagent);
                     let count = pictures.len();
@@ -651,13 +663,10 @@ const fn collapsible(count: usize) -> bool {
     count >= 4
 }
 
-fn group_status(failed: usize, running: usize) -> String {
-    match (failed, running) {
-        (0, 0) => String::new(),
-        (0, r) => format!("{r} running"),
-        (f, 0) => format!("{f} failed"),
-        (f, r) => format!("{f} failed · {r} running"),
-    }
+fn group_status(denied: usize, failed: usize, running: usize) -> String {
+    let parts = [(denied, "denied"), (failed, "failed"), (running, "running")];
+    let parts: Vec<String> = parts.iter().filter(|(n, _)| *n > 0).map(|(n, what)| format!("{n} {what}")).collect();
+    parts.join(" · ")
 }
 
 fn duration(ms: u64) -> String {

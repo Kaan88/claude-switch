@@ -182,6 +182,7 @@ mod tests {
                 duration_ms: None,
                 pictures: vec![],
                 subagent: None,
+                denial: None,
                 card: None,
             },
         };
@@ -236,6 +237,7 @@ mod tests {
                 duration_ms: None,
                 pictures: vec![],
                 subagent: None,
+                denial: None,
                 card: None,
             },
             timestamp: None,
@@ -277,6 +279,7 @@ mod tests {
                 duration_ms: None,
                 pictures: vec![],
                 subagent: None,
+                denial: None,
                 card: None,
             },
             timestamp: None,

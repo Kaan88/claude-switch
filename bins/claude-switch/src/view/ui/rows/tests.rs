@@ -21,6 +21,7 @@ fn tool(name: &str, state: ToolState, card: Option<ToolCard>) -> Item {
         duration_ms: (state == ToolState::Ok).then_some(420),
         pictures: Vec::new(),
         subagent: None,
+        denial: None,
         card,
     })
 }
@@ -200,6 +201,7 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
             duration_ms: None,
             pictures: Vec::new(),
             subagent: None,
+            denial: None,
             card: Some(ToolCard::Output(text.into())),
         })
     };
@@ -246,5 +248,49 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
     assert_eq!(
         open.iter().find(|r| r.id == Id::Tool(id(1))).unwrap().body.as_ref().unwrap().text(),
         "Set model to Opus 5.5"
+    );
+}
+
+#[test]
+fn a_denied_call_says_who_refused_it_instead_of_failed() {
+    use claude_switch_core::transcript::{Denial, DenialKind};
+    let demo = crate::demo::Transcript::new().unwrap();
+    let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let denied = |kind, reason: &str| {
+        let shell = ToolCard::Shell { command: "mkdir probe".into(), result: vec![reason.into()] };
+        let mut call = tool("Bash", ToolState::Failed, Some(shell));
+        if let ItemKind::Tool { denial, .. } = &mut call.kind {
+            *denial = Some(Box::new(Denial { kind, before_run: None, reason: reason.into(), rule_source: None }));
+        }
+        call
+    };
+    model.items = [
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        denied(DenialKind::AutoMode, "Too risky."),
+        denied(DenialKind::User, "The user doesn't want to proceed with this tool use."),
+        tool("Read", ToolState::Failed, None),
+        tool("Read", ToolState::Ok, None),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, item)| (id(i as u64), item))
+    .collect();
+    model.groups = super::super::super::model::group(&model.items);
+    let pal = &mdshared_ui::theme::DARK;
+    let mut rows =
+        Rows { list: vec![], previous: BTreeMap::new(), end: 0.0, width: 700.0, scale: 1.0, pal, chat: true };
+    rows.conversation(&model, &[id(1)].into(), &[id(1)].into());
+    let row = |i| rows.list.iter().find(|r| r.id == Id::Tool(id(i))).unwrap();
+    let group = rows.list.iter().find(|r| r.style == Style::Group).expect("four calls fold into a group");
+    assert_eq!(group.stamp, "2 denied · 1 failed", "a denied call did not fail: it never ran");
+    assert!(matches!(group.tone, Tone::Warning));
+    assert!(matches!(row(1).tone, Tone::Warning) && row(1).stamp == "✗ blocked by auto mode");
+    assert_eq!(row(2).stamp, "✗ you said no");
+    assert_eq!(row(3).stamp, "✗ failed");
+    // Opened, the row says why under what was asked for.
+    let body = row(1).body.as_ref().unwrap().text();
+    assert!(
+        body.starts_with("mkdir probe") && body.ends_with("Auto mode's classifier blocked it: Too risky."),
+        "{body}"
     );
 }

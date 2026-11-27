@@ -12,6 +12,8 @@
 //! question or the review opened), and "Submit answers" only once the review reads every answer
 //! as picked.
 mod background;
+mod blocked;
+pub(in crate::view) mod denials;
 mod prompt;
 pub(in crate::view) mod rewind;
 pub(super) mod screens;
@@ -271,6 +273,16 @@ pub enum Hit {
     Submit,
     /// Scroll a long permission prompt on (nothing is sent).
     More,
+    /// In Claude Code's list of blocked calls: Enter on the highlighted call (approve, or unmark).
+    Approve,
+    /// In that list: `r` on the highlighted call (retry, or make a retry an approval).
+    Retry,
+    /// Open Claude Code's /permissions dialog (the slash command, under its own checks).
+    Review,
+    /// Put a sentence asking Claude to retry the denied calls in the message box (nothing is sent).
+    AskRetry,
+    /// Show or fold the list of denied permissions (nothing is sent).
+    Denials(bool),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -285,6 +297,10 @@ enum Then {
     Chat(String),
     /// Tab to open the prompt's comment field on the row, type, then Enter.
     Amend(String),
+    /// Move the highlight to the row and stop: nothing is chosen.
+    Rest,
+    /// One key on the row that is not Enter.
+    Press(&'static [u8]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,6 +340,10 @@ enum Subject {
     },
     /// A permission prompt read from the screen alone: its rows, question and choices.
     Prompt(prompt::Prompt),
+    /// Claude Code's list of blocked calls: its rows with their marks.
+    Blocked {
+        entries: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -405,6 +425,14 @@ pub(super) struct Card {
     /// A permission prompt the pending call's card does not cover, read from the screen alone.
     prompt: Option<prompt::Prompt>,
     prompt_view: prompt::View,
+    /// Claude Code's list of the calls auto mode blocked (/permissions), read from the screen.
+    blocked: Option<blocked::Shown>,
+    blocked_view: blocked::View,
+    /// The current turn's denied permissions, from the transcript, and how the card shows them.
+    denials: Vec<denials::Denied>,
+    denials_watch: denials::Watch,
+    /// The card laid out is the denials' (no other card wanted the room).
+    denials_only: bool,
     /// A CLI menu with no question or permission card for it.
     pub(super) menu: Option<MenuShown>,
     /// The running shell call the CLI offers to move to the background.
@@ -546,6 +574,7 @@ fn read(
             (panel.menu.is_none() && panel.rows == *rows).then_some((empty, None, None))
         }
         Subject::Prompt(want) => prompt::still_shown(want, screen).map(|menu| (menu, None, None)),
+        Subject::Blocked { entries } => blocked::still_shown(entries, screen).map(|menu| (menu, None, None)),
     }
 }
 
@@ -990,16 +1019,34 @@ impl Chat {
             }
             // A prompt read from the screen is not the transcript's call: its card and an answer
             // in flight go on (each key still needs the same prompt on the screen).
-            let step = step.filter(|step| matches!(step.subject, Subject::Prompt(_)));
+            let step = step.filter(|step| matches!(step.subject, Subject::Prompt(_) | Subject::Blocked { .. }));
             let prompt = self.question.prompt.take();
             let prompt_view = std::mem::take(&mut self.question.prompt_view);
+            let blocked = self.question.blocked.take();
+            let blocked_view = std::mem::take(&mut self.question.blocked_view);
+            let denials = std::mem::take(&mut self.question.denials);
+            let denials_watch = std::mem::take(&mut self.question.denials_watch);
             let field = std::mem::take(&mut self.question.field);
             let held = self.question.held.take();
             let agent_step = self.question.agent_step.take();
             let rewind = self.question.rewind.take();
             let error = self.question.error.filter(|_| agent_step.is_some() || step.is_some());
-            self.question =
-                Card { item, field, held, agent_step, rewind, error, step, prompt, prompt_view, ..Card::default() };
+            self.question = Card {
+                item,
+                field,
+                held,
+                agent_step,
+                rewind,
+                error,
+                step,
+                prompt,
+                prompt_view,
+                blocked,
+                blocked_view,
+                denials,
+                denials_watch,
+                ..Card::default()
+            };
             if item.is_none() {
                 self.question.field.clear();
             }
@@ -1041,15 +1088,21 @@ impl Chat {
         let rewind_holds = self.question.rewind.as_ref().is_some_and(|r| !r.failed() || (left_open && rewind_screen));
         // Any other menu the screen shows, unless a question or prompt card already covers it.
         // A Stop agent or a rewind drives the CLI's list itself; so does a stopped one left open.
-        let menu = (!self.menus_off
+        let free = !self.menus_off
             && shown.is_none()
             && self.question.agent_step.is_none()
             && !rewind_holds
-            && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
-        .then(|| menu_shown(screen))
-        .flatten();
+            && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_)));
+        // Claude Code's list of blocked calls has a card of its own: its rows are no plain choices.
+        let blocked = (free && self.question.prompt.is_none()).then(|| blocked::shown(screen)).flatten();
+        if self.question.blocked != blocked {
+            self.question.blocked = blocked;
+            changed = true;
+        }
+        let menu = (free && self.question.blocked.is_none()).then(|| menu_shown(screen)).flatten();
         changed |= self.question.menu != menu;
-        let covered = shown.is_some() || menu.is_some() || self.question.prompt.is_some();
+        let covered =
+            shown.is_some() || menu.is_some() || self.question.prompt.is_some() || self.question.blocked.is_some();
         let background = pending.as_ref().filter(|_| !covered).and_then(|p| background::shell_offer(Some(p), screen));
         let background_changed = self.question.background != background;
         changed |= background_changed;
@@ -1077,6 +1130,7 @@ impl Chat {
             self.question.field.clear();
         }
         self.question.shown = shown;
+        changed |= self.question.sync_denials(denials::current(model));
         changed |= std::mem::replace(&mut self.question.answerable, answerable) != answerable;
         changed | self.clear_busy() | self.land_held()
     }
@@ -1113,6 +1167,7 @@ fn ready(tab: &Tab) -> bool {
 fn rewind_shown(card: &Card, model: &Model) -> bool {
     let other = card.shown.is_some()
         || card.prompt.is_some()
+        || card.blocked.is_some()
         || card.menu.is_some()
         || matches!(pending(model).map(|p| p.kind), Some(Kind::Question(_)));
     card.rewind.as_ref().is_some_and(|r| !r.failed() || !other)
@@ -1132,6 +1187,7 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             chat.open_drawer();
             return true;
         }
+        Hit::Denials(_) | Hit::Review | Hit::AskRetry => return denials::press(tab, now, hit),
         Hit::Option(_) | Hit::Escape | Hit::Close if rewind_shown(&chat.question, &pane.model) => {
             return rewind::press(tab, now, hit);
         }
@@ -1141,6 +1197,9 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     // The screen's permission prompt comes before whatever the transcript's call would show.
     if let Some(prompt) = chat.question.prompt.clone() {
         return prompt::press(tab, now, hit, prompt);
+    }
+    if let Some(list) = chat.question.blocked.clone() {
+        return blocked::press(tab, now, hit, list);
     }
     // A form's picks stay in the card until Submit: nothing is written, so nothing waits for them.
     let form = pending(&pane.model).and_then(|p| match p.kind {
@@ -1392,6 +1451,9 @@ fn look_form(screen: &Screen, step: &Step, run: &FormRun, now: Instant, may_act:
 /// Writes the first keys of a step whose menu shows its highlight on `from`.
 fn start(tab: &mut Tab, now: Instant, mut step: Step, from: usize) -> bool {
     let target = step.target;
+    if from == target && step.then == Then::Rest {
+        return true;
+    }
     let result =
         if from == target { arrived(tab, &mut step, now) } else { write(tab, &moves(from, target, &tab.term.screen)) };
     let chat = &mut tab.pane.as_mut().unwrap().chat;
@@ -1498,6 +1560,13 @@ fn arrived(tab: &mut Tab, step: &mut Step, now: Instant) -> Result<(), &'static 
             step.stage = Stage::Sent;
             step.due = now + RESULT;
         }
+        Then::Press(key) => {
+            write(tab, key)?;
+            step.stage = Stage::Sent;
+            step.due = now + RESULT;
+        }
+        // The highlight is where it was asked to be; `start` and `advance` end the step there.
+        Then::Rest => {}
     }
     step.epoch = epoch;
     Ok(())
@@ -1535,6 +1604,10 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             if step.item.is_none() && matches!(step.then, Then::Type(_) | Then::Fill(_)) {
                 chat.question.field.clear();
             }
+            return true;
+        }
+        Action::Arrive if step.then == Then::Rest => {
+            tab.pane.as_mut().unwrap().chat.question.step = None;
             return true;
         }
         Action::Arrive => arrived(tab, &mut step, now),
@@ -1593,13 +1666,16 @@ fn look(screen: &Screen, step: &Step, now: Instant, may_act: bool) -> Action {
     let late = now >= step.due;
     let typed_text = match &step.then {
         Then::Type(text) | Then::Fill(text) | Then::Amend(text) => Some(text.as_str()),
-        Then::Choose | Then::Chat(_) => None,
+        Then::Choose | Then::Chat(_) | Then::Rest | Then::Press(_) => None,
     };
     match step.stage {
         // A menu that moved on (closed, or opened the next one) is done at once.
         Stage::Sent
             if may_act
-                && matches!(step.subject, Subject::Menu { .. } | Subject::Panel { .. } | Subject::Prompt(_))
+                && matches!(
+                    step.subject,
+                    Subject::Menu { .. } | Subject::Panel { .. } | Subject::Prompt(_) | Subject::Blocked { .. }
+                )
                 && read(&step.subject, screen, None).is_none() =>
         {
             Action::Closed
@@ -1756,6 +1832,7 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         }),
         None => None,
     };
+    let wanted = wanted.or_else(|| blocked::height(&chat.question));
     let wanted = wanted.or_else(|| background::height(&chat.question)).or_else(|| {
         chat.question.menu.as_ref().map(|m| {
             // A panel has no title row: its rows say what it is.
@@ -1767,12 +1844,20 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
             }
         })
     });
-    let Some(wanted) = wanted else {
-        chat.question.rect = Rect::default();
-        return;
+    // With no other card, the current turn's denied permissions: a strip with their count, or
+    // their list. Its height is its own.
+    chat.question.denials_only = wanted.is_none();
+    let wanted = match wanted {
+        Some(wanted) => 2.0 * PAD + wanted + FIELD + STATUS,
+        None => match denials::height(&chat.question) {
+            Some(whole) => whole,
+            None => {
+                chat.question.rect = Rect::default();
+                return;
+            }
+        },
     };
     let conversation = &mut chat.layout.conversation;
-    let wanted = 2.0 * PAD + wanted + FIELD + STATUS;
     let share = if screen_prompt { 0.85 } else { 0.6 };
     let h = wanted.min((conversation.h * share).floor()).max(0.0);
     let w = card_w;
@@ -1791,6 +1876,13 @@ pub(super) struct Draw<'a> {
 }
 
 impl Draw<'_> {
+    /// A button of the card.
+    fn button(&self, p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit) {
+        let target = Target::Chat(Control::Question(hit));
+        super::paint::button(p, self.pal, r, label, self.hover == Some(target), false);
+        hits.push((r, target));
+    }
+
     /// The card under the conversation; called by the Chat painter.
     pub(super) fn card(&self, p: &mut Painter, chat: &mut Chat, model: &Model, hits: &mut Vec<(Rect, Target)>) {
         let r = chat.question.rect;
@@ -1804,16 +1896,20 @@ impl Draw<'_> {
         match pending(model).map(|p| p.kind) {
             _ if rewind_shown(&chat.question, model) => self.rewind(p, chat, inner, hits),
             _ if chat.question.prompt.is_some() => self.prompt(p, chat, inner, hits),
+            _ if chat.question.blocked.is_some() => self.blocked(p, chat, inner, hits),
             Some(Kind::Question(questions)) => self.question(p, chat, inner, questions, hits),
             Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
             _ if chat.question.menu.is_some() => self.menu(p, chat, inner, hits),
-            _ => self.background(p, chat, inner, hits),
+            _ if background::height(&chat.question).is_some() => self.background(p, chat, inner, hits),
+            _ => self.denials(p, chat, r, hits),
         }
         // Esc leaves a menu or declines what the card shows, under the same checks as a choice.
         let escape = match pending(model).map(|p| p.kind) {
             _ if chat.question.step.is_some() || rewind_shown(&chat.question, model) => false,
             // Esc declines without reading on: the prompt's footer always offers it.
             _ if chat.question.prompt.is_some() => chat.question.prompt_answers(),
+            // The list of blocked calls names what Esc will do on its own button.
+            _ if chat.question.blocked.is_some() => false,
             Some(Kind::Question(_)) => chat.question.answerable.is_some(),
             Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
             // A panel offers Close in its own footer instead.

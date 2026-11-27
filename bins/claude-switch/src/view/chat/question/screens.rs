@@ -6,7 +6,7 @@ use mdshared_term::Screen;
 use crate::view::chat::submission::screen::prompt_mark;
 
 /// Footer hints under a CLI menu, picker or dialog (the last non-empty row), lower case.
-const MENU_FOOTERS: [&str; 9] = [
+const MENU_FOOTERS: [&str; 10] = [
     "esc to cancel",
     "escape to cancel",
     "esc to close",
@@ -17,6 +17,9 @@ const MENU_FOOTERS: [&str; 9] = [
     "enter to continue",
     // The plan approval's only hint; it wraps onto the plan file's path (Claude Code 2.1.332).
     "ctrl+g to edit",
+    // /permissions › Recently blocked once a call is marked: "r to retry · Enter to approve · Esc
+    // to approve 1 blocked" (no arrows, and Esc no longer closes without acting).
+    "enter to approve",
 ];
 /// The row the CLI shows under a running shell command that can move to the background.
 const BACKGROUND_HINT: &str = "(ctrl+b to run in background)";
@@ -454,8 +457,12 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
     // Only a footer at the bottom of what the CLI draws: an old menu left in the output above has
     // the input and its status rows under it. The cursor is no guide (see `permission_like`).
     let footer = footer_row(screen, &lines)?;
-    let esc = lines[footer].to_lowercase().contains("esc");
-    let menu = walk_menu(screen);
+    // The list of calls auto mode blocked is never a menu of plain choices: Enter on a row
+    // approves that call, and Esc applies what was marked. Its own card reads it (`blocked`);
+    // one it cannot read shows as rows only, with Esc only while Esc just closes.
+    let blocked = lines[footer].to_lowercase().contains(BLOCKED_APPROVE);
+    let esc = lines[footer].to_lowercase().contains(if blocked { "esc to close" } else { "esc" });
+    let menu = if blocked { None } else { walk_menu(screen) };
     let mut title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
     // A question Claude asks: its text is every row between its tab row and its choices, and
     // each choice has its description under it.
@@ -521,6 +528,120 @@ fn selected(screen: &Screen, row: usize) -> String {
     let text: String =
         line.cells().iter().filter(|c| c.attrs.contains(mdshared_term::Attrs::INVERSE)).map(|c| c.ch).collect();
     collapse(&text)
+}
+
+/// The footer hint only the list of blocked calls shows, lower case.
+const BLOCKED_APPROVE: &str = "enter to approve";
+const BLOCKED_RETRY: &str = "r to retry";
+/// The tab of the /permissions dialog that lists them, as its tab row names it.
+const BLOCKED_TAB: &str = "Recently blocked";
+/// The row under an entry list with marks: "Esc will approve 1 blocked call".
+const BLOCKED_PENDING: &str = "Esc will ";
+/// How a blocked call's row starts: not marked, or marked to be approved or retried.
+const BLOCKED_MARKS: [char; 2] = ['✘', '✔'];
+/// What a row marked for a retry says after the call's description.
+const BLOCKED_RETRY_MARK: &str = "(retry)";
+
+/// What the user marked a blocked call for in the list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Mark {
+    /// `✘`: nothing; the call stays blocked.
+    None,
+    /// `✔`: Esc tells Claude it may retry the call.
+    Approve,
+    /// `✔ … (retry)`: Esc tells Claude so and starts the retry at once.
+    Retry,
+}
+
+/// The "Recently blocked" tab of Claude Code's /permissions dialog (2.1.332, the `blocked_*`
+/// fixtures): the calls auto mode's classifier blocked, newest first, each "n. ✘ what  why"; the
+/// highlighted one's command between dashed rules under the list. Enter marks the highlighted
+/// call to be approved (`✔`) and Enter again unmarks it; `r` marks it to be retried (`✔ … (retry)`)
+/// and `r` again turns that into an approval. While anything is marked a row under the list says
+/// what Esc will do and the footer reads "Esc to approve 1 blocked" instead of "Esc to close".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Blocked {
+    /// The tab's own words: "Commands auto mode recently blocked. Approving adds no rule."
+    pub note: String,
+    /// The calls, as the rows read after their number (mark, description, reason).
+    pub menu: Menu,
+    pub marks: Vec<Mark>,
+    /// "Esc will approve 1 blocked call", while anything is marked.
+    pub pending: Option<String>,
+    /// The highlighted call's own rows (its command), as drawn.
+    pub detail: Vec<String>,
+    /// What the footer says Esc does: "close", "approve 1 blocked", "retry 1 blocked".
+    pub esc: String,
+}
+
+/// The list of blocked calls, only as its own screen: the dialog's top rule, its tab row with
+/// "Recently blocked" selected, the tab's note, the numbered calls with exactly one highlighted,
+/// the row saying what Esc will do, the highlighted call's rows between two dashed rules, and the
+/// footer offering `r`, Enter and Esc. Any other row and it is not read.
+pub(super) fn blocked(screen: &Screen) -> Option<Blocked> {
+    if screen.modes().alt_screen {
+        return None;
+    }
+    let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
+    let lines: Vec<String> = rows.iter().map(|(_, text)| text.clone()).collect();
+    let footer = footer_row(screen, &lines)?;
+    let hints: Vec<&str> = lines[footer].split(" · ").map(str::trim).collect();
+    let has = |hint: &str| hints.iter().any(|h| h.eq_ignore_ascii_case(hint));
+    (has(BLOCKED_APPROVE) && has(BLOCKED_RETRY)).then_some(())?;
+    let esc = hints.iter().find_map(|h| h.strip_prefix("Esc to "))?.to_owned();
+    let top = (0..footer).rev().find(|&row| {
+        let text = screen.row_text(row);
+        let text = text.trim_end();
+        text.chars().count() >= screen.cols() && solid_rule(text)
+    })?;
+    let mut at = (top + 1..footer).filter(|&row| !lines[row].is_empty());
+    let tabs = at.next()?;
+    (lines[tabs].starts_with("Permissions") && selected(screen, tabs) == BLOCKED_TAB).then_some(())?;
+    let note = lines[at.next()?].clone();
+    (!note.is_empty() && numbered(&note).is_none() && !rule(&note)).then_some(())?;
+    let (mut entries, mut marks) = (Vec::new(), Vec::new());
+    let mut pending = None;
+    let mut next = at.next()?;
+    loop {
+        let (highlighted, text) = &rows[next];
+        if let Some((n, rest)) = numbered(text) {
+            (n == entries.len() + 1 && pending.is_none()).then_some(())?;
+            let mark = match rest.strip_prefix(BLOCKED_MARKS)?.strip_prefix(' ')? {
+                _ if rest.starts_with(BLOCKED_MARKS[0]) => Mark::None,
+                words if words.contains(BLOCKED_RETRY_MARK) => Mark::Retry,
+                _ => Mark::Approve,
+            };
+            entries.push(Entry { row: next, highlighted: *highlighted, text: rest.to_owned() });
+            marks.push(mark);
+        } else if text.starts_with(BLOCKED_PENDING) && pending.is_none() && !highlighted {
+            pending = Some(text.clone());
+        } else {
+            break;
+        }
+        next = at.next()?;
+    }
+    // The highlighted call's rows, between two dashed rules; nothing after them but the footer.
+    (rule(&lines[next]) && !solid_rule(&lines[next])).then_some(())?;
+    let rest: Vec<usize> = at.collect();
+    let (&close, detail) = rest.split_last()?;
+    (rule(&lines[close]) && !detail.is_empty() && detail.iter().all(|&row| !rule(&lines[row]) && !rows[row].0))
+        .then_some(())?;
+    let detail = detail
+        .iter()
+        .map(|&row| {
+            let text = screen.row_text(row);
+            // The dialog's indent and the row's own column of margin.
+            let text = text.trim_end();
+            let text = text.strip_prefix("  ").unwrap_or(text);
+            text.strip_prefix(' ').unwrap_or(text).to_owned()
+        })
+        .collect();
+    let menu = Menu { entries, lines, footer };
+    menu.highlight()?;
+    // A mark and what Esc will do go together.
+    let marked = marks.iter().any(|mark| *mark != Mark::None);
+    (marked == pending.is_some() && marked != (esc == "close")).then_some(())?;
+    Some(Blocked { note, menu, marks, pending, detail, esc })
 }
 
 /// The live input row: a `❯` row between two solid rules, the lowest on the screen. It is found

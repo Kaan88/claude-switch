@@ -715,6 +715,7 @@ mod tests {
             pictures: vec![],
             subagent: agent,
             card: None,
+            denial: None,
         };
         let id = |offset| ItemId { offset, block: 0 };
         let items = [

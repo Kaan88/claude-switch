@@ -991,3 +991,25 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     terminal was built by hand, not recorded. Still the terminal's: a prompt whose top is above the
     terminal's screen, a row wider than the card, and a decline with text (the comment field's drawing
     is not recorded).
+77. **A warning about denied permissions, with a way to approve** (owner, 2026-11-27: when a permission
+    was denied by auto mode, by a rule or by the user's own No, show it prominently, say what and why,
+    and offer what Claude Code offers). **Done.** The transcript reader carries the denial on the tool
+    item (`crates/core/src/transcript/denial.rs`: kind, before-run flag, reason, the rule's source);
+    tool rows say who refused; a card counts and lists the current turn's denials
+    (`view/chat/question/denials.rs`); `/permissions` › Recently blocked is driven as a card of its own
+    (`question/blocked.rs`); DESIGN.md, "Denied permissions", has the recorded facts and the rules.
+    Checked: recordings of Claude Code 2.1.332 in scratch folders (a classifier block made with one
+    added `autoMode.soft_deny` rule passed by `--settings`; the dialog with one and two blocked calls,
+    Enter, Enter again, `r`, `r` again, Esc after an approval and after a retry; the transcript records
+    of all three kinds); core tests on those records; reader tests on the fixtures; state tests with the
+    cards painted (approve, choose another call, retry, a list that changed since it was painted, a
+    mark that never shows, the setting off, Review through the slash-command path, Ask Claude to
+    retry); the cards' pictures looked at. Not checked: nothing was tried in the running app; a block
+    with a reason from the classifier (the recorded one gave none; the "Reason: " reading is from the
+    record's fixed wording); Enter on a call marked to retry and `r` on an approved one (not offered);
+    a list longer than the terminal, a call's row that wraps, and marks of two kinds at once (the
+    footer's words are shown as they are); `ruleSource` values other than `flagSettings` (the names
+    of the other settings files are Claude Code's documented ones); a No given with text; a denial
+    inside a subagent (not counted: it is in the subagent's transcript, and only the CLI's passing
+    notice under the input says so). Open: the count is hidden while another card has the card's
+    place; a rule can only be changed in the terminal.

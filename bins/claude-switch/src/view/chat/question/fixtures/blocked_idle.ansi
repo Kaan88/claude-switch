@@ -1,0 +1,49 @@
+cursor 20 2
+@size 110 46
+@modes paste cursor
+[0;38;2;215;119;87m ▐[0;38;2;215;119;87;48;2;0;0;0m▛███▛█[0m   [0;1mClaude[0m [0;1mCode[0m [0;38;2;153;153;153mv2.1.332[0m
+[0;38;2;215;119;87m▝▜[0;38;2;215;119;87;48;2;0;0;0m█████[0;38;2;215;119;87m█▀[0m  [0;38;2;153;153;153mHaiku[0m [0;38;2;153;153;153m5.5[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153mClaude[0m [0;38;2;153;153;153mMax[0m
+[0;38;2;215;119;87m ▝▝[0m   [0;38;2;215;119;87m▝▝[0m   [0;38;2;153;153;153m~\work\scratch[0m
+
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mRun exactly this with the Bash tool and nothing else: mkdir probe_blocked_two                               [0m
+
+[0;38;2;255;107;128m●[0;38;2;215;119;87m [0;1mBash[0m(mkdir probe_blocked_two)
+[0;38;2;153;153;153m  ⎿  Blocked by auto mode · /permissions to review · see https://code.claude.com/docs/s/claude-code-auto-mode[0m
+     [0;2m│[0m [0;38;2;153;153;153mAuto mode: No reason provided[0m
+
+[0;38;2;255;255;255m●[0m The [0;38;2;177;185;249mmkdir probe_blocked_two [0mcommand was denied by the auto mode classifier, so the directory was not
+  created. I didn't try another tool to create it, since that would get around the denial.
+
+  To allow this, add a Bash permission rule for [0;38;2;177;185;249mmkdir[0m in your Claude Code settings, or approve the command if
+  you're prompted again. Once it's allowed, I can rerun the command.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mCrunched for 5s · done 6:25 PM[0m
+
+[0;38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+❯ 
+[0;38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0;38;2;255;193;7m⏵⏵[0m [0;38;2;255;193;7mauto[0m [0;38;2;255;193;7mmode[0m [0;38;2;255;193;7mon [0;38;2;153;153;153m(shift+tab[0m [0;38;2;153;153;153mto[0m [0;38;2;153;153;153mcycle)[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153m←[0m [0;38;2;153;153;153mfor[0m [0;38;2;153;153;153magents[0m
+                                    [0;38;2;255;107;128mbash[0m [0;38;2;255;107;128mblocked[0m [0;38;2;255;107;128mby[0m [0;38;2;255;107;128mauto[0m [0;38;2;255;107;128mmode [0;38;2;153;153;153m·[0m [0;38;2;153;153;153m/permissions[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153mAuto[0m [0;38;2;153;153;153mmode:[0m [0;38;2;153;153;153mNo[0m [0;38;2;153;153;153mreason[0m [0;38;2;153;153;153mprovided[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

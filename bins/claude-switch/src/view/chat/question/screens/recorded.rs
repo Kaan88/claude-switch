@@ -136,6 +136,24 @@ pub(in crate::view::chat) const PERM_AGENT_GONE: &str = include_str!("../fixture
 pub(in crate::view::chat) const PERM_AGENT_WRITE: &str = include_str!("../fixtures/perm_agent_write.ansi");
 pub(in crate::view::chat) const PERM_TWO_FIRST: &str = include_str!("../fixtures/perm_two_first.ansi");
 pub(in crate::view::chat) const PERM_TWO_SECOND: &str = include_str!("../fixtures/perm_two_second.ansi");
+// A call auto mode's classifier blocked (110 x 46, auto mode), and /permissions after it: the idle
+// input with the CLI's notice under it, the command typed, the "Recently blocked" tab with one call
+// (not marked, marked to approve, marked to retry), after Esc applied an approval and a retry, the
+// tab with two calls (the highlight on each, the second approved, the first to retry and then to
+// approve), and the dialog's next tab.
+pub(in crate::view::chat) const BLOCKED_IDLE: &str = include_str!("../fixtures/blocked_idle.ansi");
+pub(in crate::view::chat) const BLOCKED_TYPED: &str = include_str!("../fixtures/blocked_typed.ansi");
+pub(in crate::view::chat) const BLOCKED_ONE: &str = include_str!("../fixtures/blocked_one.ansi");
+pub(in crate::view::chat) const BLOCKED_ONE_APPROVED: &str = include_str!("../fixtures/blocked_one_approved.ansi");
+pub(in crate::view::chat) const BLOCKED_ONE_CLOSED: &str = include_str!("../fixtures/blocked_one_closed.ansi");
+pub(in crate::view::chat) const BLOCKED_ONE_RETRY: &str = include_str!("../fixtures/blocked_one_retry.ansi");
+pub(in crate::view::chat) const BLOCKED_RETRY_STARTED: &str = include_str!("../fixtures/blocked_retry_started.ansi");
+pub(in crate::view::chat) const BLOCKED_TWO: &str = include_str!("../fixtures/blocked_two.ansi");
+pub(in crate::view::chat) const BLOCKED_TWO_DOWN: &str = include_str!("../fixtures/blocked_two_down.ansi");
+pub(in crate::view::chat) const BLOCKED_TWO_SECOND: &str = include_str!("../fixtures/blocked_two_second.ansi");
+pub(in crate::view::chat) const BLOCKED_TWO_RETRY: &str = include_str!("../fixtures/blocked_two_retry.ansi");
+pub(in crate::view::chat) const BLOCKED_TWO_APPROVE: &str = include_str!("../fixtures/blocked_two_approve.ansi");
+pub(in crate::view::chat) const PERM_TAB_ALLOW: &str = include_str!("../fixtures/perm_tab_allow.ansi");
 
 fn sends_blocked(screen: &Screen) -> bool {
     !crate::view::chat::submission::screen::clean_prompt(screen)
@@ -581,6 +599,83 @@ fn a_prompt_without_its_top_rule_on_the_screen_is_not_read_as_whole() {
     let main = recorded(PERM_BASH);
     let rows = permission_rows(&main, &permission(&main).unwrap()).expect("whole");
     assert_eq!((rows[0].as_str(), rows[4].as_str()), ("Bash command", "mkdir probe_dir_one"));
+}
+
+#[test]
+fn the_list_of_blocked_calls_reads_its_calls_marks_command_and_what_esc_will_do() {
+    let list = |fixture: &str| blocked(&recorded(fixture)).expect("the list of blocked calls");
+    let one = list(BLOCKED_ONE);
+    assert_eq!(one.note, "Commands auto mode recently blocked. Approving adds no rule.");
+    assert_eq!(one.menu.texts(), ["✘ Create directory probe_blocked_two Auto mode: No reason provided"]);
+    assert_eq!((one.marks.as_slice(), one.menu.highlight()), (&[Mark::None][..], Some(0)));
+    assert_eq!((one.pending.as_deref(), one.esc.as_str()), (None, "close"));
+    assert_eq!(one.detail, ["mkdir probe_blocked_two"]);
+
+    // Enter marked it: the row says so, a row under the list and the footer say what Esc will do.
+    let approved = list(BLOCKED_ONE_APPROVED);
+    assert_eq!(approved.menu.texts(), ["✔ Create directory probe_blocked_two Auto mode: No reason provided"]);
+    assert_eq!(approved.marks, [Mark::Approve]);
+    assert_eq!(approved.pending.as_deref(), Some("Esc will approve 1 blocked call"));
+    assert_eq!(approved.esc, "approve 1 blocked");
+    let retry = list(BLOCKED_ONE_RETRY);
+    assert_eq!(retry.marks, [Mark::Retry]);
+    assert_eq!(retry.menu.texts(), ["✔ Create directory probe_blocked_four (retry) Auto mode: No reason provided"]);
+    assert_eq!(
+        (retry.pending.as_deref(), retry.esc.as_str()),
+        (Some("Esc will retry 1 blocked call"), "retry 1 blocked")
+    );
+
+    // Two calls, newest first; the command under the list is the highlighted call's.
+    let two = list(BLOCKED_TWO);
+    assert_eq!(two.menu.texts().len(), 2);
+    assert_eq!((two.menu.highlight(), two.detail.as_slice()), (Some(0), &["mkdir probe_blocked_b".to_owned()][..]));
+    let down = list(BLOCKED_TWO_DOWN);
+    assert_eq!((down.menu.highlight(), down.detail.as_slice()), (Some(1), &["mkdir probe_blocked_a".to_owned()][..]));
+    assert_eq!(down.menu.texts(), two.menu.texts(), "moving the highlight changes no row");
+    let second = list(BLOCKED_TWO_SECOND);
+    assert_eq!((second.marks.as_slice(), second.menu.highlight()), (&[Mark::None, Mark::Approve][..], Some(1)));
+    assert_eq!(list(BLOCKED_TWO_RETRY).marks, [Mark::Retry, Mark::None]);
+    // `r` on a call marked to retry makes it an approval.
+    assert_eq!(list(BLOCKED_TWO_APPROVE).marks, [Mark::Approve, Mark::None]);
+}
+
+#[test]
+fn the_list_of_blocked_calls_is_never_a_menu_of_plain_choices_and_always_blocks_sends() {
+    for (name, fixture, closes) in [
+        ("one", BLOCKED_ONE, true),
+        ("approved", BLOCKED_ONE_APPROVED, false),
+        ("retry", BLOCKED_ONE_RETRY, false),
+        ("two", BLOCKED_TWO, true),
+        ("second approved", BLOCKED_TWO_SECOND, false),
+    ] {
+        let screen = recorded(fixture);
+        // Without its own card it would show as rows only: Enter on a row approves that call.
+        let panel = panel(&screen).unwrap_or_else(|| panic!("{name}: a dialog"));
+        assert!(panel.menu.is_none() && !panel.rows.is_empty(), "{name}");
+        assert_eq!(panel.esc, closes, "{name}: Esc only while it just closes");
+        assert!(crate::view::chat::submission::screen::menu(&screen) && sends_blocked(&screen), "{name}");
+        assert!(!permission_like(&screen), "{name}");
+    }
+    // Another tab of the dialog, the screens before and after it, and other menus are not the list.
+    for fixture in [PERM_TAB_ALLOW, BLOCKED_IDLE, BLOCKED_TYPED, BLOCKED_ONE_CLOSED, BLOCKED_RETRY_STARTED, MENU_MODEL]
+    {
+        assert!(blocked(&recorded(fixture)).is_none());
+    }
+    let allow = panel(&recorded(PERM_TAB_ALLOW)).expect("the Allow tab as a panel");
+    assert!(allow.menu.is_none() && allow.esc);
+    // After a block the input is idle under the CLI's notice; an approval leaves it idle, a retry
+    // starts the turn at once.
+    use crate::view::chat::submission::screen::{clean_prompt, working};
+    assert!(clean_prompt(&recorded(BLOCKED_IDLE)) && idle(&recorded(BLOCKED_IDLE)));
+    assert!(clean_prompt(&recorded(BLOCKED_ONE_CLOSED)) && !working(&recorded(BLOCKED_ONE_CLOSED)));
+    assert!(working(&recorded(BLOCKED_RETRY_STARTED)));
+    // A list with a row it does not know is not read: a mark it has not seen, a tab row that
+    // selects another tab.
+    let odd = BLOCKED_TWO.replace("\u{2718}", "?");
+    assert!(blocked(&recorded(&odd)).is_none(), "an unknown mark");
+    let moved = BLOCKED_TWO.replace("\x1b[0;1;7m Recently blocked \x1b[0m", " Recently blocked ");
+    assert_ne!(moved, BLOCKED_TWO);
+    assert!(blocked(&recorded(&moved)).is_none(), "the tab is not the selected one");
 }
 
 /// Prints what the gates make of every `.ansi` recording in the folder `CS_PROBE_DIR` names (the

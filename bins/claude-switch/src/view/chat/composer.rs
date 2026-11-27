@@ -112,7 +112,10 @@ impl Chat {
             .menu
             .as_ref()
             .filter(|_| self.question.visible())
-            .map(|menu| if menu.panel() { PANEL_UP } else { super::Reason::Menu.label() });
+            .map(|menu| if menu.panel() { PANEL_UP } else { super::Reason::Menu.label() })
+            .or_else(|| {
+                (self.question.blocked_shown() && self.question.visible()).then_some(super::Reason::Menu.label())
+            });
         let error = match (self.error, card) {
             (Some(error), Some(card)) if SCREEN_NOTICES.contains(&error) => Some(card),
             (error, _) => error,

@@ -1252,7 +1252,9 @@ to" row, "Tab to amend", "don't ask again" or "tell Claude what to do", or Yes a
 the footer (the CLI draws its prompts and menus under one), so the same words in the conversation
 above do not count; with no rule in those 24 rows, all of them do. Unless a question card answers that menu, the gate treats it as a permission
 prompt: one Chat recognises gets a permission card (see Permission prompts), one that only looks
-like a prompt is left to the terminal (drawer, notice).
+like a prompt is left to the terminal (drawer, notice). The list of calls auto mode blocked
+(/permissions › Recently blocked, footer "r to retry · Enter to approve") is no menu either: Enter
+on a row approves that call, so it has a card of its own (see Denied permissions).
 
 **Questions.** Claude Code 2.1.332 writes an `AskUserQuestion` call to the transcript only once it
 is answered or declined (checked with copies of the transcript while a question waited 30 s; a
@@ -1374,6 +1376,59 @@ applies, and the plan approval is no such prompt (its menu has no "No" choice). 
 prompts in a row cannot be told apart: the first answer then stops after eight seconds with "the
 prompt is still open", and the card answers the second on the next click.
 
+**Denied permissions.** A tool call Claude Code refuses looked like any failed call, and the reason
+was in the terminal. The owner asked for it to be said in Chat (2026-11-27): what was denied, by
+whom, and a way to approve it. Recorded from Claude Code 2.1.332: the `user` record with the call's
+`tool_result` carries `toolDenialKind` at its top level, `"user-rejected"` for the user's own No or
+Esc (with `toolDenialBeforeRun: true`), `"permission-rule"` for a deny rule (with
+`permissionDecision.ruleSource`, seen: `"flagSettings"`) and `"automode-blocked"` for auto mode's
+classifier (`permissionDecision.reasonType: "classifier"`); an allowed call in auto mode has
+`permissionDecision.decision: "accept"` and no denial kind. The reader keeps the kind, the
+before-run flag, the rule's source and the reason on the tool item (`transcript/denial.rs`: for auto
+mode the classifier's words after "Reason: ", else the result's first line); a kind it does not
+know is kept as "denied", and a failure without `toolDenialKind` is never taken for a denial,
+whatever its words. In the conversation such a row reads "✗ blocked by auto mode", "✗ denied by a
+rule" or "✗ you said no" instead of "✗ failed", says why when opened, and a folded group counts
+"2 denied · 1 failed" apart.
+A card under the conversation lists the current turn's denials (`question/denials.rs`): "✗ 2
+permissions denied since your last message", each call with its tool and target and one line on
+who refused it and what that means (the user's own No needs no approval; a rule names where it
+comes from and stays in force until it changes; auto mode's line is the classifier's reason).
+"Current" is the turn of the newest prompt in the main conversation, without the calls that a
+later call of the same tool and target ran successfully (approved, retried, or allowed the second
+time); the next prompt starts over, and a subagent's own denials are not counted (they are in its
+transcript). A denial that happens while the tab is open opens the card; ones already there when
+the tab opens show as a one-line strip with the count and Show; Hide folds it back to that strip.
+It takes the card's place only when no question, prompt, menu or background card wants it, and it
+never blocks a send. Its buttons do the least: **Review blocked calls…** (or **Open /permissions**
+for a rule) runs `/permissions` as any slash command, under that command's checks; **Ask Claude to
+retry** puts one sentence naming the calls that were not auto mode's in the message box when it is
+empty (else once it is) and sends nothing.
+What Claude Code offers for a call auto mode blocked, recorded (`blocked_*`): `/permissions` opens
+on its "Recently blocked" tab while there are such calls ("Commands auto mode recently blocked.
+Approving adds no rule."), newest first as "n. ✘ what  why", with the highlighted call's command
+between dashed rules under the list. Enter marks the highlighted call `✔` and Enter again unmarks
+it; `r` marks it `✔ … (retry)` and `r` again makes that an approval; a row under the list then
+says "Esc will approve 1 blocked call" and the footer's "Esc to close" becomes "Esc to approve 1
+blocked" (or "retry"). Esc applies the marks and closes: "Told Claude it may retry <command>. Auto
+mode checks it again; this adds no rule." (a `permission_retry` system record, now shown as a
+notice), and for a retry the turn starts at once; for an approval nothing runs until the next
+message. The classifier does check again: the retried call was blocked a second time in the
+recording. A user's No and a rule's denial are not in that list.
+Chat drives that list as a card (`question/blocked.rs`), never as a menu of plain choices (there a
+click on a row would have approved it): the tab's own note, the calls with their marks, the
+highlighted call's command, what Esc will do, and buttons for exactly the recorded changes
+(Approve and Retry now on an unmarked call, Unmark on an approved one, Approve only on one marked
+to retry), plus the Esc button under the footer's own words ("Close", "Approve 1 blocked"). A
+click on another call only moves the highlight (arrow keys, no Enter), so that its command shows
+before anything can be marked. A key that marks, and the Esc that applies marks, is written only
+for the list the card painted, row for row with its highlight and command, at least half a second
+ago, and while the screen still shows that list; Esc that only closes needs no wait. A command
+longer than eight rows or wider than the card is shown cut, with no button to mark that call. A
+list Chat cannot read (a call's row that wraps, a mark it does not know) shows as rows only, with
+Close while Esc just closes and Open terminal otherwise. The dialog's other tabs (Allow, Ask,
+Deny, Auto mode, Workspace) are read-only panels in Chat: changing a rule is the terminal's.
+
 A card answers ahead of a queued draft: the queue waits for the turn to end, which waits for the
 answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer
 ("Chat about this", "No, and tell Claude") is refused while a draft is queued, saying to cancel it
@@ -1493,7 +1548,8 @@ background shell, after Esc, after a declined prompt, under one- and two-row sta
 (the screen changes at least every 229 ms while a turn runs); typed, pasted (`[Pasted text #1 +13
 lines]`), wrapped and queued input; questions, forms, permission prompts (the main session's, a
 subagent's with the highlight on each kind of choice and after Esc, and the two prompts of two
-calls made in one message), plan approval, the
+calls made in one message), a call blocked by auto mode and the /permissions list of blocked calls
+in each of its states, plan approval, the
 rewind list and the panels of `/model`, `/effort`, `/config` (which takes two Esc to close),
 `/status`, `/help`, `/mcp`, `/permissions`, `/resume` and `/theme`. Not recorded: a pasted
 picture's marker (the recorder does not touch the clipboard).
@@ -1501,7 +1557,9 @@ picture's marker (the recorder does not touch the clipboard).
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat
 cannot show whole (its top is above the terminal's screen, or a row does not fit the card), and a
-decline with text for a prompt the pending call does not cover; a dialog with no footer Chat knows (the drawer opens by itself after
+decline with text for a prompt the pending call does not cover; changing a permission rule (the
+/permissions tabs are read-only in Chat), and a blocked call whose row or command Chat cannot show
+whole; a dialog with no footer Chat knows (the drawer opens by itself after
 four silent seconds); Claude Code's full-screen renderer or another full-screen program; a session
 whose identity could not be verified; a card step whose screen did not follow within its deadline
 (the card says which, and Open terminal).

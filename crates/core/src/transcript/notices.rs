@@ -7,7 +7,9 @@
 //!   thinking), and those are not shown;
 //! - `system` records with a `subtype`: `stop_hook_summary` (`hookErrors` is a list of strings,
 //!   `preventedContinuation`, `stopReason`, `hookInfos`), `away_summary` (the session recap,
-//!   `content`), `informational` (`content`, `level`: info, notice, suggestion or warning);
+//!   `content`), `informational` (`content`, `level`: info, notice, suggestion or warning),
+//!   `permission_retry` (`content`, `commands`: what Claude Code told Claude after the user
+//!   approved or retried a call auto mode had blocked, in `/permissions`; recorded 2026-11-27);
 //! - Claude Code's own (`isMeta`) user records starting "Stop hook feedback:";
 //! - `attachment` records whose `attachment.type` is `hook_non_blocking_error` (`hookName`,
 //!   `hookEvent`, `stderr`, `stdout`, `exitCode`), `hook_system_message` (`hookName`, `content`)
@@ -36,6 +38,8 @@ pub(super) fn system(value: &Value) -> Option<(NoticeKind, String)> {
                 (NoticeKind::StopHook, reason)
             })
         }
+        // "Told Claude it may retry <command>. Auto mode checks it again; this adds no rule."
+        "permission_retry" => Some((NoticeKind::Info, content?)),
         // Other banners only when Claude Code itself calls them a warning.
         "informational" => {
             let content = content?;
@@ -133,6 +137,16 @@ mod tests {
         assert_eq!(
             sys(json!({"type":"system","subtype":"away_summary","isMeta":false,"content":"Fixed the parser."})),
             Some((NoticeKind::Recap, "Fixed the parser.".into()))
+        );
+        assert_eq!(
+            sys(json!({"type":"system","subtype":"permission_retry","level":"info","isMeta":false,
+                "heardAtNextPrompt":false,"commands":["mkdir probe_blocked_two"],
+                "content":"Told Claude it may retry mkdir probe_blocked_two. Auto mode checks it again; this adds no rule."})),
+            Some((
+                NoticeKind::Info,
+                "Told Claude it may retry mkdir probe_blocked_two. Auto mode checks it again; this adds no rule."
+                    .into()
+            ))
         );
         assert_eq!(
             sys(json!({"type":"system","subtype":"informational","level":"warning",

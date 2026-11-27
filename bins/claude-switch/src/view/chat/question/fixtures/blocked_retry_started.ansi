@@ -1,0 +1,50 @@
+cursor 27 2
+@size 110 46
+@wrapped 21 24
+@modes paste cursor
+[0;38;2;215;119;87m ▐[0;38;2;215;119;87;48;2;0;0;0m▛███▛█[0m   [0;1mClaude[0m [0;1mCode[0m [0;38;2;153;153;153mv2.1.332[0m
+[0;38;2;215;119;87m▝▜[0;38;2;215;119;87;48;2;0;0;0m█████[0;38;2;215;119;87m█▀[0m  [0;38;2;153;153;153mHaiku[0m [0;38;2;153;153;153m5.5[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153mClaude[0m [0;38;2;153;153;153mMax[0m
+[0;38;2;215;119;87m ▝▝[0m   [0;38;2;215;119;87m▝▝[0m   [0;38;2;153;153;153m~\work\scratch[0m
+
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55mRun exactly this with the Bash tool and nothing else: mkdir probe_blocked_four                              [0m
+
+[0;38;2;255;107;128m●[0;38;2;215;119;87m [0;1mBash[0m(mkdir probe_blocked_four)
+[0;38;2;153;153;153m  ⎿  Blocked by auto mode · /permissions to review · see https://code.claude.com/docs/s/claude-code-auto-mode[0m
+     [0;2m│[0m [0;38;2;153;153;153mAuto mode: No reason provided[0m
+
+[0;38;2;255;255;255m●[0m The [0;38;2;177;185;249mmkdir probe_blocked_four [0mcommand was denied by the auto mode classifier, so I haven't created the
+  directory. I didn't retry it or try another shell, since you asked for the Bash tool and nothing else.
+
+  If you want the directory created, you can either allow Bash for this command in your permission settings,
+  or run [0;38;2;177;185;249m! mkdir probe_blocked_four [0myourself in the prompt. Tell me if you want me to try again after that.
+
+[0;38;2;153;153;153m✻[0m [0;38;2;153;153;153mCrunched for 4s · done 6:27 PM[0m
+
+[0;38;2;153;153;153m✻ [0mTold Claude it may retry [0;1mmkdir probe_blocked_four[0;38;2;153;153;153m. Auto mode checks it again; this adds no rule.[0m
+
+[0;38;2;153;153;153;48;2;55;55;55m❯ [0;38;2;255;255;255;48;2;55;55;55m/permissions                                                                                                [0m
+
+[0;38;2;215;119;87m✢[0m [0;38;2;215;119;87mMari[0;38;2;235;159;127mnat[0;38;2;215;119;87ming…[0m
+[0;38;2;153;153;153m  ⎿  Tip: Continue your session in Claude Code Desktop with [0;38;2;177;185;249m/desktop[0m
+
+[0;38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0;38;2;153;153;153m❯ [0m
+[0;38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0;38;2;255;193;7m⏵⏵[0m [0;38;2;255;193;7mauto[0m [0;38;2;255;193;7mmode[0m [0;38;2;255;193;7mon [0;38;2;153;153;153m(shift+tab[0m [0;38;2;153;153;153mto[0m [0;38;2;153;153;153mcycle)[0m [0;38;2;153;153;153m·[0m [0;38;2;153;153;153mesc[0m [0;38;2;153;153;153mto[0m [0;38;2;153;153;153minterrupt[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
