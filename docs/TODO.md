@@ -753,3 +753,14 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     opens the ⋯ menu over normal and dim glyphs, checks the entrance and settled card, and checks
     tooltip bounds and modal dimming over black and white. The separate per-cell contrast issue
     in item 62 still needs its toolkit change. Not checked on the owner's live desktop.
+71. **Tool use pulls the eye away from Claude's text** (owner, 2026-11-27, screenshot of bordered "✓ done Read
+    C:\…  53 ms" rows and "5 tool calls" boxes). **Done.** Tool rows and groups lost their box: one low line
+    (22 px, 1 px apart) in the theme's muted text with the tool name no longer in the accent colour and in the UI
+    face rather than mono, a faint "✓" and duration (set right after the target), a leading chevron, and a little
+    air before the next answer. A failure keeps "✗ failed" in the warning colour on a soft wash of the theme's
+    warning ground; a running call keeps its accent pulse. Hover, open and jump fills come from palette tokens.
+    A bitmap test draws a synthetic conversation in the light and dark palettes, every built-in theme and two
+    user-made themes (through the app's own theme code) and checks: no accent, no border, quieter than the answer
+    text yet readable, a failure in the warning colour on its wash, and that opened rows and groups stay
+    clickable. The pictures were looked at for light, dark and both user themes; nothing was seen in the
+    running app.

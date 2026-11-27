@@ -36,7 +36,8 @@ pub(super) enum Style {
 }
 
 pub(super) const HEAD: f32 = 31.0;
-pub(super) const TOOL_H: f32 = 25.0;
+/// A tool row's one line: low, so a run of calls reads as a few quiet notes.
+pub(super) const TOOL_H: f32 = 22.0;
 /// A thumbnail's slot: a picture keeps its aspect within it, about 240 px on the long side.
 pub(super) const THUMB_W: f32 = 240.0;
 pub(super) const THUMB_H: f32 = 180.0;
@@ -45,6 +46,8 @@ const THUMB_GAP: f32 = 8.0;
 pub(super) const PIC: f32 = THUMB_H + 30.0;
 pub(super) const CHIP_H: f32 = 26.0;
 const INSET: f32 = 12.0;
+const AFTER_TOOLS: f32 = 8.0;
+const TUCK_UNDER_ANSWER: f32 = 6.0;
 const TOOL_INDENT: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug)]
@@ -323,6 +326,15 @@ impl Rows<'_> {
     }
 
     fn put(&mut self, mut row: Row) {
+        // Tool lines sit close together and close under the answer that announced them; whatever
+        // follows a run of them gets a little air back.
+        let tool = |style| matches!(style, Style::Tool | Style::Group);
+        match (self.list.last().map(|last| last.style), tool(row.style)) {
+            (Some(Style::Answer), true) => self.end -= TUCK_UNDER_ANSWER,
+            (Some(last), false) if tool(last) => self.end += AFTER_TOOLS,
+            _ => {}
+        }
+        row.top = self.end;
         let pictures = row.pictures.len();
         if row.style == Style::Prompt {
             let room = Geometry::prompt_max(self.width) - 2.0 * INSET;
@@ -336,7 +348,7 @@ impl Rows<'_> {
             Style::Tool if row.open => {
                 (row.geo.ty + content + 6.0 + if row.agent.is_some() { CHIP_H } else { 0.0 }, 4.0)
             }
-            Style::Tool | Style::Group => (TOOL_H, 4.0),
+            Style::Tool | Style::Group => (TOOL_H, 1.0),
             Style::Files => (chips_height(&row) + thumbs_height(row.geo.w, pictures) + 3.0, 12.0),
             Style::Card => (HEAD + content + 12.0, 7.0),
         };
@@ -467,7 +479,7 @@ impl Rows<'_> {
                 }
                 let (label, tone) = match state {
                     ToolState::Running => ("◌ running", Tone::Accent),
-                    ToolState::Ok => ("✓ done", Tone::Muted),
+                    ToolState::Ok => ("✓", Tone::Muted),
                     ToolState::Failed => ("✗ failed", Tone::Warning),
                 };
                 row.stamp = label.into();

@@ -305,10 +305,16 @@ completion flag is shown as unknown rather than guessed.
 
 Chat and Session view use the same conversation projection, painting and input. Prompts sit in
 right-aligned tinted bubbles; cardless answers use a palette-accent Claude mark and body-size prose
-(16 logical px in Chat, 14 in Session view). Indented, bordered mono tool rows show recorded status,
-the tool and its target, and the time between use and result timestamps when both are valid and
-ordered. Runs of four or more consecutive tools start collapsed. Expand a row for the bounded
-details and any output pictures; a group can be expanded independently of its rows.
+(16 logical px in Chat, 14 in Session view). Tool rows recede behind the answers: indented, low
+one-line notes without a box, in the palette's muted text (the name included, no accent) with the
+status and duration fainter, a chevron in front and the duration right after the target. They sit
+close together and close under the answer that announced them. A failed call keeps its status in
+the warning colour on a soft wash of the warning ground; a running call keeps its pulsing accent
+status. Hovering fills the line with the hover colour; an opened row or group sits on the field or
+pane colour. Each row shows the recorded status, the tool and its target, and the time between use
+and result timestamps when both are valid and ordered. Runs of four or more consecutive tools start
+collapsed into one quiet "N tool calls" line. Expand a row for the bounded details and any output
+pictures; a group can be expanded independently of its rows.
 
 **Selecting and copying.** A selection runs from an anchor to a focus, each a row (by its stable
 identity, so it survives an appended message) and a byte in that row's shown text, so a drag or
