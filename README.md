@@ -388,3 +388,10 @@ darker cell background because the toolkit raises its opacity for contrast.
 Named palettes live alongside the built-ins. Each has its own window colours, selection,
 terminal foreground and background, and 16 ANSI colours. **Automatic** terminal colours
 follow the selected palette; choosing a specific terminal scheme still overrides it.
+
+In **Settings → Appearance**, click a named swatch to choose a dark or light palette.
+Under **Theme library**, choose **Customize…**, give the draft a name, and edit its colours.
+**Generate shades** uses the draft's window background and accent as a starting point.
+The contrast readout updates as you edit. **Save and use** applies the draft; **Save as new**
+keeps the original. **Import…** opens a theme file as a draft, and **Export file…** writes
+only the palette to a new JSON file.

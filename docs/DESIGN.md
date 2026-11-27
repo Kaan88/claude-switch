@@ -628,8 +628,9 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 The Appearance page controls the window. The window theme is System, Light or Dark;
 `--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
-(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as a row of swatches beside
-its choice; a click on a swatch chooses it. Dark: Neutral (the toolkit's dark), Near black, Warm,
+(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as named swatches.
+A click on the preview or caption chooses it; Tab focuses a row and Left/Right or Home/End changes
+the choice. Terminal presets use the same control. Dark: Neutral (the toolkit's dark), Near black, Warm,
 Blue-grey and High contrast (the toolkit's); light: Paper, Warm, Cool (the toolkit's light, warm and
 cool) and High contrast. Every palette has its own terminal colours, which Automatic terminal colours
 follow; the table of palettes and their terminal colours is `termtheme/palettes.rs`, the one place
@@ -646,6 +647,15 @@ needed to upgrade. The name is display text, never a path. Window surfaces and a
 terminal colours resolve by id, even when two palettes have identical window colours.
 Theme files are versioned JSON containing only a name, base palette and `#RRGGBB` colours.
 Import validates the whole file including all 16 ANSI colours; export creates a new file.
+
+The Appearance library opens the selected dark or light palette as a draft. A built-in is
+always copied; a user theme can be renamed, updated or saved under a new name. Generate shades
+rebuilds surfaces, text and terminal colours from the draft's page and accent. Edits stay in
+the form until Save. The editor reports the weakest text, dim text, selection, accent or terminal
+pair, or the focused ANSI colour against the terminal background. Contrast below 4.5:1 is
+flagged, not forbidden. The existing system/custom accent choice and Windows high contrast
+still take priority. Settings use switches for booleans and segmented controls for short plain
+choices. Session and folder context menus use the same switch drawing for pinned/hidden states.
 
 Automatic terminal colours use the chosen palette's terminal colours (Neutral is `#101010`).
 Match window uses the window bar background. Custom uses the background, text and accent picked on

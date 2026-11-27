@@ -513,14 +513,13 @@ impl AppState {
     pub fn row_menu(&mut self, entry: usize, anchor: Rect) {
         if let Some(mdshared_ui::sections::Entry::Heading(g)) = self.sections.entry(entry) {
             if let Some(key) = self.groups[g].key.strip_prefix("folder:") {
-                let label = if self.marks.folder_hidden(key) { "Unhide folder" } else { "Hide folder" };
                 self.context_folder = Some(key.to_string());
                 let mut items = vec![
-                    Item::new(HIDE_FOLDER, label),
+                    Item::new(HIDE_FOLDER, "Folder hidden"),
                     Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!key.is_empty()),
                 ];
                 self.archive_view_items(&mut items);
-                self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor)));
+                self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(244.0)));
             }
             return;
         }
@@ -529,13 +528,6 @@ impl AppState {
         self.context_folder = None;
         self.select(&id);
         let s = &self.sessions[i];
-        let pin = if self.marks.pinned(&id) { "Unpin" } else { "Pin" };
-        let hide = if self.marks.hidden(&id) { "Unhide session" } else { "Hide session" };
-        let folder = if self.marks.folder_hidden(&claude_switch_core::sessions::folder_key(&s.cwd)) {
-            "Unhide folder"
-        } else {
-            "Hide folder"
-        };
         let mut items = vec![
             Item::new(OPEN_CLI, "Open in CLI"),
             Item::new(OPEN_DESKTOP, "Open in Desktop"),
@@ -545,9 +537,9 @@ impl AppState {
             Item::new(RENAME, "Rename").hint("F2").sep(),
             Item::new(SET_TOPIC, "Set topic…"),
             Item::new(SUGGEST, "Suggest name"),
-            Item::new(PIN, pin).hint("Ctrl+D").enabled(!self.is_archived(s)),
-            Item::new(HIDE, hide).hint("Delete"),
-            Item::new(HIDE_FOLDER, folder).enabled(!s.cwd.as_os_str().is_empty()),
+            Item::new(PIN, "Pinned").hint("Ctrl+D").enabled(!self.is_archived(s)),
+            Item::new(HIDE, "Session hidden").hint("Delete"),
+            Item::new(HIDE_FOLDER, "Folder hidden").enabled(!s.cwd.as_os_str().is_empty()),
             archive_row_item(self.is_archived(s), self.row_flags(s)),
             Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(COPY_ID, "Copy session id").sep(),
@@ -555,7 +547,18 @@ impl AppState {
             Item::new(REVEAL, "Reveal transcript in Explorer"),
         ];
         self.archive_view_items(&mut items);
-        self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(228.0)));
+        self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(244.0)));
+    }
+
+    pub(crate) fn row_switches(&self) -> [(u32, bool); 3] {
+        let s = self.selected_session();
+        let folder =
+            self.context_folder.clone().or_else(|| s.map(|s| claude_switch_core::sessions::folder_key(&s.cwd)));
+        [
+            (PIN, s.is_some_and(|s| self.marks.pinned(&s.id))),
+            (HIDE, s.is_some_and(|s| self.marks.hidden(&s.id))),
+            (HIDE_FOLDER, folder.is_some_and(|f| self.marks.folder_hidden(&f))),
+        ]
     }
 
     fn session_file_action(&mut self, now: Instant, action: u32) {

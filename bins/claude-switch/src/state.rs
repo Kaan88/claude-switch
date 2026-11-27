@@ -39,6 +39,7 @@ pub enum Msg {
     SessionView,
     AttachPictures(u64, Vec<std::path::PathBuf>, bool),
     ArchiveReportSaved(crate::archive_report::ReportResult),
+    ThemeFile(Result<Option<Box<claude_switch_core::config::theme::NamedTheme>>, String>),
     Tray(crate::tray::Event),
     /// Another process of this user asked to open a handover tab (`handover_pipe`).
     Handover(Box<crate::compact_cli::Loaded>, std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>),

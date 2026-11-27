@@ -249,6 +249,10 @@ impl App for AppState {
                 }
             }
             Msg::SessionView => self.session_ready(cx),
+            Msg::ThemeFile(result) => {
+                self.theme_file(result);
+                cx.request_redraw_all();
+            }
             Msg::Handover(request, reply) => {
                 let result = self.handover_requested(*request);
                 if result.is_ok() {

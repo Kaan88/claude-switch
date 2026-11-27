@@ -14,7 +14,7 @@ pub mod palettes;
 use palettes::{DARK_ANSI, DARK_TERMINAL, LIGHT_ANSI, LIGHT_TERMINAL, TermColours};
 
 pub const WINDOW_THEMES: [(&str, &str); 3] = [("system", "System"), ("light", "Light"), ("dark", "Dark")];
-pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Claude"), ("system", "System"), ("custom", "Custom")];
+pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Palette"), ("system", "System"), ("custom", "Custom")];
 pub const CUSTOM: &str = "custom";
 const BLACK: Rgb = rgb(0x000000);
 const WHITE: Rgb = rgb(0xffffff);
@@ -145,7 +145,7 @@ pub fn scheme(id: &str, pal: &Palette) -> Scheme {
 pub fn terminal(id: &str, pal: &Palette, prefs: &AppearancePrefs, high_contrast: bool) -> (Scheme, Rgb) {
     let mut s = scheme(id, pal);
     if !high_contrast
-        && preset_index(id) == 0
+        && (preset_index(id) == 0 || id == CUSTOM)
         && let Some(theme) = named::selected(prefs, pal.dark)
     {
         s.background = theme.terminal_background.0;
