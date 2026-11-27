@@ -228,6 +228,7 @@ impl AppState {
                 MenuKind::Chat(tab, mode) => return self.chat_menu_chosen(cx, tab, mode, id),
                 MenuKind::Field(field) => return self.field_menu_chosen(field, id),
                 MenuKind::Conversation(tab) => return self.conversation_menu_chosen(cx, tab, id),
+                MenuKind::HandoverMore => return dialogs::click(self, cx.now(), id, 0.0),
             };
             self.command(cx.now(), id, anchor);
         }

@@ -133,6 +133,8 @@ pub enum MenuKind {
     Field(crate::fieldmouse::FieldId),
     /// Copy, Select all, Copy message, Copy as Markdown on the conversation of a tab.
     Conversation(u64),
+    /// Copy and Save as… from the Review handover dialog's “More ▾”.
+    HandoverMore,
 }
 
 /// A folder of the list as it is shown: the rows left after the filter.

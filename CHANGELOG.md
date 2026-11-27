@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Handover: the review's text wraps at word boundaries instead of in the middle of words.
+- Handover: the Review handover dialog's buttons always fit; Copy and Save as… sit on the left, or
+  under **More ▾** when the dialog is narrow.
 
 ## 0.1.2 (2026-11-27)
 

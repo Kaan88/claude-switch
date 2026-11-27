@@ -36,8 +36,9 @@ pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y:
 
 impl Compact {
     pub fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, w: f32, h: f32) {
-        let height = if self.phase == Phase::Preview { 480.0_f32 } else { 410.0_f32 };
-        let card = dialog_card(660.0_f32.min(w - 28.0), height.min(h - 24.0), w, h);
+        // The review is wider when the window has room, so its six footer actions fit in a row.
+        let (width, height) = if self.phase == Phase::Preview { (760.0_f32, 480.0_f32) } else { (660.0, 410.0) };
+        let card = dialog_card(width.min(w - 28.0), height.min(h - 24.0), w, h);
         let footer = d.card(p, card);
         let body = Rect::new(card.x + DIALOG_PAD, card.y + 51.0, card.w - DIALOG_PAD * 2.0, footer.y - card.y - 51.0);
         d.title(
@@ -213,7 +214,9 @@ impl Compact {
         }
         self.draw_editor(d, p, Rect::new(body.x, body.y + editor_y, body.w, (body.h - 60.0 - editor_y).max(0.0)), true);
         self.draw_delete_box(d, p, Rect::new(body.x, footer.y - 50.0, body.w, 20.0));
-        d.footer(
+        // Copy and Save as… keep the text without acting on it: their own group on the left,
+        // folded into “More ▾” when the card is too narrow for both groups.
+        self.more_at = d.footer_split(
             p,
             footer,
             &[
@@ -221,9 +224,9 @@ impl Compact {
                 ("In OpenCode", false, OPENCODE),
                 ("Cancel", false, CANCEL),
                 ("Back", false, BACK),
-                ("Save as…", false, SAVE),
-                ("Copy", false, COPY),
             ],
+            &[("Copy", false, COPY), ("Save as…", false, SAVE)],
+            MORE,
         );
     }
 

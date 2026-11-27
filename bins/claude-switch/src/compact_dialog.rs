@@ -27,14 +27,16 @@ const ACCOUNT: u32 = 11;
 const REFRESH: u32 = 12;
 pub(crate) const EDITOR: u32 = 13;
 const BACK: u32 = 14;
-const COPY: u32 = 15;
-const SAVE: u32 = 16;
+pub(crate) const COPY: u32 = 15;
+pub(crate) const SAVE: u32 = 16;
 const PREV: u32 = 17;
 const NEXT: u32 = 18;
 const AGENT: u32 = 19;
 pub(crate) const NAME_FIELD: u32 = 20;
 const OPENCODE: u32 = 21;
 pub(crate) const DELETE_ORIGINAL: u32 = 22;
+/// The review's “More ▾”: Copy and Save as… when the footer has no room for them.
+const MORE: u32 = 23;
 const OPTION: u32 = 100;
 const PAGE: usize = 7;
 
@@ -117,6 +119,8 @@ pub struct Compact {
     message: Option<(String, bool)>,
     /// "Delete the original session afterwards": off each time the dialog opens.
     pub(crate) delete_original: bool,
+    /// Where the review's “More ▾” was drawn, when Copy and Save as… were folded into it.
+    more_at: Option<Rect>,
 }
 
 impl Drop for Compact {
@@ -363,6 +367,7 @@ impl Compact {
             saving: None,
             message: None,
             delete_original: false,
+            more_at: None,
         };
         this.reset_agents();
         this.check_in_place(st);
@@ -641,6 +646,14 @@ impl Compact {
                 self.message = Some(("Handover copied.".into(), false));
             }
             SAVE if self.phase == Phase::Preview => self.export(st),
+            MORE if self.phase == Phase::Preview => {
+                if let Some(at) = self.more_at {
+                    use mdshared_ui::menu::{Item, Menu};
+                    let items = vec![Item::new(COPY, "Copy"), Item::new(SAVE, "Save as…")];
+                    let menu = Menu::new(items, at.x, at.bottom(), false).around(at);
+                    st.menu = Some((crate::state::MenuKind::HandoverMore, menu));
+                }
+            }
             DELETE_ORIGINAL if self.phase == Phase::Preview && self.choice.is_none() => {
                 self.delete_original = !self.delete_original;
             }

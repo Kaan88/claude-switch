@@ -483,7 +483,10 @@ Both routes recheck persisted consent before sending each part or merge.
 
 The preview is editable, with characters and approximate tokens (characters / 4). Its text wraps at word
 boundaries (a word is cut only when it alone is longer than a row); End, Up/Down and a click past a
-row's end stay on that row. Previewing or
+row's end stay on that row. The review card is up to 760 px wide. Its footer has Back, Cancel, In
+OpenCode and Open in CLI (or Continue here) on the right and Copy and Save as… in a group on the left,
+which folds into **More ▾** (a menu with both) when the card is too narrow for the two groups. Any
+dialog's footer narrows its buttons toward their labels' width rather than run past the card. Previewing or
 canceling does not save a handover. Only an explicit Save As or Open writes the edited text.
 Local Markdown files live in `handover/<session-id>-<time>.md` beside config; the newest 20
 are kept per session. An opened edited handover is kept as a new revision. Save As never
