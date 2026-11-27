@@ -2144,15 +2144,18 @@ fn an_interrupted_side_step_leaves_a_notice_not_a_stuck_card() {
     assert_eq!(f.chat().question.answerable, Some(AT), "the prompt is answered from the card");
     assert_eq!(f.chat().question.error, None, "the notice was about the agent list");
 
-    // An answer whose Enter went: sent, so no "stopped" notice.
+    // An answer whose Enter went: sent, so no "stopped" notice, and the step stays so a second
+    // click on the still-painted prompt writes nothing.
     let mut f = Fixture::new(vec![question(false)]);
     f.screen(&menu(0, None), now);
     press(f.tab(), now, Hit::Option(0));
     assert_eq!(f.writes(), [b"\r".to_vec()]);
     typed(&mut f);
-    assert!(f.chat().question.step.is_none());
+    assert!(f.chat().question.step.as_ref().is_some_and(|s| s.stage == Stage::Sent));
     assert_eq!(f.chat().question.error, None);
     assert!(!f.chat().question.failed);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty(), "no second Enter while the first is on its way");
 
     // An interrupted rewind keeps its notice on its own card, not as the next menu card's status.
     let mut f = Fixture::idle();

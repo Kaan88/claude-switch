@@ -869,8 +869,10 @@ impl Chat {
             card.error = Some(INTERRUPTED);
         }
         let answer = match self.question.step.take() {
+            // Enter already went: the step stays and keeps the card from taking a second click
+            // until the prompt closes or its wait runs out, as it does without an interruption.
             Some(step) if step.stage == Stage::Sent => {
-                self.hold(&step);
+                self.question.step = Some(step);
                 false
             }
             Some(step) => {
