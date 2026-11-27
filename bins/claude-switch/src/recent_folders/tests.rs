@@ -89,6 +89,107 @@ fn archived_and_hidden_sessions_and_hidden_folders_do_not_count() {
     assert_eq!(paths(&st), [r"C:\w\app-archived", r"C:\w\kept", r"C:\w\half"]);
 }
 
+/// Runs the folder check and waits for its answer.
+fn look(st: &mut AppState) {
+    st.start_folder_check();
+    let end = Instant::now() + Duration::from_secs(10);
+    while st.folders.job.is_some() {
+        st.take_folder_check();
+        assert!(Instant::now() < end, "the check did not finish");
+        std::thread::yield_now();
+    }
+}
+
+/// `git` in `dir`, untouched by this machine's configuration.
+fn git(dir: &Path, args: &[&str]) {
+    let mut command = std::process::Command::new("git");
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
+    let output = command
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "NUL")
+        .args(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "core.hooksPath=NUL"])
+        .args(args)
+        .output()
+        .expect("git runs");
+    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn a_real_git_worktree_and_its_subfolders_are_left_out_once_the_worker_has_looked() {
+    let root = std::env::temp_dir().join(format!("cs-recent-worktree-{}", std::process::id()));
+    let (main, linked) = (root.join("main"), root.join("linked"));
+    std::fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "--quiet"]);
+    git(&main, &["commit", "--quiet", "--allow-empty", "-m", "first"]);
+    git(&main, &["worktree", "add", "--quiet", "-b", "side", "../linked"]);
+    assert!(linked.join(".git").is_file());
+    let folders = [main.clone(), linked.clone(), main.join("src"), linked.join("src").join("deep")];
+    for folder in &folders {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    let text: Vec<String> = folders.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let mut st = state(&text.iter().enumerate().map(|(i, f)| (f.as_str(), i as u64)).collect::<Vec<_>>());
+    st.folders.temp.clear();
+    assert_eq!(paths(&st).len(), 4, "building the list reads no disk");
+    look(&mut st);
+    assert_eq!(paths(&st), [text[0].clone(), text[2].clone()]);
+    assert_eq!(paths(&st).len(), 2, "the answer is kept");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn temporary_folders_are_left_out_by_name() {
+    let env = |name: &str| {
+        let value = match name {
+            "TEMP" => r"C:\Users\LONGNA~1\AppData\Local\Temp\",
+            "TMP" => "D:/scratch",
+            "LOCALAPPDATA" => r"C:\Users\longname\AppData\Local",
+            "SystemRoot" => r"C:\Windows",
+            _ => return None,
+        };
+        Some(OsString::from(value))
+    };
+    let temp = temp_roots(env, PathBuf::from(r"E:\system-temp"));
+    let mut st = state(&[
+        (r"C:\Users\LongNa~1\AppData\Local\Temp\x", 1),
+        (r"d:\Scratch", 2),
+        (r"C:\Users\longname\AppData\Local\Temp\claude\C--work\1234\scratchpad", 3),
+        (r"c:/windows/temp/job", 4),
+        (r"E:\system-temp\play", 5),
+        (r"D:\scratch-notes", 6),
+        (r"C:\work\Temp", 7),
+    ]);
+    st.folders.temp = temp;
+    assert_eq!(paths(&st), [r"D:\scratch-notes", r"C:\work\Temp"]);
+    // A variable that is unset, relative or a whole drive rules nothing out.
+    let odd = |name: &str| (name == "TEMP").then(|| OsString::from(r"C:\"));
+    assert!(temp_roots(odd, PathBuf::from("relative")).is_empty());
+}
+
+#[test]
+fn this_computer_s_temporary_folder_is_one() {
+    let inside = std::env::temp_dir().join("claude").join("scratchpad");
+    let st = state(&[(&inside.to_string_lossy(), 1), (r"C:\w\kept", 2)]);
+    assert_eq!(paths(&st), [r"C:\w\kept"]);
+}
+
+#[test]
+fn worker_sessions_count_only_while_the_list_shows_them() {
+    let mut st = state(&[(r"C:\w\worker-only", 1), (r"C:\w\mine", 5), (r"C:\w\both", 9), (r"C:\w\both", 2)]);
+    for s in &mut st.sessions {
+        s.worker = s.cwd == Path::new(r"C:\w\worker-only") || s.last_active_ms == 1_000_000_000_000 - 2 * 60_000;
+    }
+    st.config.show_workers = false;
+    assert_eq!(paths(&st), [r"C:\w\mine", r"C:\w\both"], "a worker's activity does not move a folder up either");
+    st.config.show_workers = true;
+    assert_eq!(paths(&st), [r"C:\w\worker-only", r"C:\w\both", r"C:\w\mine"]);
+}
+
 #[test]
 fn a_folder_that_is_not_on_disk_is_dropped_once_the_worker_has_looked() {
     let root = std::env::temp_dir().join(format!("cs-recent-folders-{}", std::process::id()));
@@ -99,15 +200,7 @@ fn a_folder_that_is_not_on_disk_is_dropped_once_the_worker_has_looked() {
     std::fs::write(&file, "").unwrap();
     let text = |p: &Path| p.to_string_lossy().into_owned();
     let mut st = state(&[(&text(&gone), 1), (&text(&kept), 2), (&text(&file), 3)]);
-    let look = |st: &mut AppState| {
-        st.start_folder_check();
-        let end = Instant::now() + Duration::from_secs(10);
-        while st.folders.job.is_some() {
-            st.take_folder_check();
-            assert!(Instant::now() < end, "the check did not finish");
-            std::thread::yield_now();
-        }
-    };
+    st.folders.temp.clear();
     look(&mut st);
     assert_eq!(paths(&st), [text(&gone), text(&kept)], "a file is not a folder");
     std::fs::remove_dir(&gone).unwrap();

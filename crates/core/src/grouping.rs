@@ -139,6 +139,30 @@ pub fn project(folder: &Path) -> Project {
     fallback()
 }
 
+/// Whether `folder` is in a linked Git worktree: the first `.git` at or above it is a file that
+/// points into a `worktrees` directory (a submodule's points into `modules`). Only that file is
+/// read, so a worktree whose main repository has gone still counts. Paths [`project`] refuses
+/// (network, redirected) are not probed and count as no worktree.
+pub fn in_linked_worktree(folder: &Path) -> bool {
+    let Some(volume) = local::Volume::at(folder) else { return false };
+    let Some(cwd) = volume.folder(folder) else { return false };
+    for tree in cwd.ancestors() {
+        let marker = tree.join(".git");
+        match volume.metadata(&marker) {
+            Ok(meta) if meta.is_file() => {
+                return small_text(&volume, &marker).is_some_and(|text| {
+                    let gitdir = text.trim().strip_prefix("gitdir:").map(|dir| Path::new(dir.trim()));
+                    let above = gitdir.and_then(Path::parent).and_then(Path::file_name);
+                    above.is_some_and(|name| name.eq_ignore_ascii_case("worktrees"))
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// One root per node. Unknown parents are ignored. Discard every edge in a cycle, including
 /// self-links, without losing acyclic descendants. Iterative and linear even for long chains.
 pub fn thread_roots(parents: &[Option<usize>]) -> Vec<usize> {

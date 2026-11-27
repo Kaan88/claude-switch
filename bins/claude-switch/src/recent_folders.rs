@@ -1,11 +1,14 @@
-//! The folders the New session dialog offers: those of the sessions that are neither archived nor
-//! hidden and that still exist, one per folder, newest activity first; and the filter over them.
-//! Existence is read on a worker, so opening the dialog waits for no disk. No drawing.
+//! The folders the New session dialog offers: those of the sessions the list counts (not
+//! archived, not hidden, workers only when shown) that still exist and are neither temporary nor a
+//! Git worktree, one per folder, newest activity first; and the filter over them. The disk is read
+//! on a worker, so opening the dialog waits for none. No drawing.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use claude_switch_core::Session;
+use claude_switch_core::grouping::in_linked_worktree;
 use claude_switch_core::sessions::{folder_key, folder_name};
 use mdshared_app::fuzzy;
 use mdshared_app::job::Job;
@@ -27,12 +30,49 @@ pub struct Folder {
     pub last_active_ms: u64,
 }
 
-/// What the last look at the disk found.
-#[derive(Default)]
-pub struct Existence {
-    /// Keys of the folders that were not there. A folder not yet looked at is taken to exist.
+/// Keys of the folders a look at the disk ruled out.
+#[derive(Debug, Default, PartialEq)]
+struct Seen {
     missing: HashSet<String>,
-    job: Option<Job<HashSet<String>>>,
+    worktrees: HashSet<String>,
+}
+
+/// What is known about the sessions' folders beyond their names.
+pub struct Disk {
+    /// From the last look. A folder not yet looked at is taken to exist and to be no worktree.
+    seen: Seen,
+    job: Option<Job<Seen>>,
+    /// Keys of the temporary folders, from this process's environment.
+    temp: Vec<String>,
+}
+
+impl Default for Disk {
+    fn default() -> Self {
+        let temp = temp_roots(|name| std::env::var_os(name), std::env::temp_dir());
+        Self { seen: Seen::default(), job: None, temp }
+    }
+}
+
+/// The keys of `%TEMP%`, `%TMP%`, `%LOCALAPPDATA%\Temp`, `%SystemRoot%\Temp` and the system's
+/// answer. A relative value or a drive root is not taken for a temporary folder.
+fn temp_roots(var: impl Fn(&str) -> Option<OsString>, system: PathBuf) -> Vec<String> {
+    let path = |name| var(name).map(PathBuf::from);
+    let temp_in = |name| path(name).map(|p| p.join("Temp"));
+    [path("TEMP"), path("TMP"), temp_in("LOCALAPPDATA"), temp_in("SystemRoot"), Some(system)]
+        .into_iter()
+        .flatten()
+        .filter(|p| p.is_absolute())
+        .map(|p| clean(&p))
+        .filter(|p| p.parent().is_some())
+        .map(|p| folder_key(&p))
+        .collect()
+}
+
+/// Whether the folder of `key` is one of the `roots` or lies under one.
+fn under(key: &str, roots: &[String]) -> bool {
+    roots
+        .iter()
+        .any(|root| key.strip_prefix(root.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('\\')))
 }
 
 /// One spelling for a Windows path: backslashes, no verbatim prefix, no repeated or trailing
@@ -47,9 +87,17 @@ pub fn clean(cwd: &Path) -> PathBuf {
     Path::new(&text).components().collect()
 }
 
-/// The keys of those `folders` that are not directories now. Reads the disk.
-fn missing_of(folders: HashMap<String, PathBuf>) -> HashSet<String> {
-    folders.into_iter().filter(|(_, path)| !path.is_dir()).map(|(key, _)| key).collect()
+/// Which `folders` are not directories now, and which are in a linked worktree. Reads the disk.
+fn look(folders: HashMap<String, PathBuf>) -> Seen {
+    let mut seen = Seen::default();
+    for (key, path) in folders {
+        if !path.is_dir() {
+            seen.missing.insert(key);
+        } else if in_linked_worktree(&path) {
+            seen.worktrees.insert(key);
+        }
+    }
+    seen
 }
 
 /// The indices of the folders `query` asks for, at most [`LIMIT`]: all, newest first, for a blank
@@ -73,7 +121,8 @@ pub fn matching(all: &[Folder], query: &str) -> Vec<usize> {
 impl AppState {
     /// Every folder the New session dialog may offer, newest activity first. A session counts
     /// unless it is archived here, archived in the desktop app while the setting does not show
-    /// those, or hidden, itself or by its folder.
+    /// those, a worker's while the setting does not show those, or hidden, itself or by its folder.
+    /// Temporary folders, worktrees and missing folders are left out.
     pub fn recent_folders(&self) -> Vec<Folder> {
         let hidden: HashSet<String> = self
             .sessions
@@ -85,13 +134,16 @@ impl AppState {
             !s.cwd.as_os_str().is_empty()
                 && !self.is_archived(s)
                 && (self.config.show_archived || !s.archived)
+                && (self.config.show_workers || !s.worker)
                 && !self.hidden_session(s)
         };
+        let Disk { seen, temp, .. } = &self.folders;
         let mut found: HashMap<String, (u64, PathBuf)> = HashMap::new();
         for s in self.sessions.iter().filter(counts) {
             let path = clean(&s.cwd);
             let key = folder_key(&path);
-            if hidden.contains(&key) || self.marks.folder_hidden(&key) || self.folders.missing.contains(&key) {
+            let hidden = hidden.contains(&key) || self.marks.folder_hidden(&key);
+            if hidden || under(&key, temp) || seen.missing.contains(&key) || seen.worktrees.contains(&key) {
                 continue;
             }
             match found.get_mut(&key) {
@@ -117,8 +169,8 @@ impl AppState {
         folders
     }
 
-    /// Looks again, on a worker, at which of the sessions' folders exist. The demo's folders are
-    /// made up and count as existing.
+    /// Looks again, on a worker, at which of the sessions' folders exist and which are worktrees.
+    /// The demo's folders are made up and count as plain existing folders.
     pub fn check_folders(&mut self) {
         if !self.source.is_demo() {
             self.start_folder_check();
@@ -138,18 +190,20 @@ impl AppState {
                 let path = clean(&s.cwd);
                 (folder_key(&path), path)
             })
+            // Temporary folders are left out by name, so the disk need not be asked.
+            .filter(|(key, _)| !under(key, &self.folders.temp))
             .collect();
-        self.folders.job = Job::start(self.wake_fn(), move |_, _| missing_of(folders)).ok();
+        self.folders.job = Job::start(self.wake_fn(), move |_, _| look(folders)).ok();
     }
 
-    /// Takes a finished folder check. True when it changed what exists.
+    /// Takes a finished folder check. True when it changed what is known.
     pub fn take_folder_check(&mut self) -> bool {
         let Some(job) = self.folders.job.take_if(|job| !job.running()) else { return false };
-        let Some(missing) = job.take() else { return false };
-        if missing == self.folders.missing {
+        let Some(seen) = job.take() else { return false };
+        if seen == self.folders.seen {
             return false;
         }
-        self.folders.missing = missing;
+        self.folders.seen = seen;
         self.reload_new_session();
         true
     }

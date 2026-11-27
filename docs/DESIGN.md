@@ -223,13 +223,24 @@ tooltip is the full path.
 
 - *Which:* the folders of sessions that are not archived here, not archived in the Desktop app
   (unless that setting shows them) and not hidden, by themselves or by their folder; **Show hidden**
-  does not bring them back. Worker sessions count whether or not the list shows them.
+  does not bring them back. Worker sessions count only while **Show sessions started by tools** is
+  on, as in the list.
+- *Not temporary:* nothing at or under `%TEMP%`, `%TMP%`, `%LOCALAPPDATA%\Temp`, `%SystemRoot%\Temp`
+  or the system's temporary folder (Claude Code's scratchpads are under these). Compared by name,
+  with Switch's own environment; a relative value or a drive root is ignored.
+- *Not a worktree:* the first `.git` at or above the folder is not a file pointing into a
+  `worktrees` directory. Main checkouts and submodules stay. Only that file is read, so a worktree
+  whose main repository has gone is left out too. As for Projects, network and redirected
+  (junction, `subst`) paths are not probed, so a worktree there is listed.
+- Temporary folders and worktrees are only left out of the list: typing one or choosing it with
+  Browse works as for any folder.
 - *One row per folder:* spellings that differ in case, separators (`/`, doubled, trailing), `.`
   components or the `\\?\` prefix are one, shown as its newest session spells it. Nothing is
   resolved on disk (junctions and 8.3 names stay apart). Newest activity first.
-- *Existing only:* a worker looks after every scan and again when the dialog opens; the dialog shows
-  what the last look found and updates when the new one ends, so opening waits for no disk or
-  network path. Start still checks the folder itself. The demo's folders count as existing.
+- *Existing only:* a worker looks (for existence and worktrees) after every scan and again when the
+  dialog opens; the dialog shows what the last look found and updates when the new one ends, so
+  opening waits for no disk or network path. Start still checks the folder itself. The demo's folders
+  count as existing, plain folders.
 - *Filter:* typing in the folder field narrows the list to paths holding every word, newest first,
   or, when none does, to fuzzy matches, best first. The prefilled, picked or browsed folder filters
   nothing. At most 200 rows show; the filter searches all folders.

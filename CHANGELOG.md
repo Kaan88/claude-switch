@@ -3,9 +3,11 @@
 ## Unreleased
 
 - New session: **Recent folders** is now a scrolling list of up to 200 folders instead of four, newest
-  activity first, with the last-active time. It leaves out archived and hidden sessions and folders
-  that no longer exist, and counts different spellings of a folder once. Type in the folder field to
-  filter it; the arrows, Page Up/Down, Home, End and Enter work in it.
+  activity first, with the last-active time. It leaves out archived and hidden sessions, sessions
+  started by tools while the list hides them, folders that no longer exist, temporary folders and
+  Git worktrees (you can still type or browse to those), and counts different spellings of a folder
+  once. Type in the folder field to filter it; the arrows, Page Up/Down, Home, End and Enter work in
+  it.
 
 ## 0.1.2 (2026-11-27)
 

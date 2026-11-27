@@ -350,6 +350,21 @@ fn a_new_scan_updates_the_open_list_and_keeps_the_filter_and_the_highlight() {
 }
 
 #[test]
+fn a_folder_left_out_of_the_list_can_still_be_typed_or_browsed_to() {
+    let temp = std::env::temp_dir().join("cs-typed").to_string_lossy().into_owned();
+    let folders = [r"C:\work\app".to_string(), temp.clone()];
+    let mut st = state_with(&folders);
+    assert_eq!(listed(&st), [PathBuf::from(&folders[0])]);
+    st.new_session_folder_picked(Path::new(&temp));
+    assert_eq!(picker(&st).field.text(), temp);
+    st.dialog = None;
+    st.ask_new_session();
+    dialogs::text_input(&mut st, &temp);
+    press(&mut st, KeyName::Enter);
+    assert!(st.dialog.is_none() && !st.toasts.is_empty());
+}
+
+#[test]
 fn a_row_tooltip_gives_the_full_path() {
     let mut st = state_with(&numbered(3));
     assert_eq!(st.dialog_tip(Target::Dialog(ROW + 2)).as_deref(), Some(r"C:\work\project-02"));
@@ -369,7 +384,7 @@ fn the_dialog_draws_with_a_long_list() {
         r"C:\Users\demo\Desktop\claude-switch",
         r"C:\Users\demo\Desktop\markdown-shared-rs",
         r"D:\media\subtitles\season 2\a folder with a rather long name that goes on and on and on",
-        r"C:\Users\demo\AppData\Local\Temp\cs-rec\play4",
+        r"C:\Users\demo\Videos\recordings\play4",
         r"C:\Users\demo\Desktop\very\deeply\nested\projects\kept\for\many\years\homelab\ansible\roles",
         r"E:\",
     ]

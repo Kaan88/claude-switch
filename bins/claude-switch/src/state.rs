@@ -174,8 +174,8 @@ pub struct AppState {
     pub recent_local_day: Option<(i64, i32)>,
     pub marks: claude_switch_core::marks::Marks,
     pub marks_read_only: bool,
-    /// Which session folders were not on disk at the last look (the New session list).
-    pub folders: crate::recent_folders::Existence,
+    /// What the New session list knows about the sessions' folders.
+    pub folders: crate::recent_folders::Disk,
     pub marks_flush_at: Option<Instant>,
     /// Saves left to retry for marks no one will set again (a handover's links); see `save_marks`.
     pub marks_retries: u8,
