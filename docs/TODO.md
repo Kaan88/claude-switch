@@ -634,6 +634,13 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     run; that the detached process survives the end of Claude Code's Bash call on Windows (the same bootstrap
     already starts the window from the skill); the message box; the window's notices on screen; the cleanup on a real temp folder. Left: an old
     `claude-switch` on `PATH` refuses `--background` (no fallback, by decision).
+    Review fixes (2026-11-27): the window answers `shown:` only for errors it put on screen and `failed:` for the
+    rest (its own wait ran out, closing, unreadable answer), which the background process then reports; a queued
+    request carries a ticket, so after the 30-second wait it is cancelled when the window has not taken it (the
+    answer says it was not opened) and otherwise the answer says the outcome is unknown and the tab may still
+    open; a launcher that runs out of time keeps the job and says the handover may have started; a job over
+    256 KiB is refused before starting. Tested: reply kinds, ticket, the wait's four outcomes, launcher result,
+    job size.
 62. **Dark text in a transparent terminal gets a dark outline** (owner, 2026-11-27, two screenshots: the grey
     tool-result rows such as "Shell cwd was reset to ..." and the dim session-name rule "═══ Claude-switch handover
     file · continued ═══"). Selection is fine. With terminal opacity below 100 % dim and dark glyphs show a dark

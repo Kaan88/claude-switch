@@ -249,7 +249,10 @@ impl App for AppState {
                 }
             }
             Msg::SessionView => self.session_ready(cx),
-            Msg::Handover(request, reply) => {
+            // `take` claims the request; false when the pipe thread already told the caller it
+            // was not opened, so it is not acted on.
+            Msg::Handover(_, _, ticket) if !ticket.take() => {}
+            Msg::Handover(request, reply, _) => {
                 let result = self.handover_requested(*request);
                 if result.is_ok() {
                     crate::tray::show(cx.window());

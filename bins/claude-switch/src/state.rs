@@ -41,7 +41,12 @@ pub enum Msg {
     ArchiveReportSaved(crate::archive_report::ReportResult),
     Tray(crate::tray::Event),
     /// Another process of this user asked to open a handover tab (`handover_pipe`).
-    Handover(Box<crate::compact_cli::Loaded>, std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>),
+    /// The ticket says whether the pipe thread gave up on it first (then it is not acted on).
+    Handover(
+        Box<crate::compact_cli::Loaded>,
+        std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>,
+        crate::handover_pipe::Ticket,
+    ),
     /// A handover from another process failed (a background `/switch-compact`'s reason, or a
     /// request the pipe thread could not load), or opened with a note. Shown as a notice only.
     HandoverNotice(crate::compact_cli::Notice),
