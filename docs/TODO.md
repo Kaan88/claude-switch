@@ -1016,3 +1016,11 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     inside a subagent (not counted: it is in the subagent's transcript, and only the CLI's passing
     notice under the input says so). Open: the count is hidden while another card has the card's
     place; a rule can only be changed in the terminal.
+
+80. **Later: `/fork` breaks Chat's continuation** (owner, 2026-11-27: "fork broke chat continuation, I
+    think. not a big deal right now. note it."; screenshot). After `/fork` typed in a Claude tab,
+    Claude Code goes on in the forked session (Chat shows the `/fork` row, "session waiting for a
+    prompt · <title> · continued · <id>"), while Chat keeps showing the old conversation and does not
+    pick up the new turns the terminal shows. Chat follows a tab to a new session after `/clear`,
+    compaction and `/resume`; `/fork` probably needs the same (find the forked session's transcript
+    and switch the tab to it, as for `/resume`). Not looked into yet.
