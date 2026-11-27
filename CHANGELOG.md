@@ -5,6 +5,8 @@
 - Chat: the working line ("✶ Sprouting… (40s · ↓ 3.2k tokens)"), "Waiting for your answer/approval",
   the terminal-answer hint, a read error and Load earlier line up with the conversation's reading
   column instead of the window's left edge.
+- Chat: Cut in the message box (right-click › Cut and Ctrl+X) removes the selected text after copying
+  it; before, it only copied.
 
 ## 0.1.2 (2026-11-27)
 

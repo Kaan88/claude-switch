@@ -659,10 +659,18 @@ impl Chat {
     }
 
     pub(super) fn editor_copy(&mut self, cut: bool) {
+        self.editor_copy_to(cut, platform::set_clipboard_text);
+    }
+
+    /// Copy or Cut through `set_clipboard`; Cut removes the selection only once the clipboard took
+    /// it. Returns whether the draft changed.
+    pub(super) fn editor_copy_to(&mut self, cut: bool, set_clipboard: impl FnOnce(&str) -> bool) -> bool {
         let selection = self.editor.selection();
-        if !selection.is_empty() && platform::set_clipboard_text(&self.editor.text[selection]) && cut {
-            self.insert_text("");
+        if selection.is_empty() || !set_clipboard(&self.editor.text[selection]) || !cut {
+            return false;
         }
+        self.recall.end();
+        self.editor.delete_selection()
     }
 
     pub(super) fn editor_point(&self, x: f32, y: f32) -> (f32, f32) {

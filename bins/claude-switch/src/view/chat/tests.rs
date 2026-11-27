@@ -540,3 +540,35 @@ fn compact_and_clear_only_write_after_confirmation() {
 }
 
 mod review;
+
+#[test]
+fn cut_removes_the_selection_once_the_clipboard_took_it() {
+    let mut app = demo();
+    let chat = &mut app.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+    chat.editor.insert("hello world");
+    chat.editor.move_to(6, false);
+    chat.editor.move_to(11, true);
+    // The right-click menu offers Cut for the selection and keeps it.
+    app.chat_editor_menu(0.0, 0.0);
+    let (_, menu) = app.menu.as_ref().expect("the editor menu");
+    let cut = menu.items.iter().find(|item| item.label == "Cut").unwrap();
+    assert!(cut.enabled, "Cut is offered for a selection");
+    let chat = &mut app.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+    assert_eq!(chat.editor.selection(), 6..11, "opening the menu keeps the selection");
+
+    let mut copied = String::new();
+    assert!(!chat.editor_copy_to(true, |_| false), "a refused clipboard keeps the text");
+    assert_eq!(chat.editor.text, "hello world");
+    assert!(!chat.editor_copy_to(false, |s| {
+        copied = s.to_owned();
+        true
+    }));
+    assert_eq!((copied.as_str(), chat.editor.text.as_str()), ("world", "hello world"), "Copy leaves the draft");
+    assert!(chat.editor_copy_to(true, |s| {
+        copied = s.to_owned();
+        true
+    }));
+    assert_eq!((copied.as_str(), chat.editor.text.as_str()), ("world", "hello "), "Cut removes what it copied");
+    assert_eq!((chat.editor.caret, chat.editor.selection()), (6, 6..6));
+    assert!(!chat.editor_copy_to(true, |_| true), "nothing selected, nothing cut");
+}

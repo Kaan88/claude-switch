@@ -95,6 +95,18 @@ impl ComposerEditor {
         self.metrics = None;
     }
 
+    /// Removes the selected text (Cut). `insert` ignores an empty string, so it cannot do this.
+    /// Returns whether text was removed.
+    pub fn delete_selection(&mut self) -> bool {
+        if self.selection().is_empty() {
+            return false;
+        }
+        self.inner.insert("");
+        self.row_hint = None;
+        self.metrics = None;
+        true
+    }
+
     pub fn move_to(&mut self, byte: usize, select: bool) {
         self.row_hint = None;
         self.inner.move_to(byte, select);
