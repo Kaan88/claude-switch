@@ -287,8 +287,13 @@ handover file; OpenCode may ask permission to read it, since it is outside the p
 session is left as it is and nothing is recorded in `marks.json`. Whether `--prompt` submits at once or
 waits for Enter was not checked (that would need a model request). Saved tabs keep a running OpenCode
 tab as `{"kind":"opencode","folder","active"}` beside the Claude rows in `terminal-tabs.json`
-(older builds skip such rows); restoring reopens it in that folder with `--continue`, OpenCode's
-last session there, which can be a later one started elsewhere, and never repeats a first prompt.
+(older builds skip such rows). Restoring reopens the first such tab of a folder with `--continue`,
+OpenCode's last session there (possibly a later one started elsewhere, or an older one when that tab
+was never used), and further tabs of the same folder fresh, so two tabs never show one session; a
+first prompt is never repeated. OpenCode's own session id is not kept: `--session <id>` with a new id
+does not create the session at startup (checked with `--standalone` in a scratch folder), and
+whether a later first message keeps that id could only be seen with a model request, so it is not
+relied on.
 A folder that is gone is listed in the "Tabs not reopened" notice.
 
 **Not there:** more than one terminal in a tab, search or links in the terminal,

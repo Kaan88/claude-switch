@@ -53,6 +53,8 @@ pub struct Restore {
     started: bool,
     verified_owners: HashSet<(u64, String)>,
     external_owners: ownership::PendingOwners,
+    /// Folders whose OpenCode tab this restore already reopened with `--continue`.
+    opencode_continued: HashSet<String>,
 }
 
 fn valid_id(id: &str) -> bool {
@@ -494,7 +496,14 @@ impl AppState {
     /// OpenCode keeps its own sessions: the tab reopens in its folder with `--continue` (that
     /// folder's last OpenCode session) and never with the prompt it may have started with.
     fn restore_opencode(&mut self, item: &Entry) {
-        match self.open_opencode_tab(&item.cwd, crate::opencode_tab::Start::Continue) {
+        // `--continue` is the folder's last session: only one tab per folder may take it, or two
+        // tabs would show the same session. The others start fresh.
+        let start = if self.restore.opencode_continued.insert(folder_key(&item.cwd)) {
+            crate::opencode_tab::Start::Continue
+        } else {
+            crate::opencode_tab::Start::Fresh
+        };
+        match self.open_opencode_tab(&item.cwd, start) {
             Ok(id) if item.active => self.restore.active = Some(id),
             Ok(_) => {}
             Err(e) => {
@@ -642,6 +651,27 @@ mod tests {
         app.begin_tab_restore(Instant::now());
         let tab = app.tabs.shown().expect("reopened and shown");
         assert_eq!(tab.opencode.as_deref(), Some(folder.as_path()));
+    }
+
+    #[test]
+    fn only_one_opencode_tab_per_folder_reopens_with_continue_the_others_start_fresh() {
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        app.apply_scan(crate::demo::scan(&app.config));
+        let a = app.sessions[0].cwd.clone();
+        let b = app.sessions.iter().map(|s| s.cwd.clone()).find(|c| folder_key(c) != folder_key(&a)).unwrap();
+        app.restore.pending =
+            [Entry::opencode(a.clone(), false), Entry::opencode(a.clone(), true), Entry::opencode(b.clone(), false)]
+                .into();
+        app.begin_tab_restore(Instant::now());
+        let starts: Vec<_> = app
+            .tabs
+            .list
+            .iter()
+            .map(|t| (t.opencode.clone().unwrap(), t.term.screen.row_text(0).contains("--continue")))
+            .collect();
+        assert_eq!(starts, [(a.clone(), true), (a, false), (b, true)]);
+        // A later restore (another window run) starts its own count.
+        assert!(app.restore.opencode_continued.is_empty());
     }
 
     #[test]
