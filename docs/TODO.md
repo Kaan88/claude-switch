@@ -637,6 +637,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     agent's config, fmt, clippy and the workspace tests. Not checked: any real Claude or OpenCode request (none was
     made during development), answer quality of a real model, the dialogs and the Settings rows by eye in the
     running app, and timing with a large `meaning.json`.
+    Review fixes (`fix/review-meaning`): the subjects sent with a Summarize request now come only from visible, not
+    hidden sessions (they came from every kept summary); sessions with no readable prompt or no answer get a
+    marker, so they are no longer re-sent and offered on every run and "Nothing to summarize" is reached.
     Original request: **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
     later item. not now."). Today search is literal text and Related is word overlap (DESIGN.md, Session
     organization). Wanted: a search that finds a session by what it was about ("where we fixed push"), questions

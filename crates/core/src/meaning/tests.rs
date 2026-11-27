@@ -71,6 +71,7 @@ fn indexing_sends_only_changed_sessions_in_batches_and_keeps_partial_work() {
     let report = index(
         &mut cache,
         items,
+        |_| true,
         &Engine::Claude,
         |r| {
             requests.borrow_mut().push(r.to_owned());
@@ -93,6 +94,7 @@ fn indexing_sends_only_changed_sessions_in_batches_and_keeps_partial_work() {
     let report = index(
         &mut cache,
         again,
+        |_| true,
         &Engine::Claude,
         |r| {
             requests.borrow_mut().push(r.to_owned());
@@ -114,6 +116,7 @@ fn indexing_sends_only_changed_sessions_in_batches_and_keeps_partial_work() {
     let err = index(
         &mut fresh,
         items,
+        |_| true,
         &Engine::Claude,
         |r| {
             calls += 1;
@@ -131,6 +134,7 @@ fn indexing_sends_only_changed_sessions_in_batches_and_keeps_partial_work() {
     let cancelled = index(
         &mut Cache::default(),
         vec![item("x", 1, "p")],
+        |_| true,
         &Engine::Claude,
         |r| {
             sent = true;
@@ -224,4 +228,81 @@ fn questions_are_answered_once_and_kept_for_the_same_summaries() {
     assert!(cache.answer("where did we fix push?", "claude", basis + 1).is_none());
     assert!(ask(&mut cache, "q", &set, &Engine::Claude, |_| Ok("no json".into())).is_err());
     assert!(ask(&mut cache, "q", &[], &Engine::Claude, |_| panic!("nothing to ask over")).is_err());
+}
+
+#[test]
+fn subjects_sent_come_only_from_sessions_that_may_be_sent_now() {
+    let mut cache = Cache::default();
+    cache.digests.insert("shown".into(), digest("Fixed fonts", &[], Some("Fonts")));
+    cache.digests.insert("hidden".into(), digest("Private thing", &[], Some("Secret project")));
+    let mut request = String::new();
+    index(
+        &mut cache,
+        vec![item("new", 1, "a new prompt")],
+        |id| id != "hidden",
+        &Engine::Claude,
+        |r| {
+            request = r.to_owned();
+            fake(r)
+        },
+        || false,
+        |_| {},
+    )
+    .unwrap();
+    assert!(request.contains("Existing subjects: [\"Fonts\"]"), "{request}");
+    assert!(!request.contains("Secret project"));
+    // The question set is the caller's visible ids only.
+    assert!(ask_set(&cache, ["shown", "new"]).iter().all(|(id, _)| *id != "hidden"));
+}
+
+#[test]
+fn empty_and_unanswered_sessions_get_markers_and_are_not_sent_again_until_they_change() {
+    let mut cache = Cache::default();
+    let empty = Item { id: "empty".into(), active_ms: 5, excerpts: Excerpts::default() };
+    let items = vec![empty, item("skipped", 5, "never answered"), item("ok", 5, "answered")];
+    // A model that answers only the session whose prompt says "answered".
+    let partial = |r: &str| {
+        let lines: Vec<_> = fake(r)?.lines().filter(|l| l.contains("Worked on answered")).map(str::to_owned).collect();
+        Ok(lines.join("\n"))
+    };
+    let report = index(&mut cache, items, |_| true, &Engine::Claude, partial, || false, |_| {}).unwrap();
+    assert_eq!((report.sent, report.summarized, report.skipped, report.empty), (2, 1, 1, 1));
+    for id in ["empty", "skipped"] {
+        assert!(cache.digests[id].is_marker(), "{id}");
+        assert!(!cache.stale(id, 5), "{id} is not offered again");
+        assert!(score("never answered", &cache.digests[id]).is_none());
+    }
+    assert!(ask_set(&cache, ["empty", "skipped", "ok"]).iter().all(|(id, _)| *id == "ok"));
+    assert!(cache.subjects(|_| true).iter().all(|s| s == "fake area"));
+
+    // Markers survive a save and load.
+    let t = TempDir::new("meaning-markers");
+    let path = t.0.join("meaning.json");
+    cache.save(&path).unwrap();
+    assert_eq!(Cache::load(&path), cache);
+
+    // Later activity with the same prompts sends nothing; changed prompts are retried.
+    let mut sent = Vec::new();
+    let again = vec![
+        Item { id: "empty".into(), active_ms: 9, excerpts: Excerpts::default() },
+        item("skipped", 9, "never answered"),
+    ];
+    let report = index(
+        &mut cache,
+        again,
+        |_| true,
+        &Engine::Claude,
+        |r| {
+            sent.push(r.to_owned());
+            fake(r)
+        },
+        || false,
+        |_| {},
+    )
+    .unwrap();
+    assert!(sent.is_empty() && report.unchanged == 1 && report.empty == 1);
+    assert!(!cache.stale("empty", 9) && !cache.stale("skipped", 9));
+    index(&mut cache, vec![item("skipped", 12, "now changed")], |_| true, &Engine::Claude, fake, || false, |_| {})
+        .unwrap();
+    assert_eq!(cache.digests["skipped"].summary, "Worked on now changed");
 }
