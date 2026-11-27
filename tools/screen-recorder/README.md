@@ -141,8 +141,12 @@ source) for the newest version and looks for that version's marker in the Action
 a new version, or when started by hand, a Windows job installs Claude Code with the installer,
 builds the recorder, runs `recorder compat --ci --api-key-env ANTHROPIC_API_KEY`, uploads the
 recordings as the artifact `cli-compat-<version>` and writes the report into the run's summary.
-When states do not match, it opens the issue "Chat: screens changed in Claude Code <version>" with
-the report, or updates it when it is already open, and the run stays green with a warning. A run
+The version is the one installed (`claude --version`): when the installer installs another one
+than the newest found, the run says so in a warning and the artifact, the issue and the marker
+name the installed one. When states do not match, it opens the issue "Chat: screens changed in
+Claude Code <version>" with the report, or updates it when it is already open; when it was
+closed (the version was checked again after the cache let go of its marker), the report goes
+there as a comment and the issue stays closed. The run stays green with a warning. A run
 that could not check anything (the key is refused, the check does not build, Claude Code does not
 start) is red and is tried again the next day.
 

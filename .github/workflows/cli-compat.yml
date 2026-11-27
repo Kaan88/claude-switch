@@ -79,6 +79,8 @@ jobs:
       CARGO_BUILD_JOBS: '2'
     outputs:
       result: ${{ steps.run.outputs.result }}
+      # What was installed and checked: the issue and the marker name this one.
+      installed: ${{ steps.installed.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,8 +95,21 @@ jobs:
           $bin = Join-Path $env:USERPROFILE '.local\bin'
           if (-not (Test-Path -LiteralPath (Join-Path $bin 'claude.exe'))) { throw "claude.exe is not in $bin." }
           $bin >> $env:GITHUB_PATH
+      # The installer may install another version than the one found above (a release on its
+      # way, another channel): the run checks what is installed and names that one.
       - name: Installed version
-        run: claude --version
+        id: installed
+        env:
+          NEWEST: ${{ needs.version.outputs.version }}
+        run: |
+          $line = "$(claude --version | Select-Object -First 1)".Trim()
+          $version = ($line -split '\s+')[0]
+          if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$') { throw "claude --version printed `"$line`"." }
+          if ($version -ne $env:NEWEST) {
+            "::warning::The newest Claude Code is $env:NEWEST, but the installer installed $version: this run checks $version, and the issue and the marker name it."
+          }
+          "Checking Claude Code $version"
+          "version=$version" >> $env:GITHUB_OUTPUT
       - name: Build the recorder
         run: cargo build --locked --manifest-path tools/screen-recorder/Cargo.toml
       # Built here, before the API key is in any step's environment: the recorder's own build of
@@ -121,7 +136,7 @@ jobs:
         if: always() && steps.run.outputs.out != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: cli-compat-${{ needs.version.outputs.version }}
+          name: cli-compat-${{ steps.installed.outputs.version }}
           path: ${{ steps.run.outputs.out }}
           retention-days: 30
           if-no-files-found: warn
@@ -130,7 +145,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ steps.installed.outputs.version }}
           OUT: ${{ steps.run.outputs.out }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
@@ -142,11 +157,17 @@ jobs:
             'What to do: `tools/screen-recorder/README.md`, "After a Claude Code update".'
             ''
           ) + (Get-Content -LiteralPath (Join-Path $env:OUT 'report.md')) | Set-Content -LiteralPath $body -Encoding utf8
-          $found = gh issue list --state open --search "`"$title`" in:title" --json number,title | ConvertFrom-Json
+          # Open or closed: a version checked again (the cache let go of its marker) gets no twin.
+          $found = gh issue list --state all --limit 20 --search "`"$title`" in:title" --json number,title,state | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'gh issue list failed.' }
-          $issue = $found | Where-Object { $_.title -eq $title } | Select-Object -First 1
-          if ($issue) {
+          $same = @($found | Where-Object { $_.title -eq $title })
+          $issue = @($same | Where-Object { $_.state -eq 'OPEN' }) + $same | Select-Object -First 1
+          if ($issue -and $issue.state -eq 'OPEN') {
             gh issue edit $issue.number --body-file $body
+          } elseif ($issue) {
+            # Closed by someone who dealt with it: the new report goes there as a comment, and
+            # the issue stays closed.
+            gh issue comment $issue.number --body-file $body
           } else {
             gh issue create --title $title --body-file $body
           }
@@ -167,11 +188,11 @@ jobs:
     steps:
       - name: Write the marker
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.check.outputs.installed }}
           RESULT: ${{ needs.check.outputs.result }}
         run: printf '%s %s\n' "$VERSION" "$RESULT" > cli-compat-marker
       - name: Keep it
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: cli-compat-marker
-          key: cli-compat-${{ needs.version.outputs.version }}
+          key: cli-compat-${{ needs.check.outputs.installed }}

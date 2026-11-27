@@ -1197,6 +1197,26 @@ mod tests {
     }
 
     #[test]
+    fn in_the_workflow_the_issue_and_the_marker_name_the_installed_version_and_no_issue_is_made_twice() {
+        let text = workflow();
+        let check = &text[text.find("\n  check:").expect("the check job")..];
+        // Past the first job only the step that compares the installed version reads the one found.
+        let newest: Vec<&str> =
+            check.lines().filter(|l| l.contains("needs.version.outputs.version")).map(str::trim).collect();
+        assert_eq!(newest, ["NEWEST: ${{ needs.version.outputs.version }}"]);
+        for named in [
+            "name: cli-compat-${{ steps.installed.outputs.version }}",
+            "VERSION: ${{ steps.installed.outputs.version }}",
+            "VERSION: ${{ needs.check.outputs.installed }}",
+            "key: cli-compat-${{ needs.check.outputs.installed }}",
+        ] {
+            assert!(check.contains(named), "{named}");
+        }
+        assert!(check.contains("gh issue list --state all"), "closed issues are looked up too");
+        assert!(check.contains("gh issue comment"), "a closed one gets the report as a comment");
+    }
+
+    #[test]
     fn the_stamp_is_a_date_and_a_time() {
         let stamp = stamp();
         assert_eq!((stamp.len(), stamp.as_bytes()[8]), (15, b'-'));
