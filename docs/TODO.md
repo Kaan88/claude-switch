@@ -612,3 +612,33 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     separate."); the Archived chip becomes "Archived here"; the details row "Archived: yes, in the desktop app"
     becomes "Desktop archive: yes", so "Archived" alone always means Switch's archive. Update README, DESIGN and
     the wiki's Sessions and Settings pages.
+61. **`/switch-compact` blocks the chat, and its report sets the agent going again** (owner, 2026-11-27). Compact and
+    open should run in the background: the skill starts `compact --open` and ends its turn at once, and the result
+    (the new tab, or the failure) is shown by Switch, not reported back into the old chat as a tool result the agent
+    then acts on. The old session must not resume its tasks because a handover finished. Seen with it: "claude-switch
+    compact: Could not read the transcript." on a 112 MB transcript. Cause: the `claude-switch` on PATH was built
+    before `a6d6b84` (64 MiB limit, now 2 GiB); current `main` reads that transcript. The CLI and the automatic
+    handover now say why a read failed instead of dropping the reason.
+62. **Selected text in a transparent terminal is hard to see** (owner, 2026-11-27). With terminal opacity below
+    100 % the selection highlight shows the backdrop through it; draw the selection opaque (or with its own
+    contrast-checked colour) whatever the terminal's opacity.
+63. **Settings › Appearance: flexible theming and one kind of control per choice** (owner, 2026-11-27, screenshot of
+    Appearance). Today the dark palette is chosen with swatches and a dropdown ("Neutral") side by side, the light
+    palette with swatches and a segmented row (Paper, Warm, Cool, High contrast), other rows use segmented rows or
+    switches. Pick one control per kind of choice across all Settings pages and menus (swatches with a name under
+    them for palettes, segmented rows for two to four plain options, switches for on/off) and make toggles and
+    selections look the same in menus. "More flexible theming": own palettes (from a base colour and an accent, as
+    the wallpaper palettes in kweb mail are generated), saved and named; decide the scope before building.
+64. **A scrollbar that fades, and page width options** (owner, 2026-11-27). Scrollbars show while scrolling or
+    under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
+    the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide).
+65. **The pointer over the terminal is an I-beam; it should be the arrow, as in Windows Terminal** (owner,
+    2026-11-27: "instead of normal pointer like in windows terminal, I get text selection like behaviour"). Show the
+    arrow over the terminal; selection by dragging stays. Check what Windows Terminal does over a mouse-reporting
+    program (Claude Code) and match it.
+66. **A better design for the composer's chips** (owner, 2026-11-27): Model, Effort, Context, Compact, Clear, the
+    slash menu, Attach, Terminal and Details look like the same flat button and their labels are cut ("Effort
+    mediu…"). Group them by kind (state the session is in: model, effort, context; actions: compact, clear;
+    panels: terminal, details), show a value as a value (an effort level as a small meter or dots, context as a
+    filling bar), never cut a label, and keep the row from jumping when a value changes. Item 43 covers the values
+    being stale; this is the look.

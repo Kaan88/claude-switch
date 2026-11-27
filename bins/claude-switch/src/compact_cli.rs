@@ -135,7 +135,7 @@ fn run(options: Options) -> Result<(), String> {
         claude_switch_core::account(&config, account).map_err(|e| e.to_string())?;
     }
     let data = compact::Handover::read(session.clone(), name_of(&roots, session))
-        .map_err(|_| "Could not read the transcript.")?;
+        .map_err(|e| format!("Could not read the transcript: {e}"))?;
     // An empty focus file (the plugin with no focus text) means no focus of the user's own.
     let own = options.focus_file.as_deref().map(Path::new).map(focus_from_file).transpose()?;
     let focus = match own.filter(|text| !text.trim().is_empty()) {

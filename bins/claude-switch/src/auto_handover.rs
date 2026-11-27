@@ -287,7 +287,7 @@ impl AppState {
         let prefs = self.config.compact.clone();
         let job = Job::start(self.wake_fn(), move |cancel, _| {
             let data = compact::Handover::read_cancel(data_session, name, || cancel.cancelled())
-                .map_err(|_| "Could not read the transcript.".to_string())?;
+                .map_err(|e| format!("Could not read the transcript: {e}"))?;
             let focus = data.chosen_focus(&prefs).1;
             crate::compact_runner::make(&roots, &program, &model, &data, &focus, || cancel.cancelled())
                 .map(|text| (text, data.basis()))
