@@ -7,11 +7,14 @@ use claude_switch_core::{Roots, Session, compact, config, marks::Marks, sessions
 use std::io::{self, Write};
 use std::path::Path;
 
+mod background;
 mod window;
+
+pub use background::{Notice, clean_old_jobs, decode_notice};
 
 const USAGE: &str = "Usage: claude-switch compact --session <id|latest> [--cwd <folder>] \
     [--model <provider/model>] [--as <account>] [--focus-file <file>] \
-    [--print | --open [--agent <name>] [--name <title>]] [--save]";
+    [--print | --open [--agent <name>] [--name <title>] [--background]] [--save]";
 
 #[derive(Default, Debug)]
 struct Options {
@@ -22,8 +25,31 @@ struct Options {
     agent: Option<String>,
     name: Option<String>,
     focus_file: Option<String>,
+    /// Focus text already read (a background job's), used instead of `focus_file`.
+    focus: Option<String>,
     open: bool,
     save: bool,
+    /// Make and open the handover in a detached process and return at once.
+    background: bool,
+}
+
+/// Why a run failed, and whether the running window has shown it already.
+#[derive(Debug)]
+struct Failed {
+    message: String,
+    shown: bool,
+}
+
+impl From<String> for Failed {
+    fn from(message: String) -> Self {
+        Failed { message, shown: false }
+    }
+}
+
+impl From<&str> for Failed {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -49,6 +75,10 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
                 options.save = true;
                 continue;
             }
+            "--background" if !options.background => {
+                options.background = true;
+                continue;
+            }
             "--print" | "--open" if mode.is_none() => {
                 mode = Some(flag == "--open");
                 continue;
@@ -66,6 +96,9 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
     }
     options.session = session.ok_or("Specify --session <id|latest>.")?;
     options.open = mode.unwrap_or(false);
+    if options.background && !options.open {
+        return Err("--background makes and opens the handover in the background and requires --open.".into());
+    }
     if let Some(name) = &options.agent {
         claude_switch_core::launch::session_agent_args(name).map_err(|error| error.to_string())?;
         if !options.open {
@@ -110,18 +143,28 @@ fn focus_from_file(path: &Path) -> Result<String, String> {
     Ok(text.trim_start_matches('\u{feff}').to_owned())
 }
 
-fn run(options: Options) -> Result<(), String> {
+/// Everything checked before any transcript is read: consent, OpenCode, the session, the account.
+struct Ready {
+    roots: Roots,
+    config: claude_switch_core::Config,
+    model: String,
+    program: std::path::PathBuf,
+    session: Session,
+    account: String,
+}
+
+fn ready(options: &Options) -> Result<Ready, String> {
     let roots = Roots::from_env().ok_or("USERPROFILE or APPDATA is not set.")?;
     let config = config::load(&roots);
-    let model = options.model.as_deref().unwrap_or(&config.compact.model);
-    let provider = compact::provider(model).ok_or("Choose a provider/model in the window or specify --model.")?;
+    let model = options.model.clone().unwrap_or_else(|| config.compact.model.clone());
+    let provider = compact::provider(&model).ok_or("Choose a provider/model in the window or specify --model.")?;
     if !config.compact.consents.contains(provider) {
         return Err(format!(
             "No consent for {provider}. Run Compact and open once from the window and approve this provider."
         ));
     }
     let program = compact_runner::opencode()?;
-    let cwd = match options.cwd {
+    let cwd = match &options.cwd {
         Some(cwd) => Some(std::path::absolute(cwd).map_err(|_| "Invalid working folder.")?),
         None if options.session == "latest" => {
             Some(std::env::current_dir().map_err(|_| "Could not read the working folder.")?)
@@ -129,22 +172,34 @@ fn run(options: Options) -> Result<(), String> {
         None => None,
     };
     let sessions = sessions::scan(&roots, &config);
-    let session = find(&sessions, &options.session, cwd.as_deref()).ok_or("No matching transcript was found.")?;
-    let account = options.account.as_deref().unwrap_or(&config.current);
+    let session = find(&sessions, &options.session, cwd.as_deref()).ok_or("No matching transcript was found.")?.clone();
+    let account = options.account.clone().unwrap_or_else(|| config.current.clone());
     if options.open || options.account.is_some() {
-        claude_switch_core::account(&config, account).map_err(|e| e.to_string())?;
+        claude_switch_core::account(&config, &account).map_err(|e| e.to_string())?;
     }
-    let data = compact::Handover::read(session.clone(), name_of(&roots, session))
+    Ok(Ready { roots, config, model, program, session, account })
+}
+
+/// The note that the Settings default agent was dropped, for a new tab, is returned for the
+/// background process to show; the foreground has printed it.
+fn run(options: Options) -> Result<Option<String>, Failed> {
+    let Ready { roots, config, model, program, session, account } = ready(&options)?;
+    let account = account.as_str();
+    let data = compact::Handover::read(session.clone(), name_of(&roots, &session))
         .map_err(|e| format!("Could not read the transcript: {e}"))?;
     // An empty focus file (the plugin with no focus text) means no focus of the user's own.
-    let own = options.focus_file.as_deref().map(Path::new).map(focus_from_file).transpose()?;
+    let own = match options.focus.clone() {
+        Some(text) => Some(text),
+        None => options.focus_file.as_deref().map(Path::new).map(focus_from_file).transpose()?,
+    };
     let focus = match own.filter(|text| !text.trim().is_empty()) {
         Some(text) => text,
         None => data.chosen_focus(&config.compact).1,
     };
-    let text = compact_runner::make(&roots, &program, model, &data, &focus, || false)?;
+    let text = compact_runner::make(&roots, &program, &model, &data, &focus, || false)?;
     if !options.open {
-        return print(&roots, &session.id, &text, options.save, io::stdout().lock());
+        print(&roots, &session.id, &text, options.save, io::stdout().lock())?;
+        return Ok(None);
     }
     compact_open::validate_prompt(&text)?;
     let file = compact::save(&roots, &session.id, &text).map_err(|e| format!("Could not keep the handover: {e}"))?;
@@ -161,20 +216,26 @@ fn run(options: Options) -> Result<(), String> {
         basis: Some(data.basis()),
     };
     match handover_pipe::send(&encode_request(&request)?) {
-        handover_pipe::Sent::Answered(result) => match result? {
-            handover_pipe::Outcome::NewTab => {
-                eprintln!("Claude Switch: opened the handover tab in the running window.{}", note(dropped.as_deref()));
-            }
-            handover_pipe::Outcome::InPlace => eprintln!(
+        handover_pipe::Sent::Answered(Err(message)) => return Err(Failed { message, shown: true }),
+        handover_pipe::Sent::Answered(Ok(handover_pipe::Outcome::NewTab)) => {
+            eprintln!("Claude Switch: opened the handover tab in the running window.{}", note(dropped.as_deref()));
+        }
+        handover_pipe::Sent::Answered(Ok(handover_pipe::Outcome::InPlace)) => {
+            eprintln!(
                 "Claude Switch: continuing in this session's tab (/clear, then the handover as the first message)."
-            ),
-        },
+            );
+            return Ok(None);
+        }
+        handover_pipe::Sent::Answered(Ok(handover_pipe::Outcome::Shown)) => {
+            return Err("The running Claude Switch did not confirm opening a Claude tab.".into());
+        }
+        handover_pipe::Sent::NoAnswer(message) => return Err(message.into()),
         handover_pipe::Sent::NotRunning => {
             window::spawn(&exe, &session.id, account, name, agent, options.name.as_deref())?;
             eprintln!("Claude Switch: started Claude Switch with the handover tab.{}", note(dropped.as_deref()));
         }
     }
-    Ok(())
+    Ok(dropped)
 }
 
 fn note(dropped: Option<&str>) -> String {
@@ -210,11 +271,25 @@ fn print(roots: &Roots, id: &str, text: &str, save: bool, mut out: impl Write) -
 }
 
 pub fn entry(args: impl Iterator<Item = String>) -> i32 {
+    let mut args = args.peekable();
+    if args.next_if(|word| word == background::JOB_FLAG).is_some() {
+        return background::run_job(args);
+    }
     match parse(args) {
-        Ok(options) => match run(options) {
-            Ok(()) => 0,
+        Ok(options) if options.background => match background::start(options) {
+            Ok(line) => {
+                eprintln!("{line}");
+                0
+            }
             Err(e) => {
                 eprintln!("claude-switch compact: {e}");
+                1
+            }
+        },
+        Ok(options) => match run(options) {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("claude-switch compact: {}", e.message);
                 1
             }
         },
@@ -385,6 +460,11 @@ pub fn forward_to_running(request: &Handoff, ack: &str) -> bool {
                 eprintln!("claude-switch compact: {e}");
             }
             acknowledge(ack, result.is_ok());
+            true
+        }
+        handover_pipe::Sent::NoAnswer(e) => {
+            eprintln!("claude-switch compact: {e}");
+            acknowledge(ack, false);
             true
         }
     }

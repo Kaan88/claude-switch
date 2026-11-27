@@ -217,15 +217,29 @@ impl AppState {
         let Some(listener) = self.compact.listener.take() else { return };
         let roots = roots.clone();
         listener.serve(move |bytes| {
-            let result = (|| {
-                let args = crate::compact_cli::decode_request(&bytes)?;
-                let request = crate::compact_cli::load(&roots, args)?;
-                let (tx, rx) = std::sync::mpsc::channel();
-                proxy.lock().map_err(|_| "Claude Switch is closing.")?.send(Msg::Handover(Box::new(request), tx));
-                rx.recv_timeout(crate::handover_pipe::REPLY_WAIT).map_err(
-                    |_| "Timed out waiting for the window. The outcome is unknown; check for the tab before retrying.",
-                )?
-            })();
+            use crate::handover_pipe::Outcome;
+            let post = |msg: Msg| -> Result<(), String> {
+                proxy.lock().map_err(|_| "Claude Switch is closing.")?.send(msg);
+                Ok(())
+            };
+            // A background handover's failure or note: shown as a notice, nothing else.
+            if let Some(notice) = crate::compact_cli::decode_notice(&bytes) {
+                let result = notice.and_then(|n| post(Msg::HandoverNotice(n)).map(|()| Outcome::Shown));
+                return crate::handover_pipe::reply(&result);
+            }
+            let result =
+                match crate::compact_cli::decode_request(&bytes).and_then(|a| crate::compact_cli::load(&roots, a)) {
+                    // Shown here as well, so every `failed:` answer is on screen (the caller may run
+                    // in the background, with nobody reading its output).
+                    Err(e) => post(Msg::HandoverNotice(crate::compact_cli::Notice::Failed(e.clone()))).and(Err(e)),
+                    Ok(request) => (|| {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        post(Msg::Handover(Box::new(request), tx))?;
+                        rx.recv_timeout(crate::handover_pipe::REPLY_WAIT).map_err(|_| {
+                        "Timed out waiting for the window. The outcome is unknown; check for the tab before retrying."
+                    })?
+                    })(),
+                };
             crate::handover_pipe::reply(&result)
         });
     }

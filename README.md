@@ -130,6 +130,9 @@ use the same numbered continuation name as the editor. `--open` saves the handov
 the session, continues there in place; otherwise it opens the new session as a tab in the running
 window (beside the source session's tab), or starts Claude Switch with that tab when it is not
 running. It waits for the window's confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
+Add `--background` (with `--open`) to return at once: Claude Switch makes and opens the handover in a
+separate process and shows the result in its window, or in a message box when it has no window to show a
+failure in.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
 code units are saved in full; the new session's initial prompt asks it to read the saved
@@ -168,6 +171,10 @@ letters or digits start each segment; letters, digits, `-`, and `_` continue it;
 segments. An invalid first-word name stops the command. Remaining text is literal focus; with
 no first-word prefix, the entire text is focus and the configured agent default is used.
 The plugin leaves the new session name to Claude Switch’s numbered continuation default.
+The command runs in the background (`compact --open --background`): the chat gets one line saying the
+handover started and its turn ends there, so the old session does not carry on. Claude Switch then shows the
+continued session, or why the handover failed, in its own window. The plugin needs a Claude Switch that
+knows `--background`; an older one on `PATH` refuses it as an unknown option.
 
 ## Licence
 

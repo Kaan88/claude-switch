@@ -1,5 +1,6 @@
-//! The one request a second Claude Switch process may hand to the running window: open a saved
-//! handover as a tab. A per-user named pipe, never a command channel.
+//! The two requests a second Claude Switch process may hand to the running window: open a saved
+//! handover as a tab, or show why a background handover failed (a notice that acts on nothing).
+//! A per-user named pipe, never a command channel.
 //!
 //! - The pipe's name carries the user's SID and its DACL grants only that SID; remote clients
 //!   are refused and only one instance exists (`FILE_FLAG_FIRST_PIPE_INSTANCE`).
@@ -11,7 +12,8 @@
 //! - A client gets [`READ_WAIT`] to write its request; repeated connect errors back off.
 //! - The payload is a fixed versioned list of validated words (`compact_cli::encode_request`),
 //!   at most [`MAX_REQUEST`] bytes, decoded and revalidated by the receiving window; the reply is
-//!   `opened` or `failed:` and the app's own message.
+//!   `opened`, `continuing`, `shown` (a failure notice) or `failed:` and the app's own message,
+//!   which the window shows as well.
 
 use std::time::Duration;
 
@@ -27,6 +29,8 @@ pub enum Outcome {
     NewTab,
     /// Started continuing it in place, in the tab that runs the session.
     InPlace,
+    /// Showed a background handover's failure notice.
+    Shown,
 }
 
 /// What the caller learned.
@@ -34,14 +38,18 @@ pub enum Outcome {
 pub enum Sent {
     /// No Claude Switch window of this user is listening.
     NotRunning,
-    /// The running window answered.
+    /// The running window answered; an error is one it shows in its window as well.
     Answered(Result<Outcome, String>),
+    /// A window is there but gave no answer (refused, busy, closed or timed out), so it may not
+    /// have shown anything.
+    NoAnswer(String),
 }
 
 pub fn reply(result: &Result<Outcome, String>) -> Vec<u8> {
     match result {
         Ok(Outcome::NewTab) => b"opened".to_vec(),
         Ok(Outcome::InPlace) => b"continuing".to_vec(),
+        Ok(Outcome::Shown) => b"shown".to_vec(),
         Err(e) => {
             let mut text = format!("failed:{e}");
             while text.len() > MAX_REPLY {
@@ -56,6 +64,7 @@ pub fn read_reply(bytes: &[u8]) -> Result<Outcome, String> {
     match bytes {
         b"opened" => return Ok(Outcome::NewTab),
         b"continuing" => return Ok(Outcome::InPlace),
+        b"shown" => return Ok(Outcome::Shown),
         _ => {}
     }
     match std::str::from_utf8(bytes).ok().and_then(|s| s.strip_prefix("failed:")) {
@@ -343,22 +352,20 @@ mod win {
                     WaitNamedPipeW(path.as_ptr(), 2000);
                 },
                 _ => {
-                    return Sent::Answered(Err("Claude Switch is running but refused the handover request.".into()));
+                    return Sent::NoAnswer("Claude Switch is running but refused the handover request.".into());
                 }
             }
         }
         let Some(pipe) = pipe else {
-            return Sent::Answered(Err("Claude Switch is running but busy. Try again.".into()));
+            return Sent::NoAnswer("Claude Switch is running but busy. Try again.".into());
         };
         if !owned_by(pipe.0, &sid) {
-            return Sent::Answered(Err(
-                "The handover channel is not owned by this Windows user. Nothing was sent.".into()
-            ));
+            return Sent::NoAnswer("The handover channel is not owned by this Windows user. Nothing was sent.".into());
         }
         let mode = PIPE_READMODE_MESSAGE;
         // SAFETY: valid handle and mode pointer.
         if unsafe { SetNamedPipeHandleState(pipe.0, &mode, null(), null()) } == 0 || !write_message(pipe.0, payload) {
-            return Sent::Answered(Err("Could not hand the request to Claude Switch.".into()));
+            return Sent::NoAnswer("Could not hand the request to Claude Switch.".into());
         }
         // The window bounds its own wait; this bound only guards against a hung window.
         let (tx, rx) = std::sync::mpsc::channel();
@@ -368,11 +375,11 @@ mod win {
         });
         match rx.recv_timeout(REPLY_WAIT + Duration::from_secs(5)) {
             Ok(Some(bytes)) => Sent::Answered(read_reply(&bytes)),
-            Ok(None) => Sent::Answered(Err("Claude Switch closed the handover request without an answer.".into())),
-            Err(_) => Sent::Answered(Err(
+            Ok(None) => Sent::NoAnswer("Claude Switch closed the handover request without an answer.".into()),
+            Err(_) => Sent::NoAnswer(
                 "Timed out waiting for Claude Switch. The outcome is unknown; check for the tab before retrying."
                     .into(),
-            )),
+            ),
         }
     }
 
@@ -512,7 +519,7 @@ mod win {
             assert_eq!(early.join().unwrap(), Sent::Answered(Ok(Outcome::NewTab)));
             assert_eq!(send_on(&suffix, b"other"), Sent::Answered(Err("no".into())));
             let long = vec![b'a'; MAX_REQUEST + 1];
-            assert!(matches!(send_on(&suffix, &long), Sent::Answered(Err(_))));
+            assert!(matches!(send_on(&suffix, &long), Sent::NoAnswer(_)));
             assert_eq!(send_on(&suffix, b"open"), Sent::Answered(Ok(Outcome::NewTab)), "still serves after a refusal");
         }
 
@@ -544,6 +551,7 @@ mod tests {
     fn replies_round_trip_and_anything_else_is_not_success() {
         assert_eq!(read_reply(&reply(&Ok(Outcome::NewTab))), Ok(Outcome::NewTab));
         assert_eq!(read_reply(&reply(&Ok(Outcome::InPlace))), Ok(Outcome::InPlace));
+        assert_eq!(read_reply(&reply(&Ok(Outcome::Shown))), Ok(Outcome::Shown));
         assert_eq!(read_reply(&reply(&Err("Sign in first.".into()))), Err("Sign in first.".into()));
         for bad in [b"".as_slice(), b"opened\n", b"failed:", b"process started", b"\xff\xfe"] {
             assert!(read_reply(bad).is_err());

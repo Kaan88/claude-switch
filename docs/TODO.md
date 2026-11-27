@@ -619,6 +619,21 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     compact: Could not read the transcript." on a 112 MB transcript. Cause: the `claude-switch` on PATH was built
     before `a6d6b84` (64 MiB limit, now 2 GiB); current `main` reads that transcript. The CLI and the automatic
     handover now say why a read failed instead of dropping the reason.
+    **Done** (2026-11-27, branch `fix/item-61`): `compact --open --background`, which the skill now runs, does the
+    quick checks (consent, OpenCode, session, account), reads the focus file, writes an app-named job file to the
+    temp folder and starts `compact --background-job <name>` through the window's fixed ShellExecute bootstrap (no
+    console, no inherited handles), then prints one line and exits. The detached process revalidates the job with
+    the same parser and runs `compact --open`; the result is the tab or the continuation in place, a failure is a
+    notice in the running window (a new pipe request kind that only shows text) or a message box when no window
+    takes it. The window now also shows a handover request it could not load. The skill tells the agent to report
+    the one line and end its turn, not wait, poll, retry or resume. Owner's decisions (2026-11-27), built: a
+    dropped Settings default agent is an info notice in the window (same pipe request kind, a note version); no
+    fallback to the blocking call; each window start removes job files over a day old (job name pattern, plain
+    files only). Checked: format, lint, tests (job and notice encoding and revalidation, both notice kinds, job
+    file read once and removed, cleanup keeps other names, folders and new files, option rules). Not checked: a real `/switch-compact`
+    run; that the detached process survives the end of Claude Code's Bash call on Windows (the same bootstrap
+    already starts the window from the skill); the message box; the window's notices on screen; the cleanup on a real temp folder. Left: an old
+    `claude-switch` on `PATH` refuses `--background` (no fallback, by decision).
 62. **Dark text in a transparent terminal gets a dark outline** (owner, 2026-11-27, two screenshots: the grey
     tool-result rows such as "Shell cwd was reset to ..." and the dim session-name rule "═══ Claude-switch handover
     file · continued ═══"). Selection is fine. With terminal opacity below 100 % dim and dark glyphs show a dark
