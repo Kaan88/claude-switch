@@ -26,7 +26,7 @@ mod opencode_rows;
 mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
-pub(crate) use settings::{OPENCODE, TERMINAL, settings, settings_event};
+pub(crate) use settings::{OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
@@ -72,6 +72,12 @@ pub enum Pending {
     Suggest {
         ids: Vec<String>,
         batch: bool,
+    },
+    /// Summarize sessions for search by meaning.
+    MeaningIndex,
+    /// Ask a question over the kept summaries.
+    MeaningAsk {
+        question: String,
     },
     UnarchiveAll,
     RestartOpenCode(crate::opencode_workers::Restart),
@@ -437,6 +443,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::ManageShell { tab, generation, tool }) => st.confirm_shell_manager(tab, generation, tool),
             (OK, Pending::Quit) => st.quit = true,
             (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
+            (OK, Pending::MeaningIndex) => st.start_meaning_index(),
+            (OK, Pending::MeaningAsk { question }) => st.start_meaning_question(question),
             (OK, Pending::UnarchiveAll) => st.unarchive(now, None),
             (OK | CANCEL, Pending::RestartOpenCode(request)) => st.confirm_restart_opencode(request, id == OK),
             (OK, Pending::Remove { slug }) => {

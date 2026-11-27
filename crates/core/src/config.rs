@@ -300,6 +300,7 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
         window_theme,
         appearance: AppearancePrefs::read(&file["appearance"]),
         compact: crate::compact::Preferences::read(&file["compact"]),
+        meaning: crate::meaning::Prefs::read(&file["meaning"]),
     }
 }
 
@@ -455,6 +456,7 @@ fn config_value(config: &Config) -> Value {
         "windowTheme": config.window_theme,
         "appearance": config.appearance.json(),
         "compact": config.compact.json(),
+        "meaning": config.meaning.json(),
     })
 }
 

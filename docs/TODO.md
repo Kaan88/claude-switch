@@ -575,13 +575,29 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     fixed-width slot (the widest glyph of the set, centred) and start the text at a fixed x; use tabular figures, or a
     fixed slot per counter, so changing digits do not move what follows (`view/working.rs`, and the Session view's
     copy of the line).
-56. **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
+56. **Done (branch `fix/items-56-59`): search and group sessions by meaning.** Settings › Sessions › Search by
+    meaning (off by default): the model is Claude Haiku via the CLI on the workers' account (Suggest names' isolated
+    run) or an OpenCode model (the handover summarizer's isolated run, its own tool-less agent); List models fills
+    the choice. Palette: "Summarize sessions for search by meaning…" (confirmed; sends Suggest names' payload for up
+    to 100 visible, not hidden, stale sessions in requests of 20; keeps summary, keywords and subject per session
+    in `meaning.json`, re-sent only when the prompts change) and "Ask about past sessions…" (confirmed; sends the
+    question and the kept summaries only; the answer is kept and repeated without a request). With it on, the
+    list's search also matches summaries locally, Details shows "About", and Topics gets a "By meaning" grouping
+    by subject across projects. Everything runs on a worker job with Cancel; DESIGN.md, Session organization.
+    Checked: core tests with a fake model (payload identical to Suggest names', batching, unchanged sessions not
+    re-sent, partial results kept on failure and cancel, answer parsing and cache, local matching of "where we
+    fixed push"), window tests on the demo source (off by default, confirmation text names model and data, index
+    → search → Topics by subject, question → kept answer without a second request, Cancel), the OpenCode search
+    agent's config, fmt, clippy and the workspace tests. Not checked: any real Claude or OpenCode request (none was
+    made during development), answer quality of a real model, the dialogs and the Settings rows by eye in the
+    running app, and timing with a large `meaning.json`.
+    Original request: **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
     later item. not now."). Today search is literal text and Related is word overlap (DESIGN.md, Session
     organization). Wanted: a search that finds a session by what it was about ("where we fixed push"), questions
     about past sessions, and grouping by meaning across projects. Done by a model the owner picks in Settings, the
     same way as the handover's summarizer (an OpenCode worker/model or the Claude CLI), opt-in, sending only the
     excerpts "Suggest names" already sends, with a confirmation before a run that sends anything. An on-device
-    embedding model was the alternative offered; not chosen. Not started.
+    embedding model was the alternative offered; not chosen.
 57. **Better handovers: a fitting focus chosen by itself, and a sharper fixed format** (owner, 2026-11-27, from a
     cc-fable review of six real handovers: sections cut mid-word at 800 characters, "Standing instructions" turned
     into a to-do list, a permission guessed ("presumably approved"), job and session ids missing, space spent on

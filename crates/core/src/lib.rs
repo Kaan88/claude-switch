@@ -23,6 +23,7 @@ pub mod fulltext;
 pub mod grouping;
 pub mod launch;
 pub mod marks;
+pub mod meaning;
 mod merge;
 pub mod naming;
 mod prompt_clean;
@@ -301,6 +302,8 @@ pub struct Config {
     pub appearance: config::AppearancePrefs,
     /// Handover model and per-provider permission to send session data.
     pub compact: compact::Preferences,
+    /// Opt-in search, questions and grouping by meaning (off by default).
+    pub meaning: meaning::Prefs,
 }
 
 /// Convenience for callers: the account with this slug.

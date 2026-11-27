@@ -47,6 +47,8 @@ const COPY_PATH: u32 = 28;
 const REVEAL: u32 = 29;
 const CHAT_LAYOUT: u32 = 30;
 const SET_TOPIC: u32 = 31;
+const MEANING_INDEX: u32 = 240;
+const MEANING_ASK: u32 = 241;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -78,6 +80,8 @@ pub const COMMANDS: &[Command] = &[
     Command::new(PIN, "session.pin", "Pin / unpin session").keys("Ctrl+D"),
     Command::new(SUGGEST, "session.suggest", "Suggest names for the selected session"),
     Command::new(SUGGEST_BATCH, "session.suggest_recent", "Suggest names for all unnamed recent sessions"),
+    Command::new(MEANING_INDEX, "session.meaning_index", "Summarize sessions for search by meaning…"),
+    Command::new(MEANING_ASK, "session.meaning_ask", "Ask about past sessions…"),
     Command::new(ACCOUNTS, "app.accounts", "Accounts…"),
     Command::new(SETTINGS, "app.settings", "Settings…"),
     Command::new(ABOUT, "app.about", "About"),
@@ -114,6 +118,8 @@ impl AppState {
             RENAME => self.ask_rename_session(),
             SET_TOPIC => self.ask_set_topic(),
             SUGGEST | SUGGEST_BATCH => self.ask_naming(id == SUGGEST_BATCH),
+            MEANING_INDEX => self.ask_meaning_index(),
+            MEANING_ASK => self.ask_meaning_question(),
             HIDE_FOLDER if let Some(key) = self.context_folder.take() => self.toggle_group_hidden(now, key),
             HIDE | HIDE_FOLDER => self.toggle_hidden(now, id == HIDE_FOLDER),
             PIN => {

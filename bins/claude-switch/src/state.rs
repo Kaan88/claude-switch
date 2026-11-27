@@ -181,6 +181,7 @@ pub struct AppState {
     pub archive_picks: HashSet<String>,
     pub archive_count: usize,
     pub naming_job: Option<Job<crate::session_panel::NameResults>>,
+    pub meaning: crate::meaning::Meaning,
     pub sections: Sections,
     pub collapsed: HashSet<String>,
     pub selected: Option<String>,
@@ -296,6 +297,7 @@ impl AppState {
             archive_picks: HashSet::new(),
             archive_count: 0,
             naming_job: None,
+            meaning: Default::default(),
             sections: Sections::new(400.0, ROW_H),
             collapsed: HashSet::new(),
             selected: None,
@@ -358,6 +360,7 @@ impl AppState {
             s.error("Session marks are read-only", error);
         }
         s.rebuild_accounts();
+        s.load_meaning();
         s
     }
 
@@ -475,7 +478,7 @@ impl AppState {
         changed |= self.take_conversation_search();
         changed |= self.take_related();
         let selected = self.selected_session().map(|s| s.file.clone());
-        self.take_naming_job() | self.session_size.take(selected.as_deref()) | changed
+        self.take_naming_job() | self.take_meaning_job() | self.session_size.take(selected.as_deref()) | changed
     }
 
     pub fn apply_scan(&mut self, scan: Scan) {

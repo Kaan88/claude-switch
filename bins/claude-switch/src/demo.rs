@@ -81,6 +81,7 @@ pub fn config() -> Config {
         window_theme: "system".into(),
         appearance: Default::default(),
         compact: Default::default(),
+        meaning: Default::default(),
     }
 }
 

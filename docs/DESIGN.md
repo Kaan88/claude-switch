@@ -1339,6 +1339,36 @@ title and topic editable before acceptance. **Set topic…** edits or clears a l
 running a model. Topics have at most three words and 60 characters; blank means no topic. The demo contains synthetic
 projects, a worktree, a four-session thread, adjacent activity, Related prompts and topics.
 
+**Search by meaning** (Settings → Sessions, off by default) adds a model-written summary to
+literal search. **Model** is Claude Haiku through the CLI on the workers' account (the same
+isolated `-p` run as Suggest names: an empty private folder, no tools, MCP, settings, slash
+commands or session persistence) or an OpenCode model, run like the handover's summarizer (an
+empty temporary folder, no project or Claude Code config, its own one-step agent that may use no
+tool, `--standalone --archived`, title “Claude Switch search”). **List models** fills the OpenCode
+choices on a worker; the list is shared with the handover dialog. The palette's **Summarize
+sessions for search by meaning…** confirms first, naming the model, the count and what is sent:
+the payload of a name suggestion (numeric ids, the first and up to three recent prompts, 500
+characters each) for visible, not hidden sessions with no summary or activity since it, newest
+first, at most 100 a run in requests of 20, plus the subjects already in use so groups stay
+stable. Each answer line gives a summary of at most 200 characters, up to eight keywords and a
+subject (a topic-shaped label); invalid, repeated and out-of-range ids are dropped. They are kept
+in `meaning.json` beside `config.json` with an FNV-1a fingerprint of the exact payload: a session
+whose prompts did not change is not sent again, and the file is written after every request, so a
+cancelled or failed run keeps what was answered. A missing or damaged file is an empty cache;
+**Forget** removes it. While the setting is on, the list's search also matches a session when
+every meaningful word of the search (one may miss from three or more; stop words and simple
+suffixes ignored) begins a word of its summary, keywords or subject, locally; Details shows the
+summary as **About**; Topics appears once any summary has a subject and its **By meaning** button
+groups by subject across projects (sessions without one under “Not summarized”). **Ask about past
+sessions…** takes a question and confirms before sending it with the kept summaries, keywords and
+subjects (no prompts, folders or dates) of up to 200 visible sessions; the model answers with at
+most 1,200 characters and up to ten ids, which open from the answer. The answer is kept by
+question (case and spacing ignored), model and the fingerprint of the summaries it went over, so
+the same question again is answered from the file without a request. All requests and transcript
+reads run on one worker job; the dialog's Cancel kills the child process. The demo answers
+locally with synthetic text and sends nothing. Each run is confirmed instead of recording a
+provider consent, so the handover's consents are neither used nor changed.
+
 ## Terminal cursor and backdrop
 
 Settings → Terminal saves `appearance.cursorShape`, `appearance.cursorBlink`, and

@@ -49,17 +49,20 @@ pub fn build_prompt(items: &[Excerpts]) -> String {
     build_request(items, None)
 }
 
-pub fn build_request(items: &[Excerpts], topics: Option<&[String]>) -> String {
+/// The data a request carries for these sessions: numeric ids with the first and up to three
+/// recent prompts, each cut to 500 characters. Search by meaning sends exactly this too.
+pub fn excerpt_payload(items: &[Excerpts]) -> Vec<Value> {
+    items.iter().take(MAX_BATCH).enumerate().map(|(i, sample)| excerpt_value(i, sample)).collect()
+}
+
+pub(crate) fn excerpt_value(id: usize, sample: &Excerpts) -> Value {
     let cut = |s: &str| s.chars().take(500).collect::<String>();
-    let items: Vec<_> = items
-        .iter()
-        .take(MAX_BATCH)
-        .enumerate()
-        .map(|(i, sample)| {
-            let last: Vec<_> = sample.last.iter().rev().take(3).rev().map(|s| cut(s)).collect();
-            json!({"id": i, "first": sample.first.as_deref().map(cut), "last": last})
-        })
-        .collect();
+    let last: Vec<_> = sample.last.iter().rev().take(3).rev().map(|s| cut(s)).collect();
+    json!({"id": id, "first": sample.first.as_deref().map(cut), "last": last})
+}
+
+pub fn build_request(items: &[Excerpts], topics: Option<&[String]>) -> String {
+    let items = excerpt_payload(items);
     let topic_instruction = topics.map_or_else(String::new, |topics| {
         let topics: Vec<_> = topics.iter().filter_map(|topic| crate::grouping::valid_topic(topic)).collect();
         format!(
@@ -163,6 +166,33 @@ fn run(
     if items.is_empty() {
         return Ok(BTreeMap::new());
     }
+    let answer = run_text(account, &build_request(items, topics), cancelled, program, prefix)?;
+    Ok(parse_suggestions(&answer, items.len(), topics))
+}
+
+/// One headless, tool-less Claude request with the same isolation as name suggestions (Haiku, an
+/// empty private folder, no tools, MCP, settings or session persistence). Returns the model's text.
+pub fn ask_claude(program: &Path, account: &Account, prompt: &str, cancelled: impl Fn() -> bool) -> io::Result<String> {
+    result_text(&run_text(account, prompt, cancelled, program, &[])?)
+        .ok_or_else(|| io::Error::other("Claude returned no usable answer"))
+}
+
+/// The answer text of the CLI's JSON envelope; `None` for an error or an unreadable envelope.
+pub fn result_text(envelope: &str) -> Option<String> {
+    let envelope = serde_json::from_str::<Value>(envelope).ok()?;
+    if envelope["is_error"].as_bool() == Some(true) {
+        return None;
+    }
+    envelope["result"].as_str().map(str::to_owned)
+}
+
+fn run_text(
+    account: &Account,
+    prompt: &str,
+    cancelled: impl Fn() -> bool,
+    program: &Path,
+    prefix: &[&str],
+) -> io::Result<String> {
     if cancelled() {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "Cancelled"));
     }
@@ -203,7 +233,7 @@ fn run(
     let mut child = cmd.spawn()?;
     let mut stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
-    let prompt = build_request(items, topics);
+    let prompt = prompt.to_owned();
     let writer = std::thread::spawn(move || stdin.write_all(prompt.as_bytes()));
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -228,7 +258,7 @@ fn run(
     if status.is_err() {
         let _ = child.kill();
         let _ = child.wait();
-        return status.map(|_| BTreeMap::new());
+        return status.map(|_| String::new());
     }
     let status = status?;
     if !status.success() {
@@ -244,8 +274,7 @@ fn run(
         std::thread::sleep(Duration::from_millis(30));
     }
     writer.join().map_err(|_| io::Error::other("Request writer stopped"))??;
-    let answer = reader.join().map_err(|_| io::Error::other("Response reader stopped"))??;
-    Ok(parse_suggestions(&answer, items.len(), topics))
+    reader.join().map_err(|_| io::Error::other("Response reader stopped"))?
 }
 
 #[cfg(test)]

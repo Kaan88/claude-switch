@@ -152,7 +152,16 @@ impl AppState {
     pub fn listed_models(&self) -> Option<&[String]> {
         self.compact.models.as_deref()
     }
+}
 
+impl Cache {
+    /// Models listed from Settings › Sessions, shared with the handover dialog.
+    pub fn set_listed_models(&mut self, models: Vec<String>) {
+        self.models = Some(models);
+    }
+}
+
+impl AppState {
     pub fn start_compact(&mut self) {
         if let Some(request) = self.compact.startup.take() {
             let result = self.open_handover_tab(request);
