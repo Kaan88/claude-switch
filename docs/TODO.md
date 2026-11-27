@@ -683,8 +683,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     card is up, the composer's prompt notices are replaced by "Close Claude Code's panel above to send." (or the
     menu's own notice). Checked: unit tests over the recorded /usage rows and a scripted panel. Not checked: the
     card has not been seen in the running app; the "Scanning local sessions…" row is not recorded (its glyph is
-    assumed to be one of the working line's); the card still shows only the last ten of the panel's last fourteen
-    rows above its footer, so on a tall /usage panel the bars at its top are not in the card.
+    assumed to be one of the working line's). The card reads a panel from its own top (see DESIGN.md), so the bars
+    at the top of a tall /usage panel are in it; the selected settings tab as the card's title is tested only on a
+    scripted screen, since the recorded screens keep no styles.
 69. **Code files in the side panel have no syntax highlighting, and their lines wrap mid-token** (owner, 2026-11-27,
     screenshot: `mk_ctx.py` in the docked viewer, plain text, `g[-1]` split across rows). The toolkit already has
     `mdshared-highlight` (`tokens(source, language, dark)`: syntect's bundled set plus small scanners for TOML,

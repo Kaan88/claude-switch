@@ -18,7 +18,8 @@ const MENU_FOOTERS: [&str; 9] = [
 ];
 /// The hint the CLI shows under a running shell command that can move to the background, lower case.
 const BACKGROUND_HINT: &str = "ctrl+b to run in background";
-/// How many rows of a menu the read-only card copies.
+/// How many rows above its footer a panel's card copies when it cannot tell where the panel
+/// starts.
 const PANEL_ROWS: usize = 14;
 
 /// A menu footer: one of the hints, or arrows with a word for moving or choosing.
@@ -306,13 +307,51 @@ pub(super) fn panel(screen: &Screen) -> Option<Panel> {
     let footer = footer_row(screen, &lines)?;
     let esc = lines[footer].to_lowercase().contains("esc");
     let menu = menu(screen);
-    let title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
-    let rows = lines[footer.saturating_sub(PANEL_ROWS)..footer]
-        .iter()
-        .filter(|text| !text.is_empty() && !rule(text))
-        .cloned()
-        .collect();
+    let mut title = menu.as_ref().and_then(|m| m.above(4).last().map(|s| (*s).to_owned())).unwrap_or_default();
+    let top = panel_top(screen, &lines, footer);
+    let mut rows: Vec<(usize, &String)> =
+        (top..footer).map(|row| (row, &lines[row])).filter(|(_, text)| !text.is_empty() && !rule(text)).collect();
+    // The settings dialog's tab row: the selected tab names the panel.
+    if menu.is_none()
+        && let Some(&(row, text)) = rows.first()
+        && settings_tabs(text)
+    {
+        title = selected(screen, row);
+        rows.remove(0);
+    }
+    let rows = rows.into_iter().map(|(_, text)| text.clone()).collect();
     Some(Panel { title, menu, rows, esc })
+}
+
+/// Where a panel starts: under the nearest full-width solid rule above its footer. A panel
+/// taller than the terminal has none on screen; it then starts at the top of the screen, unless
+/// the rows above the footer show conversation (a `❯` prompt, `●` tool or `⎿` result row), in
+/// which case only the last rows are taken.
+fn panel_top(screen: &Screen, lines: &[String], footer: usize) -> usize {
+    let full = |text: &str| solid_rule(text) && text.chars().count() >= screen.cols();
+    if let Some(at) = lines[..footer].iter().rposition(|text| full(text)) {
+        return at + 1;
+    }
+    let conversation = (0..footer).any(|row| {
+        let text = screen.row_text(row);
+        let text = text.trim_start();
+        text.starts_with(['❯', '●', '⎿'])
+    });
+    if conversation { footer.saturating_sub(PANEL_ROWS) } else { 0 }
+}
+
+/// The tab row of Claude Code's settings dialog ("Settings  Status  Config  Usage  Stats").
+fn settings_tabs(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    words.first() == Some(&"Settings") && words.contains(&"Config") && words.contains(&"Usage")
+}
+
+/// The text of a row's inverse cells: the selected tab; empty when none is marked.
+fn selected(screen: &Screen, row: usize) -> String {
+    let Some(line) = screen.line(row) else { return String::new() };
+    let text: String =
+        line.cells().iter().filter(|c| c.attrs.contains(mdshared_term::Attrs::INVERSE)).map(|c| c.ch).collect();
+    collapse(&text)
 }
 
 /// The CLI offers Ctrl+B for the running command: its hint is by the input.

@@ -196,3 +196,42 @@ fn usage_bars_read_their_percentage_and_other_rows_are_left_alone() {
         assert_eq!(usage_bar(&other), None, "{other}");
     }
 }
+
+#[test]
+fn a_panel_is_read_from_its_own_top() {
+    // Taller than the terminal, no rule on screen and no conversation: from the screen's top.
+    let usage = panel(&recorded(PANEL_USAGE)).expect("the /usage panel");
+    assert_eq!(usage.rows[..3], ["Current week (all models)", usage.rows[1].as_str(), "Resets Dec 2, 3am (UTC)"]);
+    assert_eq!(usage_bar(&usage.rows[1]), Some((99, "99% used")));
+    assert_eq!(usage.rows.last().map(String::as_str), Some("You're out of usage credits · /usage-credits to buy more"));
+
+    // Under its rule: the settings tab row is dropped, the conversation above is not copied.
+    let config = panel(&recorded(MENU_CONFIG)).expect("the /config panel");
+    assert_eq!(config.rows.first().map(String::as_str), Some("⌕ Search settings…"));
+    assert!(config.rows.iter().all(|row| !row.contains("/effort") && !row.starts_with("Settings")));
+    assert!(config.rows.len() > 14, "the whole panel, not its last rows");
+    let effort = panel(&recorded(MENU_EFFORT)).expect("the /effort panel");
+    assert_eq!(effort.rows.first().map(String::as_str), Some("Effort"));
+
+    // The selected tab names the panel.
+    let mut screen = Screen::new(100, 12, 0);
+    let rule = "─".repeat(100);
+    let tabs = "  Settings  Status   Config   \x1b[7mUsage\x1b[27m   Stats";
+    screen.feed(
+        format!("❯ /usage\r\n{rule}\r\n{tabs}\r\n\r\n  Current week\r\n  0% used\r\n\r\n  Esc to close").as_bytes(),
+    );
+    let tabbed = panel(&screen).expect("a tabbed panel");
+    assert_eq!(tabbed.title, "Usage");
+    assert_eq!(tabbed.rows, ["Current week", "0% used"]);
+
+    // No rule, and conversation above the footer: only the last rows.
+    let mut screen = Screen::new(100, 30, 0);
+    let mut text = String::from("❯ /usage\r\n  ⎿  Settings dialog dismissed\r\n");
+    for i in 0..20 {
+        text.push_str(&format!("  row {i}\r\n"));
+    }
+    text.push_str("  Esc to close");
+    screen.feed(text.as_bytes());
+    let rows = panel(&screen).expect("a panel").rows;
+    assert_eq!((rows.len(), rows[0].as_str()), (14, "row 6"));
+}

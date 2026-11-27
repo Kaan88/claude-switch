@@ -1527,7 +1527,6 @@ const FIELD: f32 = 30.0;
 const STATUS: f32 = 22.0;
 const DETAIL_LINES: usize = 6;
 const BODY_LINES: usize = 4;
-const MENU_LINES: usize = 10;
 /// The widest a usage bar is drawn.
 const BAR_W: f32 = 320.0;
 
@@ -1589,7 +1588,8 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         chat.question.menu.as_ref().map(|m| {
             // A panel has no title row: its rows say what it is.
             if m.choices.is_empty() {
-                HEADER + 6.0 + m.rows.len().min(MENU_LINES) as f32 * LINE
+                let title = if m.title.is_empty() { 0.0 } else { LINE };
+                HEADER + 6.0 + title + m.rows.len() as f32 * LINE
             } else {
                 HEADER + LINE + 6.0 + m.choices.len() as f32 * (CHOICE + 4.0)
             }
@@ -1711,7 +1711,14 @@ impl Draw<'_> {
         let mut y = inner.y;
         p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code panel", pal.muted, inner.w);
         y += HEADER + 6.0;
-        for row in menu.rows.iter().rev().take(MENU_LINES).rev() {
+        if !menu.title.is_empty() {
+            p.text(Face::Semibold, 12.5, inner.x, y + LINE / 2.0, &menu.title, pal.text, inner.w);
+            y += LINE;
+        }
+        // From the panel's top, as many rows as the card has room for; the rest is named.
+        let room = ((inner.bottom() - y - FIELD - STATUS) / LINE).floor().max(1.0) as usize;
+        let (shown, more) = if menu.rows.len() > room { (room - 1, menu.rows.len() - room + 1) } else { (room, 0) };
+        for row in menu.rows.iter().take(shown) {
             let cy = y + LINE / 2.0;
             match screens::usage_bar(row) {
                 Some((percent, label)) => {
@@ -1727,6 +1734,11 @@ impl Draw<'_> {
                 }
                 None => copied_row(p, Face::Mono, 11.0, inner.x, cy, row, pal.muted, inner.w),
             }
+            y += LINE;
+        }
+        if more > 0 {
+            let note = format!("{more} more rows in the terminal");
+            p.text(Face::Ui, 11.0, inner.x, y + LINE / 2.0, &note, pal.muted, inner.w);
             y += LINE;
         }
         let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);

@@ -949,7 +949,12 @@ Any menu whose footer (an "Esc to …"/"Enter to …" hint, or arrows with navig
 last row by the input shows as a card when no question or permission card covers it: its title row
 and its numbered choices as buttons, answered like a question (arrows, then Enter once the screen
 shows the highlight on that row with the same title and choices); the step ends as soon as that
-menu is gone. A menu without numbered rows is a "Claude Code panel": its rows read-only (a usage row,
+menu is gone. A menu without numbered rows is a "Claude Code panel", read from its own top: under the
+nearest full-width solid rule above its footer, without the settings dialog's tab row ("Settings
+Status Config Usage Stats"), whose selected (inverse) tab becomes the card's title. A panel taller
+than the terminal has no rule on screen; it is then read from the top of the screen, unless the rows
+above its footer show conversation (a `❯`, `●` or `⎿` row), when only its last 14 rows are. The card
+grows to fit, up to its usual cap, and names the rows it has no room for. Its rows are read-only (a usage row,
 block characters then "N% used", drawn as a bar in the theme's colours; a row starting with a spinner
 glyph keeps it in the working line's fixed slot, as every copied CLI row does), with Close (Esc) when
 its footer offers Esc and Open terminal otherwise; while it is up the composer says "Close Claude
