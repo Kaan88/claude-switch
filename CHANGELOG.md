@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Settings: **Peek** at the top right of every page. Hold it with the mouse, or hold Space when
+  nothing focused uses Space, and the dim and the dialog fade away (instantly with Reduce motion)
+  to show the window as it is with the changes already applied, Mica or Acrylic included; a pill at
+  the top says how to come back. Let go and Settings returns on the same page, scroll and focus.
+  Clicks and keys do nothing while peeking, and switching away from the window ends it.
 - Settings › Appearance: the dark and light palettes (and the Terminal page's colour presets) are a
   grid of equal cards, five across, each a small window in that palette: title bar, side pane, text,
   accent button and a terminal with its colours. Names sit whole inside the card; a long custom name

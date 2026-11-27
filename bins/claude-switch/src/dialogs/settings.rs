@@ -13,6 +13,7 @@ mod appearance;
 mod chat_page;
 mod meaning;
 mod pages;
+pub(crate) mod peek;
 mod theme_editor;
 mod tiles;
 pub(crate) use chat_page::CHAT;

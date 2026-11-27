@@ -797,6 +797,24 @@ kept and this window reloads the current settings, without asking for a restart.
 the separately persisted usage opt-in or handover consent; the tab-restore preference still uses
 `window.ini`. Switching categories does not write settings.
 
+**Peek.** Settings dims the window, so a palette, the backdrop, terminal colours or the Chat
+reading width can't be judged under it. The **Peek** button (an eye, at the top right of the page's
+card on its title's line; Close stays in the footer; tooltip "Hold to see the window without
+Settings") hides the dim and the dialog while the left button is held on it, and Space does the
+same while held when Settings has the keyboard and what has focus does nothing with Space: the
+category list, no control, or a number. A text box, switch, segmented choice, palette card, button,
+Close or an open dropdown or picker keeps its Space, and Space with Ctrl, Alt or Shift does not
+peek. Both fade the layer (a snapshot of the window under it, blended) over 120 ms each way, instant
+with Reduce motion, Windows' reduced motion or high contrast; when settled nothing of Settings is
+drawn, so Mica or Acrylic shows exactly as without it. A pill at the top centre, under the title
+bar ("Peeking · let go to return to Settings", an eye, accent border on the popup surface) says
+what is happening. Settings keeps its page, scroll and focus, and nothing is saved by a peek.
+While peeking the app swallows every press, key, wheel, text and pointer move (`AppState::
+peek_event`), so nothing reaches the window under it; only the release of what started the peek
+ends it: the left button anywhere (the press captured the mouse, so a release outside the window
+arrives too), or Space's key release, which the host does not reduce and the app reads in its raw
+winit hook. Losing the keyboard (Alt+Tab, a click in another window) ends any peek.
+
 ## Recent sessions and local marks
 
 Recent is the default. It sorts sessions across folders by activity, newest first, with local

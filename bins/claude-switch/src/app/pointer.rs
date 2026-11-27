@@ -132,7 +132,11 @@ impl AppState {
         let mut changed = std::mem::replace(&mut self.hover, hover) != hover;
         let over = hover
             .filter(|_| layer == Layer::Base)
-            .and_then(|key| Some(Over { key, text: topbar::tip_of(key)?.into(), anchor: self.rect_of(key)? }));
+            .and_then(|key| Some(Over { key, text: topbar::tip_of(key)?.into(), anchor: self.rect_of(key)? }))
+            .or_else(|| {
+                let anchor = self.settings_peek_tip().filter(|_| layer == Layer::Dialog)?;
+                Some(Over { key: Target::SettingsPeek, text: crate::dialogs::PEEK_TIP.into(), anchor })
+            });
         changed |= self.tip.hover_at(cx.now(), over, self.mouse);
         cx.set_cursor(self.pointer_cursor(layer, hover, cx.size()));
         changed
