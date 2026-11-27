@@ -231,6 +231,12 @@ impl Shared {
     }
 }
 
+/// The lock, also after a thread panicked while it held it: the run's state is only shown and
+/// reported, and the screen and the clean-up must still get to it.
+pub fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub struct Run {
     pub shared: Arc<Mutex<Shared>>,
     pub live: Arc<Mutex<Vec<String>>>,
@@ -517,7 +523,7 @@ fn check(setup: &Setup, run: &Run, out: &Path, script: &str) -> Result<Vec<State
     let summary = out.join(script).join("check.json");
     let log = out.join(script).join("check.log");
     let _ = std::fs::remove_file(&summary);
-    let program = run.shared.lock().unwrap().check.clone().ok_or("the check was not built")?;
+    let program = lock(&run.shared).check.clone().ok_or("the check was not built")?;
     let mut command = Command::new(program);
     without_key(&mut command, setup);
     command.args(["cli_compat", "--ignored", "--nocapture"]);
@@ -546,13 +552,13 @@ fn check(setup: &Setup, run: &Run, out: &Path, script: &str) -> Result<Vec<State
 }
 
 fn say(run: &Run, line: String) {
-    run.shared.lock().unwrap().lines.push(line);
+    lock(&run.shared).lines.push(line);
 }
 
 /// Records one script and checks it; the row holds the result.
 fn run_script(setup: &Setup, run: &Run, i: usize) {
     let (script, out, n, total) = {
-        let mut shared = run.shared.lock().unwrap();
+        let mut shared = lock(&run.shared);
         shared.phase = "Recording".to_owned();
         let row = &mut shared.rows[i];
         row.status = Status::Recording;
@@ -569,9 +575,9 @@ fn run_script(setup: &Setup, run: &Run, i: usize) {
     };
     let name = script.name.clone();
     say(run, format!("[{n}/{total}] {name}: recording"));
-    run.live.lock().unwrap().clear();
+    lock(&run.live).clear();
     let finish = |status: Status, states: Vec<StateResult>, note: String| {
-        let mut shared = run.shared.lock().unwrap();
+        let mut shared = lock(&run.shared);
         let row = &mut shared.rows[i];
         row.took = row.started.map(|s| s.elapsed());
         (row.status, row.states, row.note) = (status, states, note);
@@ -604,11 +610,13 @@ fn run_script(setup: &Setup, run: &Run, i: usize) {
     let note = match recorder.run(&script.body) {
         Ok(()) => String::new(),
         Err(Abort::Stopped) => return finish(Status::Skipped("stopped".to_owned()), Vec::new(), String::new()),
-        Err(why @ Abort::Start(_)) => return finish(Status::Error(why.to_string()), Vec::new(), String::new()),
+        Err(why @ (Abort::Start(_) | Abort::Script(_) | Abort::Io(_))) => {
+            return finish(Status::Error(why.to_string()), Vec::new(), String::new());
+        }
         Err(why @ Abort::Timeout(_)) => why.to_string(),
     };
     {
-        let mut shared = run.shared.lock().unwrap();
+        let mut shared = lock(&run.shared);
         shared.rows[i].status = Status::Checking;
         shared.phase = "Checking".to_owned();
         shared.cost = cost(&setup.project);
@@ -817,7 +825,7 @@ fn summary(shared: &Shared) -> serde_json::Value {
 /// Everything queued is done: the report, the summary, and the version as checked when the whole
 /// set ran.
 fn wrap_up(setup: &Setup, run: &Run) {
-    let mut shared = run.shared.lock().unwrap();
+    let mut shared = lock(&run.shared);
     shared.cost = cost(&setup.project);
     shared.took = Some(shared.started.elapsed());
     shared.phase = "Done".to_owned();
@@ -837,11 +845,11 @@ fn wrap_up(setup: &Setup, run: &Run) {
 fn worker(setup: &Setup, run: &Run) {
     // The check's test program first: a build error is found before any model request is made.
     {
-        run.shared.lock().unwrap().phase = "Building the check (cargo test --no-run)".to_owned();
+        lock(&run.shared).phase = "Building the check (cargo test --no-run)".to_owned();
         say(run, "building the check".to_owned());
-        let out = run.shared.lock().unwrap().out.clone();
+        let out = lock(&run.shared).out.clone();
         let built = build_check(setup, &out, &run.stop);
-        let mut shared = run.shared.lock().unwrap();
+        let mut shared = lock(&run.shared);
         match built {
             Ok(program) => shared.check = Some(program),
             Err(why) => {
@@ -855,9 +863,9 @@ fn worker(setup: &Setup, run: &Run) {
     }
     let mut started = false;
     loop {
-        let next = run.shared.lock().unwrap().queue.pop_front();
+        let next = lock(&run.shared).queue.pop_front();
         let Some(i) = next else {
-            if !run.shared.lock().unwrap().done {
+            if !lock(&run.shared).done {
                 wrap_up(setup, run);
             }
             if run.quit.load(Ordering::Relaxed) {
@@ -867,11 +875,11 @@ fn worker(setup: &Setup, run: &Run) {
             continue;
         };
         if run.stop.load(Ordering::Relaxed) {
-            run.shared.lock().unwrap().rows[i].status = Status::Skipped("stopped".to_owned());
+            lock(&run.shared).rows[i].status = Status::Skipped("stopped".to_owned());
             continue;
         }
         run_script(setup, run, i);
-        let mut shared = run.shared.lock().unwrap();
+        let mut shared = lock(&run.shared);
         match shared.rows[i].status.clone() {
             // Claude Code that does not start for the first script will not start for the rest.
             Status::Error(why) if !started => {
@@ -931,6 +939,12 @@ pub fn main(args: &[String]) -> i32 {
     if let Some(unknown) = options.only.iter().find(|name| all.iter().all(|s| &s.name != *name)) {
         return fail(format!("no script named {unknown} in {}", dir.display()));
     }
+    // A script that does not read ends the run before any model request.
+    for script in &all {
+        if let Err(why) = crate::record::script_reads(&script.body) {
+            return fail(format!("{}: {why}", script.name));
+        }
+    }
     let (plain, model, only) = (options.plain, options.model.clone(), options.only.clone());
     let out = options.out.clone();
     let (setup, account) = match setup(options) {
@@ -987,24 +1001,34 @@ pub fn main(args: &[String]) -> i32 {
         stop: Arc::new(AtomicBool::new(false)),
         quit: Arc::new(AtomicBool::new(plain)),
     };
-    std::thread::scope(|scope| {
+    let worked = std::thread::scope(|scope| {
         let work = scope.spawn(|| worker(&setup, &run));
         if plain {
             let mut printed = 0;
             while !work.is_finished() {
-                let lines: Vec<String> = run.shared.lock().unwrap().lines[printed..].to_vec();
+                let lines: Vec<String> = lock(&run.shared).lines[printed..].to_vec();
                 printed += lines.len();
                 lines.iter().for_each(|line| println!("{line}"));
                 std::thread::sleep(Duration::from_millis(100));
             }
-            run.shared.lock().unwrap().lines[printed..].iter().for_each(|line| println!("{line}"));
-        } else if let Err(e) = crate::tui::run(&run) {
+            lock(&run.shared).lines[printed..].iter().for_each(|line| println!("{line}"));
+        } else if let Err(e) = crate::tui::run(&run, || work.is_finished()) {
             eprintln!("the screen failed: {e}");
             run.stop.store(true, Ordering::Relaxed);
             run.quit.store(true, Ordering::Relaxed);
         }
+        work.join()
     });
-    let shared = run.shared.lock().unwrap();
+    if let Err(panic) = worked {
+        // The worker stopped half way (its panic is printed above): the scratch folder and the
+        // account's transcripts of the run still go, and nothing counts as checked.
+        clean(&setup);
+        let why =
+            panic.downcast_ref::<&str>().map(|s| (*s).to_owned()).or_else(|| panic.downcast_ref::<String>().cloned());
+        eprintln!("The recorder stopped unexpectedly: {}", why.unwrap_or_default());
+        return 2;
+    }
+    let shared = lock(&run.shared);
     let (pass, fail, skipped) = shared.counts();
     if plain {
         println!();
@@ -1049,6 +1073,7 @@ mod tests {
         for script in &all {
             assert!(here.join("expect").join(format!("{}.expect", script.name)).is_file(), "{}", script.name);
             assert!(script.body.lines().any(|l| l == "start"), "{}", script.name);
+            crate::record::script_reads(&script.body).unwrap_or_else(|why| panic!("{}: {why}", script.name));
             assert!(script.args.iter().all(|a| !a.contains("{scripts}")), "{}", script.name);
         }
         let deny = all.iter().find(|s| s.name == "deny").expect("deny");

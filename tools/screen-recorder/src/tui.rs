@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph, Wrap};
 
-use crate::compat::{Row, Run, Shared, Status, mmss};
+use crate::compat::{Row, Run, Shared, Status, lock, mmss};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const KEYS: &str = " ↑↓ select · Enter details · r record again · q quit";
@@ -154,7 +154,7 @@ fn live(frame: &mut Frame, area: Rect, run: &Run, shared: &Shared) {
     let block = Block::new().borders(Borders::TOP).title(title).title_style(bold());
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let rows = run.live.lock().unwrap().clone();
+    let rows = lock(&run.live).clone();
     let end = rows.iter().rposition(|row| !row.trim().is_empty()).map_or(0, |i| i + 1);
     let start = end.saturating_sub(inner.height as usize);
     let lines: Vec<Line> = rows[start..end].iter().map(|row| Line::raw(clip(row, inner.width as usize))).collect();
@@ -255,7 +255,7 @@ fn details(frame: &mut Frame, area: Rect, shared: &Shared, view: &View) {
 }
 
 fn draw(frame: &mut Frame, run: &Run, view: &View) {
-    let shared = run.shared.lock().unwrap();
+    let shared = lock(&run.shared);
     let tick = (view.began.elapsed().as_millis() / 100) as usize;
     let rows = shared.rows.len() as u16 + 1;
     let [head, scripts, rest, keys] =
@@ -274,16 +274,34 @@ fn draw(frame: &mut Frame, run: &Run, view: &View) {
     frame.render_widget(Paragraph::new(keys_line).style(dim()), keys);
 }
 
+/// Once asked to quit: when the worker has wrapped up (the report) and gone idle. Without the
+/// worker (it ended, or it panicked) there is nothing to wait for.
+fn leave(quitting: bool, done: bool, worker_gone: bool) -> bool {
+    worker_gone || quitting && done
+}
+
+/// However the screen ends, also by a panic: the terminal is itself again, and the worker is
+/// told to stop so that the run can end (and clean up) instead of waiting for it.
+struct Restore<'a>(&'a Run);
+
+impl Drop for Restore<'_> {
+    fn drop(&mut self) {
+        self.0.stop.store(true, Ordering::Relaxed);
+        self.0.quit.store(true, Ordering::Relaxed);
+        ratatui::restore();
+    }
+}
+
 /// Shows the run until the user leaves; `q` ends the recording in progress and the worker.
-pub fn run(run: &Run) -> std::io::Result<()> {
+pub fn run(run: &Run, worker_gone: impl Fn() -> bool) -> std::io::Result<()> {
     let mut terminal = ratatui::try_init()?;
+    let _restore = Restore(run);
     let mut view = View { selected: 0, details: false, scroll: 0, began: Instant::now(), quitting: false };
-    let result = loop {
+    loop {
         if let Err(e) = terminal.draw(|frame| draw(frame, run, &view)) {
             break Err(e);
         }
-        // Once asked to quit: until the worker has wrapped up (the report) and gone idle.
-        if view.quitting && run.shared.lock().unwrap().done {
+        if leave(view.quitting, lock(&run.shared).done, worker_gone()) {
             break Ok(());
         }
         if !event::poll(Duration::from_millis(80))? {
@@ -293,7 +311,7 @@ pub fn run(run: &Run) -> std::io::Result<()> {
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        let count = run.shared.lock().unwrap().rows.len();
+        let count = lock(&run.shared).rows.len();
         let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => view.quitting = true,
@@ -307,7 +325,7 @@ pub fn run(run: &Run) -> std::io::Result<()> {
             KeyCode::Enter => (view.details, view.scroll) = (!view.details, 0),
             KeyCode::Esc => view.details = false,
             KeyCode::Char('r') | KeyCode::Char('R') => {
-                let mut shared = run.shared.lock().unwrap();
+                let mut shared = lock(&run.shared);
                 let fatal = shared.fatal.is_some();
                 if shared.rows[view.selected].finished() && !fatal && !view.quitting {
                     shared.rows[view.selected].status = Status::Queued;
@@ -321,7 +339,17 @@ pub fn run(run: &Run) -> std::io::Result<()> {
             run.stop.store(true, Ordering::Relaxed);
             run.quit.store(true, Ordering::Relaxed);
         }
-    };
-    ratatui::restore();
-    result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_screen_leaves_when_the_worker_is_gone_even_without_its_report() {
+        assert!(!leave(false, false, false) && !leave(true, false, false) && !leave(false, true, false));
+        assert!(leave(true, true, false), "asked to quit, and the report is written");
+        assert!(leave(false, false, true) && leave(true, false, true), "a worker that panicked sets no done");
+    }
 }

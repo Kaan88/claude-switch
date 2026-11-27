@@ -32,7 +32,7 @@ const SIGN_IN_SCREENS: [&str; 3] = ["Select login method", "Choose the text styl
 const KEY_DIALOG: &str = "Do you want to use this API key?";
 const TRUST_DIALOG: &str = "trust this folder";
 
-fn unescape(s: &str) -> Vec<u8> {
+fn unescape(s: &str) -> Result<Vec<u8>, String> {
     let b = s.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -45,7 +45,8 @@ fn unescape(s: &str) -> Vec<u8> {
                 b't' => out.push(b'\t'),
                 b's' => out.push(b' '),
                 b'x' => {
-                    out.push(u8::from_str_radix(&s[i + 2..i + 4], 16).expect("two hex digits after \\x"));
+                    let hex = s.get(i + 2..i + 4).and_then(|h| u8::from_str_radix(h, 16).ok());
+                    out.push(hex.ok_or_else(|| "two hex digits after \\x".to_owned())?);
                     i += 2;
                 }
                 c => out.push(c),
@@ -56,7 +57,7 @@ fn unescape(s: &str) -> Vec<u8> {
             i += 1;
         }
     }
-    out
+    Ok(out)
 }
 
 /// A snapshot without what the CLI shows of an API key ("sk-ant-...last characters" in its
@@ -98,6 +99,10 @@ pub enum Abort {
     Start(String),
     /// A `wait` or `gone` ran out of time (only when the recorder is strict).
     Timeout(String),
+    /// A line of the script does not read.
+    Script(String),
+    /// A file or the terminal could not be written.
+    Io(String),
 }
 
 impl std::fmt::Display for Abort {
@@ -106,6 +111,8 @@ impl std::fmt::Display for Abort {
             Abort::Stopped => f.write_str("stopped"),
             Abort::Start(why) => write!(f, "Claude Code did not reach its input: {why}"),
             Abort::Timeout(what) => write!(f, "the screen never showed what the script waited for: {what}"),
+            Abort::Script(why) => write!(f, "the script does not read: {why}"),
+            Abort::Io(why) => write!(f, "the recording could not be written: {why}"),
         }
     }
 }
@@ -175,22 +182,40 @@ impl Recorder {
         })
     }
 
-    /// Runs a script's lines; the log is written to `log.txt` however it ends.
+    /// Runs a script's lines; the log is written to `log.txt` however it ends. Every line is read
+    /// first: a mistake in the script ends it before a key goes.
     pub fn run(&mut self, script: &str) -> Result<(), Abort> {
+        let lines: Vec<&str> =
+            script.lines().map(str::trim_end).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+        let steps: Result<Vec<Step>, Abort> = lines
+            .iter()
+            .map(|line| Step::read(line).map_err(|why| Abort::Script(format!("{line:?}: {why}"))))
+            .collect();
         let mut result = Ok(());
-        for line in script.lines().map(str::trim_end).filter(|l| !l.is_empty() && !l.starts_with('#')) {
-            let (op, rest) = line.split_once(' ').unwrap_or((line, ""));
-            self.note(&format!(">> {line}"));
-            result = self.step(op, rest);
-            if let Err(why) = &result {
+        match steps {
+            Err(why) => {
                 self.note(&format!("ABORT {why}"));
-                self.snap("aborted");
-                break;
+                result = Err(why);
+            }
+            Ok(steps) => {
+                for (line, step) in lines.iter().zip(steps) {
+                    self.note(&format!(">> {line}"));
+                    result = self.step(step);
+                    if let Err(why) = &result {
+                        self.note(&format!("ABORT {why}"));
+                        let _ = self.snap("aborted");
+                        break;
+                    }
+                }
             }
         }
         let _ = self.pty.kill();
         self.publish(true);
-        std::fs::write(self.out.join("log.txt"), &self.log).expect("write log");
+        if let Err(e) = std::fs::write(self.out.join("log.txt"), &self.log)
+            && result.is_ok()
+        {
+            result = Err(Abort::Io(format!("log.txt: {e}")));
+        }
         result
     }
 
@@ -311,12 +336,17 @@ impl Recorder {
         s
     }
 
-    fn snap(&mut self, name: &str) {
-        std::fs::write(self.out.join(format!("{name}.ansi")), redact(&self.ansi())).expect("write snapshot");
-        std::fs::write(self.out.join(format!("{name}.txt")), redact(&self.text())).expect("write snapshot");
+    fn snap(&mut self, name: &str) -> Result<(), Abort> {
+        for (path, text) in [
+            (self.out.join(format!("{name}.ansi")), redact(&self.ansi())),
+            (self.out.join(format!("{name}.txt")), redact(&self.text())),
+        ] {
+            std::fs::write(&path, text).map_err(|e| Abort::Io(format!("{}: {e}", path.display())))?;
+        }
         let c = self.screen.cursor();
         let quiet = self.last_output.elapsed().as_millis();
         self.note(&format!("snap {name} cursor {} {} quiet {quiet} ms", c.row, c.col));
+        Ok(())
     }
 
     fn has(&self, text: &str) -> bool {
@@ -340,9 +370,9 @@ impl Recorder {
         Ok(())
     }
 
-    /// Whether `done` came true within `max_ms`.
-    fn until(&mut self, max_ms: &str, mut done: impl FnMut(&Recorder) -> bool) -> Result<bool, Abort> {
-        let end = Instant::now() + Duration::from_millis(max_ms.parse().expect("milliseconds"));
+    /// Whether `done` came true within `max`.
+    fn until(&mut self, max: Duration, mut done: impl FnMut(&Recorder) -> bool) -> Result<bool, Abort> {
+        let end = Instant::now() + max;
         loop {
             self.pump();
             self.stopped()?;
@@ -370,7 +400,7 @@ impl Recorder {
         let end = Instant::now() + Duration::from_secs(60);
         let (mut key, mut trust) = (false, false);
         loop {
-            if self.until("200", ready)? {
+            if self.until(Duration::from_millis(200), ready)? {
                 break;
             }
             if let Some(screen) = SIGN_IN_SCREENS.iter().find(|s| self.has(s)) {
@@ -402,42 +432,36 @@ impl Recorder {
         self.run_for(Duration::from_millis(1500))
     }
 
-    fn step(&mut self, op: &str, rest: &str) -> Result<(), Abort> {
-        let ms = |s: &str| Duration::from_millis(s.parse().expect("milliseconds"));
-        match op {
-            "sleep" => self.run_for(ms(rest))?,
-            "send" => {
+    fn step(&mut self, step: Step) -> Result<(), Abort> {
+        match step {
+            Step::Sleep(time) => self.run_for(time)?,
+            Step::Send(bytes) => {
                 self.pump();
-                self.write(&unescape(rest));
+                self.write(&bytes);
             }
-            "wait" | "gone" => {
-                let (text, max) = rest.rsplit_once(' ').expect("TEXT MS");
-                let want = op == "wait";
-                if !self.until(max, |r| r.has(text) == want)? {
+            Step::Wait { text, want, max } => {
+                if !self.until(max, |r| r.has(&text) == want)? {
+                    let op = if want { "wait" } else { "gone" };
                     self.note(&format!("TIMEOUT {op} {text}"));
                     if self.strict {
                         return Err(Abort::Timeout(format!("{op} {text}")));
                     }
                 }
             }
-            "quiet" => {
-                let (time, max) = rest.split_once(' ').expect("MS MAX");
-                let time = ms(time);
+            Step::Quiet { time, max } => {
                 if !self.until(max, |r| r.last_output.elapsed() >= time)? {
                     self.note("TIMEOUT quiet");
                 }
             }
-            "idle" => {
-                let (time, name) = rest.split_once(' ').expect("MS NAME");
+            Step::Idle { time, name } => {
                 self.verbose = true;
-                let ran = self.run_for(ms(time));
+                let ran = self.run_for(time);
                 self.verbose = false;
                 ran?;
-                self.snap(name);
+                self.snap(&name)?;
             }
-            "watch" => {
-                let (time, name) = rest.split_once(' ').expect("MS NAME");
-                let end = Instant::now() + ms(time);
+            Step::Watch { time, name } => {
+                let end = Instant::now() + time;
                 let (mut last, mut n) = (String::new(), 0);
                 while Instant::now() < end {
                     self.run_for(Duration::from_secs(1))?;
@@ -445,41 +469,117 @@ impl Recorder {
                     if text != last {
                         last = text;
                         n += 1;
-                        self.snap(&format!("{name}-{n:03}"));
+                        self.snap(&format!("{name}-{n:03}"))?;
                     }
                 }
             }
-            "resize" => {
-                let (cols, rows) = rest.split_once(' ').expect("COLS ROWS");
-                let (cols, rows): (u16, u16) = (cols.parse().expect("columns"), rows.parse().expect("rows"));
+            Step::Resize { cols, rows } => {
                 self.pump();
                 self.screen.resize(cols.into(), rows.into());
-                self.pty.resize(cols, rows).expect("resize");
+                self.pty.resize(cols, rows).map_err(|e| Abort::Io(format!("resize: {e}")))?;
             }
-            "snap" => {
+            Step::Snap(name) => {
                 self.pump();
-                self.snap(rest);
+                self.snap(&name)?;
             }
             // The newest transcript in REC_PROJECT, as it is on disk now.
-            "tscopy" => {
-                let dir = std::env::var("REC_PROJECT").expect("REC_PROJECT for tscopy");
+            Step::TsCopy(name) => {
+                let dir = std::env::var("REC_PROJECT").map_err(|_| Abort::Script("tscopy needs REC_PROJECT".into()))?;
                 let newest = std::fs::read_dir(&dir)
-                    .expect("REC_PROJECT folder")
+                    .map_err(|e| Abort::Io(format!("{dir}: {e}")))?
                     .filter_map(Result::ok)
                     .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
                     .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
                 match newest {
                     Some(e) => {
-                        let len = std::fs::copy(e.path(), self.out.join(format!("{rest}.jsonl"))).expect("copy");
-                        self.note(&format!("tscopy {rest} {len} bytes"));
+                        let to = self.out.join(format!("{name}.jsonl"));
+                        let len =
+                            std::fs::copy(e.path(), &to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+                        self.note(&format!("tscopy {name} {len} bytes"));
                     }
                     None => self.note("tscopy: no transcript"),
                 }
             }
-            "start" => self.start()?,
-            _ => panic!("unknown op {op}"),
+            Step::Start => self.start()?,
         }
         Ok(())
+    }
+}
+
+/// Whether every line of a script reads, without running any of it.
+pub fn script_reads(script: &str) -> Result<(), String> {
+    for line in script.lines().map(str::trim_end).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        Step::read(line).map_err(|why| format!("{line:?}: {why}"))?;
+    }
+    Ok(())
+}
+
+/// One line of a script, read before anything runs.
+#[derive(Debug, PartialEq)]
+enum Step {
+    Sleep(Duration),
+    Send(Vec<u8>),
+    /// `wait` (`want`) or `gone` (not `want`): until the screen shows `text`, or no longer does.
+    Wait {
+        text: String,
+        want: bool,
+        max: Duration,
+    },
+    Quiet {
+        time: Duration,
+        max: Duration,
+    },
+    Idle {
+        time: Duration,
+        name: String,
+    },
+    Watch {
+        time: Duration,
+        name: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    Snap(String),
+    TsCopy(String),
+    Start,
+}
+
+fn number<T: std::str::FromStr>(text: &str, what: &str) -> Result<T, String> {
+    text.trim().parse().map_err(|_| format!("{text:?} is not {what}"))
+}
+
+impl Step {
+    fn read(line: &str) -> Result<Step, String> {
+        let (op, rest) = line.split_once(' ').unwrap_or((line, ""));
+        let ms = |s: &str| number::<u64>(s, "a number of milliseconds").map(Duration::from_millis);
+        let two = |what: &str| rest.split_once(' ').ok_or_else(|| format!("{op} needs {what}"));
+        Ok(match op {
+            "sleep" => Step::Sleep(ms(rest)?),
+            "send" => Step::Send(unescape(rest)?),
+            "wait" | "gone" => {
+                let (text, max) = rest.rsplit_once(' ').ok_or_else(|| format!("{op} needs TEXT MS"))?;
+                Step::Wait { text: text.to_owned(), want: op == "wait", max: ms(max)? }
+            }
+            "quiet" => {
+                let (time, max) = two("MS MAX")?;
+                Step::Quiet { time: ms(time)?, max: ms(max)? }
+            }
+            "idle" | "watch" => {
+                let (time, name) = two("MS NAME")?;
+                let (time, name) = (ms(time)?, name.to_owned());
+                if op == "idle" { Step::Idle { time, name } } else { Step::Watch { time, name } }
+            }
+            "resize" => {
+                let (cols, rows) = two("COLS ROWS")?;
+                Step::Resize { cols: number(cols, "a number of columns")?, rows: number(rows, "a number of rows")? }
+            }
+            "snap" => Step::Snap(rest.to_owned()),
+            "tscopy" => Step::TsCopy(rest.to_owned()),
+            "start" => Step::Start,
+            _ => return Err(format!("unknown op {op}")),
+        })
     }
 }
 
@@ -534,7 +634,33 @@ mod tests {
 
     #[test]
     fn escapes_in_a_send_become_the_keys_they_name() {
-        assert_eq!(unescape(r"a\sb\r"), b"a b\r");
-        assert_eq!(unescape(r"\e[A\x03\\"), b"\x1b[A\x03\\");
+        assert_eq!(unescape(r"a\sb\r").unwrap(), b"a b\r");
+        assert_eq!(unescape(r"\e[A\x03\\").unwrap(), b"\x1b[A\x03\\");
+        assert!(unescape(r"\x4").is_err() && unescape(r"\xzz").is_err(), "no panic on a short or bad \\x");
+    }
+
+    #[test]
+    fn a_script_line_that_does_not_read_is_an_error_not_a_panic() {
+        let ms = Duration::from_millis;
+        assert_eq!(Step::read("sleep 250"), Ok(Step::Sleep(ms(250))));
+        assert_eq!(
+            Step::read("wait for shortcuts 9000"),
+            Ok(Step::Wait { text: "for shortcuts".into(), want: true, max: ms(9000) })
+        );
+        assert_eq!(Step::read("resize 80 24"), Ok(Step::Resize { cols: 80, rows: 24 }));
+        assert_eq!(Step::read("send hi\\r"), Ok(Step::Send(b"hi\r".to_vec())));
+        for bad in [
+            "jump 3",
+            "sleep soon",
+            "wait 9000x",
+            "gone",
+            "quiet 500",
+            "idle x name",
+            "resize 80",
+            "resize 80 lots",
+            "send \\x4",
+        ] {
+            assert!(Step::read(bad).is_err(), "{bad}");
+        }
     }
 }

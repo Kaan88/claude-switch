@@ -43,7 +43,8 @@ Environment:
 
 ## Scripts
 
-One op per line; `#` starts a comment.
+One op per line; `#` starts a comment. Every line is read before the first one runs: a line that
+does not read (an unknown op, a number that is not one) ends the script before a key goes.
 
 | Op | What it does |
 | --- | --- |
@@ -120,7 +121,8 @@ The run shows on a screen of its own:
 
 Keys: Up and Down choose a script, Enter shows its states and the screen of the first one that
 does not match (Up, Down, PgUp, PgDn scroll; Enter or Esc go back), `r` records the chosen script
-again, `q` or Ctrl+C stops. However it ends, the scratch folder (`%TEMP%\cs-compat`) is removed,
+again, `q` or Ctrl+C stops. The screen also ends when the worker stopped unexpectedly (a panic),
+and gives the terminal back. However it ends, the scratch folder (`%TEMP%\cs-compat`) is removed,
 and from the account's folder the scratch transcripts (`projects\…-cs-compat-work`, only that
 folder) and the files named after those sessions (`plans`, `session-env`, `file-history`). What
 stays in the account is Claude Code's own bookkeeping: the scratch folder's entry in `.claude.json`,
