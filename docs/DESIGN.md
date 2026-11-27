@@ -1232,7 +1232,11 @@ respects an explicitly steady cursor, the system caret interval, focus, visibili
 
 Opacity defaults to 100% and steps down to 60% by 5%. It affects normal backgrounds and padding,
 not text, explicit terminal backgrounds, or selected cells. The toolkit can raise opacity for text
-contrast. Without an active Mica or Acrylic backdrop (including high contrast or loss of window
+contrast. On a translucent frame the grid requests grayscale glyph masks even for cells the
+toolkit promotes to opaque. Edges use source-over on premultiplied BGRA, not a second blend
+against black. On an opaque frame the font returns to the system's antialiasing. The pinned
+toolkit still raises opacity per ink colour, so dim text can have darker cell backgrounds.
+Without an active Mica or Acrylic backdrop (including high contrast or loss of window
 focus), the setting is disabled and the surface draws opaque. The scrollback thumb has a solid
 gutter and the end notice is drawn on solid rows. The Chat drawer header is solid. Window-level
 popups and dialogs temporarily use an opaque terminal frame beneath their edges and scrims.

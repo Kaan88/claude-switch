@@ -81,6 +81,14 @@ impl Surface {
         let Self { area, inner, metrics, scheme, pal } = *self;
         let sel = t.selection.as_ref().filter(|s| !s.is_empty());
         let translucent = percent < 100 && p.frost_key().is_some();
+        // termview can raise individual cells to opaque. Its premultiplied blitter
+        // then takes the LCD path on those cells unless the masks themselves are gray.
+        static OPAQUE_AA: std::sync::OnceLock<mdshared_text::Subpixel> = std::sync::OnceLock::new();
+        font.set_subpixel(if translucent {
+            mdshared_text::Subpixel::None
+        } else {
+            *OPAQUE_AA.get_or_init(mdshared_ui::platform::subpixel_order)
+        });
         let opacity = BackgroundOpacity::new(f32::from(percent) / 100.0).with_padding(true);
         let mut grid = inner;
         if translucent {
@@ -170,6 +178,42 @@ mod tests {
     fn pixel(b: &Bitmap, x: usize, y: usize) -> [u8; 4] {
         let i = (y * b.width as usize + x) * 4;
         b.pixels[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn gray_terminal_glyphs_composite_over_black_and_white_without_fringe() {
+        let mut term = Term::empty((11, 4));
+        term.feed(b"\x1b[38;2;185;185;185mS\x1b[2mS");
+        let mut s = surface();
+        s.scheme.background = [16; 3];
+        let mut bmp = Bitmap::new(105, 76);
+        let mut gfx = Gfx::new();
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        p.set_frost_key(Some(Key::new(DARK.page, 217)));
+        let mut font = CellFont::new();
+        font.set_subpixel(mdshared_text::Subpixel::Rgb);
+        s.draw(&mut p, &mut font, &term, View::new().cursor_shown(false), 80);
+        for col in 0..2 {
+            let ink = s.scheme.cell_colors(&term.screen.cell(0, col)).glyph.unwrap()[0];
+            let x0 = 6 + 8 * col;
+            let ground = pixel(&bmp, x0, 6);
+            let mut partial = false;
+            for y in 6..22 {
+                for x in x0..x0 + 8 {
+                    let [b, g, r, a] = pixel(&bmp, x, y);
+                    assert_eq!((r, g), (g, b), "LCD fringe at {x},{y}");
+                    for desktop in [0_u16, 255] {
+                        let over = |c, a| u16::from(c) + desktop * (255 - u16::from(a)) / 255;
+                        let bg = over(ground[0], ground[3]);
+                        let fg = u16::from(ink);
+                        let visible = over(r, a);
+                        assert!((bg.min(fg).saturating_sub(1)..=bg.max(fg) + 1).contains(&visible));
+                        partial |= visible > bg.min(fg) + 1 && visible + 1 < bg.max(fg);
+                    }
+                }
+            }
+            assert!(partial, "no antialiased edge in column {col}");
+        }
     }
 
     #[test]

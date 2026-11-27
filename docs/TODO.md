@@ -626,6 +626,14 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     and then laid over the backdrop. Glyph edges must blend with the real background colour (premultiplied alpha,
     grayscale rather than ClearType antialiasing over transparency), and a cell with the default background must not
     paint an opaque box behind its text.
+    **App-side fix done; toolkit change outstanding.** Translucent frames now request grayscale font
+    masks, including on cells promoted to opaque. Bitmap tests composite grey glyphs over black
+    and white. Not checked against the owner's desktop. At e951766, `mdshared-text` already uses
+    premultiplied source-over. `mdshared-ui::termview::draw::Background::alpha` calls `for_ink`
+    for each distinct foreground, sometimes returning 255 beside translucent spaces. Expose a
+    uniform-default-background option on `BackgroundOpacity`: use `normal` on every default cell,
+    retaining 255 for selection, block cursor, inverse and explicit backgrounds. Use that option
+    here when available. No toolkit or pin change.
 63. **Settings › Appearance: flexible, customizable colours and theming, and one kind of control per choice**
     (owner, 2026-11-27, screenshot of Appearance; "more flexible, customizable color and theming"). Today the dark
     palette is chosen with swatches and a dropdown ("Neutral") side by side, the light palette with swatches and a

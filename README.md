@@ -380,4 +380,5 @@ In **Settings → Terminal**, choose Block, Bar, or Underline and optionally ena
 The terminal program’s explicit cursor style still takes precedence. **Background opacity**
 goes from 60% to 100% (the default) when Mica or Acrylic is active on Windows 11 22H2 or later.
 These settings apply to open tabs and to Chat’s terminal drawer. **Ctrl+Shift+E** opens or closes
-the drawer in Chat.
+the drawer in Chat. Translucent terminals use grayscale text edges. Dim text can still have a
+darker cell background because the toolkit raises its opacity for contrast.
