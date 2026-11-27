@@ -254,7 +254,13 @@ impl Settings {
         self.editor.is_none() && (self.index == 0 || self.category() == super::TERMINAL)
     }
 
-    pub(crate) fn key(&mut self, key: &KeyName, mods: Mods, text: Option<&str>) -> SettingsEvent {
+    pub(crate) fn key(
+        &mut self,
+        config: &claude_switch_core::Config,
+        key: &KeyName,
+        mods: Mods,
+        text: Option<&str>,
+    ) -> SettingsEvent {
         self.key_used = true;
         if self.rail_focus {
             let next = match key {
@@ -273,7 +279,7 @@ impl Settings {
         }
         if self.has_palettes()
             && self.form.colour_open().is_none()
-            && let Some(outcome) = tiles::key(&mut self.form, key)
+            && let Some(outcome) = tiles::key(&mut self.form, config, key)
         {
             return SettingsEvent::Form(outcome);
         }
@@ -485,7 +491,7 @@ mod tests {
                     settings.form.rows().iter().enumerate().filter_map(|(i, row)| row.id().map(|id| (i, id))).collect();
                 let mods = Mods::default();
                 for (row, id) in controls {
-                    settings.key(&KeyName::Tab, mods, None);
+                    settings.key(&st.config, &KeyName::Tab, mods, None);
                     assert_eq!(settings.form.focus_id(), Some(id), "{label}");
                     let control = settings.form.control_rect(row);
                     assert!(control.w > 0.0 && control.h > 0.0);
@@ -504,11 +510,11 @@ mod tests {
                     assert!(p.measure(Face::Ui, 13.5, name) <= room, "{label}: {name}");
                     assert!(p.measure(Face::Ui, 11.5, help) <= room, "{label}: {help} (room {room})");
                 }
-                settings.key(&KeyName::Tab, mods, None);
+                settings.key(&st.config, &KeyName::Tab, mods, None);
                 let close = settings.form.close_rect();
                 assert!(settings.form.focus_on_close());
                 assert!(close.y >= body.bottom() && close.bottom() < card.bottom());
-                settings.key(&KeyName::Tab, mods, None);
+                settings.key(&st.config, &KeyName::Tab, mods, None);
                 assert!(settings.rail_focus);
             }
         }
@@ -533,7 +539,7 @@ mod tests {
         settings.press(swatch.cx(), swatch.cy(), mods, 1);
         settings.release(swatch.cx(), swatch.cy());
         assert!(settings.form.colour_open().is_some());
-        assert!(matches!(settings.key(&KeyName::Escape, mods, None), SettingsEvent::Form(Outcome::Redraw)));
+        assert!(matches!(settings.key(&st.config, &KeyName::Escape, mods, None), SettingsEvent::Form(Outcome::Redraw)));
         assert!(settings.form.colour_open().is_none());
         settings.press(swatch.cx(), swatch.cy(), mods, 1);
         settings.release(swatch.cx(), swatch.cy());
@@ -577,13 +583,13 @@ mod tests {
         };
 
         open(&mut settings, &mut p);
-        settings.key(&KeyName::Escape, mods, None);
+        settings.key(&st.config, &KeyName::Escape, mods, None);
         assert!(!settings.colour_open());
         assert_eq!(settings.form.colour(id), before, "Escape restores");
 
         open(&mut settings, &mut p);
         assert!(
-            matches!(settings.key(&KeyName::Enter, mods, None), SettingsEvent::Form(Outcome::Changed { id: c, .. }) if c == id)
+            matches!(settings.key(&st.config,&KeyName::Enter, mods, None), SettingsEvent::Form(Outcome::Changed { id: c, .. }) if c == id)
         );
         assert!(!settings.colour_open());
         let applied = settings.form.colour(id);

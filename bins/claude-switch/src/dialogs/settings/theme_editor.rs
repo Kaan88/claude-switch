@@ -7,7 +7,7 @@ use claude_switch_core::config::theme::{self, Colour, NamedTheme};
 use mdshared_ui::settings::Value;
 use mdshared_ui::{cover::contrast, gfx::rgb};
 
-fn from_base(base: &palettes::Theme) -> NamedTheme {
+pub(super) fn from_base(base: &palettes::Theme) -> NamedTheme {
     let p = crate::windowlook::palette(&base.palette, &Default::default(), None);
     let t = base.terminal;
     NamedTheme {

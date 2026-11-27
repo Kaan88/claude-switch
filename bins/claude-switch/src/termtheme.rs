@@ -14,7 +14,7 @@ pub mod palettes;
 use palettes::{DARK_ANSI, DARK_TERMINAL, LIGHT_ANSI, LIGHT_TERMINAL, TermColours};
 
 pub const WINDOW_THEMES: [(&str, &str); 3] = [("system", "System"), ("light", "Light"), ("dark", "Dark")];
-pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Palette"), ("system", "System"), ("custom", "Custom")];
+pub const ACCENT_SOURCES: [(&str, &str); 3] = [("theme", "Default"), ("system", "System"), ("custom", "Custom")];
 pub const CUSTOM: &str = "custom";
 const BLACK: Rgb = rgb(0x000000);
 const WHITE: Rgb = rgb(0xffffff);

@@ -583,6 +583,72 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_enters_an_unselected_palette_row_from_either_end() {
+        let mut st = AppState::new(Source::Demo, Some(true), Default::default());
+        for (id, name) in [("user-1", "Evening"), ("user-2", "Midnight")] {
+            let mut t = theme_editor::from_base(&termtheme::palettes::DARK_THEMES[0]);
+            t.name = name.into();
+            st.config.appearance.themes.insert(id.into(), t);
+        }
+        for (page, second, expected) in [
+            ("Appearance", tiles::row_id(true, 1), ["user-1", "user-2", "user-2"]),
+            (TERMINAL, tiles::MORE_TERMINAL, ["campbell", "vintage", "custom"]),
+        ] {
+            st.dialog = Some(settings(&mut st, Some(page)));
+            let selected = |st: &AppState| {
+                if page == TERMINAL {
+                    st.config.terminal_scheme.clone()
+                } else {
+                    st.config.appearance.dark_theme.clone()
+                }
+            };
+            let before = selected(&st);
+            for _ in 0..3 {
+                navigate(&mut st, KeyName::Tab);
+                if current(&st).form.focus_id() == Some(second) {
+                    break;
+                }
+            }
+            assert_eq!(current(&st).form.focus_id(), Some(second));
+            navigate(&mut st, KeyName::Enter);
+            navigate(&mut st, KeyName::Space);
+            assert_eq!(selected(&st), before);
+            navigate(&mut st, KeyName::Right);
+            assert_eq!(selected(&st), expected[0]);
+            navigate(&mut st, KeyName::Right);
+            assert_eq!(selected(&st), expected[1]);
+            // The first row is now unselected, even though its Form choice still has a value.
+            assert!(super::super::key(
+                &mut st,
+                Instant::now(),
+                &KeyName::Tab,
+                Mods { shift: true, ..Default::default() },
+                None
+            ));
+            navigate(&mut st, KeyName::Home);
+            navigate(&mut st, KeyName::Tab);
+            navigate(&mut st, KeyName::Left);
+            assert_eq!(selected(&st), expected[2]);
+        }
+    }
+
+    #[test]
+    fn default_accent_keeps_clay_on_builtins_and_uses_the_named_themes_accent() {
+        let mut st = AppState::new(Source::Demo, Some(true), Default::default());
+        let mut theme = theme_editor::from_base(&termtheme::palettes::DARK_THEMES[0]);
+        let saved = [90, 180, 220];
+        theme.accent.0 = saved;
+        st.config.appearance.themes.insert("user-1".into(), theme);
+        let change = |st: &mut AppState, id, i| settings_outcome(st, Outcome::Changed { id, value: Value::Choice(i) });
+        let default = ACCENT_SOURCES.iter().position(|(_, label)| *label == "Default").unwrap();
+        change(&mut st, SET_ACCENT, default);
+        assert_eq!(st.config.appearance.accent_source, "theme");
+        assert_eq!(st.pal().accent, mdshared_ui::gfx::rgb(0xd97757));
+        change(&mut st, tiles::row_id(true, 1), 0);
+        assert_eq!(st.pal().accent, saved);
+    }
+
+    #[test]
     fn the_two_archives_have_distinct_names() {
         let st = AppState::new(Source::Demo, None, WindowFile::default());
         let rows = sessions(&st);
