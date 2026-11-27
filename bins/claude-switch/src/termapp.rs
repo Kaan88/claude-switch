@@ -33,6 +33,8 @@ pub struct Woken {
     pub all: bool,
     pub strip: bool,
     pub output: bool,
+    /// The shown tab's cursor moved or changed: its blink starts again, on.
+    pub cursor: bool,
 }
 
 /// The variable that makes Claude Code draw with its classic main-screen renderer. Per the docs
@@ -286,6 +288,7 @@ impl AppState {
                 continue;
             }
             w.output = true;
+            w.cursor |= r.cursor_moved;
             if tab.term.scroll > 0 {
                 // Scrollback growth can move the overlaid thumb outside the dirty grid rows.
                 w.all = true;
@@ -630,7 +633,10 @@ impl AppState {
         if w.output {
             self.session_tick(cx, true);
         }
-        if w.all || !w.rects.is_empty() {
+        // Only a cursor that changed starts its blink again. A program that repaints around a
+        // parked cursor (Claude Code's counter while it works) would otherwise cut every off
+        // phase short, about once a second.
+        if w.cursor {
             Self::cursor_moved(cx);
         }
         if w.all || self.metrics.is_none() {
@@ -680,7 +686,7 @@ impl AppState {
         }
     }
 
-    /// Restarts the cursor's blink, after a key or output.
+    /// Restarts the cursor's blink, after a key or output that moved or changed the cursor.
     pub fn cursor_moved(cx: &mut Cx<'_, Msg>) {
         cx.anim().forget(CURSOR);
     }

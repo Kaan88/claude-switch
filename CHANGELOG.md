@@ -59,6 +59,9 @@
   Git worktrees (you can still type or browse to those), and counts different spellings of a folder
   once. Type in the folder field to filter it; the arrows, Page Up/Down, Home, End and Enter work in
   it.
+- Terminal: a blinking cursor (Settings › Terminal › Blink) keeps an even rhythm in Claude tabs and
+  the Chat drawer. Output now restarts the blink only when it moves or changes the cursor, so
+  Claude Code's once-a-second counter elsewhere on the screen no longer cuts the off phase short.
 
 ## 0.1.2 (2026-11-27)
 

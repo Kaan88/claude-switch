@@ -355,4 +355,111 @@ mod tests {
         assert_eq!(visible_notice(&term, View::new()), 0..2);
         assert_eq!(visible_notice(&term, View::new().scrolled(3)), 1..2);
     }
+
+    /// What happens in the simulated window at a moment, besides the blink's own frames.
+    enum Event {
+        /// The program's output, fed as `term_woke` feeds it.
+        Output(&'static [u8]),
+        /// A key, as `key` restarts the blink, and its echo.
+        Key(&'static [u8]),
+        /// A redraw for something else: a spinner, the pointer, a toast.
+        Redraw,
+    }
+
+    /// Drives the cursor's blink as the host does, on a simulated clock: a frame at every event
+    /// and at every deadline the animator gives, the shown tab's output restarting the blink only
+    /// where `term_woke` does. Returns each change of the cursor, (ms, on).
+    fn blink_run(events: &[(u64, Event)], end: u64, policy: mdshared_ui::anim::Policy) -> Vec<(u64, bool)> {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let mut anim = mdshared_ui::anim::Animator::new();
+        anim.set_policy(policy);
+        let mut term = Term::empty((100, 30));
+        term.feed(crate::term::tests::PROMPT);
+        let view = term.view(true).cursor_preference(CursorShape::Block, true);
+        let half = Some(Duration::from_millis(530));
+        let (mut at, mut next, mut deadline) = (0, 0, Some(0));
+        let mut changes: Vec<(u64, bool)> = Vec::new();
+        while at < end {
+            let event = events.get(next).filter(|(t, _)| deadline.is_none_or(|d| *t <= d));
+            at = match (event, deadline) {
+                (Some((t, _)), _) => *t,
+                (None, Some(d)) => d,
+                (None, None) => break,
+            };
+            if let Some((_, e)) = event {
+                next += 1;
+                match e {
+                    Event::Output(bytes) if term.feed_marked(bytes) => anim.forget(CURSOR),
+                    Event::Key(echo) => {
+                        anim.forget(CURSOR);
+                        term.feed(echo);
+                    }
+                    Event::Output(_) | Event::Redraw => {}
+                }
+            }
+            anim.begin_frame(start + Duration::from_millis(at));
+            let blink = half.filter(|_| cursor_can_blink(&term.screen, view, true));
+            let on = termview::cursor_blinks_on(&mut anim, CURSOR, blink, &term.screen, view);
+            deadline = anim.end_frame().map(|d| d.duration_since(start).as_millis() as u64);
+            if changes.last().is_none_or(|&(_, was)| was != on) {
+                changes.push((at, on));
+            }
+        }
+        changes
+    }
+
+    /// Claude Code's output while it runs a command, recorded through ConPTY (ms after the
+    /// command started): the counter every second, the title's spinner in between, one notice
+    /// that comes and goes on rows of its own; and a redraw of the window's own every 16 ms
+    /// for a while (a tab's spinner).
+    fn claude_working() -> Vec<(u64, Event)> {
+        let title = "\x1b]0;\u{25d0} Claude Code\x07".as_bytes();
+        let notice = b"\x1b[?25l\x1b[13;81H\x1b[K\x1b[38;2;255;193;7m\x1b[14;25HYou've used 99%\x1b[11;3H\x1b[?25h";
+        let gone = b"\x1b[?25l\x1b[14;1H\x1b[K\x1b[11;3H\x1b[?25h";
+        let mut events: Vec<(u64, Event)> = Vec::new();
+        for (t, text) in [(1305, title), (1965, title), (2928, title), (3890, title), (4851, title), (5812, title)] {
+            events.push((t, Event::Output(text)));
+        }
+        for t in [1310, 2313, 3307, 4316, 5313, 6318, 7316, 8312, 9316, 10313] {
+            events.push((t, Event::Output(crate::term::tests::COUNTER)));
+        }
+        events.push((5412, Event::Output(notice)));
+        events.push((5439, Event::Output(gone)));
+        events.extend((0..120).map(|i| (6000 + i * 16, Event::Redraw)));
+        events.sort_by_key(|(t, _)| *t);
+        events
+    }
+
+    fn halves(changes: &[(u64, bool)]) -> Vec<u64> {
+        changes.windows(2).map(|w| w[1].0 - w[0].0).collect()
+    }
+
+    #[test]
+    fn the_blink_keeps_its_rhythm_through_repaints_around_the_cursor_and_other_redraws() {
+        use mdshared_ui::anim::Policy;
+        let changes = blink_run(&claude_working(), 12_000, Policy::Always);
+        assert_eq!(changes.first(), Some(&(0, true)));
+        assert!(changes.len() > 20, "{changes:?}");
+        assert!(halves(&changes).iter().all(|&h| h == 530), "uneven: {:?}", halves(&changes));
+
+        // A key restarts it, on, and the rhythm resumes from there; so does output that changes
+        // the cursor's cell. (Both stay on the parked cell, where the recorded counter puts the
+        // cursor back.)
+        let mut events = claude_working();
+        events.push((2_100, Event::Key(b"")));
+        events.push((7_777, Event::Output(b"i\x08")));
+        events.sort_by_key(|(t, _)| *t);
+        let changes = blink_run(&events, 12_000, Policy::Always);
+        let between =
+            |from: u64, to: u64| changes.iter().copied().filter(|&(t, _)| t > from && t < to).collect::<Vec<_>>();
+        for (from, to) in [(2_100, 7_777), (7_777, 12_000)] {
+            let after = between(from, to);
+            assert_eq!(after.first(), Some(&(from + 530, false)), "{changes:?}");
+            assert!(halves(&after).iter().all(|&h| h == 530), "{changes:?}");
+        }
+
+        // Reduced motion: steady, and no frame asked for it.
+        assert_eq!(blink_run(&claude_working(), 12_000, Policy::Never), [(0, true)]);
+    }
 }
