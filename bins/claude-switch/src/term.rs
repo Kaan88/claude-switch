@@ -8,7 +8,7 @@ use std::ops::Range;
 
 use claude_switch_core::Launch;
 use mdshared_pty::{Command, Exit, Pty};
-use mdshared_term::{MouseButton, Point, Screen, Selection};
+use mdshared_term::{MouseButton, Point, Screen, Selection, SelectionKind};
 use mdshared_ui::termview::View;
 
 /// Lines of scrollback a terminal keeps.
@@ -145,6 +145,7 @@ impl Term {
 
     pub fn finish(&mut self, exit: Exit) {
         self.ended = Some(exit);
+        self.stop_pointer();
         let line = ended_line(exit);
         let line_count = line.len().div_ceil(self.screen.cols()) as u64;
         // Force normal wrapping for the app-owned notice, and hide the cursor after it.
@@ -236,6 +237,17 @@ impl Term {
     /// The selected text, when something is selected.
     pub fn selected_text(&self) -> Option<String> {
         self.selection.filter(|s| !s.is_empty()).map(|s| s.text(&self.screen)).filter(|t| !t.is_empty())
+    }
+
+    /// Copy consumes the highlight. A selection of blank cells still counts as a copy, not a paste.
+    pub fn take_selected_text(&mut self, single_line: bool) -> Option<String> {
+        self.selecting = false;
+        let selection = self.selection.take().filter(|s| !s.is_empty())?;
+        let mut text = selection.text(&self.screen);
+        if single_line && selection.kind() == SelectionKind::Stream {
+            text.retain(|c| c != '\n');
+        }
+        Some(text)
     }
 }
 

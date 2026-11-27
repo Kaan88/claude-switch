@@ -134,11 +134,11 @@ impl AppState {
             .filter(|_| layer == Layer::Base)
             .and_then(|key| Some(Over { key, text: topbar::tip_of(key)?.into(), anchor: self.rect_of(key)? }));
         changed |= self.tip.hover_at(cx.now(), over, self.mouse);
-        cx.set_cursor(self.pointer_cursor(layer, hover, cx.size(), cx.mods().shift));
+        cx.set_cursor(self.pointer_cursor(layer, hover, cx.size()));
         changed
     }
 
-    fn pointer_cursor(&self, layer: Layer, hover: Option<Target>, (w, h): (f32, f32), shift: bool) -> Cursor {
+    fn pointer_cursor(&self, layer: Layer, hover: Option<Target>, (w, h): (f32, f32)) -> Cursor {
         let (x, y) = self.mouse;
         if !Rect::new(0.0, 0.0, w, h).contains(x, y) {
             return Cursor::Default;
@@ -150,16 +150,13 @@ impl AppState {
             return Cursor::Text;
         }
         if (layer == Layer::Picture
-            || layer == Layer::Base && !matches!(hover, Some(Target::Chat(_))) && y >= self.main_top)
+            || layer == Layer::Base && !matches!(hover, Some(Target::Chat(_) | Target::Terminal)) && y >= self.main_top)
             && let Some(cursor) = self.session_pointer_cursor(x, y)
         {
             return cursor;
         }
-        let program_mouse =
-            self.tabs.shown().is_some_and(|t| termkeys::mouse_to_program(&t.term.screen.modes(), shift));
         match hover {
             Some(Target::Splitter) => Cursor::ResizeEw,
-            Some(Target::Terminal) if !program_mouse => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Editor)) => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Grip)) => Cursor::ResizeNs,
             Some(Target::Chat(crate::view::chat::Control::Detail(_) | crate::view::chat::Control::Shells)) => {
@@ -210,17 +207,20 @@ mod tests {
         app.mouse = (125.0, 130.0);
         let cursor = |app: &AppState| {
             let layer = app.pointer_layer();
-            app.pointer_cursor(layer, app.hover_target(layer), window, false)
+            app.pointer_cursor(layer, app.hover_target(layer), window)
         };
         app.hits = vec![(at, Target::Terminal)];
-        assert_eq!(cursor(&app), Cursor::Text);
+        assert_eq!(cursor(&app), Cursor::Default, "the terminal always has an arrow");
         app.hits = vec![(at, Target::Tab(2))];
         assert_eq!(cursor(&app), Cursor::Default, "same point, but the new layout is not a terminal");
-        app.hits = vec![(at, Target::Terminal)];
+        app.hits = vec![(at, Target::Chat(crate::view::chat::Control::Editor))];
+        assert_eq!(cursor(&app), Cursor::Text);
         app.main_menu(at);
         assert_eq!(cursor(&app), Cursor::Default);
         app.menu = None;
         assert_eq!(cursor(&app), Cursor::Text);
+        app.hits = vec![(at, Target::Terminal)];
+        assert_eq!(cursor(&app), Cursor::Default);
         app.session_pointer_left();
         assert_eq!(cursor(&app), Cursor::Default);
     }

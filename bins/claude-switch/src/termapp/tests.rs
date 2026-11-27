@@ -29,6 +29,92 @@ fn ended_tabs_still_handle_local_scrollback() {
     assert!(app.tabs.shown().unwrap().term.scroll > 0);
 }
 
+fn mouse_terminal() -> AppState {
+    let mut app = AppState::new(crate::source::Source::Demo, None, Default::default());
+    app.tabs.open(NewTab { label: "mouse".into(), color: [0; 3], account: None, session: None }, Term::empty((10, 3)));
+    let area = Rect::new(0.0, 0.0, 400.0, 180.0);
+    app.layout_terminals(area, area, 1.0);
+    app.tabs.shown_mut().unwrap().term.feed(b"one\r\ntwo");
+    app
+}
+
+fn cell(app: &AppState, row: usize, col: usize) -> (f32, f32) {
+    let r = app.metrics.unwrap().cell_rect(app.term_area, row, col);
+    (r.x + r.w / 2.0, r.y + r.h / 2.0)
+}
+
+#[test]
+fn a_terminal_drag_keeps_its_selection_until_right_click_copies_and_clears_it() {
+    let mut app = mouse_terminal();
+    let (x, y) = cell(&app, 0, 0);
+    let (end_x, end_y) = cell(&app, 1, 2);
+    let plain = Mods::default();
+    assert_eq!(app.term_pointer_press(x, y, Button::Left, 1, plain), None);
+    assert!(app.term_move(end_x, end_y, plain));
+    assert!(app.term_release(end_x, end_y, Button::Left, plain));
+    assert_eq!(app.tabs.shown().unwrap().term.selected_text().as_deref(), Some("one\ntwo"));
+    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Copy("one\ntwo".into())));
+    assert!(app.tabs.shown().unwrap().term.selection.is_none());
+    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Paste));
+
+    // Empty copied text is not a reason to paste old clipboard contents.
+    let (blank_x, blank_y) = cell(&app, 2, 2);
+    assert_eq!(app.term_pointer_press(x, blank_y, Button::Left, 1, plain), None);
+    assert!(app.term_move(blank_x, blank_y, plain));
+    assert!(app.term_release(blank_x, blank_y, Button::Left, plain));
+    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Copy(String::new())));
+}
+
+#[test]
+fn mouse_reporting_gets_clicks_unless_shift_starts_a_local_gesture() {
+    let mut app = mouse_terminal();
+    app.tabs.shown_mut().unwrap().term.feed(b"\x1b[?1002h\x1b[?1006h");
+    let (x, y) = cell(&app, 0, 0);
+    let (end_x, end_y) = cell(&app, 1, 2);
+    let plain = Mods::default();
+    let shift = Mods { shift: true, ..plain };
+
+    assert_eq!(app.term_pointer_press(x, y, Button::Left, 1, plain), None);
+    assert_eq!(app.tabs.shown().unwrap().term.reported, Some(MouseButton::Left));
+    assert!(!app.term_move(end_x, end_y, plain));
+    assert!(app.term_release(end_x, end_y, Button::Left, plain));
+    assert!(app.tabs.shown().unwrap().term.selection.is_none());
+
+    assert_eq!(app.term_pointer_press(x, y, Button::Left, 1, shift), None);
+    assert!(app.tabs.shown().unwrap().term.reported.is_none());
+    assert!(app.term_move(end_x, end_y, shift));
+    assert!(app.term_release(end_x, end_y, Button::Left, plain), "letting go of Shift does not send a release");
+    assert_eq!(
+        app.term_pointer_press(x, y, Button::Right, 1, plain),
+        None,
+        "right-click reports even with a selection"
+    );
+    assert_eq!(app.tabs.shown().unwrap().term.reported, Some(MouseButton::Right));
+    assert!(app.term_release(x, y, Button::Right, plain));
+    assert_eq!(app.tabs.shown().unwrap().term.selected_text().as_deref(), Some("one\ntwo"));
+    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, shift), Some(MouseClipboard::Copy("onetwo".into())));
+    assert!(app.tabs.shown().unwrap().term.selection.is_none());
+    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, shift), Some(MouseClipboard::Paste));
+}
+
+#[test]
+fn terminal_clipboard_paste_refuses_unbracketed_lines_and_skips_ended_tabs() {
+    let mut app = mouse_terminal();
+    let multiline = || Some("one\r\ntwo".to_string());
+    app.paste_terminal(multiline);
+    assert!(app.info.take().is_some());
+    let term = &mut app.tabs.shown_mut().unwrap().term;
+    term.feed(b"\x1b[?2004h\x1b[?1002h");
+    app.paste_terminal(multiline);
+    assert!(app.info.is_none());
+
+    app.tabs.shown_mut().unwrap().term.finish(mdshared_pty::Exit { code: Some(0), signal: None });
+    let (x, y) = cell(&app, 0, 0);
+    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, Mods::default()), None);
+    assert!(app.tabs.shown().unwrap().term.reported.is_none());
+    app.paste_terminal(|| panic!("an ended tab should not read the clipboard"));
+}
+
 #[test]
 fn claude_tabs_get_the_classic_renderer_only_when_the_setting_is_on() {
     let launch = |program: &str| Launch {

@@ -654,22 +654,24 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 64. **A scrollbar that fades, and page width options** (owner, 2026-11-27). Scrollbars show while scrolling or
     under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
     the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide).
-65. **The terminal should behave as Windows Terminal does with the mouse** (owner, 2026-11-27: "instead of normal
-    pointer like in windows terminal, I get text selection like behaviour ... still I want default windows terminal
-    behaviour"). The arrow pointer over the terminal, not the I-beam; drag to select; right-click copies the
-    selection and clears it, or pastes when nothing is selected (Windows Terminal's default), even though Claude
-    Code copies a selection by itself. Check what Windows Terminal does over a mouse-reporting program (Claude Code)
-    and match it, Shift-drag included.
+65. **Done: Windows Terminal mouse gestures for terminal tabs and the Chat drawer.** Arrow pointer, drag to
+    select, and right-click to copy and clear the selection or paste safely. Unmodified clicks and drags go to
+    a program that asks for mouse reports; Shift keeps the gestures local. Checked against Windows Terminal 1.25
+    source and with tests for pointer choice, selection, reporting and paste safety. Native clipboard gestures
+    and Claude Code's own fullscreen auto-copy were not checked interactively. Switch does not handle clipboard
+    writes via OSC 52. If application-driven OSC 52 copy is wanted, the toolkit needs a bounded parser event
+    for validated, decoded clipboard writes (no clipboard reads); the owner should decide when Switch may honor it.
 66. **A better design for the composer's chips** (owner, 2026-11-27): Model, Effort, Context, Compact, Clear, the
     slash menu, Attach, Terminal and Details look like the same flat button and their labels are cut ("Effort
     mediu…"). Group them by kind (state the session is in: model, effort, context; actions: compact, clear;
     panels: terminal, details), show a value as a value (an effort level as a small meter or dots, context as a
     filling bar), never cut a label, and keep the row from jumping when a value changes. Item 43 covers the values
     being stale; this is the look.
-67. **Shift+Enter in the terminal sends instead of starting a new line** (owner, 2026-11-27). In Windows Terminal
-    Shift+Enter gives Claude Code a new line; in Switch's terminal it reaches the CLI as a plain Enter. Send what
-    Claude Code reads as Shift+Enter (check the key encoding it accepts: the win32 input mode or kitty keyboard
-    sequence it asks for, or ESC CR), and check the same for the Chat composer's paste of line breaks (item 46).
+67. **Done: Shift+Enter starts a line in the terminal without sending.** Switch sends `CSI 13;2u` for Shift+Enter
+    alone, not a bare Enter. A scratch ConPTY run with Claude Code 2.1.332 showed two prompt rows with this
+    sequence even without kitty negotiation. The same run showed line breaks from the Chat composer's bracketed
+    paste encoding (item 46); the composer test checks that Enter waits for the echo. No prompt was submitted.
+    The desktop key path, other CLI versions and other programs were not checked interactively.
 68. **The `/usage` card loses the terminal's bars, and its spinner line jumps** (owner, 2026-11-27, screenshot of the
     read-only menu card for /usage). The card copies the panel's rows as plain text, so the usage bars the terminal
     draws (coloured cells or block characters) are missing; copy each cell's colours and draw the rows as the
