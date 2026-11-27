@@ -570,4 +570,30 @@ impl AppState {
             self.activate(cx, t, x);
         }
     }
+
+    /// The window lost the keyboard. A button held through Alt+Tab or a dialog never sends its
+    /// release (winit reports none when the capture goes), so every drag and press ends here as
+    /// if it were let go off every control: what a drag reached stays, nothing is clicked.
+    pub(crate) fn pointer_lost(&mut self) {
+        self.field_mouse.cancel();
+        self.folder_scroll_release();
+        self.tabs.drag = None;
+        self.chat_end_drag(None);
+        if self.splitter.release() {
+            self.save_window();
+        }
+        self.session_pointer_lost();
+        if let Some(tab) = self.tabs.shown_mut() {
+            tab.term.stop_pointer();
+        }
+        if let Some(p) = &mut self.palette {
+            // Off every row: always `Outcome::None`, so nothing is chosen.
+            p.release(-1.0, -1.0);
+        }
+        self.accounts_dd.cancel();
+        if let Some(Dialog::Settings(form)) = &mut self.dialog {
+            let o = form.release(-1.0, -1.0);
+            dialogs::settings_event(self, o);
+        }
+    }
 }

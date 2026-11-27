@@ -587,6 +587,22 @@ impl AppState {
         }
     }
 
+    /// The window lost focus with the button down: the divider, a scrollbar thumb or a text
+    /// selection in hand ends where it got to, and a divider that moved is kept as a release
+    /// keeps it.
+    pub fn session_pointer_lost(&mut self) {
+        if self.session_view.splitter.release() {
+            self.save_window();
+        }
+        let panel = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()).and_then(|pane| {
+            pane.ui.pointer_lost();
+            pane.ui.take_panel_change()
+        });
+        if let Some(panel) = panel {
+            self.share_markdown_panel(panel);
+        }
+    }
+
     /// One pane's Markdown panel width or reading width, for every pane and the next run.
     fn share_markdown_panel(&mut self, panel: ui::Panel) {
         self.session_view.markdown = panel;

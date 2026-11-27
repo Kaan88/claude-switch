@@ -93,6 +93,16 @@ impl Ui {
         self.dragging = false;
     }
 
+    /// The window lost focus mid-press: no release will come. The divider, a thumb or a selection
+    /// in hand stays where it got to; the keyboard and the selection stay.
+    pub fn pointer_lost(&mut self) {
+        self.divider_release();
+        self.scroll_drag = None;
+        self.pressed = None;
+        self.start = None;
+        self.dragging = false;
+    }
+
     pub fn blur(&mut self) {
         self.focused = false;
         self.dragging = false;
@@ -462,6 +472,23 @@ mod tests {
     use super::*;
     use mdshared_text::bitmap::Bitmap;
     use mdshared_ui::gfx::Gfx;
+
+    #[test]
+    fn a_lost_pointer_ends_the_divider_thumb_and_selection_drags_and_keeps_the_divider() {
+        use mdshared_ui::splitter::Axis;
+        let mut ui = Ui::default();
+        let area = Rect::new(0.0, 0.0, 1000.0, 400.0);
+        ui.panel_area = Some(area);
+        let grip = ui.panel.split.rects(area, Axis::Horizontal).1;
+        assert!(ui.panel.split.press(area, Axis::Horizontal, grip.cx(), grip.cy()));
+        assert_eq!(ui.divider_move(grip.cx() - 60.0, grip.cy()), Some(true));
+        ui.scroll_drag = Some(Drag { surface: Surface::Conversation, fraction: 0.5 });
+        ui.dragging = true;
+        ui.pointer_lost();
+        assert_eq!(ui.divider_move(grip.cx() - 120.0, grip.cy()), None, "no divider in hand");
+        assert!(!ui.scroll_dragging() && !ui.dragging);
+        assert_eq!(ui.take_panel_change(), Some(ui.panel), "the moved divider is shared and saved");
+    }
 
     #[test]
     fn working_stop_in_both_surfaces_requires_the_same_turn_at_press_and_release() {

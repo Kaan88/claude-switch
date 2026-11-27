@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A drag no longer goes on after the window loses focus with the mouse button down (Alt+Tab, a
+  dialog of another program). Windows sends no button release then, so the list's or the session
+  view's divider, a terminal selection, a scrollbar thumb or the Markdown panel's divider in the
+  session view, the palette's field and the colour picker in Settings kept following the pointer
+  after coming back, with no button held. Each now ends where it was dragged to.
+
 ## 0.1.4 (2026-11-27)
 
 - Chat: after `/model` (or another command that only prints, such as `/effort`), the session no

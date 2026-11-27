@@ -661,6 +661,36 @@ mod tests {
         assert!(matches!(settings.release(second.cx(), second.cy()), SettingsEvent::Page(1)));
     }
     #[test]
+    fn losing_focus_lets_go_of_the_colour_square_and_keeps_the_picker_open() {
+        let mut st = AppState::new(Source::Demo, None, Default::default());
+        let mut gfx = Gfx::new();
+        let mut bitmap = Bitmap::new(760, 480);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        let mut settings = Settings::new(&st, 0);
+        let viewport = settings.place(&mut p, MIN_WINDOW);
+        settings.form.layout(&mut p, viewport);
+        let mods = Mods::default();
+        let id = super::super::SET_ACCENT_COLOUR;
+        let index = settings.form.rows().iter().position(|r| r.id() == Some(id)).unwrap();
+        // Below the palette cards at this size: scroll it into view as Tab would.
+        settings.form.focus_row(id);
+        let swatch = settings.form.swatch_rect(index);
+        settings.press(swatch.cx(), swatch.cy(), mods, 1);
+        settings.release(swatch.cx(), swatch.cy());
+        settings.form.layout(&mut p, viewport);
+        let opened = settings.form.colour(id);
+        let square = settings.form.picker_confirmation_layout().expect("a confirming picker").picker.square;
+        settings.press(square.x + 4.0, square.y + 4.0, mods, 1);
+        assert!(settings.pointer_move(square.x + 20.0, square.y + 20.0), "the square is held");
+        st.dialog = Some(crate::dialogs::Dialog::Settings(Box::new(settings)));
+        st.pointer_lost();
+        let Some(crate::dialogs::Dialog::Settings(mut settings)) = st.dialog.take() else { panic!("Settings stays") };
+        assert!(settings.colour_open(), "losing focus neither applies nor cancels");
+        assert!(!settings.pointer_move(square.x + 40.0, square.y + 40.0), "the next plain move drags nothing");
+        assert_eq!(settings.form.colour(id), opened, "staged, not applied");
+    }
+
+    #[test]
     fn colour_rows_change_only_when_applied_and_an_outside_press_applies_without_clicking_through() {
         let st = AppState::new(Source::Demo, None, Default::default());
         let mut gfx = Gfx::new();

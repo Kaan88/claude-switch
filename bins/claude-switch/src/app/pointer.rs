@@ -247,6 +247,62 @@ mod tests {
     }
 
     #[test]
+    fn losing_focus_ends_the_splitters_where_they_were_dragged_to_and_the_account_press() {
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        let area = Rect::new(0.0, 40.0, 1200.0, 600.0);
+        for split in [&mut app.splitter, &mut app.session_view.splitter] {
+            let grip = split.rects(area, Axis::Horizontal).1;
+            assert!(split.press(area, Axis::Horizontal, grip.cx(), grip.cy()));
+            assert!(split.drag(area, Axis::Horizontal, grip.cx() - 40.0, grip.cy()));
+        }
+        let field = Bar::layout(area.w).account;
+        app.accounts_dd.press(field, field.cx(), field.cy());
+        assert!(app.accounts_dd.pressed());
+        let moved = (app.splitter.position(area.w), app.session_view.splitter.position(area.w));
+        app.pointer_lost();
+        assert!(!app.splitter.dragging(), "the next plain move must not drag the list's divider");
+        assert!(!app.session_view.splitter.dragging(), "nor the session view's");
+        assert_eq!((app.splitter.position(area.w), app.session_view.splitter.position(area.w)), moved);
+        assert!(!app.accounts_dd.pressed(), "a later release must not open the accounts");
+    }
+
+    #[test]
+    fn losing_focus_ends_a_terminal_selection_and_keeps_it() {
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        let tab = crate::tabs::NewTab { label: "t".into(), color: [0; 3], account: None, session: None };
+        app.tabs.open(tab, crate::term::Term::empty((10, 3)));
+        let area = Rect::new(0.0, 0.0, 400.0, 180.0);
+        app.layout_terminals(area, area, 1.0);
+        app.tabs.shown_mut().unwrap().term.feed(b"one\r\ntwo");
+        let cell = |app: &AppState, row, col| app.metrics.unwrap().cell_rect(app.term_area, row, col);
+        let (from, to, past) = (cell(&app, 0, 0), cell(&app, 0, 2), cell(&app, 1, 2));
+        let plain = mdshared_ui::keys::Mods::default();
+        app.term_press(from.cx(), from.cy(), Button::Left, 1, plain);
+        assert!(app.term_move(to.cx(), to.cy(), plain));
+        app.pointer_lost();
+        assert!(!app.term_move(past.cx(), past.cy(), plain), "no button is down any more");
+        assert_eq!(app.tabs.shown().unwrap().term.selected_text().as_deref(), Some("one"));
+    }
+
+    #[test]
+    fn losing_focus_ends_a_drag_in_the_palette_field() {
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        app.open_palette();
+        let pal = *app.pal();
+        let (mut gfx, mut bitmap) = (mdshared_ui::gfx::Gfx::new(), mdshared_text::Bitmap::new(900, 600));
+        let mut p = mdshared_ui::gfx::Painter::new(&mut bitmap, &mut gfx, 1.0);
+        let window = Rect::new(0.0, 0.0, 900.0, 600.0);
+        let palette = app.palette.as_mut().unwrap();
+        palette.set_query("alpha beta");
+        palette.draw(&mut p, &pal, window, TITLE_H, true);
+        let field = palette.field_rect();
+        palette.press(field.x + 2.0, field.cy(), Default::default(), 1);
+        app.pointer_lost();
+        let palette = app.palette.as_mut().unwrap();
+        assert!(!palette.pointer_move(field.right() - 2.0, field.cy()), "the move selects nothing");
+    }
+
+    #[test]
     fn cursor_follows_current_hit_after_tab_or_menu_changes_and_on_leave() {
         let mut app = AppState::new(Source::Demo, None, Default::default());
         let window = (640.0, 480.0);
