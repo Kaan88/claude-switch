@@ -45,6 +45,7 @@ const HIDE_FOLDER: u32 = 26;
 const COPY_ID: u32 = 27;
 const COPY_PATH: u32 = 28;
 const REVEAL: u32 = 29;
+const OPEN_FOLDER: u32 = 32;
 const CHAT_LAYOUT: u32 = 30;
 const SET_TOPIC: u32 = 31;
 const MEANING_INDEX: u32 = 240;
@@ -131,7 +132,7 @@ impl AppState {
                     self.reveal_selected();
                 }
             }
-            COPY_ID | COPY_PATH | REVEAL => self.session_file_action(now, id),
+            COPY_ID | COPY_PATH | REVEAL | OPEN_FOLDER => self.session_file_action(now, id),
             SESSION_VIEW => self.toggle_session_view(),
             CHAT_LAYOUT => self.set_chat_layout(!self.chat_active()),
             PASTE => self.paste(),
@@ -565,7 +566,8 @@ impl AppState {
             archive_row_item(self.is_archived(s), self.row_flags(s)),
             crate::delete::row_item(self.delete_block(&s.id)),
             Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!s.cwd.as_os_str().is_empty()),
-            Item::new(COPY_ID, "Copy session id").sep(),
+            Item::new(OPEN_FOLDER, "Open working folder").enabled(!s.cwd.as_os_str().is_empty()).sep(),
+            Item::new(COPY_ID, "Copy session id"),
             Item::new(COPY_PATH, "Copy folder path").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(REVEAL, "Reveal transcript in Explorer"),
         ];
@@ -596,6 +598,10 @@ impl AppState {
                 set_clipboard_text(&s.cwd.to_string_lossy());
                 self.toast("Folder path copied".into(), now);
             }
+            OPEN_FOLDER => {
+                let folder = s.cwd.clone();
+                self.open_working_folder(now, &folder);
+            }
             REVEAL if self.source.is_demo() => self.toast("Demo: Explorer was not started".into(), now),
             REVEAL => {
                 let path = s.file.clone();
@@ -606,6 +612,19 @@ impl AppState {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+impl AppState {
+    /// Opens a session's or tab's working folder in Explorer, or says why not.
+    pub(crate) fn open_working_folder(&mut self, now: Instant, folder: &std::path::Path) {
+        if self.source.is_demo() {
+            self.toast("Demo: Explorer was not started".into(), now);
+        } else if folder.as_os_str().is_empty() || !folder.is_dir() {
+            self.warn("Working folder not found", folder.display().to_string());
+        } else if let Err(e) = crate::run::open_folder(folder) {
+            self.error("Could not open the folder", e.to_string());
         }
     }
 }

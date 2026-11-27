@@ -15,6 +15,8 @@ const CLOSE: u32 = 1;
 const CLOSE_OTHERS: u32 = 2;
 const COMPACT: u32 = 3;
 const COPY_BASE: u32 = 4;
+/// Above every `COPY_BASE + account` id.
+const OPEN_FOLDER: u32 = 100_000;
 
 #[derive(Clone, Copy)]
 pub struct Drag {
@@ -89,8 +91,10 @@ impl AppState {
                 Item::new(COPY_BASE + i as u32, format!("Open a copy as {}", account.name)).enabled(can_copy)
             })
             .collect();
+        let folder = self.tab_folder(id).is_some();
         items.extend([
             Item::new(COMPACT, "Compact and open as…").enabled(tab.resume_id.is_some()),
+            Item::new(OPEN_FOLDER, "Open working folder").enabled(folder).sep(),
             Item::new(RENAME, "Rename tab…").sep(),
             Item::new(CLOSE, "Close"),
             Item::new(CLOSE_OTHERS, "Close others").enabled(self.tabs.list.len() > 1),
@@ -116,6 +120,11 @@ impl AppState {
                 self.dialog = Some(dialogs::name_dialog("Rename tab", title, NameFor::Tab(id)));
             }
             CLOSE => self.ask_close_tab(id),
+            OPEN_FOLDER => {
+                if let Some(folder) = self.tab_folder(id) {
+                    self.open_working_folder(now, &folder);
+                }
+            }
             COMPACT => {
                 self.ask_tab_compact(id, None);
             }
@@ -139,6 +148,17 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// The folder a tab works in: the one its Claude session was started in, else its session's
+    /// as the list knows it. A shell tab has none.
+    pub(crate) fn tab_folder(&self, id: u64) -> Option<std::path::PathBuf> {
+        let tab = self.tabs.get(id)?;
+        let listed = || {
+            let session = tab.resume_id.as_ref().or(tab.session.as_ref())?;
+            Some(self.sessions.get(*self.by_id.get(session)?)?.cwd.clone())
+        };
+        tab.cwd.clone().or_else(listed).filter(|cwd| !cwd.as_os_str().is_empty())
     }
 
     /// A tab that runs a Claude session renames the session: its mark (list, search, the tab
@@ -180,6 +200,32 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::{source::Source, tabs::NewTab, term::Term};
+
+    fn tab(app: &mut AppState, session: Option<String>) -> u64 {
+        app.tabs.open(NewTab { label: "Tab".into(), color: [0; 3], session, account: None }, Term::empty((80, 24)))
+    }
+
+    #[test]
+    fn a_tab_works_in_its_launch_folder_else_in_its_sessions_and_a_shell_tab_in_none() {
+        let mut app = AppState::new(Source::Demo, Some(false), Default::default());
+        app.apply_scan(crate::demo::scan(&app.config));
+        let shell = tab(&mut app, None);
+        assert_eq!(app.tab_folder(shell), None);
+        let launched = tab(&mut app, None);
+        app.tabs.get_mut(launched).unwrap().cwd = Some(r"C:\work\trail".into());
+        assert_eq!(app.tab_folder(launched), Some(r"C:\work\trail".into()));
+        let listed = app.sessions.iter().find(|s| !s.cwd.as_os_str().is_empty()).expect("demo sessions");
+        let (id, cwd) = (listed.id.clone(), listed.cwd.clone());
+        let resumed = tab(&mut app, Some(id));
+        assert_eq!(app.tab_folder(resumed), Some(cwd));
+    }
+
+    #[test]
+    fn only_an_existing_absolute_folder_is_opened() {
+        assert!(crate::run::open_folder(std::path::Path::new("relative")).is_err());
+        assert!(crate::run::open_folder(&std::env::current_exe().unwrap()).is_err(), "never a file");
+        assert!(crate::run::open_folder(&std::env::temp_dir().join("cs-no-such-folder-81723")).is_err());
+    }
 
     #[test]
     fn digit_shortcuts_leave_terminal_input_and_altgr_alone() {
