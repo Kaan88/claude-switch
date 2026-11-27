@@ -664,3 +664,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     the terminal" for a panel that only shows information; say "Claude Code panel" and offer Close (Esc) only. With
     the card up, the composer's notice "No quiet, empty Claude Code prompt is visible" is noise: the card already
     says what is on screen.
+69. **Code files in the side panel have no syntax highlighting, and their lines wrap mid-token** (owner, 2026-11-27,
+    screenshot: `mk_ctx.py` in the docked viewer, plain text, `g[-1]` split across rows). The toolkit already has
+    `mdshared-highlight` (`tokens(source, language, dark)`: syntect's bundled set plus small scanners for TOML,
+    Kotlin, Swift, PowerShell, Dockerfile; plain above 256 KiB); add it as a dependency at the same pin and colour
+    the literal view in `view/ui/markdown.rs` (`text_lines`) by the file's extension, with colours that keep
+    contrast on every palette. Wrap long code lines at a word or operator boundary with a hanging indent under the
+    line's own indentation (or offer "Wrap: off" with horizontal scrolling), and show line numbers in a gutter.
+    Markdown files keep their rendered view; their fenced code blocks should get the same highlighting if they do
+    not already.
