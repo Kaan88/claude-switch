@@ -174,15 +174,52 @@ impl Ui {
                 if let Some(cut) = cut {
                     p.restore(cut);
                 }
-                for (top, h, code) in text.code_blocks() {
-                    let r = Rect::new(tx + geo.tw - 60.0, py + top + 5.0, 54.0, 20.0);
-                    if h < 30.0 || geo.tw < 120.0 || intersection(r, body).is_none() {
+                for block in text.code_blocks() {
+                    let code = block.code;
+                    let copied = self.copied.as_deref() == Some(code);
+                    let word = if copied { "Copied" } else { "Copy" };
+                    let box_top = py + block.top;
+                    if block.room >= CODE_HEAD && geo.tw >= 120.0 {
+                        // A header joined to the renderer's box: the language left, Copy right.
+                        let head = Rect::new(tx, box_top - CODE_HEAD, geo.tw, CODE_HEAD);
+                        if intersection(Rect::new(head.x, head.y, head.w, head.h + 24.0), body).is_none() {
+                            continue;
+                        }
+                        let lap = 12.0;
+                        // Drawn as the renderer draws its box: a hairline of one device pixel.
+                        let frame = Rect::new(head.x, head.y, head.w, head.h + lap);
+                        p.rbox(frame, 6.0, pal.line);
+                        p.rbox(frame.inset(p.px()), (6.0 - p.px()).max(0.0), pal.field);
+                        // The seam: the box's own top edge and corners, and this frame's lower edge.
+                        p.fill(Rect::new(head.x + p.px(), box_top - 1.0, head.w - 2.0 * p.px(), lap + 1.0), pal.field);
+                        let lang = if block.lang.is_empty() { "text" } else { block.lang };
+                        if !block.lang.is_empty() {
+                            // The renderer's own label in the box's corner: the header has it now.
+                            let w = p.measure(Face::Ui, 12.0, block.lang) + 26.0;
+                            p.fill(Rect::new(head.right() - w - 2.0, box_top + 2.0, w, 22.0), pal.field);
+                        }
+                        let cy = head.cy() + 3.0;
+                        p.text(Face::Ui, 11.5, head.x + 16.0, cy, lang, pal.muted, (head.w - 110.0).max(0.0));
+                        let w = p.measure(Face::Ui, 11.5, word) + 34.0;
+                        let r = Rect::new(head.right() - w - 6.0, cy - 11.0, w, 22.0);
+                        let hot = frame_hit(r, Action::CopyCode(code.to_owned()));
+                        if hot {
+                            p.rbox(r, 5.0, pal.hover);
+                        }
+                        let ink = if hot { pal.text } else { pal.muted };
+                        p.icon(mdshared_ui::glyph::COPY, 13.0, r.x + 12.0, cy, ink);
+                        p.text(Face::Ui, 11.5, r.x + 24.0, cy, word, ink, w);
                         continue;
                     }
-                    let copied = self.copied.as_deref() == Some(code);
+                    // No room for a header: Copy beside the renderer's own language label, not over it.
+                    let label = if block.lang.is_empty() { 0.0 } else { p.measure(Face::Ui, 12.0, block.lang) + 14.0 };
+                    let r = Rect::new(tx + geo.tw - 60.0 - label, box_top + 5.0, 54.0, 20.0);
+                    if block.height < 30.0 || geo.tw < 120.0 + label || intersection(r, body).is_none() {
+                        continue;
+                    }
                     let hot = frame_hit(r, Action::CopyCode(code.to_owned()));
                     p.rbox(r, 4.0, if hot { pal.hover } else { pal.bar });
-                    p.text_center(Face::Ui, 11.5, r, if copied { "Copied" } else { "Copy" }, pal.muted);
+                    p.text_center(Face::Ui, 11.5, r, word, pal.muted);
                 }
                 py += text.height();
             }
@@ -255,6 +292,9 @@ fn thumb_fit(w: f32, h: f32, slot: Rect, scale: f32) -> Rect {
     let k = (slot.w / w).min(slot.h / h).min(1.0 / scale.max(0.01));
     Rect::new(slot.x, slot.y, (w * k).max(1.0), (h * k).max(1.0))
 }
+
+/// The header of a code block: the language and Copy.
+const CODE_HEAD: f32 = 28.0;
 
 /// How a tool row is drawn this frame.
 #[derive(Clone, Copy)]

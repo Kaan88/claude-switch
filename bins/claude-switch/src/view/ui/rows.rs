@@ -460,8 +460,8 @@ impl Body {
         }
     }
 
-    /// An answer's code blocks (top, height, text), relative to the text's top.
-    pub fn code_blocks(&self) -> Vec<(f32, f32, &str)> {
+    /// An answer's code blocks, relative to the text's top.
+    pub fn code_blocks(&self) -> Vec<crate::view::preview::CodeBlock<'_>> {
         match &self.layout {
             Layout::Plain(_) => Vec::new(),
             Layout::Markdown(t) => t.code_blocks(),
@@ -558,7 +558,8 @@ impl Rows<'_> {
         // Tool details (diffs, command output) are read on demand: muted, like their row.
         let quiet = Palette { text: self.pal.muted, ..*self.pal };
         let layout = if kind == BodyKind::Markdown {
-            Layout::Markdown(Box::new(Preview::new(
+            // In the conversation a fenced block has a header: the language and Copy.
+            Layout::Markdown(Box::new(Preview::with_code_headers(
                 raw,
                 self.pal,
                 self.scale,

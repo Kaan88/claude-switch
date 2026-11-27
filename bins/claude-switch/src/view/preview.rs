@@ -14,6 +14,50 @@ use mdview_render::{DARK, DocumentRenderer, Hit, LIGHT, Options, Theme};
 
 use super::links;
 
+/// A paragraph that holds only this is the room kept above a code block for its header.
+pub const SPACER: &str = "\u{200b}";
+
+/// A top-level code block of a rendered answer, in logical px from the text's top.
+pub struct CodeBlock<'a> {
+    pub top: f32,
+    pub height: f32,
+    pub code: &'a str,
+    /// The fence's language; empty when it names none.
+    pub lang: &'a str,
+    /// The room above the box that was kept for a header; 0 when there is none (a block the
+    /// renderer placed without the spacer: an indented one, or one in a file's preview).
+    pub room: f32,
+}
+
+/// `raw` with room for a header before every fenced code block that starts a line: a paragraph
+/// of its own that holds a zero-width space (a no-break space would take no line). The renderer draws a code block as one box with no
+/// header and has no setting for one, so the header is drawn in this room, joined to the box.
+fn with_header_room(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 16);
+    // The fence that is open: its character and length.
+    let mut open: Option<(char, usize)> = None;
+    for line in raw.split_inclusive('\n') {
+        let text = line.trim_end_matches(['\n', '\r']);
+        let fence = text.chars().next().filter(|c| matches!(c, '`' | '~'));
+        let run = fence.map_or(0, |c| text.chars().take_while(|x| *x == c).count());
+        match (open, fence) {
+            (None, Some(c)) if run >= 3 && !(c == '`' && text[run..].contains('`')) => {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push('\n');
+                out.push_str(SPACER);
+                out.push_str("\n\n");
+                open = Some((c, run));
+            }
+            (Some((c, len)), Some(d)) if c == d && run >= len && text[run..].trim().is_empty() => open = None,
+            _ => {}
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 pub struct Preview {
     id: u64,
     doc: Document,
@@ -146,6 +190,23 @@ impl Preview {
     /// `files` is present for transcript prose, absent for file previews (which cannot open
     /// additional destinations). The renderer still supplies layout, selection, syntax and pixels.
     pub fn new(raw: &str, pal: &Palette, scale: f32, width: f32, size: f32, files: Option<&links::Files>) -> Self {
+        Self::build(raw, pal, scale, width, size, files)
+    }
+
+    /// As [`Preview::new`], for an answer in the conversation: with room above each fenced code
+    /// block for the header the conversation draws there (the language and Copy).
+    pub fn with_code_headers(
+        raw: &str,
+        pal: &Palette,
+        scale: f32,
+        width: f32,
+        size: f32,
+        files: Option<&links::Files>,
+    ) -> Self {
+        Self::build(&with_header_room(raw), pal, scale, width, size, files)
+    }
+
+    fn build(raw: &str, pal: &Palette, scale: f32, width: f32, size: f32, files: Option<&links::Files>) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let mut doc = safe_document(raw);
         let mut local = Vec::new();
@@ -237,22 +298,40 @@ impl Preview {
         range.contains(&offset).then_some(name)
     }
 
-    /// The top-level code blocks: their top and height in logical px from the text's top, and
-    /// their text, for a Copy button.
-    pub fn code_blocks(&self) -> Vec<(f32, f32, &str)> {
+    /// The top-level code blocks, for the header or the Copy button the conversation draws.
+    pub fn code_blocks(&self) -> Vec<CodeBlock<'_>> {
         let blocks: Vec<_> = self.active(|a| {
             a.renderer
                 .page_layout()
                 .map_or_else(Vec::new, |page| page.blocks().iter().map(|b| (b.block, b.y, b.height)).collect())
         });
         let scale = self.options.scale;
+        let spacer = |index: u32| {
+            self.doc.blocks.get(index as usize).is_some_and(|b| {
+                matches!(b.kind, BlockKind::Paragraph { .. })
+                    && self.doc.text.get(b.text.usize()).map(|text| text.trim_end_matches(['\r', '\n'])) == Some(SPACER)
+            })
+        };
         blocks
-            .into_iter()
-            .filter_map(|(index, y, h)| {
+            .iter()
+            .enumerate()
+            .filter_map(|(at, &(index, y, h))| {
                 let block = self.doc.blocks.get(index as usize)?;
-                matches!(block.kind, BlockKind::CodeBlock { .. }).then_some(())?;
+                let BlockKind::CodeBlock { lang } = block.kind else { return None };
                 let code = self.doc.text.get(block.text.usize())?;
-                Some(((y - self.top) / scale, h / scale, code))
+                // The spacer before it, when this answer was laid out with one.
+                let room = at
+                    .checked_sub(1)
+                    .and_then(|before| blocks.get(before))
+                    .filter(|(before, ..)| spacer(*before))
+                    .map_or(0.0, |(_, before_y, _)| (y - before_y) / scale);
+                Some(CodeBlock {
+                    top: (y - self.top) / scale,
+                    height: h / scale,
+                    code,
+                    lang: self.doc.str(lang).trim(),
+                    room,
+                })
             })
             .collect()
     }
@@ -378,6 +457,29 @@ mod tests {
         assert!(doc.images.iter().all(|i| i.src.len == 0 && i.dark_src.len == 0 && i.light_src.len == 0));
         assert!(!doc.blocks.iter().any(|b| matches!(b.kind, BlockKind::Diagram { .. } | BlockKind::Math { .. })));
         assert!(!doc.spans.iter().any(|s| matches!(s.kind, SpanKind::Math { .. })));
+    }
+
+    #[test]
+    fn an_answers_fenced_blocks_get_room_for_a_header_and_say_their_language() {
+        let raw =
+            "Before:\n```rust\nfn a() {}\n```\nand\n\n~~~\nplain ``` inside\n~~~\n\n- item\n\n      indented code\n";
+        let spaced = with_header_room(raw);
+        assert_eq!(spaced.matches(SPACER).count(), 2, "one spacer per fenced block, none for a fence inside one");
+        assert!(spaced.contains(&format!("Before:\n\n{SPACER}\n\n```rust\n")), "{spaced:?}");
+        assert_eq!(with_header_room("no code here"), "no code here");
+        // An inline run of backticks does not open a fence.
+        assert_eq!(with_header_room("```not a fence``` text"), "```not a fence``` text");
+        let p = Preview::with_code_headers(raw, &LIGHT, 1.0, 400.0, 16.0, None);
+        let blocks = p.code_blocks();
+        let fenced: Vec<_> = blocks.iter().filter(|b| b.room > 0.0).collect();
+        assert_eq!(fenced.iter().map(|b| b.lang).collect::<Vec<_>>(), ["rust", ""]);
+        assert!(fenced.iter().all(|b| b.room >= 28.0), "{:?}", fenced.iter().map(|b| b.room).collect::<Vec<_>>());
+        assert_eq!(fenced[0].code.trim_end(), "fn a() {}");
+        assert_eq!(fenced[1].code.trim_end(), "plain ``` inside");
+        // A file's preview has no header room: its blocks are as the renderer draws them.
+        let plain = Preview::new(raw, &LIGHT, 1.0, 400.0, 16.0, None);
+        assert!(plain.code_blocks().iter().all(|b| b.room == 0.0));
+        assert!(plain.height() < p.height());
     }
 
     #[test]

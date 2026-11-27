@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Chat and the Session view: a code block in an answer has a header with its language on the
+  left and Copy on the right. The Copy button used to cover the language, so no block showed it.
+
 - Chat and the Session view: a run of tool calls between two answers is one quiet line in words
   ("Ran a command, read 3 files, searched the code"), at the column's edge. A single call reads as
   itself ("Ran cargo test -p tiles"). The line opens into a timeline: an icon per kind of call,
