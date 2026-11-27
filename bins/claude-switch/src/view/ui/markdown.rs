@@ -2,7 +2,7 @@ use std::io;
 
 use super::super::documents::Document;
 use super::super::preview::Preview;
-use super::scroll::{GUTTER, Scrollbar, Surface};
+use super::scroll::{GUTTER, Scrollbar};
 use super::*;
 use mdshared_ui::splitter::{Axis, Hold, Splitter};
 
@@ -132,7 +132,7 @@ impl Reading {
     }
 
     /// The column for a body `body` wide, centred in it.
-    fn place(self, body: Rect) -> Rect {
+    pub(super) fn place(self, body: Rect) -> Rect {
         let w = self.column().map_or(body.w, |c| c.min(body.w)).floor();
         Rect::new((body.x + (body.w - w) / 2.0).round(), body.y, w, body.h)
     }
@@ -387,15 +387,6 @@ impl Ui {
                 }
             }
             pane.scroll = Scrollbar::new(Rect::new(body.right() + 1.0, body.y, GUTTER, body.h), pane.max);
-            if let Some(bar) = pane.scroll {
-                bar.draw(
-                    p,
-                    pal,
-                    pane.offset,
-                    self.mouse,
-                    self.scroll_drag.is_some_and(|d| d.surface == Surface::Markdown),
-                );
-            }
         }
         p.restore(clip);
         self.markdown = Some(pane);

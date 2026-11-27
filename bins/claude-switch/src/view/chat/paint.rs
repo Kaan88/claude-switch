@@ -69,7 +69,11 @@ impl AppState {
         let transcript_mouse = popup.as_ref().map_or(transcript_mouse, |popup| popup.pointer_behind(transcript_mouse));
         let now = cx.now();
         let motion = cx.anim().animates();
+        pane.ui.set_chat_reading(crate::view::Reading::from_key(&self.win_file.chat_reading));
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
+        if let Some(deadline) = pane.ui.scroll_deadline() {
+            cx.wake_at(deadline);
+        }
         if pane.ui.animating() && motion {
             cx.animating(l.conversation);
         }

@@ -80,6 +80,7 @@ fn focus_kind_of(id: u32) -> Option<(FocusKind, bool)> {
     })
 }
 const SET_CLASSIC_VIEW: u32 = 99;
+const SET_CHAT_READING: u32 = 130;
 const AUTO_STEPS: [u8; 5] = [50, 60, 70, 80, 90];
 
 /// The threshold choice: Claude Code's own point first, then percentages (a saved one included).
@@ -219,6 +220,16 @@ fn sessions(st: &AppState) -> Vec<Row> {
             .help("Off: they open in a separate console window."),
         Row::toggle(SET_CLASSIC_VIEW, "Classic terminal view for Claude tabs", st.config.classic_terminal_view)
             .help("Chat cannot send while the CLI draws its full-screen view. Applies to new tabs."),
+        Row::choice(
+            SET_CHAT_READING,
+            "Chat reading width",
+            &["Narrow", "Medium", "Wide", "Full"],
+            crate::view::Reading::ALL
+                .iter()
+                .position(|r| *r == crate::view::Reading::from_key(&st.win_file.chat_reading))
+                .unwrap_or(1),
+        )
+        .help("The Markdown viewer has its own width control."),
         Row::toggle(SET_ARCHIVED, "Show sessions archived in the desktop app", st.config.show_archived)
             .help("Claude Desktop's own archive. Switch's Archive is separate."),
         Row::toggle(SET_WORKERS_SHOWN, "Show sessions started by tools", st.config.show_workers)
@@ -392,6 +403,12 @@ fn notifications(st: &AppState) -> Vec<Row> {
 fn settings_outcome(st: &mut AppState, o: Outcome) {
     match o {
         Outcome::Closed => st.dialog = None,
+        Outcome::Changed { id: SET_CHAT_READING, value: Value::Choice(i) } => {
+            if let Some(reading) = crate::view::Reading::ALL.get(i) {
+                st.win_file.chat_reading = reading.key().to_owned();
+                st.save_window();
+            }
+        }
         Outcome::Changed { id: SET_RESTORE_TABS, value: Value::Choice(i) } => {
             if let Some(&mode) = crate::winfile::RestoreTabs::ALL.get(i) {
                 st.win_file.restore_tabs = mode;
@@ -585,6 +602,17 @@ mod tests {
     }
 
     #[test]
+    fn chat_width_setting_is_independent_of_markdown_and_round_trips() {
+        let mut st = AppState::new(Source::Demo, None, WindowFile::default());
+        st.session_view.markdown.reading = crate::view::Reading::Narrow;
+        settings_outcome(&mut st, Outcome::Changed { id: SET_CHAT_READING, value: Value::Choice(2) });
+        assert_eq!(st.win_file.chat_reading, "wide");
+        assert_eq!(st.win_file.markdown_reading, "narrow");
+        let restored = crate::winfile::parse(&crate::winfile::to_text(&st.win_file));
+        assert_eq!(restored.chat_reading, "wide");
+    }
+
+    #[test]
     fn every_setting_has_exactly_one_page() {
         let st = AppState::new(Source::Demo, None, WindowFile::default());
         let expected: &[&[u32]] = &[
@@ -613,6 +641,7 @@ mod tests {
             &[
                 SET_EMBEDDED,
                 SET_CLASSIC_VIEW,
+                SET_CHAT_READING,
                 SET_ARCHIVED,
                 SET_WORKERS_SHOWN,
                 SET_HIDDEN,
@@ -731,10 +760,13 @@ mod tests {
         navigate(&mut st, KeyName::Down);
         assert_eq!(current(&st).form.focus_id(), Some(SET_CLASSIC_VIEW));
         navigate(&mut st, KeyName::Down);
+        assert_eq!(current(&st).form.focus_id(), Some(SET_CHAT_READING));
+        navigate(&mut st, KeyName::Down);
         assert_eq!(current(&st).form.focus_id(), Some(SET_ARCHIVED));
         let archived = st.config.show_archived;
         navigate(&mut st, KeyName::Space);
         assert_ne!(st.config.show_archived, archived);
+        navigate(&mut st, KeyName::Up);
         navigate(&mut st, KeyName::Up);
         navigate(&mut st, KeyName::Up);
         assert_eq!(current(&st).category(), "Sessions");

@@ -12,6 +12,7 @@ mod preview;
 mod shells;
 mod text;
 mod ui;
+pub(crate) use ui::Reading;
 mod working;
 
 use std::path::{Path, PathBuf};
@@ -198,6 +199,13 @@ impl Pane {
 }
 
 impl AppState {
+    pub(crate) fn scroll_wake_due(&self, now: Instant) -> bool {
+        self.tabs
+            .shown()
+            .and_then(|tab| tab.pane.as_ref())
+            .and_then(|pane| pane.ui.scroll_deadline())
+            .is_some_and(|deadline| deadline <= now)
+    }
     pub fn session_visible(&self, width: f32) -> bool {
         self.tabs.shown().is_some_and(|tab| tab.pane.is_some())
             && (self.chat_active() || self.session_width_enabled(width))
@@ -436,6 +444,9 @@ impl AppState {
         let mut hits = Vec::new();
         if let Some(pane) = self.shown_pane(area.w) {
             pane.ui.draw(p, pal, rects.2, &mut pane.model, mouse, cx.now(), motion);
+            if let Some(deadline) = pane.ui.scroll_deadline() {
+                cx.wake_at(deadline);
+            }
             if let Some(side) = pane.ui.detail_side() {
                 let area =
                     mdshared_ui::gfx::Rect::new(rects.2.x, rects.2.y + 31.0, rects.2.w, (rects.2.h - 31.0).max(0.0));

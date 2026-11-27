@@ -505,6 +505,41 @@ mod tests {
     }
 
     #[test]
+    fn chat_reading_widths_render_centered_at_narrow_and_wide_sizes() {
+        let demo = crate::demo::Transcript::new().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let mut model = Model::new(source, demo.cwd().into(), || {});
+        let mut gfx = Gfx::new();
+        let mut bitmap = Bitmap::new(1500, 600);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        for width in [600.0, 1400.0] {
+            for reading in Reading::ALL {
+                let mut ui = Ui::default();
+                ui.set_chat(true);
+                ui.set_chat_reading(reading);
+                ui.draw(
+                    &mut p,
+                    &mdshared_ui::theme::DARK,
+                    Rect::new(0.0, 0.0, width, 600.0),
+                    &mut model,
+                    (-1.0, -1.0),
+                    Instant::now(),
+                    false,
+                );
+                let available = width - 2.0 * PAD - GUTTER;
+                let expected = match reading {
+                    Reading::Narrow => available.min(560.0),
+                    Reading::Medium => available.min(720.0),
+                    Reading::Wide => available.min(900.0),
+                    Reading::Full => available,
+                };
+                assert_eq!(ui.body.w, expected);
+                assert!((ui.body.cx() - (width - GUTTER) / 2.0).abs() <= 1.0);
+            }
+        }
+    }
+
+    #[test]
     fn conversation_scrollbar_pages_drags_resumes_follow_and_releases_outside() {
         let demo = crate::demo::Transcript::new().unwrap();
         let source = crate::view::model::Source::File(demo.path().into());

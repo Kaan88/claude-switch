@@ -638,7 +638,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     contrast checked as the user edits; import and export of a theme as a file.
 64. **A scrollbar that fades, and page width options** (owner, 2026-11-27). Scrollbars show while scrolling or
     under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
-    the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide).
+    the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide). **Done:** the Chat
+    conversation has its own width in Settings → Sessions; the Markdown viewer keeps its existing width
+    control. Both scrollbars show on movement or hover and fade, or snap away with reduced motion.
+    Rendering and timing tests cover the layouts; visual inspection in a running app has not been checked.
 65. **The terminal should behave as Windows Terminal does with the mouse** (owner, 2026-11-27: "instead of normal
     pointer like in windows terminal, I get text selection like behaviour ... still I want default windows terminal
     behaviour"). The arrow pointer over the terminal, not the I-beam; drag to select; right-click copies the

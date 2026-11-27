@@ -11,6 +11,7 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 - Make an editable handover with an OpenCode model and open it in a brand-new Claude Code session.
 - Keep separate logins while sharing transcripts and settings.
 - In Chat, the composer separates session values, actions and panels; effort is shown with a five-dot meter.
+- Choose the Chat conversation's reading width in **Settings → Sessions**. The Markdown viewer keeps its own width control.
 - Check OpenCode’s version and active sessions in **Settings → OpenCode**, confirm a service restart, or open OpenCode Config Studio when installed.
 - Open handovers that are too long for the command line by asking the new session to read the saved Markdown file.
 
