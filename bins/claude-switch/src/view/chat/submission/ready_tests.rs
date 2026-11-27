@@ -245,6 +245,83 @@ fn a_message_the_cli_puts_back_after_an_early_stop_returns_to_the_message_box() 
 }
 
 #[test]
+fn a_put_back_message_stays_on_the_cli_input_while_the_message_box_holds_a_draft() {
+    // A second message held behind the first, then Stop before Claude answers.
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send(RESTORED);
+    assert_eq!(f.writes(), message(RESTORED));
+    f.turn();
+    f.show(WORKING_TOOL);
+    assert_eq!(f.pass(SECOND), (Gate::Running, None));
+    f.send("and then this");
+    assert!(f.chat().queue.is_some() && f.writes().is_empty());
+    let now = f.now;
+    AppState::chat_stop(f.tab(), now);
+    assert_eq!(f.writes(), [b"".to_vec()]);
+    f.show(PLAIN_RESTORED);
+    for _ in 0..4 {
+        f.pass(SECOND);
+    }
+    // No Ctrl+U: the first message is still on the CLI input, the second still in the box and
+    // not sent into it.
+    assert!(f.writes().is_empty());
+    let chat = f.chat();
+    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_none());
+    assert_eq!(chat.editor.text, "and then this");
+    assert_eq!(chat.error, Some(TAKEBACK_HELD));
+    // The same when the user has only started typing.
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send(RESTORED);
+    f.writes();
+    f.turn();
+    f.show(WORKING_TOOL);
+    f.pass(SECOND);
+    f.chat().editor.set("half a sen".into());
+    f.show(PLAIN_RESTORED);
+    f.pass(SECOND);
+    f.pass(SECOND);
+    assert!(f.writes().is_empty());
+    let chat = f.chat();
+    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_none());
+    assert_eq!(chat.editor.text, "half a sen");
+    assert_eq!(chat.error, Some(TAKEBACK_HELD));
+}
+
+#[test]
+fn a_take_back_ends_at_its_deadline_while_output_keeps_coming() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send(RESTORED);
+    f.writes();
+    f.turn();
+    f.show(WORKING_TOOL);
+    f.pass(SECOND);
+    f.show(PLAIN_RESTORED);
+    f.pass(SECOND);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"".to_vec()]);
+    // The input is empty, but the screen never goes quiet.
+    let mut ticks = 0;
+    while f.chat().staging.takeback.is_some() {
+        f.show(PLAIN_EMPTIED);
+        f.pass(SECOND / 10);
+        let now = f.now;
+        assert!(stage_deadline(f.chat(), now).is_none_or(|due| due > now), "a past deadline re-armed");
+        ticks += 1;
+        assert!(ticks <= 25, "the take-back has no deadline");
+    }
+    let chat = f.chat();
+    assert_eq!(chat.editor.text, RESTORED);
+    assert_eq!(chat.error, Some(TAKEN_BACK));
+    assert!(chat.staging.sent.is_none() && !chat.locked() && f.writes().is_empty());
+}
+
+#[test]
 fn text_the_user_typed_in_the_terminal_is_never_cleared() {
     let mut f = Live::new();
     f.show(PLAIN_IDLE);

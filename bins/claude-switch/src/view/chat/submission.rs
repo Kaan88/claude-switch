@@ -34,6 +34,7 @@ const TAKEN_BACK_PICTURE: &str =
     "Stopped before Claude answered. Your message is back in the box; paste its picture again.";
 const TAKEBACK_FAILED: &str =
     "Claude Code put your last message back on its input and Chat could not clear it. Clear it in the terminal.";
+const TAKEBACK_HELD: &str = "Claude Code put your last message back on its input. Chat left it there, as the message      box holds a draft: send or clear it in the terminal, and the draft follows.";
 const IMAGE_KEY: &[u8] = b"\x1bv";
 pub(super) const CHECK: &str = "Open the terminal to check";
 pub(super) const NO_QUIET_PROMPT: &str = "No quiet, empty Claude Code prompt is visible. Check the terminal.";
@@ -599,7 +600,9 @@ impl AppState {
 /// prompt back on its input (2.1.332), where it would block every later send. While that input
 /// shows exactly the message Chat last submitted, with no turn running and nothing else typed
 /// into the terminal since, Chat empties it with Ctrl+U (one line per key, each after the screen
-/// showed the one before) and gives the text back to the message box when that is empty.
+/// showed the one before) and gives the text back to the message box. Only an empty box with no
+/// attachments and no held draft takes it back: otherwise the message stays on the CLI input,
+/// with a notice, so that no text is ever cleared without a place to go.
 fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
     let chat = &pane.chat;
@@ -607,31 +610,52 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let Some(sent) = &chat.staging.sent else { return false };
     let resting = chat.screen_resting(&tab.term, now);
     let Some(step) = &chat.staging.takeback else {
-        let starts = may_write
+        let put_back = may_write
             && chat.waiting().is_none()
             && !chat.enter_only()
             && resting
             && !clean_prompt(screen)
             && shown_exactly(tab, &sent.expected);
-        if starts {
-            let epoch = chat.output_epoch.wrapping_sub(1);
-            tab.pane.as_mut().unwrap().chat.staging.takeback =
-                Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP });
+        if !put_back {
+            return false;
         }
-        return starts;
+        let box_free = chat.editor.text.trim().is_empty() && chat.chips.is_empty() && chat.queue.is_none();
+        let chat = &mut tab.pane.as_mut().unwrap().chat;
+        if box_free {
+            let epoch = chat.output_epoch.wrapping_sub(1);
+            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP });
+        } else {
+            // The message stays where the user can see it: a draft waits behind it, and sends
+            // once the CLI input is empty again.
+            chat.staging.sent = None;
+            chat.refused(TAKEBACK_HELD, None);
+        }
+        return true;
     };
     if clean_prompt(screen) {
-        if !chat.quiet(now) {
+        // The input is empty and no Enter went with the keys, so the message was not sent: it
+        // comes back once the screen settles, or at the step's deadline if output keeps coming.
+        if !chat.quiet(now) && now < step.due && !screen::working(screen) {
             return false;
         }
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         let sent = chat.staging.sent.take().unwrap();
         chat.staging.takeback = None;
-        if chat.editor.text.trim().is_empty() && chat.chips.is_empty() && chat.queue.is_none() {
-            chat.editor.set(sent.text);
-            chat.error = Some(if sent.picture { TAKEN_BACK_PICTURE } else { TAKEN_BACK });
-            chat.retry = None;
-        }
+        // Nothing can be typed or queued while the take-back runs (the composer is locked), but
+        // should the box hold text after all, the message goes in front of it, never away.
+        chat.queue = None;
+        let text = match chat.editor.text.trim().is_empty() {
+            true => sent.text,
+            false => format!(
+                "{}
+
+{}",
+                sent.text, chat.editor.text
+            ),
+        };
+        chat.editor.set(text);
+        chat.error = Some(if sent.picture { TAKEN_BACK_PICTURE } else { TAKEN_BACK });
+        chat.retry = None;
         return true;
     }
     let input = prompt(screen).is_some() || screen::shows_some_input(screen);
@@ -875,16 +899,23 @@ pub(super) fn write(tab: &mut Tab, bytes: &[u8], demo_text: &str) -> Result<(), 
     Ok(())
 }
 
-pub(super) fn stage_deadline(chat: &Chat) -> Option<Instant> {
-    chat.image_wait
-        .as_ref()
-        .map(|wait| wait.due)
-        .or_else(|| chat.staging.echo.as_ref().map(|wait| wait.due))
-        .or_else(|| chat.staging.lines.as_ref().map(|wait| wait.due))
-        .or_else(|| chat.staging.command.as_ref().map(|wait| wait.due))
-        .or_else(|| chat.staging.takeback.as_ref().map(|step| step.due))
-        .or_else(|| chat.question.deadline())
-        .or_else(|| chat.mode_deadline())
+/// The next stage deadline still ahead. One already past is never armed again: its stage acts on
+/// it at the next tick, which the pending work's poll brings anyway, and re-arming an instant
+/// that has gone would wake the window at once, over and over.
+pub(super) fn stage_deadline(chat: &Chat, now: Instant) -> Option<Instant> {
+    [
+        chat.image_wait.as_ref().map(|wait| wait.due),
+        chat.staging.echo.as_ref().map(|wait| wait.due),
+        chat.staging.lines.as_ref().map(|wait| wait.due),
+        chat.staging.command.as_ref().map(|wait| wait.due),
+        chat.staging.takeback.as_ref().map(|step| step.due),
+        chat.question.deadline(),
+        chat.mode_deadline(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|due| *due > now)
+    .min()
 }
 
 #[cfg(test)]

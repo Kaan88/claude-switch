@@ -35,7 +35,9 @@
   its command, **Approve** or **Retry now**, then apply. **Ask Claude to retry** puts a sentence
   in the message box and sends nothing.
 - Stop before Claude answers: Claude Code puts the message back on its own input, which blocked
-  the next send. Chat now clears it there and puts the text back in the message box.
+  the next send. Chat now clears it there and puts the text back in the message box. When the
+  box holds a draft (a second message held behind the first, or one you were typing), Chat leaves
+  the message on Claude Code's input and says so, instead of clearing it with nowhere to go.
 - More time for a pasted picture to show (20 s) and for a pasted message to appear (5 s).
 - Chat: the working line ("✶ Sprouting… (40s · ↓ 3.2k tokens)"), "Waiting for your answer/approval",
   the terminal-answer hint, a read error and Load earlier line up with the conversation's reading

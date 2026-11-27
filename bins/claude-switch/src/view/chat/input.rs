@@ -173,7 +173,7 @@ impl AppState {
             if Self::has_chat_work(tab) || Some(tab.id) == active && pane.chat.enabled && pane.chat.commands.loading() {
                 cx.wake_at(now + SUBMISSION_POLL);
             }
-            if let Some(deadline) = submission::stage_deadline(&pane.chat) {
+            if let Some(deadline) = submission::stage_deadline(&pane.chat, now) {
                 cx.wake_at(deadline);
             }
             // The gate reads the screen's rest: look again when the quiet time is up.

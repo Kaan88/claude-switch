@@ -1178,8 +1178,12 @@ Interrupted before any answer, Claude Code 2.1.332 takes the turn out of the con
 the prompt back on its input, where it would block the next send. While that input shows exactly
 the message Chat last submitted, with no working line and no terminal input since, Chat empties it
 with Ctrl+U (one line a key, each after the screen showed the one before, two seconds a key, forty
-keys at most) and puts the text back in the message box when that is empty; a picture has to be
-pasted again. Text the user typed in the terminal is never cleared.
+keys at most) and puts the text back in the message box; a picture has to be pasted again. Once
+the input reads empty the text comes back when the screen goes quiet, or at the key's deadline
+if output keeps coming. The take-back starts only when the message box is empty, with no
+attachments and no held draft: otherwise the message stays on the CLI input, with a notice, and a
+held draft follows once the user sends or clears it there. Text the user typed in the terminal is
+never cleared, and no text is cleared without a place to go.
 A minimized window, an open dialog or another blocking window overlay pauses automatic writes in
 every tab; stage deadlines still run. **Cancel** unlocks a held draft without sending. No path
 overrides a recognized permission question, a pending tool or a menu. Direct terminal input cancels a queued or staged send, and samples a
