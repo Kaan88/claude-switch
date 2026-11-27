@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.3 (2026-11-27)
+
+- Development: a check against new Claude Code versions (`tools/screen-recorder`, `tools/cli-compat.ps1`,
+  `.github/workflows/cli-compat.yml`) records what the newest Claude Code draws and runs Chat's screen
+  readers over it, so a version that breaks Chat is caught before it is met in use. On GitHub it runs
+  once per new version and waits for an `ANTHROPIC_API_KEY` secret; on this PC it runs by hand.
 - Chat no longer refuses nearly every message in the installed app. Started from the Start menu,
   Claude Code got no `TERM` and drew its input mark as `>`, which Chat did not read as the prompt:
   sends, pictures ("No empty CLI input line for the picture"), slash commands and the Mode chip all

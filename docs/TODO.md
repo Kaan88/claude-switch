@@ -12,21 +12,23 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
   and added to `$reviewedGit` in `tools/write-third-party-notices.ps1` (licence still MIT, no new
   embedded files in the crates Switch ships), or the release run stops at "Unaudited git source"
   after the build, as 0.1.2's first run did. The script needs PowerShell 7 (`pwsh`).
-- Released: 0.1.2 on 2026-11-27 (tag `v0.1.2`, items 22, 47, 49, 53, 56, 59, 61-72 and the Chat
-  cards). Toolkit work is finished for now (owner, 2026-11-27): item 32 (fonts) and item 62's
-  single-opacity option wait for it.
+- Released: 0.1.2 on 2026-11-27 (tag `v0.1.2`, items 22, 47, 49, 53, 56, 59, 61, 63-72 and the Chat
+  cards) and 0.1.3 the same day (tag `v0.1.3`, items 73-77 and the Chat send gate rebuilt from the
+  screen; CHANGELOG.md). Toolkit work is finished for now (owner, 2026-11-27): item 32 (fonts) and
+  item 62's single-opacity option wait for it. OpenCode tabs (59) were tried by the owner and run
+  well; nearly everything else in 0.1.2 and 0.1.3 has not been seen in the running app.
 - Build: `cargo build -p claude-switch`.
 - Hidden flags for trying things: `--demo`, `--theme light|dark`, `--shell <program>`, `--type <text>`,
   `--sessions-tab`.
 
-- Unreleased on `fix/suggestion-gate` (2026-11-27): Chat's readiness from the screen, `TERM` for
-  Claude tabs, held drafts, the question card from the screen, the take-back after an early Stop
-  (DESIGN.md, "What counts as ready", "Questions", "Renderer", "What still needs the terminal").
-  Checked by tests over screens recorded from Claude Code 2.1.332 and never in the running app:
-  the first things to try there are a plain send in a resumed tab, a send while a turn runs, Stop
-  right after a send, a question from Claude, and a pasted picture (its marker was not recorded).
-  Open: the composer's notice for text on the CLI's input has no "clear it" button; a new
-  Claude Code version needs the recordings again (`probe_recordings`).
+- In 0.1.3 (2026-11-27): Chat's readiness from the screen, `TERM` for Claude tabs, held drafts, the
+  question and permission cards from the screen, typed answers, denied permissions, the take-back
+  after an early Stop (DESIGN.md, "What counts as ready", "Questions", "Renderer", "What still needs
+  the terminal"). Checked by tests over screens recorded from Claude Code 2.1.332 and two review
+  loops, never in the running app: the first things to try there are a plain send in a resumed
+  tab, a send while a turn runs, Stop right after a send, a question from Claude, and a pasted
+  picture (its marker was not recorded). A new Claude Code version is checked with
+  `tools/cli-compat.ps1` (by hand) or the `cli-compat` workflow (needs an `ANTHROPIC_API_KEY` secret).
 
 ## Completed follow-ups
 
