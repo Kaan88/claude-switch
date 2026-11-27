@@ -1536,6 +1536,10 @@ Settings → Terminal saves `appearance.cursorShape`, `appearance.cursorBlink`, 
 including the Chat drawer. The default cursor is a steady Block; Bar and Underline are fallbacks
 when the program has not chosen a DECSCUSR style. Blink is off by default. When enabled it still
 respects an explicitly steady cursor, the system caret interval, focus, visibility and reduced motion.
+It starts again, on, after each key and after output that moves the cursor (by absolute line, so
+scrolling counts) or changes its look, its screen or the cell under it. Output that repaints
+elsewhere and puts the cursor back, as Claude Code's elapsed-time counter does every second while it
+works, leaves the rhythm alone.
 
 Opacity defaults to 100% and steps down to 60% by 5%. It affects normal backgrounds and padding,
 not text, explicit terminal backgrounds, or selected cells. The toolkit can raise opacity for text

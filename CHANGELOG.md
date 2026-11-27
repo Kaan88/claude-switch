@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Terminal: a blinking cursor (Settings › Terminal › Blink) keeps an even rhythm in Claude tabs and
+  the Chat drawer. Output now restarts the blink only when it moves or changes the cursor, so
+  Claude Code's once-a-second counter elsewhere on the screen no longer cuts the off phase short.
+
 ## 0.1.2 (2026-11-27)
 
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and
