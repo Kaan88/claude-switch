@@ -49,6 +49,20 @@ pub(crate) fn classic_renderer(launch: &mut Launch, enabled: bool) {
     }
 }
 
+/// What the terminal tabs' screen understands, as the toolkit's PTY names it on other systems.
+pub(crate) const TERM_NAME: (&str, &str) = ("TERM", "xterm-256color");
+
+/// Names the terminal for a Claude tab. On Windows nothing sets `TERM` for a program started from
+/// the Start menu, and Claude Code then takes the terminal for one without Unicode: it draws its
+/// input mark as `>`, check boxes as `[ ]` and so on (Claude Code 2.1.332), not the screens Chat
+/// was recorded against. With `TERM=xterm-256color` it draws them as in any modern terminal. A
+/// launch that sets `TERM` itself keeps its own; other programs are left as they are.
+pub(crate) fn terminal_name(launch: &mut Launch) {
+    if term::is_claude_program(&launch.program) {
+        launch.env.entry(TERM_NAME.0.into()).or_insert_with(|| TERM_NAME.1.into());
+    }
+}
+
 fn button_of(b: Button) -> Option<MouseButton> {
     match b {
         Button::Left => Some(MouseButton::Left),
@@ -100,6 +114,7 @@ impl AppState {
         let signing_in = claude_switch_core::launch::is_login(l);
         let mut l = l.clone();
         classic_renderer(&mut l, self.config.classic_terminal_view);
+        terminal_name(&mut l);
         if let Some(pane) = &mut pane {
             pane.chat.classic_renderer = l.env.contains_key(CLASSIC_RENDERER);
             if !self.source.is_demo() {
