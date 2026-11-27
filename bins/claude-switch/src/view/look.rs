@@ -11,6 +11,9 @@ pub(super) const BOX_RADIUS: f32 = 18.0;
 /// An arrow pointing up: Send.
 pub(super) const ARROW_UP: &str = "M8 13V3.5M3.8 7.7L8 3.5l4.2 4.2";
 
+/// The Claude mark: kept for the working line.
+pub(super) const MARK: &str = "✳︎";
+
 /// The composer and the cards: a surface one step above the page.
 pub(super) fn raised(pal: &Palette) -> Rgb {
     if pal.dark { mix(pal.page, pal.text, 0.06) } else { pal.field }

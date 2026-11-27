@@ -155,6 +155,8 @@ pub(super) struct Row {
     pub started: Option<i64>,
     pub agent: Option<String>,
     pub tone: Tone,
+    /// A folded group that holds the call the CLI offers to run in the background.
+    pub offer: bool,
 }
 
 /// Reuse unchanged shaping across appends and prepended history.
@@ -267,6 +269,8 @@ pub(super) struct Rows<'a> {
     pub scale: f32,
     pub pal: &'a Palette,
     pub chat: bool,
+    /// The running shell call the CLI offers to move to the background.
+    pub offer: Option<ItemId>,
 }
 
 impl Rows<'_> {
@@ -332,6 +336,7 @@ impl Rows<'_> {
             started: None,
             agent: None,
             tone: Tone::Normal,
+            offer: false,
         }
     }
 
@@ -415,6 +420,8 @@ impl Rows<'_> {
                 row.stamp = group_status(denied, failed, running);
                 row.tone = if failed + denied > 0 { Tone::Warning } else { Tone::Muted };
                 row.busy = running > 0;
+                // Folded, the group's line stands for the call.
+                row.offer = !row.open && self.offer.is_some_and(|offer| ids.contains(&offer));
                 self.put(row);
             }
             for &id in ids {

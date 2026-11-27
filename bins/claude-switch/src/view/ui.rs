@@ -115,6 +115,13 @@ pub struct Ui {
     column: (f32, f32),
     /// The newest message there was while the view last followed the latest.
     seen: Option<ItemId>,
+    /// Chat shows a card that says what Claude waits for: the working line does not repeat it.
+    working_hidden: bool,
+    /// The running shell call the CLI offers to move to the background, and whether that key is
+    /// on its way: its line in the conversation carries the button.
+    offer: Option<(ItemId, bool)>,
+    /// Where the last frame drew that button.
+    offer_rect: Option<Rect>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -173,6 +180,40 @@ impl Ui {
         model.select_agent(None);
     }
 
+    /// What the working line says, when Claude Code works or waits.
+    pub(super) fn working(&self) -> Option<&Footer> {
+        self.working.as_ref()
+    }
+
+    /// Chat hides the working line while a card says the same ("Waiting for your answer").
+    pub(super) fn hide_working(&mut self, hidden: bool) {
+        self.working_hidden = hidden;
+    }
+
+    /// The running shell call whose line offers "Run in background", and whether the key is on
+    /// its way (the button is then dimmed).
+    pub(super) fn set_offer(&mut self, offer: Option<(ItemId, bool)>) {
+        if self.offer.map(|(id, _)| id) != offer.map(|(id, _)| id) {
+            self.cache = None;
+        }
+        self.offer = offer;
+    }
+
+    /// Where the last frame drew "Run in background", for the host to take its click.
+    pub(super) fn offer_rect(&self) -> Option<Rect> {
+        self.offer_rect.filter(|_| self.offer.is_some_and(|(_, busy)| !busy))
+    }
+
+    /// The room Chat's working line takes after the last message.
+    fn working_room(&self, m: &Model) -> f32 {
+        let shown = self.chat
+            && self.page == Page::Conversation
+            && m.agent.is_none()
+            && self.working.is_some()
+            && !self.working_hidden;
+        if shown { super::working::CHAT_LINE } else { 0.0 }
+    }
+
     pub(super) fn set_working(&mut self, footer: Option<Footer>) -> bool {
         if self.working == footer {
             false
@@ -204,8 +245,9 @@ impl Ui {
 
     pub(super) fn footer_height(&self, width: f32, main: bool) -> f32 {
         if self.chat {
-            // Chat has no strip: only the working line keeps a row under the conversation.
-            return if self.page == Page::Conversation && main && self.working.is_some() { 25.0 } else { 0.0 };
+            // Chat has no strip: the working line is the conversation's last row, Stop is the
+            // composer's, and "jump to latest" floats over the conversation.
+            return 0.0;
         }
         if self.page == Page::Conversation && main && self.working.is_some() && width - 2.0 * PAD < 440.0 {
             49.0
@@ -331,7 +373,9 @@ impl Ui {
             let body = Rect::new(content.x, top, (content.w - GUTTER).max(0.0), content.h);
             self.body = if self.chat { self.chat_reading.place(body) } else { body };
             self.layout(m, pal, p.scale);
+            self.offer_rect = None;
             self.paint_rows(p, pal, m, phase, motion);
+            self.paint_working(p, pal, m);
             self.scrollbar =
                 Scrollbar::new(Rect::new(self.body.right() + 1.0, top, GUTTER - 1.0, self.body.h), self.max);
             if let Some(bar) = self.scrollbar {
@@ -366,7 +410,7 @@ impl Ui {
         if self.page == Page::Conversation && self.chat {
             self.jump_button(p, pal, m, visible);
         }
-        if self.page == Page::Conversation {
+        if self.page == Page::Conversation && !self.chat {
             self.conversation_footer(
                 p,
                 pal,
@@ -415,7 +459,16 @@ impl Ui {
                 } else {
                     Default::default()
                 };
-            let mut r = Rows { previous, list: Vec::new(), end: 0.0, width: self.body.w, pal, scale, chat: self.chat };
+            let mut r = Rows {
+                previous,
+                list: Vec::new(),
+                end: 0.0,
+                width: self.body.w,
+                pal,
+                scale,
+                chat: self.chat,
+                offer: self.offer.map(|(id, _)| id),
+            };
             match self.page {
                 Page::Conversation => {
                     r.conversation(m, &self.expanded, &self.tool_expanded);
@@ -438,7 +491,7 @@ impl Ui {
                 self.offset = row.top + delta;
             }
         }
-        self.max = (self.rows.last().map_or(0.0, |r| r.top + r.h + 4.0) - self.body.h).max(0.0);
+        self.max = (self.rows_end() + self.working_room(m) - self.body.h).max(0.0);
         if let Some((id, pending)) = &mut self.tool_jump
             && *pending
             && self.body.h > 0.0
@@ -452,6 +505,25 @@ impl Ui {
         } else {
             self.offset.clamp(0.0, self.max)
         };
+    }
+
+    /// Where the conversation's rows end, with a little air under the last.
+    fn rows_end(&self) -> f32 {
+        self.rows.last().map_or(0.0, |r| r.top + r.h + 4.0)
+    }
+
+    /// Chat's working line after the last message, where the next text will appear.
+    fn paint_working(&mut self, p: &mut Painter, pal: &Palette, m: &Model) {
+        if self.working_room(m) == 0.0 {
+            return;
+        }
+        let Some(work) = &self.working else { return };
+        let body = self.body;
+        let y = body.y + self.rows_end() - self.offset;
+        let clip = p.clip(body);
+        let cy = y + super::working::CHAT_LINE / 2.0 + 2.0;
+        super::working::draw_chat_line(p, pal, body.x, cy, &work.label, body.w);
+        p.restore(clip);
     }
 
     pub(super) fn jump_to_tool(&mut self, model: &Model, id: ItemId) -> bool {

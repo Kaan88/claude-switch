@@ -17,6 +17,9 @@ pub(super) struct Draw<'a> {
     pub chips: &'a [Control],
     /// Own command lines by slot; an empty one has no chip.
     pub own: &'a [String],
+    /// A turn is running, and whether Stop's checks pass now: Stop is on the Send button (or
+    /// beside it, when there is a draft to send).
+    pub stop: Option<bool>,
 }
 
 /// The chips in their default order.
@@ -64,6 +67,8 @@ pub(super) fn left_group(chips: &[Control]) -> f32 {
     if fixed.is_empty() { 0.0 } else { fixed.iter().sum::<f32>() + 4.0 * (fixed.len() - 1) as f32 + 1.0 }
 }
 
+/// The message box's placeholder while a turn runs.
+pub(super) const QUEUE_HINT: &str = "Queue the next message…";
 /// The centre of the editor's first row, from its top.
 const FIRST_ROW: f32 = 15.0;
 /// The round Send button.
@@ -109,7 +114,7 @@ impl Chat {
         Some(Suggestions { bounds, matches, selected, first, visible })
     }
 
-    pub(super) fn notice(&self, info: &ChatInfo) -> Option<&'static str> {
+    pub(super) fn notice(&self, _info: &ChatInfo) -> Option<&'static str> {
         // With a menu or panel card up, the card says what the screen shows: the composer only
         // says why it waits, not that the terminal's prompt is not visible.
         let card = self
@@ -151,7 +156,6 @@ impl Chat {
                     }
                 })
             })
-            .or_else(|| self.can_stop(info).then_some("A turn is running. You can queue the next message."))
     }
 
     pub(super) fn attachment_pages(&self) -> usize {
@@ -335,12 +339,14 @@ impl Draw<'_> {
         let x = e.x + 8.0;
         let width = editor_text_width(e);
         let next_chip = chat.popups.next_prompt.clone().filter(|_| !chat.locked());
+        // While a turn runs a message is queued, and the box says so.
+        let hint = if self.stop.is_some() && !chat.locked() { QUEUE_HINT } else { "Message Claude Code…" };
         let ed = &mut chat.editor;
         ed.flow(p, width, e.h);
         let selection = ed.selection();
         let caret_row = ed.caret_row();
         if ed.text.is_empty() {
-            p.text(editor::FACE, editor::TEXT_SIZE, x, e.y + FIRST_ROW, "Message Claude Code…", self.pal.muted, width);
+            p.text(editor::FACE, editor::TEXT_SIZE, x, e.y + FIRST_ROW, hint, self.pal.muted, width);
             if let Some(next) = next_chip.as_deref() {
                 let label = format!("↳ {}  ·  Tab", short(next, 80));
                 let w = (p.measure(Face::Ui, PILL_FONT, &label) + 18.0).min(width);
@@ -478,10 +484,20 @@ impl Draw<'_> {
         }
         let row = r.y + if l.stacked { SEND - 2.0 } else { 0.0 };
         let rsend = Rect::new(r.right() - SEND - 1.0, row, SEND, SEND);
-        self.send(p, chat, rsend);
         let y = row + (SEND - 24.0) / 2.0;
         // The slot left of Send is kept for the small Stop, so nothing moves when it shows.
         let mut x = rsend.x - STOP_SLOT - 4.0;
+        let something = !chat.editor.text.trim().is_empty() || !chat.chips.is_empty();
+        match self.stop {
+            // A turn runs and there is nothing to send: the round button is Stop.
+            Some(ready) if !something && !chat.locked() => self.stop_button(p, rsend, ready, true),
+            // With a draft the round button sends (the draft is queued); Stop stands beside it.
+            Some(ready) => {
+                self.send(p, chat, rsend);
+                self.stop_button(p, Rect::new(x + 1.0, y, 24.0, 24.0), ready, false);
+            }
+            None => self.send(p, chat, rsend),
+        }
         if self.wide {
             x -= 58.0;
             self.toolbar_pill(p, Rect::new(x, y, 58.0, 24.0), "Details", Control::Panel, !chat.side_hidden, true);
@@ -499,6 +515,34 @@ impl Draw<'_> {
         x -= 63.0;
         let attach = Rect::new(x, y, 59.0, 24.0);
         self.toolbar_pill(p, attach, "Attach…", Control::Attach, false, !chat.locked());
+    }
+
+    /// Stop: a square, on the round button or as a small plain button beside Send. It is dimmed
+    /// and takes no click while its checks fail; a click goes the way every Stop does.
+    fn stop_button(&mut self, p: &mut Painter, r: Rect, ready: bool, round: bool) {
+        let pal = self.pal;
+        let target = Target::Chat(Control::Stop);
+        let hot = ready && self.hover == Some(target);
+        let ground = look::raised(pal);
+        let side = if round { 10.0 } else { 9.0 };
+        let square = Rect::new(r.cx() - side / 2.0, r.cy() - side / 2.0, side, side);
+        if round {
+            let fill = match (ready, hot) {
+                (true, true) => mdshared_ui::gfx::mix(pal.text, ground, 0.18),
+                (true, false) => pal.text,
+                _ => look::quiet_fill(pal, ground),
+            };
+            p.rbox(r, r.h / 2.0, fill);
+            p.rbox(square, 2.0, if ready { ground } else { pal.faint });
+        } else {
+            if hot {
+                p.rbox(r, 6.0, pal.hover);
+            }
+            p.rbox(square, 2.0, if ready { pal.text } else { pal.faint });
+        }
+        if ready {
+            self.hits.push((r, target));
+        }
     }
 
     /// Send: a round button, the accent with an up arrow when there is something to send and the
@@ -789,6 +833,7 @@ mod tests {
                                 pins: &[],
                                 chips: &DEFAULT_CHIPS,
                                 own: &[],
+                                stop: None,
                             }
                             .toolbar(&mut p, &chat, &info);
                             let what = format!("{width} px at {scale}x, panel {panel}, {start:?} {model} {mode:?}");
@@ -833,6 +878,7 @@ mod tests {
             pins: &[],
             chips: &chips,
             own: &own,
+            stop: None,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         let order: Vec<_> = hits.iter().map(|(_, t)| *t).collect();
@@ -871,6 +917,7 @@ mod tests {
             pins: &[],
             chips: &DEFAULT_CHIPS,
             own: &own,
+            stop: None,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         for (r, t) in &hits {
@@ -881,6 +928,53 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(chips_of(&settings), chips);
+    }
+
+    /// While a turn runs, Stop is the round button when there is nothing to send, and a small
+    /// button beside Send when there is a draft; dimmed, it takes no click. Either way the click
+    /// is `Control::Stop`, as the old strip's and the notice bar's Stop were.
+    #[test]
+    fn stop_is_on_the_send_button_while_a_turn_runs_and_beside_it_with_a_draft() {
+        let mut gfx = Gfx::new();
+        let app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
+        let mut bitmap = Bitmap::new(1100, 480);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        let layout = Layout::new(Rect::new(0.0, 0.0, 1100.0, 480.0), true, false, None, false, false);
+        let (send, stop) = (Target::Chat(Control::Send), Target::Chat(Control::Stop));
+        let mut hits_for = |draft: &str, turn: Option<bool>| {
+            let mut chat = Chat { layout, last_gate: Some(Gate::Running), ..Default::default() };
+            chat.editor.set(draft.into());
+            let mut hits = Vec::new();
+            Draw {
+                pal: app.pal(),
+                focused: true,
+                wide: true,
+                hover: None,
+                hits: &mut hits,
+                pins: &[],
+                chips: &DEFAULT_CHIPS,
+                own: &[],
+                stop: turn,
+            }
+            .composer(&mut p, &mut chat, &ChatInfo::default(), None, None);
+            let find = |t: Target| hits.iter().find_map(|(r, hit)| (*hit == t).then_some(*r));
+            (find(send), find(stop))
+        };
+        let (idle_send, none) = hits_for("", None);
+        let idle_send = idle_send.expect("Send when no turn runs");
+        assert_eq!(none, None);
+        // Nothing to send: the round button is Stop, where Send was.
+        assert_eq!(hits_for("", Some(true)), (None, Some(idle_send)));
+        // Its checks fail: dimmed, and no click.
+        assert_eq!(hits_for("", Some(false)), (None, None));
+        // A draft: the round button sends (it is queued), Stop is the small button left of it.
+        let (queue, small) = hits_for("next", Some(true));
+        let small = small.expect("Stop beside Send");
+        assert_eq!(queue, Some(idle_send));
+        assert!(
+            small.right() <= idle_send.x && small.w < idle_send.w && layout.toolbar.contains(small.cx(), small.cy())
+        );
+        assert_eq!(hits_for("next", Some(false)), (Some(idle_send), None));
     }
 
     #[test]
@@ -908,6 +1002,7 @@ mod tests {
                     pins: &[],
                     chips: &DEFAULT_CHIPS,
                     own: &[],
+                    stop: None,
                 }
                 .toolbar(&mut p, &chat, &info);
                 positions.push(hits);
@@ -958,6 +1053,7 @@ mod tests {
                 pins: &pins,
                 chips: &DEFAULT_CHIPS,
                 own: &[],
+                stop: None,
             }
             .composer(&mut p, &mut chat, &info, suggestions, None);
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();

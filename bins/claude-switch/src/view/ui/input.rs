@@ -464,7 +464,7 @@ mod tests {
     use mdshared_ui::gfx::Gfx;
 
     #[test]
-    fn working_stop_in_both_surfaces_requires_the_same_turn_at_press_and_release() {
+    fn the_session_views_stop_requires_the_same_turn_at_press_and_release_and_chat_has_none_in_the_pane() {
         let demo = crate::demo::Transcript::new_chat().unwrap();
         let mut model = Model::new(crate::view::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
         let mut gfx = Gfx::new();
@@ -490,7 +490,14 @@ mod tests {
                 label: "✻ Shimmying… (53m 37s · ↓ 27.1k tokens)".into(), stop: Some(one)
             }));
             draw(&mut ui, &mut p, &mut model);
-            let r = ui.hits.iter().find_map(|(r, action)| (*action == Action::Stop(one)).then_some(*r)).unwrap();
+            let stop = ui.hits.iter().find_map(|(r, action)| (*action == Action::Stop(one)).then_some(*r));
+            if chat {
+                // Chat's Stop is on the composer's Send button (`composer::tests`), not in the pane.
+                assert_eq!(stop, None);
+                assert_eq!(ui.footer_height(width, true), 0.0, "Chat has no strip under the conversation");
+                continue;
+            }
+            let r = stop.unwrap();
             let (x, y) = (r.cx(), r.cy());
             ui.press(x, y, 1, Mods::default(), &mut model);
             assert_eq!(ui.release(x, y, Mods::default(), &mut model), Release::Stop(one));
@@ -541,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn the_working_line_and_the_error_line_start_at_the_reading_column() {
+    fn the_working_line_ends_the_conversation_at_the_reading_column_and_the_error_line_starts_there() {
         let demo = crate::demo::Transcript::new().unwrap();
         let source = crate::view::model::Source::File(demo.path().into());
         let mut model = Model::new(source, demo.cwd().into(), || {});
@@ -576,20 +583,24 @@ mod tests {
                 ui.draw(&mut p, &pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
                 let body = ui.body;
                 assert_eq!(ui.column(), (body.x, body.w), "{width} {reading:?}");
-                let footer = area.bottom() - ui.footer_height(width, true);
-                let (left, right) = ink(&bitmap, footer + 3.0, area.bottom(), width);
+                // The working line is the conversation's last row: right after the last message,
+                // inside the conversation, with no strip under it.
+                assert_eq!(ui.footer_height(width, true), 0.0);
+                assert!(ui.follow.active() && ui.offset == ui.max);
+                let top = body.y + ui.rows_end() - ui.offset;
+                assert!(top + crate::view::working::CHAT_LINE <= body.bottom() + 0.5, "{width} {reading:?}");
+                let (left, right) = ink(&bitmap, top + 4.0, top + crate::view::working::CHAT_LINE, width);
                 assert!(
                     left >= body.x && left <= body.x + 8.0,
                     "{width} {reading:?}: the working line starts at {left}, the text at {}",
                     body.x
                 );
                 assert!(
-                    right <= body.right() + 1.0,
-                    "{width} {reading:?}: the footer ends at {right}, the column at {}",
+                    right > left + 100.0 && right <= body.right() + 1.0,
+                    "{width} {reading:?}: the working line ends at {right}, the column at {}",
                     body.right()
                 );
-                let stop = ui.hits.iter().find_map(|(r, a)| matches!(a, Action::Stop(_)).then_some(*r)).unwrap();
-                assert!(stop.x > left && stop.right() <= body.right() + 1.0);
+                assert!(ui.hits.iter().all(|(_, a)| !matches!(a, Action::Stop(_))), "Stop is the composer's");
                 let (left, _) = ink(&bitmap, 9.0, 24.0, width);
                 assert!(left >= body.x && left <= body.x + 4.0, "{width} {reading:?}: the error at {left}");
             }

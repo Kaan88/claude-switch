@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Chat: the working line ("✻ Shimmying… 12s · ↓ 1.2k tokens") is the last line of the
+  conversation, where the next text will appear, with the mark in the accent colour. The strip
+  between the conversation and the message box is gone.
+- Chat: Stop is the round Send button, as a square, while a turn runs and the box is empty. With
+  a draft the button sends (the draft is queued, as before) and Stop is a small square left of it.
+  Stop is dimmed while it cannot be used. The box reads "Queue the next message…" then, and no
+  longer shows a notice bar to say so.
+- Chat: "Run in background" stands at the right of the running command's line instead of in a
+  card of its own. The card still shows when there are agents to stop or something to report.
+
 - Chat: one column. Claude's answers start at the column's left edge, without the ✳ mark or an
   indent; your messages are in a neutral grey bubble on the right; the message box and the cards
   are as wide as the column, so the draft, a card's text and the answers share a left edge. The

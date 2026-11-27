@@ -7,7 +7,7 @@ use super::*;
 impl Ui {
     pub(super) fn conversation_footer(&mut self, p: &mut Painter, pal: &Palette, r: Rect, visible: bool, main: bool) {
         let stacked = r.h == 49.0;
-        let h = if self.chat { 23.0 } else { 26.0 };
+        let h = 26.0;
         let y = if stacked { r.bottom() - h } else { r.y + (r.h - h) / 2.0 };
         let latest = Rect::new(r.right() - 110.0, y, 110.0, h);
         if let Some(work) = self.working.as_ref().filter(|_| main) {
@@ -21,8 +21,6 @@ impl Ui {
                 p.text_center(Face::Ui, 12.0, stop, "Stop", pal.muted);
             }
         }
-        // Chat shows a round button over the conversation instead (`Ui::jump_button`).
-        let visible = visible && !self.chat;
         if visible {
             if self.follow.active() {
                 p.text_center(Face::Ui, 12.0, latest, "Following latest", pal.muted);
@@ -97,8 +95,26 @@ impl Ui {
                         p.rbox(header, 5.0, pal.hover);
                         ground = pal.hover;
                     }
-                    let badge = if row.background && header.w >= 120.0 {
-                        let badge = Rect::new(header.right() - 76.0, header.y + 3.0, 68.0, header.h - 6.0);
+                    // The CLI's own "ctrl+b" offer, on the running command's line.
+                    let offered = match (&row.id, self.offer) {
+                        (Id::Tool(id), Some((offer, busy))) if *id == offer => Some(busy),
+                        (Id::Group(_), Some((_, busy))) if row.offer => Some(busy),
+                        _ => None,
+                    };
+                    let mut offer_w = 0.0;
+                    if let Some(busy) = offered.filter(|_| header.w >= 260.0) {
+                        let label = if busy { "Moving to background…" } else { "Run in background" };
+                        let w = p.measure(Face::Ui, 12.0, label) + 22.0;
+                        let pill = Rect::new(header.right() - w, header.cy() - 12.0, w, 24.0);
+                        let over = !busy && pill.contains(mouse.0, mouse.1);
+                        let edge = crate::view::look::edge(pal);
+                        p.frame(pill, 12.0, if over { pal.hover } else { pal.page }, edge);
+                        p.text_center(Face::Ui, 12.0, pill, label, if busy { pal.muted } else { pal.text });
+                        self.offer_rect = intersection(pill, body);
+                        offer_w = w + 8.0;
+                    }
+                    let badge = if row.background && header.w >= 120.0 + offer_w {
+                        let badge = Rect::new(header.right() - offer_w - 76.0, header.y + 3.0, 68.0, header.h - 6.0);
                         let Id::Tool(id) = row.id else { unreachable!() };
                         let hot = frame_hit(badge, Action::Shell(id));
                         p.rbox(badge, 4.0, if hot { pal.hover } else { pal.on });
@@ -107,6 +123,7 @@ impl Ui {
                     } else {
                         0.0
                     };
+                    let badge = badge + offer_w;
                     draw_tool_line(p, pal, header, row, color, ground, badge);
                     self.busy_visible |= row.busy && header.bottom() > body.y;
                 }

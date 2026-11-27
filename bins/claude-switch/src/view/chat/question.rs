@@ -128,6 +128,11 @@ pub(in crate::view) fn waiting_label(model: &Model, screen: &Screen) -> Option<&
     }
 }
 
+/// `label` is a working line that only says Claude waits for the user: a card that asks says it.
+pub(in crate::view) fn waits_for_user(label: &str) -> bool {
+    label == ASKING || label == APPROVING
+}
+
 /// One single-choice question: a click on a choice answers it.
 fn simple(questions: &[Question]) -> bool {
     matches!(questions, [q] if !q.multi_select)

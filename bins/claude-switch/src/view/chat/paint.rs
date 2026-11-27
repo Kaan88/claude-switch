@@ -107,7 +107,22 @@ impl AppState {
         let transcript_mouse = suggestions.as_ref().map_or(mouse, |popup| popup.pointer_behind(mouse));
         let transcript_mouse = popup.as_ref().map_or(transcript_mouse, |popup| popup.pointer_behind(transcript_mouse));
         pane.ui.set_chat_reading(crate::view::Reading::from_key(&self.win_file.chat_reading));
+        // A card that asks says what Claude waits for; the working line does not repeat it.
+        let asking = chat.question.visible() && !chat.question.only_denials();
+        let waiting = pane.ui.working().is_some_and(|w| super::question::waits_for_user(&w.label));
+        pane.ui.hide_working(asking && waiting);
+        // Stop is the composer's: on Send while a turn runs, dimmed while its checks fail.
+        let info = &pane.model.chat;
+        let running = chat.last_gate == Some(super::Gate::Running) || pane.ui.working().is_some() && !waiting;
+        let stop_ready = pane.ui.working().is_some_and(|w| w.stop.is_some())
+            || chat.last_gate == Some(super::Gate::Running) && chat.can_stop(info);
+        let stop = running.then_some(stop_ready);
+        pane.ui.set_offer(chat.question.background_inline());
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
+        if let Some(r) = pane.ui.offer_rect() {
+            // "Run in background" on the command's line: the same click as the card's button.
+            self.hits.push((r, Target::Chat(Control::Question(super::question::Hit::Background))));
+        }
         frame.0 = pane.ui.scroll_deadline();
         if pane.ui.animating() && motion {
             frame.1 = Some(l.conversation);
@@ -209,6 +224,7 @@ impl AppState {
             pins: &self.win_file.chat_pins,
             chips: &composer::chips_of(&self.config.chat),
             own: &self.config.chat.commands,
+            stop,
         }
         .composer(p, chat, &pane.model.chat, suggestions, popup);
         frame

@@ -111,6 +111,7 @@ fn both_views_expand_tools_and_put_only_successful_named_markdown_under_the_turn
             scale: 1.0,
             pal: &mdshared_ui::theme::DARK,
             chat,
+            offer: None,
         };
         rows.conversation(
             &model,
@@ -166,8 +167,16 @@ fn notices_are_compact_rows_that_expand_and_thoughts_do_not_split_or_count_in_a_
     assert_eq!(model.groups[1], Group::Tools((1..7).map(id).collect()), "thoughts stay inside the tool group");
     let project = |open: BTreeSet<ItemId>, tools: BTreeSet<ItemId>| {
         let pal = &mdshared_ui::theme::DARK;
-        let mut rows =
-            Rows { list: vec![], previous: BTreeMap::new(), end: 0.0, width: 700.0, scale: 1.0, pal, chat: true };
+        let mut rows = Rows {
+            list: vec![],
+            previous: BTreeMap::new(),
+            end: 0.0,
+            width: 700.0,
+            scale: 1.0,
+            pal,
+            chat: true,
+            offer: None,
+        };
         rows.conversation(&model, &open, &tools);
         rows.list
     };
@@ -223,8 +232,16 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
     model.groups = super::super::super::model::group(&model.items);
     let project = |tools: BTreeSet<ItemId>| {
         let pal = &mdshared_ui::theme::DARK;
-        let mut rows =
-            Rows { list: vec![], previous: BTreeMap::new(), end: 0.0, width: 700.0, scale: 1.0, pal, chat: true };
+        let mut rows = Rows {
+            list: vec![],
+            previous: BTreeMap::new(),
+            end: 0.0,
+            width: 700.0,
+            scale: 1.0,
+            pal,
+            chat: true,
+            offer: None,
+        };
         rows.conversation(&model, &BTreeSet::new(), &tools);
         rows.list
     };
@@ -278,8 +295,16 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
     .collect();
     model.groups = super::super::super::model::group(&model.items);
     let pal = &mdshared_ui::theme::DARK;
-    let mut rows =
-        Rows { list: vec![], previous: BTreeMap::new(), end: 0.0, width: 700.0, scale: 1.0, pal, chat: true };
+    let mut rows = Rows {
+        list: vec![],
+        previous: BTreeMap::new(),
+        end: 0.0,
+        width: 700.0,
+        scale: 1.0,
+        pal,
+        chat: true,
+        offer: None,
+    };
     rows.conversation(&model, &[id(1)].into(), &[id(1)].into());
     let row = |i| rows.list.iter().find(|r| r.id == Id::Tool(id(i))).unwrap();
     let group = rows.list.iter().find(|r| r.style == Style::Group).expect("four calls fold into a group");
