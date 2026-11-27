@@ -2231,3 +2231,22 @@ fn a_rewind_left_open_keeps_its_card_over_the_list_until_the_list_is_gone() {
     f.sync();
     assert!(f.rewind().is_none());
 }
+
+#[test]
+fn a_cancel_that_stops_sends_no_esc_on_top_of_its_own() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert!(press(f.tab(), now, Hit::Escape));
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec()]);
+    // The CLI does not repaint: the list still shows when the cancel times out.
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty(), "no third Esc");
+    let r = f.rewind().unwrap();
+    assert_eq!((r.error, r.note), (Some(rewind::NOT_CANCELLED), Some(rewind::LEFT_OPEN)));
+}

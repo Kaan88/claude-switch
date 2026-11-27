@@ -606,6 +606,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     permission prompt or CLI menu takes the card from a stopped rewind, whose notice comes back afterwards.
     Re-review (2026-11-27): a rewind that stopped with its screen still open keeps its card (why it stopped, and
     that the screen is open) over the generic panel card while that screen shows, and goes once it is gone.
+    A Cancel that times out with the list still on screen sends no closing Esc on top of its own; it says the
+    screen is still open.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).
