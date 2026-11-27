@@ -900,7 +900,9 @@ impl Chat {
             changed = true;
         }
         let shown = match pending.as_ref().map(|p| p.kind) {
-            Some(Kind::Tool(kind)) => tool_prompt(kind, pending.as_ref().is_some_and(|p| p.alone), cwd, screen),
+            Some(Kind::Tool(kind)) if !self.menus_off => {
+                tool_prompt(kind, pending.as_ref().is_some_and(|p| p.alone), cwd, screen)
+            }
             _ => None,
         };
         changed |= self.question.shown != shown;
@@ -911,9 +913,11 @@ impl Chat {
         });
         let answerable = answerable.map(|p| p.item.offset);
         // Any other menu the screen shows, unless a question or prompt card already covers it.
-        let menu = (shown.is_none() && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
-            .then(|| menu_shown(screen))
-            .flatten();
+        let menu = (!self.menus_off
+            && shown.is_none()
+            && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
+        .then(|| menu_shown(screen))
+        .flatten();
         changed |= self.question.menu != menu;
         let background = pending.as_ref().filter(|p| p.alone && shown.is_none() && menu.is_none()).and_then(|p| {
             let Kind::Tool(ItemKind::Tool { card: Some(ToolCard::Shell { command, .. }), .. }) = p.kind else {

@@ -12,6 +12,55 @@ pub(super) struct Draw<'a> {
     pub hover: Option<Target>,
     pub hits: &'a mut Vec<(Rect, Target)>,
     pub pins: &'a [String],
+    /// The quick-command chips in their order (Settings › Chat).
+    pub chips: &'a [Control],
+    /// Own command lines by slot; an empty one has no chip.
+    pub own: &'a [String],
+}
+
+/// The chips in their default order.
+pub(super) const DEFAULT_CHIPS: [Control; 7] = [
+    Control::Model,
+    Control::Effort,
+    Control::Context,
+    Control::Mode,
+    Control::Compact,
+    Control::Clear,
+    Control::Commands,
+];
+
+/// The chip a Settings key names; `None` for a key this version does not know.
+pub(crate) fn chip_control(key: &str) -> Option<Control> {
+    let at = claude_switch_core::config::QUICK_CHIPS.iter().position(|(k, _)| *k == key)?;
+    DEFAULT_CHIPS.get(at).copied()
+}
+
+/// The quick-command chips Settings shows, in order.
+pub(crate) fn chips_of(prefs: &claude_switch_core::config::ChatPrefs) -> Vec<Control> {
+    prefs.shown().filter_map(chip_control).collect()
+}
+
+const MODE_W: f32 = 125.0;
+/// An own command's widest chip.
+const OWN_MAX: f32 = 150.0;
+
+fn chip_width(control: Control) -> f32 {
+    match control {
+        Control::Model => MODEL_W,
+        Control::Effort => EFFORT_CHIP_MAX,
+        Control::Context => CONTEXT_CHIP_MAX,
+        Control::Mode => MODE_W,
+        Control::Compact => 62.0,
+        Control::Clear => 44.0,
+        _ => 32.0,
+    }
+}
+
+/// What the left group takes on the toolbar's line: its chips but the permission mode (shown
+/// only when there is room left), the gaps between them and the row's 1 px inset.
+pub(super) fn left_group(chips: &[Control]) -> f32 {
+    let fixed: Vec<f32> = chips.iter().filter(|c| **c != Control::Mode).map(|c| chip_width(*c)).collect();
+    if fixed.is_empty() { 0.0 } else { fixed.iter().sum::<f32>() + 4.0 * (fixed.len() - 1) as f32 + 1.0 }
 }
 
 const PICKER_HEADER: f32 = 22.0;
@@ -371,29 +420,47 @@ impl Draw<'_> {
         let effort = format!("{level} ▾");
         let context = if compacted { format!("After {after}") } else { context };
         let right = if l.stacked { 0.0 } else { TOOLBAR_RIGHT + if self.wide { DETAILS_W } else { 0.0 } };
-        let room = r.w - right - (FIXED_CHIPS + EFFORT_CHIP_MAX + CONTEXT_CHIP_MAX);
+        let room = r.w - right - left_group(self.chips);
         // The permission mode, when the row has room left for it.
         let mode = chat.mode_label();
-        let mode_w = 125.0;
-        let mode_w = if room >= mode_w + 4.0 { mode_w } else { 0.0 };
-        for (label, w, control) in [
-            (model.as_str(), MODEL_W, Control::Model),
-            (effort.as_str(), EFFORT_CHIP_MAX, Control::Effort),
-            (context.as_str(), CONTEXT_CHIP_MAX, Control::Context),
-            (mode.as_str(), mode_w, Control::Mode),
-            ("Compact", 62.0, Control::Compact),
-            ("Clear", 44.0, Control::Clear),
-            ("/ …", 32.0, Control::Commands),
-        ] {
-            if w == 0.0 {
-                continue;
-            }
+        let mode_shown = room >= MODE_W + 4.0;
+        for &control in self.chips {
+            let label = match control {
+                Control::Model => model.as_str(),
+                Control::Effort => effort.as_str(),
+                Control::Context => context.as_str(),
+                Control::Mode if mode_shown => mode.as_str(),
+                Control::Mode => continue,
+                Control::Compact => "Compact",
+                Control::Clear => "Clear",
+                _ => "/ …",
+            };
+            let w = chip_width(control);
             let chip = Rect::new(x, r.y + 1.0, w, 24.0);
             if control == Control::Effort {
                 self.effort_pill(p, chip, &effort, level);
             } else {
                 self.toolbar_pill(p, chip, label, control, control == Control::Commands && chat.commands.open, true);
             }
+            x += w + 4.0;
+        }
+        // Own commands after the others, each only when it fits whole before the right group.
+        let end = r.right() - right;
+        for (n, line) in self.own.iter().enumerate().filter(|(_, line)| !line.is_empty()) {
+            let fits = |p: &mut Painter, text: &str| {
+                let w = (p.measure(Face::Semibold, PILL_FONT, text) + 16.0).ceil();
+                (w <= OWN_MAX).then_some(w)
+            };
+            let name = line.split(' ').next().unwrap_or(line);
+            let Some((label, w)) =
+                fits(p, line).map(|w| (line.as_str(), w)).or_else(|| fits(p, name).map(|w| (name, w)))
+            else {
+                continue;
+            };
+            if x + w > end {
+                break;
+            }
+            self.toolbar_pill(p, Rect::new(x, r.y + 1.0, w, 24.0), label, Control::Own(n), false, !chat.locked());
             x += w + 4.0;
         }
         let y = r.y + if l.stacked { 28.0 } else { 1.0 };
@@ -592,9 +659,6 @@ const MODEL_W: f32 = 104.0;
 const TOOLBAR_RIGHT: f32 = 216.0;
 /// The Details chip and its gap, when the right group has it.
 const DETAILS_W: f32 = 62.0;
-/// Model, Compact, Clear and "/ …", the five gaps between the six chips and the row's 1 px
-/// inset: with Effort and Context, exactly what the left group takes.
-const FIXED_CHIPS: f32 = MODEL_W + 62.0 + 44.0 + 32.0 + 5.0 * 4.0 + 1.0;
 /// The widest short Effort chip ("Effort medium ▾") and Context chip ("Context 999.9k"):
 /// the layout keeps room for them, and a test measures them against these.
 pub(super) const EFFORT_CHIP_MAX: f32 = 99.0;
@@ -602,8 +666,8 @@ pub(super) const CONTEXT_CHIP_MAX: f32 = 92.0;
 
 /// The toolbar width the left chips need to share one line with the right group. Narrower, the
 /// layout puts the groups on two lines rather than let a chip shrink below its label.
-pub(super) fn toolbar_one_line(wide: bool) -> f32 {
-    TOOLBAR_RIGHT + if wide { DETAILS_W } else { 0.0 } + FIXED_CHIPS + EFFORT_CHIP_MAX + CONTEXT_CHIP_MAX
+pub(super) fn toolbar_one_line(wide: bool, left: f32) -> f32 {
+    TOOLBAR_RIGHT + if wide { DETAILS_W } else { 0.0 } + left
 }
 
 fn model_label(p: &mut Painter, model: &str) -> String {
@@ -688,8 +752,17 @@ mod tests {
                             chat.mode_shown = *mode;
                             let mut hits = Vec::new();
                             let wide = area.w >= 900.0 || layout.side.w > 0.0;
-                            Draw { pal, focused: true, wide, hover: None, hits: &mut hits, pins: &[] }
-                                .toolbar(&mut p, &chat, &info);
+                            Draw {
+                                pal,
+                                focused: true,
+                                wide,
+                                hover: None,
+                                hits: &mut hits,
+                                pins: &[],
+                                chips: &DEFAULT_CHIPS,
+                                own: &[],
+                            }
+                            .toolbar(&mut p, &chat, &info);
                             let what = format!("{width} px at {scale}x, panel {panel}, {start:?} {model} {mode:?}");
                             for (i, (a, _)) in hits.iter().enumerate() {
                                 assert!(a.x >= layout.toolbar.x && a.right() <= layout.toolbar.right() + 0.5, "{what}");
@@ -704,6 +777,81 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Settings › Chat: the chips in the chosen order, hidden ones absent, own commands after them
+    /// only where they fit whole, and fewer chips keep the row on one line at a narrower width.
+    #[test]
+    fn configured_chips_follow_their_order_and_own_commands_fit_or_stay_away() {
+        let mut gfx = Gfx::new();
+        let app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
+        let mut bitmap = Bitmap::new(1400, 480);
+        let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+        let chips = [Control::Clear, Control::Model];
+        let own = ["/review --strict".to_owned(), String::new(), format!("/{}", "x".repeat(90))];
+        let area = Rect::new(0.0, 0.0, 1100.0, 480.0);
+        let left = left_group(&chips);
+        assert!(left < left_group(&DEFAULT_CHIPS));
+        let layout = Layout::with_shells(area, true, false, None, false, false, false, false, 1, left);
+        assert!(!layout.stacked);
+        let chat = Chat { layout, ..Default::default() };
+        let mut hits = Vec::new();
+        Draw {
+            pal: app.pal(),
+            focused: false,
+            wide: true,
+            hover: None,
+            hits: &mut hits,
+            pins: &[],
+            chips: &chips,
+            own: &own,
+        }
+        .toolbar(&mut p, &chat, &ChatInfo::default());
+        let order: Vec<_> = hits.iter().map(|(_, t)| *t).collect();
+        assert_eq!(
+            order[..3],
+            [Target::Chat(Control::Clear), Target::Chat(Control::Model), Target::Chat(Control::Own(0))],
+            "{order:?}"
+        );
+        assert!(!order.contains(&Target::Chat(Control::Own(2))), "a name too long for a chip is left out");
+        assert!(!order.contains(&Target::Chat(Control::Compact)));
+        let own_chip = hits.iter().find(|(_, t)| *t == Target::Chat(Control::Own(0))).unwrap().0;
+        let attach = hits.iter().find(|(_, t)| *t == Target::Chat(Control::Attach)).unwrap().0;
+        assert!(own_chip.right() <= attach.x);
+        // On a narrow toolbar an own command that does not fit is not drawn over the right group.
+        let narrow = Layout::with_shells(
+            Rect::new(0.0, 0.0, 760.0, 480.0),
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+            false,
+            1,
+            left_group(&DEFAULT_CHIPS),
+        );
+        let chat = Chat { layout: narrow, ..Default::default() };
+        let mut hits = Vec::new();
+        Draw {
+            pal: app.pal(),
+            focused: false,
+            wide: false,
+            hover: None,
+            hits: &mut hits,
+            pins: &[],
+            chips: &DEFAULT_CHIPS,
+            own: &own,
+        }
+        .toolbar(&mut p, &chat, &ChatInfo::default());
+        for (r, t) in &hits {
+            assert!(r.right() <= narrow.toolbar.right() + 0.5, "{t:?} leaves the toolbar");
+        }
+        let settings = claude_switch_core::config::ChatPrefs {
+            chips: vec!["clear".into(), "from-a-newer-version".into(), "model".into()],
+            ..Default::default()
+        };
+        assert_eq!(chips_of(&settings), chips);
     }
 
     #[test]
@@ -722,8 +870,17 @@ mod tests {
                 let mut info = ChatInfo::default();
                 info.context = Some(context);
                 let mut hits = Vec::new();
-                Draw { pal: app.pal(), focused: false, wide: width >= 900.0, hover: None, hits: &mut hits, pins: &[] }
-                    .toolbar(&mut p, &chat, &info);
+                Draw {
+                    pal: app.pal(),
+                    focused: false,
+                    wide: width >= 900.0,
+                    hover: None,
+                    hits: &mut hits,
+                    pins: &[],
+                    chips: &DEFAULT_CHIPS,
+                    own: &[],
+                }
+                .toolbar(&mut p, &chat, &info);
                 positions.push(hits);
             }
             assert_eq!(positions[0], positions[1]);
@@ -763,13 +920,17 @@ mod tests {
             assert_eq!(model_label(&mut p, info.model.as_deref().unwrap()), "Sonnet 5.5 ▾");
             assert_eq!(model_label(&mut p, "claude-sonnet-5-5"), "Sonnet 5.5 ▾");
             p.fill(area, pal.page);
-            Draw { pal, focused: true, wide: width >= 900, hover: None, hits: &mut hits, pins: &pins }.composer(
-                &mut p,
-                &mut chat,
-                &info,
-                suggestions,
-                None,
-            );
+            Draw {
+                pal,
+                focused: true,
+                wide: width >= 900,
+                hover: None,
+                hits: &mut hits,
+                pins: &pins,
+                chips: &DEFAULT_CHIPS,
+                own: &[],
+            }
+            .composer(&mut p, &mut chat, &info, suggestions, None);
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();
             // The mode chip shows only where the row has room for it.
             let mode = tool.iter().filter(|(_, t)| *t == Target::Chat(Control::Mode)).count();

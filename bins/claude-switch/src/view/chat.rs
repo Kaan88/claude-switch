@@ -149,6 +149,9 @@ pub struct Chat {
     pub(super) first_sent: bool,
     /// The tab was started with Claude Code's classic renderer (Settings).
     pub(crate) classic_renderer: bool,
+    /// Settings › Chat › "Answer menus from the chat" is off: no card for the CLI's menus,
+    /// pickers or permission prompts; they stay in the terminal.
+    pub(crate) menus_off: bool,
     question: question::Card,
     mode_step: Option<submission::mode::ModeStep>,
     /// The permission mode as the screen last showed it.

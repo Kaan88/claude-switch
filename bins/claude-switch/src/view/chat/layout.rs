@@ -38,7 +38,8 @@ pub struct Layout {
 impl Layout {
     #[cfg(test)]
     pub fn new(area: Rect, panel: bool, drawer: bool, height: Option<f32>, chips: bool, notice: bool) -> Self {
-        Self::with_shells(area, panel, drawer, height, chips, notice, false, false, 1)
+        let left = super::composer::left_group(&super::composer::DEFAULT_CHIPS);
+        Self::with_shells(area, panel, drawer, height, chips, notice, false, false, 1, left)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -52,6 +53,7 @@ impl Layout {
         shell_chip: bool,
         reveal: bool,
         lines: usize,
+        left: f32,
     ) -> Self {
         let panel_w = if panel && (area.w >= 900.0 || reveal) { (area.w * 0.24).clamp(252.0, 300.0) } else { 0.0 };
         let main_w = (area.w - panel_w).max(0.0);
@@ -60,7 +62,7 @@ impl Layout {
         // they stay intact on two lines rather than clipping a label. The right group has
         // Details where the chat paints it wide (`paint`); the box's frame and padding take 38 px.
         let wide = area.w >= 900.0 || panel_w > 0.0;
-        let stacked = measure < 750.0 || measure - 38.0 < super::composer::toolbar_one_line(wide);
+        let stacked = measure < 750.0 || measure - 38.0 < super::composer::toolbar_one_line(wide, left);
         let chips_h = if chips { 46.0 } else { 0.0 };
         let notice_h = if notice { 30.0 } else { 0.0 };
         let toolbar_h = if stacked { 53.0 } else { 26.0 };
@@ -116,7 +118,8 @@ mod tests {
     use super::*;
 
     fn box_for(area: Rect, drawer: bool, lines: usize) -> Layout {
-        Layout::with_shells(area, false, drawer, None, false, false, false, false, lines)
+        let left = super::super::composer::left_group(&super::super::composer::DEFAULT_CHIPS);
+        Layout::with_shells(area, false, drawer, None, false, false, false, false, lines, left)
     }
 
     #[test]

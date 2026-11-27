@@ -10,9 +10,11 @@ use mdshared_ui::colour_picker::parse_hex;
 use mdshared_ui::settings::{Form, Outcome, Row, Value};
 
 mod appearance;
+mod chat_page;
 mod pages;
 mod theme_editor;
 mod tiles;
+pub(crate) use chat_page::CHAT;
 pub(crate) use pages::Settings;
 
 pub(crate) const TERMINAL: &str = "Terminal";
@@ -25,6 +27,7 @@ const PAGES: &[Page] = &[
     ("Appearance", appearance::rows),
     (TERMINAL, terminal),
     ("Sessions", sessions),
+    (CHAT, chat_page::rows),
     ("Usage", usage),
     (HANDOVERS, handovers),
     (OPENCODE, opencode),
@@ -414,6 +417,12 @@ fn notifications(st: &AppState) -> Vec<Row> {
 fn settings_outcome(st: &mut AppState, o: Outcome) {
     match o {
         Outcome::Closed => st.dialog = None,
+        Outcome::Changed { id, value } if chat_page::owns(id) => {
+            chat_page::apply(st, id, Some(value));
+        }
+        Outcome::Action(id) if chat_page::owns(id) => {
+            chat_page::apply(st, id, None);
+        }
         Outcome::Changed { id: SET_CHAT_READING, value: Value::Choice(i) } => {
             if let Some(reading) = crate::view::Reading::ALL.get(i) {
                 st.win_file.chat_reading = reading.key().to_owned();
@@ -727,6 +736,20 @@ mod tests {
                 SET_ATTENTION,
                 SET_SUGGEST_TOPICS,
             ],
+            &[
+                chat_page::CHIP_SLOT,
+                chat_page::CHIP_SLOT + 1,
+                chat_page::CHIP_SLOT + 2,
+                chat_page::CHIP_SLOT + 3,
+                chat_page::CHIP_SLOT + 4,
+                chat_page::CHIP_SLOT + 5,
+                chat_page::CHIP_SLOT + 6,
+                chat_page::OWN_COMMAND,
+                chat_page::OWN_COMMAND + 1,
+                chat_page::OWN_COMMAND + 2,
+                chat_page::RESET_CHIPS,
+                chat_page::SET_ANSWER_MENUS,
+            ],
             &[SET_USAGE, SET_USAGE_WARNINGS],
             &[
                 SET_CONTINUE_IN,
@@ -852,11 +875,11 @@ mod tests {
         assert_eq!(current(&st).form.focus_id(), Some(SET_EMBEDDED));
         super::super::key(&mut st, Instant::now(), &KeyName::Tab, Mods { shift: true, ..Mods::default() }, None);
         navigate(&mut st, KeyName::Down);
-        assert_eq!(current(&st).category(), "Usage");
+        assert_eq!(current(&st).category(), CHAT);
         navigate(&mut st, KeyName::Escape);
         assert!(st.dialog.is_none());
         st.dialog = Some(settings(&mut st, None));
-        assert_eq!(current(&st).category(), "Usage");
+        assert_eq!(current(&st).category(), CHAT);
         st.opencode_settings(true);
         assert_eq!(current(&st).category(), OPENCODE);
         navigate(&mut st, KeyName::Escape);
@@ -893,6 +916,7 @@ mod tests {
         assert!(!config::load(&roots).embedded_terminal);
         st.dialog = Some(settings(&mut st, Some(TERMINAL)));
         assert_eq!(current(&st).form.value(SET_TERM_FONT), Some(Value::Number(21)));
+        navigate(&mut st, KeyName::Down);
         navigate(&mut st, KeyName::Down);
         navigate(&mut st, KeyName::Down);
         assert_eq!(current(&st).form.value(SET_USAGE), Some(Value::Bool(false)));

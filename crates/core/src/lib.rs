@@ -299,6 +299,8 @@ pub struct Config {
     pub window_theme: String,
     /// Optional visual preferences beyond the theme and font size.
     pub appearance: config::AppearancePrefs,
+    /// Settings › Chat: quick-command chips and whether Chat answers the CLI's menus.
+    pub chat: config::ChatPrefs,
     /// Handover model and per-provider permission to send session data.
     pub compact: compact::Preferences,
 }

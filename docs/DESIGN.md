@@ -735,7 +735,7 @@ but a polling tick no longer redraws the window unless visible state changes.
 
 ## Settings pages
 
-The category list at left selects one page at right: Appearance, Terminal, Sessions, Usage,
+The category list at left selects one page at right: Appearance, Terminal, Sessions, Chat, Usage,
 Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
 closing Settings. Each window remembers the last page while it runs; category selection is not saved.
@@ -1143,6 +1143,22 @@ forms, which are measured too. The layout reserves the widest short forms ("Effo
 "Context 999.9k") and puts the two chip groups on two lines when one line cannot hold them with
 Attach, Terminal, Details and Send. A test lays out every effort level, mode and Context form from
 the 760 px minimum window up at several display scales.
+
+**Settings › Chat.** Quick commands: the toolbar's left chips (Model, Effort, Context, Permission
+mode, Compact, Clear, "/ …") show in the order of seven slots, each a dropdown of the chips plus
+None; a chip picked in another slot swaps with it, None hides it. Saved as `chat.chips` (keys in
+order; a key from a newer version is kept and not shown). The one-line toolbar reserves only the
+shown chips, so fewer chips keep one line at narrower widths. Three own commands (`chat.commands`,
+by slot) are text rows, saved as typed whenever the text is a command line (a CLI-style name, a
+"/" added if left out, one printable line of arguments, at most 200 bytes). Each set one is a chip
+after the others, labelled with its line (or only "/name" when the line is wider than 150 px), drawn
+only when it fits whole before the right group; a click runs it as a direct slash command, with the
+same checks and the Compact/Clear confirmation. Typing "/" still opens the list with every chip
+hidden. Restore defaults resets chips and commands, not the switch below. "Answer menus from the
+chat" (`chat.answerMenus`, on by default) off: no card for the CLI's menus, pickers, plan approval
+or permission prompts; the gate leaves them to the terminal and opens the drawer as before those
+cards. Claude's questions (`AskUserQuestion`) and the Ctrl+B background offer keep their cards.
+A two-window save merges `chat` field by field and keeps keys it does not know.
 
 **Esc.** A card's Esc button writes one Escape only under the same checks as its choices: the screen
 still shows that question, the pending call's own prompt, or the same menu (a menu Chat cannot read
