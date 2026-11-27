@@ -171,7 +171,8 @@ fn text_on_the_cli_input_is_never_an_idle_prompt_and_a_draft_waits_until_it_is_g
     assert!(f.chat().queue.is_some() && f.chat().error.is_none());
     assert_eq!(f.pass(SECOND).0, Gate::Check);
     assert!(f.writes().is_empty(), "the typed text is left alone");
-    // The text was sent or cleared in the terminal: the draft goes by itself.
+    // The text went without keys from this app (Claude Code redrew its input): the draft goes by
+    // itself. Typing in the terminal would instead cancel the queue and keep the draft.
     f.show(PLAIN_IDLE);
     f.pass(SECOND);
     assert_eq!(f.writes(), message("mine"));

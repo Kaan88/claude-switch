@@ -9,8 +9,8 @@
   after the model, and said Claude Code might be waiting for an answer.
 - Chat: Send now while Claude Code's input does not read empty is kept instead of refused: the
   message goes by itself as soon as the input reads empty, still during the turn. A message sent
-  while the input holds text typed in the terminal waits until that text was sent or cleared there
-  (Chat never clears it), instead of being refused.
+  while the input holds text is held the same way instead of being refused, and Chat never clears
+  that text. Typing in the terminal still cancels a held message (the draft is kept).
 - Chat: when it cannot send because of what it read on the screen, or says Claude Code may be
   waiting for an answer, it keeps the screen and a note of why in
   `%APPDATA%\claude-switch\screen-reports` (on this computer only; the newest 20, at most one a
