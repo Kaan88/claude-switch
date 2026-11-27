@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Chat no longer refuses nearly every message in the installed app. Started from the Start menu,
+  Claude Code got no `TERM` and drew its input mark as `>`, which Chat did not read as the prompt:
+  sends, pictures ("No empty CLI input line for the picture"), slash commands and the Mode chip all
+  pointed at the terminal. Claude tabs now start with `TERM=xterm-256color`, and Chat reads both
+  drawings.
+- Chat takes "ready" from the screen: a quiet, empty input with no working line. A resumed session,
+  a turn stopped with Esc, a slash command or a key in the terminal no longer leave "Open the
+  terminal to check" or a turn that seems to run forever. An answer that mentions "esc to
+  interrupt" is no longer taken for a running turn, and a bell no longer blocks an idle prompt.
+- A message sent while Claude Code is busy or still drawing its prompt is held and goes out by
+  itself; **Send now** and **Cancel** stay. A slash command waits up to three seconds for the
+  prompt.
+- A question Claude asks now shows in Chat while it waits (Claude Code writes it to the transcript
+  only after the answer): its text, choices and their descriptions, a form's pages and its review,
+  with "Waiting for your answer" instead of "Working…". When the terminal is silent for seconds
+  with nothing Chat can read, the terminal drawer opens by itself.
+- Stop before Claude answers: Claude Code puts the message back on its own input, which blocked
+  the next send. Chat now clears it there and puts the text back in the message box.
+- More time for a pasted picture to show (20 s) and for a pasted message to appear (5 s).
+
 ## 0.1.2 (2026-11-27)
 
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and

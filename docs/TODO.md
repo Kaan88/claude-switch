@@ -19,6 +19,16 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
 - Hidden flags for trying things: `--demo`, `--theme light|dark`, `--shell <program>`, `--type <text>`,
   `--sessions-tab`.
 
+- Unreleased on `fix/suggestion-gate` (2026-11-27): Chat's readiness from the screen, `TERM` for
+  Claude tabs, held drafts, the question card from the screen, the take-back after an early Stop
+  (DESIGN.md, "What counts as ready", "Questions", "Renderer", "What still needs the terminal").
+  Checked by tests over screens recorded from Claude Code 2.1.332 and never in the running app:
+  the first things to try there are a plain send in a resumed tab, a send while a turn runs, Stop
+  right after a send, a question from Claude, and a pasted picture (its marker was not recorded).
+  Open: a typed answer to a question the transcript does not hold yet (the screen card only
+  clicks); the composer's notice for text on the CLI's input has no "clear it" button; a new
+  Claude Code version needs the recordings again (`probe_recordings`).
+
 ## Completed follow-ups
 
 - Open a copy is in the palette and under "Open elsewhere"; the Desktop and cold-cache warnings

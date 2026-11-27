@@ -1052,32 +1052,48 @@ Terminal layout keeps its normal Session view and controls. F6 switches layouts 
 command palette is open; a focused terminal still receives its ordinary F6. Ctrl+Shift+E remains reserved by the window
 and toggles the drawer in Chat.
 
-**What counts as ready.** The screen heuristic checks the live cursor's `❯` input row, including
-boxed rows, and ignores SGR-faint placeholder characters. It rejects recognized menus, permission
-questions and the alternate screen. A successful write only means input was handed to the terminal.
-An ordinary automatic send needs a newly observed, explicit transcript `end_turn`, no unresolved
-tool in the current turn, at least 750 ms without terminal output, bracketed-paste mode, and no
-alternate screen or blocking drawer signal. An old completion from a resumed transcript, missing
-stop reasons, an unrecognized title, and terminal quiet alone are not proof. The OSC title has no
-verified Claude readiness protocol: explicit busy labels only veto a send. On a transcript reset
-or after any composer send or direct terminal input, an old completion cannot rearm sending;
-a new prompt must be observed. There is still a race between observing the PTY and writing it.
-When uncertain, Chat retains the draft and displays the refusal inside the composer until its cause
-changes. **Send anyway** is explicit and requires bracketed-paste mode outside the alternate screen.
-During an active turn, **Queue** keeps one draft in memory and locks its text and attachments until
-it sends or is cancelled. Automatic delivery waits for a newer completion and a visibly empty prompt,
-even after switching tabs. A minimized window, an open dialog or another blocking window overlay
-pauses automatic writes in every tab; stage deadlines still run. After the app's **Stop**, a fresh
-clean prompt with the observed working
-indicator gone (or a new interruption notice) can also release the queue. **Send now** can send
-during a turn when that prompt is visibly empty; **Cancel**
-unlocks the draft without sending. Neither path overrides a recognized permission question, pending
-tool, bell or slash menu. Direct terminal input cancels a queued or staged send, and samples a
+**What counts as ready.** The screen is what the next key meets, so the screen decides (decided
+2026-11-27, after 0.1.2 refused nearly every send; the owner: "zero instances where I have to open
+the terminal"). Ready is the CLI's input shown idle: the live cursor's input row (`❯`, or `>` right
+under the input box's rule where Claude Code draws without Unicode; boxed rows too) visibly empty,
+SGR-faint placeholder and suggestion characters aside; no working line (the interrupt hint in the
+rows under the input, or the CLI's own spinner line right above it: never those words in an answer);
+no recognized menu, permission question or alternate screen; bracketed-paste mode; and at least
+750 ms without terminal output or input. A message Chat just submitted must have shown first (newer
+output, or five seconds). The transcript only hints: it shows no completion for a resumed session,
+its last record after an Esc reads as a running turn, and a command or a key in the terminal leaves
+it stale. It still says a turn runs (a newer prompt with no end, a pending tool) while the screen
+does not show an input at rest, and a newly observed `end_turn` still makes a quiet demo or test
+screen ready. The OSC title is no protocol: explicit busy labels only veto a send. A successful
+write only means input was handed to the terminal, and there is still a race between observing the
+PTY and writing it.
+A draft that only has to wait is held, not refused: a running turn, a prompt the CLI is still
+drawing, a command's output, a new chat's transcript, a picture while the input is not empty. It is
+locked (text and attachments) until it sends or is cancelled, and goes out by itself, also in a
+hidden tab, once the input is idle (or a newer completion shows, where no screen can be read).
+**Send now** on a held draft pastes into the visibly empty input while a turn runs, and is the
+explicit override (bracketed paste, outside the alternate screen, no pending tool, no text on the
+input) when no prompt can be read. Refused outright, with the reason in the composer, are only
+what waiting cannot fix: text already on the CLI's input, a card that wants an answer first, an
+unverified session, an ended program.
+Interrupted before any answer, Claude Code 2.1.332 takes the turn out of the conversation and puts
+the prompt back on its input, where it would block the next send. While that input shows exactly
+the message Chat last submitted, with no working line and no terminal input since, Chat empties it
+with Ctrl+U (one line a key, each after the screen showed the one before, two seconds a key, forty
+keys at most) and puts the text back in the message box when that is empty; a picture has to be
+pasted again. Text the user typed in the terminal is never cleared.
+A minimized window, an open dialog or another blocking window overlay pauses automatic writes in
+every tab; stage deadlines still run. **Cancel** unlocks a held draft without sending. No path
+overrides a recognized permission question, a pending tool or a menu. Direct terminal input cancels a queued or staged send, and samples a
 transcript byte watermark before writing so a buffered earlier prompt cannot rearm Chat.
 
-**When the drawer opens.** A pending tool first observed at least four seconds ago plus 750 ms
-of terminal silence is a hint, not proof of a permission question. A slow tool can look the
-same. A BEL and process exit also open the drawer. Only an automatically
+**When the drawer opens.** For what Chat cannot read. A pending tool first observed at least four
+seconds ago plus 750 ms of terminal silence, or a running turn whose terminal has been silent for
+four seconds, with no working line on the screen, no text on the input and no card for what shows:
+the CLI may be waiting for an answer ("Claude Code may be waiting for your answer in the
+terminal."). Under the working line the same silence is a slow tool and opens nothing. A BEL opens
+it only while the screen shows neither the working line nor an idle input (an idle input clears the
+bell), and a process exit does. Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. Chat
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
@@ -1139,7 +1155,18 @@ the footer (the CLI draws its prompts and menus under one), so the same words in
 above do not count; with no rule in those 24 rows, all of them do. Unless a question card answers that menu, the gate treats it as a permission
 prompt left to the terminal (drawer, notice).
 
-**Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
+**Questions.** Claude Code 2.1.332 writes an `AskUserQuestion` call to the transcript only once it
+is answered or declined (checked with copies of the transcript while a question waited 30 s; a
+`Write`, `Bash` or `ExitPlanMode` call is written at once). So while a question waits the screen is
+all there is, and it shows through the menu card (see CLI menus): "Claude asks", the question's
+text (every row between its tab row, " ☐ Header" or a form's "←  ☐ A  ☐ B  ✔ Submit  →", and its
+choices), each choice with the description the screen shows under it, a form page's unnumbered
+Next or Submit row where the arrow keys reach it, and the review ("Review your answers", which has
+no footer) as its two entries with the answers in the title. A click moves the highlight and
+presses Enter under the menu card's checks; a box is ticked the same way. The working line reads
+"Waiting for your answer" while that card shows, whatever the transcript says. A typed answer
+needs the transcript's card below (or the terminal) and is the open gap.
+A pending `AskUserQuestion` call that the main transcript does hold is shown as a card built from
 the call's input (header, question, options with descriptions), never from the screen. A lone
 single-choice question is answered by one click: before any key it requires the live screen to show a menu footer,
 the question text, and every option as `n. label` in order, followed only by "Type something" and
@@ -1316,9 +1343,36 @@ for a send. Only an answer stopped before its Enter leaves its prompt to the ter
 whose Enter went ends quietly, a Ctrl+B or Stop agent leaves a notice that goes with its card, and a
 rewind says so on its own card.
 
-Every screen pattern lives in `view/chat/question/screens.rs`.
+Every screen pattern lives in `view/chat/question/screens.rs` and `view/chat/submission/screen.rs`.
+The fixtures next to them are recorded from the real CLI through a ConPTY (`*.txt`: rows and
+cursor; `*.ansi`: also styles, size and the rows the terminal marks as wrapping; `plain_*`: started
+without `TERM`). `cargo test probe_recordings -- --ignored --nocapture` with `CS_PROBE_DIR` set to a
+folder of such recordings prints what the gates make of each. Recorded on 2026-11-27 for the
+readiness rules: the idle input after a turn, at the start, with the next-prompt suggestion, with a
+background shell, after Esc, after a declined prompt, under one- and two-row status lines, at 40 to
+200 columns and 10 to 50 rows, after `/clear` and `/compact`; a running tool, agent and compaction
+(the screen changes at least every 229 ms while a turn runs); typed, pasted (`[Pasted text #1 +13
+lines]`), wrapped and queued input; questions, forms, permission prompts, plan approval, the
+rewind list and the panels of `/model`, `/effort`, `/config` (which takes two Esc to close),
+`/status`, `/help`, `/mcp`, `/permissions`, `/resume` and `/theme`. Not recorded: a pasted
+picture's marker (the recorder does not touch the clipboard).
 
-**Renderer.** Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
+**What still needs the terminal.** Each for a reason a key could not be justified: text the user
+typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt that
+does not name the one pending call (a subagent's, or two calls); a typed answer to a question the
+transcript does not hold yet; a dialog with no footer Chat knows (the drawer opens by itself after
+four silent seconds); Claude Code's full-screen renderer or another full-screen program; a session
+whose identity could not be verified; a card step whose screen did not follow within its deadline
+(the card says which, and Open terminal).
+
+**Renderer.** Claude tabs start with `TERM=xterm-256color` (a launch's own `TERM` stays). Windows
+sets no `TERM` for a program started from the Start menu, and Claude Code 2.1.332 then takes the
+terminal for one without Unicode: `>` for `❯`, `[ ]`/`[×]`/`√` for `☐`/`☒`/`✔`. With `TERM` set,
+and nothing else, it draws as recorded. The readers take the plain drawing all the same (a tab
+kept from an older version, a launch with another `TERM`): the input mark `>` counts only right
+under the input box's rule, a ticked box is `[√]` or `[✔]`. 0.1.2 knew only `❯`, which is why the
+installed app, unlike one started from a shell, refused every send.
+Claude tabs start with `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` while Settings ›
 Sessions › Classic terminal view is on (the default): Claude Code then draws on the main screen,
 where the prompt checks above apply. The variable is set for that process only, never in Claude
 Code's settings. The alternate-screen veto stays for every tab; in a tab started without the
@@ -1328,7 +1382,9 @@ needs a capture from a real session and is not attempted.
 **Local data.** File chips use the existing path quoting. Ctrl+V prefers clipboard text. Use
 Ctrl+Shift+V or **Attach… → Paste picture** to choose the picture explicitly. Supported picture
 formats get an in-memory thumbnail. A send checks the clipboard sequence, writes Alt+V alone,
-and waits up to four seconds for a newly displayed `[Image #n]` on the CLI input row. Only then does
+and waits up to twenty seconds for a newly displayed `[Image #n]` on the CLI input row (Claude Code
+reads the clipboard through a helper process on Windows; the wait ends at once on any other
+change). A picture sent while the input is not visibly empty is held like any draft. Only then does
 Chat paste the text and write one Enter. Timeout or an intervening input, permission, clipboard or
 session change retains the draft. Failed picture or command staging blocks new sends until newer
 terminal output shows a quiet, clean prompt. If paste succeeded but Enter did not, **Press Enter**
@@ -1337,8 +1393,10 @@ bracketed paste carries them as CR, as a terminal pastes), replaces tabs with sp
 control characters, and writes the text as bracketed paste followed by one app-generated Enter. A
 message of several lines gets its Enter only once newer output shows it on the input line: the rows
 from the `❯` row to the cursor equal the text (whitespace and wrapping aside), or the input is the
-CLI's `[Pasted text #n +m lines]` marker (after a picture's marker when there is one). Two seconds
-without that keep the draft, press no Enter and ask to check the terminal. Ordinary
+CLI's `[Pasted text #n +m lines]` marker (after a picture's marker when there is one). Five seconds
+without that keep the draft, press no Enter and ask to check the terminal. A slash command's line
+may wrap onto more rows; one refused only because the prompt is not quiet yet waits up to three
+seconds for it and then runs by itself. Ordinary
 terminal paste refuses multiline clipboard text when bracketed paste is off. Composer Up on the
 first displayed line and Down on the last walk real prompts in the main transcript, including
 terminal input. Recall skips adjacent repeats, pages back through the transcript worker as needed,
