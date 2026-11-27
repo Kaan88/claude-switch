@@ -655,3 +655,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Shift+Enter gives Claude Code a new line; in Switch's terminal it reaches the CLI as a plain Enter. Send what
     Claude Code reads as Shift+Enter (check the key encoding it accepts: the win32 input mode or kitty keyboard
     sequence it asks for, or ESC CR), and check the same for the Chat composer's paste of line breaks (item 46).
+68. **The `/usage` card loses the terminal's bars, and its spinner line jumps** (owner, 2026-11-27, screenshot of the
+    read-only menu card for /usage). The card copies the panel's rows as plain text, so the usage bars the terminal
+    draws (coloured cells or block characters) are missing; copy each cell's colours and draw the rows as the
+    terminal does (or recognise the bar rows and draw a real bar with the percentage). The "* Scanning local
+    sessions…" row animates in the card and jumps sideways: use item 55's fixed-width spinner slot there too, and in
+    every other place that shows a copied CLI row. The card says "Choose in the terminal's menu" and "Answer this in
+    the terminal" for a panel that only shows information; say "Claude Code panel" and offer Close (Esc) only. With
+    the card up, the composer's notice "No quiet, empty Claude Code prompt is visible" is noise: the card already
+    says what is on screen.
