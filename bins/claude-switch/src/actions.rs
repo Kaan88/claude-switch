@@ -49,6 +49,7 @@ const CHAT_LAYOUT: u32 = 30;
 const SET_TOPIC: u32 = 31;
 const MEANING_INDEX: u32 = 240;
 const MEANING_ASK: u32 = 241;
+pub const NEW_OPENCODE: u32 = 242;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -69,6 +70,7 @@ pub const COMMANDS: &[Command] = &[
     Command::new(OPEN_COPY, "session.open_copy", "Open a copy in CLI"),
     Command::new(crate::compact_dialog::COMMAND, "session.compact", crate::compact_dialog::LABEL),
     Command::new(NEW_SHELL, "tab.new_shell", "New shell tab").keys("Ctrl+Shift+T"),
+    Command::new(NEW_OPENCODE, "tab.new_opencode", "New OpenCode tab…"),
     Command::new(NEXT_TAB, "tab.next", "Next tab").keys("Ctrl+Tab"),
     Command::new(PREV_TAB, "tab.previous", "Previous tab").keys("Ctrl+Shift+Tab"),
     Command::new(CLOSE_TAB, "tab.close", "Close terminal tab").keys("Ctrl+Shift+W"),
@@ -133,6 +135,7 @@ impl AppState {
             CHAT_LAYOUT => self.set_chat_layout(!self.chat_active()),
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
+            NEW_OPENCODE => self.ask_new_opencode_tab(),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
             CLOSE_TAB => {
                 if let Some(t) = self.tabs.active {

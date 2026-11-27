@@ -269,6 +269,28 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
 shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
 running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
 
+**OpenCode tabs.** The palette's **New OpenCode tab…** opens the New session picker with the folder
+only (no account or app) and starts the owner's normal OpenCode there: `opencode_cli::find_program`
+(native `opencode.exe`), the plain shell's sanitized environment (Claude Code's config and session
+variables removed, `PWD` removed because OpenCode prefers it to the process folder) and no OpenCode
+overrides, so the owner's own config, plugins and Magic Context apply, unlike the handover and
+search jobs. The installed CLI (v2.4.1, `opencode --help`) is `opencode [flags] [<directory>]` with
+`--prompt <text>` and `--continue`; options go before the folder. The tab is labelled “OpenCode ·
+<folder>” and shows a terminal glyph instead of an account colour. It has no session id, account,
+launch folder in the Claude sense or pane, so it is never a list row, gets no Chat or Session view,
+live-record matching, send gate, usage, handover or auto-handover, exactly as a shell tab; its folder is
+kept in its own field. The handover preview's **In OpenCode** keeps the edited handover as Open does
+and opens such a tab in the source session's folder, beside the source's tab, with the text as
+`--prompt` (one native argument, no shell). Above 15,000 UTF-16 units, or when the text starts with
+`-` (so OpenCode's parser cannot read it as an option), the prompt instead asks to read the saved
+handover file; OpenCode may ask permission to read it, since it is outside the project. The Claude
+session is left as it is and nothing is recorded in `marks.json`. Whether `--prompt` submits at once or
+waits for Enter was not checked (that would need a model request). Saved tabs keep a running OpenCode
+tab as `{"kind":"opencode","folder","active"}` beside the Claude rows in `terminal-tabs.json`
+(older builds skip such rows); restoring reopens it in that folder with `--continue`, OpenCode's
+last session there, which can be a later one started elsewhere, and never repeats a first prompt.
+A folder that is gone is listed in the "Tabs not reopened" notice.
+
 **Not there:** more than one terminal in a tab, search or links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host
 has no name for Insert); input-method composition (the host turns input methods off on Windows).

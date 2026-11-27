@@ -124,6 +124,11 @@ pub fn accounts(st: &mut AppState, now: Instant) -> Dialog {
     Dialog::Accounts { scroll: 0.0, shares }
 }
 
+/// The New session picker for a folder only, starting an OpenCode tab.
+pub(crate) fn new_opencode_dialog(st: &AppState) -> Dialog {
+    Dialog::NewSession(Box::new(newsession::NewSession::for_opencode(st)))
+}
+
 pub(crate) fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
     let mut field = TextField::new();
     field.set_text(text);

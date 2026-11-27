@@ -33,6 +33,7 @@ const PREV: u32 = 17;
 const NEXT: u32 = 18;
 const AGENT: u32 = 19;
 pub(crate) const NAME_FIELD: u32 = 20;
+const OPENCODE: u32 = 21;
 const OPTION: u32 = 100;
 const PAGE: usize = 7;
 
@@ -558,6 +559,21 @@ impl Compact {
         st.open_handover_tab(request)
     }
 
+    /// The handover as the first prompt of a new OpenCode tab in the session's folder, kept as
+    /// for a Claude handover (the long-text rule names that file).
+    fn open_in_opencode(&mut self, st: &mut AppState) -> Result<(), String> {
+        compact_open::validate_prompt(&self.preview.text)?;
+        let saved = match &st.source {
+            Source::Real(roots) => {
+                let saved = compact_open::keep(roots, &self.session.id, &self.preview.text, self.saved.as_deref())?;
+                self.saved = Some(saved.clone());
+                saved
+            }
+            Source::Demo => PathBuf::from("demo-handover.md"),
+        };
+        st.continue_in_opencode(&self.session, &self.preview.text, &saved).map(drop)
+    }
+
     /// The new session name takes the mouse only where a click would focus it.
     pub(crate) fn name_editable(&self) -> bool {
         self.phase == Phase::Preview && self.choice.is_none()
@@ -585,6 +601,10 @@ impl Compact {
             OK if self.phase == Phase::Setup => self.make(st, false),
             OK if self.phase == Phase::Consent => self.make(st, true),
             OK if self.phase == Phase::Preview && self.choice.is_none() => match self.open(st, now) {
+                Ok(()) => return false,
+                Err(e) => self.error(e),
+            },
+            OPENCODE if self.phase == Phase::Preview && self.choice.is_none() => match self.open_in_opencode(st) {
                 Ok(()) => return false,
                 Err(e) => self.error(e),
             },
