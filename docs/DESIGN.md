@@ -1421,6 +1421,13 @@ completion, a recalled prompt (and leaving it) or a filled chip is a step of its
 back the text with its caret and selection. At most 100 steps are kept; sending a message clears
 them. Neither the toolkit's single-line `TextField` (search box, dialog fields, Settings) nor the
 handover dialog's editor has undo.
+Caret keys follow a Windows text box. Shift extends the selection. Ctrl+Left and Ctrl+Right go to
+the start of the previous or next word, where a run of punctuation is a word of its own and a line
+break a stop. Ctrl+Backspace and Ctrl+Delete remove a word, one undo step each. Home and End go to
+the wrapped line's ends; with Ctrl, to the draft's ends. Ctrl+A selects all. Up and Down recall
+earlier prompts only without modifiers, so Shift+Up and Shift+Down always select. The word rules
+live in the editor the composer shares with the handover dialog (`compact_dialog/editor.rs`); the
+toolkit's `TextField` has its own word movement.
 The composer toolbar separates session values, actions and panels by their surfaces. Fixed-width
 value controls keep their neighbours still as values change; effort is a five-dot scale and
 context remains a token count, not a filled bar, because the transcript supplies no verified limit.

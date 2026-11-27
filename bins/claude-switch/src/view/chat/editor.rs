@@ -204,7 +204,12 @@ impl ComposerEditor {
                 self.row_hint = None;
                 self.inner.key(k, mods, None);
                 self.metrics = None;
-                let (kind, typed) = if *k == KeyName::Enter { (Kind::Typing, "\n") } else { (Kind::Deleting, "") };
+                // A word removed with Ctrl is a step of its own; plain deleting runs on.
+                let (kind, typed) = match k {
+                    KeyName::Enter => (Kind::Typing, "\n"),
+                    _ if mods.ctrl => (Kind::Other, ""),
+                    _ => (Kind::Deleting, ""),
+                };
                 self.record(before.clone(), kind, typed);
                 return self.text != before.text;
             }

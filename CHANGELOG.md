@@ -10,6 +10,9 @@
 - Chat: undo and redo in the message box: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Undo and Redo in its
   right-click menu. Typing undoes a word at a time; a paste, a cut, a run of deletions, a completion,
   a recalled prompt or a filled chip is one step each. Sending a message clears the history.
+- Chat and the handover editor: Ctrl+Left and Ctrl+Right move by word, and Ctrl+Shift+Left/Right
+  select by word, as in Windows text boxes. Before, they moved one character. Ctrl+Backspace and
+  Ctrl+Delete remove a word, one undo step each in the message box.
 
 ## 0.1.2 (2026-11-27)
 

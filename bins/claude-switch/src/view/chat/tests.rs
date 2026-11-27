@@ -657,3 +657,85 @@ fn the_menu_offers_undo_and_redo_and_a_sent_message_clears_the_history() {
     assert!(chat.editor.text.is_empty(), "sent");
     assert!(!chat.editor.history.can_undo(), "a sent message is not brought back by Ctrl+Z");
 }
+
+#[test]
+fn caret_keys_move_and_select_by_character_word_line_and_draft_like_a_windows_text_box() {
+    use claude_switch_core::transcript::{Item, ItemId, ItemKind};
+    use mdshared_ui::keys::{KeyName, Mods};
+    let plain = Mods::default();
+    let shift = Mods { shift: true, ..plain };
+    let ctrl = Mods { ctrl: true, ..plain };
+    let both = Mods { ctrl: true, shift: true, ..plain };
+    let mut model = model::Model::new(model::Source::File(Default::default()), Default::default(), || {});
+    let kind = ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false };
+    model.items.insert(ItemId { offset: 1, block: 0 }, Item { timestamp: None, kind });
+    let mut chat = Chat::default();
+    chat.editor.history.clock = Some(Instant::now());
+    let press = |chat: &mut Chat, key: KeyName, mods: Mods| {
+        chat.editor_key(&model, Some(&key), mods, None);
+        (chat.editor.caret, chat.editor.selection())
+    };
+    chat.editor.insert("Fix the bug, then ship");
+    let end = chat.editor.text.len();
+
+    // Ctrl+Left and Ctrl+Right jump to word starts; punctuation is a stop of its own.
+    assert_eq!(press(&mut chat, KeyName::Left, ctrl), (18, 18..18), "the start of “ship”");
+    assert_eq!(press(&mut chat, KeyName::Left, ctrl), (13, 13..13), "“then”");
+    assert_eq!(press(&mut chat, KeyName::Left, ctrl), (11, 11..11), "the comma");
+    assert_eq!(press(&mut chat, KeyName::Right, ctrl), (13, 13..13));
+    // Ctrl+Shift extends by a word, Shift by a character.
+    assert_eq!(press(&mut chat, KeyName::Right, both), (18, 13..18));
+    assert_eq!(press(&mut chat, KeyName::Right, shift), (19, 13..19));
+    assert_eq!(press(&mut chat, KeyName::Left, shift), (18, 13..18));
+    assert_eq!(press(&mut chat, KeyName::Left, both), (13, 13..13), "back to where it began");
+    assert_eq!(press(&mut chat, KeyName::Left, both), (11, 11..13));
+    // A plain arrow collapses the selection to its side.
+    assert_eq!(press(&mut chat, KeyName::Right, plain), (13, 13..13));
+    // Ctrl+Home and Ctrl+End, selecting with Shift.
+    assert_eq!(press(&mut chat, KeyName::Home, both), (0, 0..13));
+    assert_eq!(press(&mut chat, KeyName::End, ctrl), (end, end..end));
+    assert_eq!(press(&mut chat, KeyName::Home, ctrl), (0, 0..0));
+    assert_eq!(press(&mut chat, KeyName::End, both), (end, 0..end));
+    // Ctrl+A selects the whole draft.
+    chat.editor.move_to(3, false);
+    let ctrl_a = chat.editor_key(&model, Some(&KeyName::Char('a')), ctrl, Some("\u{1}"));
+    assert!(!ctrl_a && chat.editor.selection() == (0..end) && chat.editor.text == "Fix the bug, then ship");
+
+    // Ctrl+Backspace and Ctrl+Delete remove a word each, one undo step each.
+    chat.editor.move_to(end, false);
+    assert!(chat.editor_key(&model, Some(&KeyName::Backspace), ctrl, None));
+    assert!(chat.editor_key(&model, Some(&KeyName::Backspace), ctrl, None));
+    assert_eq!(chat.editor.text, "Fix the bug, ");
+    chat.editor.move_to(0, false);
+    assert!(chat.editor_key(&model, Some(&KeyName::Delete), ctrl, None));
+    assert_eq!(chat.editor.text, "the bug, ");
+    assert!(chat.undo_or_redo(false));
+    assert_eq!(chat.editor.text, "Fix the bug, ");
+    assert!(chat.undo_or_redo(false));
+    assert_eq!(chat.editor.text, "Fix the bug, then ");
+    assert!(chat.undo_or_redo(false));
+    assert_eq!(chat.editor.text, "Fix the bug, then ship");
+
+    // Home and End stop at the wrapped line first, with Shift selecting.
+    chat.editor.set("alpha beta gamma".into());
+    chat.editor.rows = vec![0..6, 6..11, 11..16];
+    chat.editor.move_to(8, false);
+    assert_eq!(press(&mut chat, KeyName::Home, shift), (6, 6..8), "to the start of the wrapped line");
+    assert_eq!(press(&mut chat, KeyName::End, plain), (11, 11..11));
+    assert_eq!(chat.editor.caret_row(), 1, "the end of the wrapped line, not the start of the next");
+    assert_eq!(press(&mut chat, KeyName::Home, plain), (6, 6..6));
+
+    // Shift+Up and Shift+Down select lines and never recall; plain Up on the first line recalls.
+    chat.editor.set("one\ntwo".into());
+    chat.editor.move_to(7, false);
+    assert_eq!(press(&mut chat, KeyName::Up, shift), (3, 3..7));
+    assert_eq!(chat.editor.text, "one\ntwo");
+    assert_eq!(press(&mut chat, KeyName::Up, shift), (3, 3..7), "Shift+Up on the first line does not recall");
+    assert_eq!(chat.editor.text, "one\ntwo");
+    assert_eq!(press(&mut chat, KeyName::Down, shift), (7, 7..7));
+    chat.editor.move_to(1, false);
+    press(&mut chat, KeyName::Up, plain);
+    assert_eq!(chat.editor.text, "an earlier prompt", "plain Up on the first line recalls as before");
+    press(&mut chat, KeyName::Escape, plain);
+    assert_eq!(chat.editor.text, "one\ntwo");
+}

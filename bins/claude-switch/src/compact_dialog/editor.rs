@@ -125,6 +125,8 @@ impl Editor {
                 }
                 return;
             }
+            KeyName::Left if mods.ctrl => word_left(&self.text, self.caret),
+            KeyName::Right if mods.ctrl => word_right(&self.text, self.caret),
             KeyName::Left => {
                 if !mods.shift && !self.selection().is_empty() {
                     self.selection().start
@@ -165,7 +167,12 @@ impl Editor {
             }
             KeyName::Backspace | KeyName::Delete => {
                 if self.selection().is_empty() {
-                    self.anchor = if *k == KeyName::Backspace { previous() } else { next() };
+                    self.anchor = match (*k == KeyName::Backspace, mods.ctrl) {
+                        (true, true) => word_left(&self.text, self.caret),
+                        (true, false) => previous(),
+                        (false, true) => word_right(&self.text, self.caret),
+                        (false, false) => next(),
+                    };
                 }
                 self.insert("");
                 return;
@@ -188,9 +195,139 @@ impl Editor {
     }
 }
 
+/// How Ctrl+arrows see a character: a word character, punctuation, a space or tab, or a line break.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Class {
+    Word,
+    Punctuation,
+    Space,
+    Break,
+}
+
+fn class(c: char) -> Class {
+    if c == '\n' {
+        Class::Break
+    } else if c.is_whitespace() {
+        Class::Space
+    } else if c.is_alphanumeric() || c == '_' {
+        Class::Word
+    } else {
+        Class::Punctuation
+    }
+}
+
+/// Ctrl+Left, as in Windows text boxes: back over spaces, then to the start of the word or of the
+/// run of punctuation before them. At the start of a line it goes to the end of the line above.
+pub fn word_left(text: &str, at: usize) -> usize {
+    let mut chars = text[..at].char_indices().rev().peekable();
+    let start = at;
+    let mut at = at;
+    while let Some(&(i, c)) = chars.peek()
+        && class(c) == Class::Space
+    {
+        at = i;
+        chars.next();
+    }
+    let Some(&(i, c)) = chars.peek() else { return at };
+    let run = class(c);
+    if run == Class::Break {
+        // Spaces at the start of a line stop at the line's start; from there, the line above.
+        return if at != start { at } else { i };
+    }
+    while let Some(&(i, c)) = chars.peek()
+        && class(c) == run
+    {
+        at = i;
+        chars.next();
+    }
+    at
+}
+
+/// Ctrl+Right, as in Windows text boxes: past the word or the run of punctuation at the caret and
+/// the spaces after it, to the start of the next one. A line break is a stop of its own: from
+/// the end of a line it goes to the first word of the next.
+pub fn word_right(text: &str, at: usize) -> usize {
+    let mut chars = text[at..].char_indices().map(|(i, c)| (at + i, c)).peekable();
+    let Some(&(_, c)) = chars.peek() else { return at };
+    let run = class(c);
+    match run {
+        Class::Break => {
+            chars.next();
+        }
+        Class::Space => {}
+        _ => {
+            while chars.peek().is_some_and(|&(_, c)| class(c) == run) {
+                chars.next();
+            }
+        }
+    }
+    while chars.peek().is_some_and(|&(_, c)| class(c) == Class::Space) {
+        chars.next();
+    }
+    chars.peek().map_or(text.len(), |&(i, _)| i)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ctrl_right_and_ctrl_left_stop_at_word_and_punctuation_starts() {
+        let text = "Fix the bug, then (maybe) ship.\n  next line";
+        let mut stops = vec![0];
+        while let Some(&at) = stops.last().filter(|&&at| at < text.len()) {
+            stops.push(word_right(text, at));
+        }
+        let pieces = stops.windows(2).map(|w| &text[w[0]..w[1]]).collect::<Vec<_>>();
+        assert_eq!(
+            pieces,
+            ["Fix ", "the ", "bug", ", ", "then ", "(", "maybe", ") ", "ship", ".", "\n  ", "next ", "line"]
+        );
+        let mut back = vec![text.len()];
+        while let Some(&at) = back.last().filter(|&&at| at > 0) {
+            back.push(word_left(text, at));
+        }
+        let pieces = back.windows(2).map(|w| &text[w[1]..w[0]]).collect::<Vec<_>>();
+        assert_eq!(
+            pieces,
+            ["line", "next ", "  ", "\n", ".", "ship", ") ", "maybe", "(", "then ", ", ", "bug", "the ", "Fix "],
+            "back from a line's first word: its start, then the end of the line above"
+        );
+        assert_eq!(word_right("café au lait", 0), 6, "letters beyond ASCII are word characters");
+        assert_eq!((word_left("", 0), word_right("", 0)), (0, 0));
+    }
+
+    #[test]
+    fn ctrl_backspace_ctrl_delete_and_shift_selection() {
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        let shift = Mods { shift: true, ..Mods::default() };
+        let both = Mods { ctrl: true, shift: true, ..Mods::default() };
+        let mut e = Editor::default();
+        e.set("one two three".into());
+        e.move_to(e.text.len(), false);
+        e.key(&KeyName::Backspace, ctrl, None);
+        assert_eq!(e.text, "one two ", "Ctrl+Backspace removes the word before the caret");
+        e.move_to(0, false);
+        e.key(&KeyName::Delete, ctrl, None);
+        assert_eq!(e.text, "two ", "Ctrl+Delete removes the word and its space");
+        e.key(&KeyName::Right, both, None);
+        assert_eq!((e.selection(), e.caret), (0..4, 4), "Ctrl+Shift+Right selects a word");
+        e.key(&KeyName::Left, shift, None);
+        assert_eq!(e.selection(), 0..3, "Shift+Left shrinks it by a character");
+        e.key(&KeyName::Right, ctrl, None);
+        assert_eq!((e.selection(), e.caret), (4..4, 4), "Ctrl+Right moves on and clears it");
+        e.key(&KeyName::Left, both, None);
+        assert_eq!(e.selection(), 0..4, "Ctrl+Shift+Left selects back by a word");
+        e.move_to(1, false);
+        e.key(&KeyName::End, both, None);
+        assert_eq!(e.selection(), 1..4, "Ctrl+Shift+End selects to the end");
+        e.key(&KeyName::Home, both, None);
+        assert_eq!((e.selection(), e.caret), (0..1, 0), "Ctrl+Shift+Home selects to the start");
+        e.key(&KeyName::End, ctrl, None);
+        assert_eq!((e.selection(), e.caret), (4..4, 4), "Ctrl+End goes to the end");
+        e.key(&KeyName::Backspace, ctrl, None);
+        assert_eq!(e.text, "", "Ctrl+Backspace after a trailing space takes the word too");
+    }
 
     #[test]
     fn wraps_unicode_and_preserves_bytes_while_editing() {

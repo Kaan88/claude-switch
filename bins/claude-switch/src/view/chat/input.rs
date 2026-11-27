@@ -8,6 +8,7 @@ use mdshared_ui::platform;
 use super::{Chat, Chip, Drawer, Side, clipboard, submission};
 use crate::state::{AppState, Msg, Target};
 use crate::tabs::Tab;
+use crate::view::model::Model;
 
 const SUBMISSION_POLL: Duration = Duration::from_millis(250);
 
@@ -287,40 +288,13 @@ impl AppState {
         let Some(tab) = self.tabs.shown_mut() else { return true };
         let pane = tab.pane.as_mut().expect("Chat pane");
         let chat = &mut pane.chat;
-        let mut changed = false;
-        match k.name.as_ref() {
-            Some(KeyName::Enter) if !mods.shift && !mods.ctrl && !mods.alt => self.chat_control(cx, Control::Send),
-            Some(KeyName::Char('c' | 'C')) if mods.ctrl && !mods.alt => chat.editor_copy(false),
-            Some(KeyName::Char('a' | 'A')) if mods.ctrl && !mods.alt => {
-                chat.recall.cancel_load();
-                chat.editor.select_all();
+        let changed = match k.name.as_ref() {
+            Some(KeyName::Enter) if !mods.shift && !mods.ctrl && !mods.alt => {
+                self.chat_control(cx, Control::Send);
+                false
             }
-            _ if chat.locked() => {}
-            Some(KeyName::Char(c @ ('z' | 'Z' | 'y' | 'Y'))) if mods.ctrl && !mods.alt => {
-                // Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo, as in Windows text boxes.
-                let redo = matches!(c, 'y' | 'Y') || mods.shift;
-                changed = chat.undo_or_redo(redo);
-            }
-            Some(KeyName::Char('x' | 'X')) if mods.ctrl && !mods.alt => {
-                chat.editor_copy(true);
-                changed = true;
-            }
-            Some(KeyName::Char('v' | 'V')) if mods.ctrl && !mods.alt => {
-                chat.paste_clipboard(mods.shift);
-                changed = true;
-            }
-            Some(key @ (KeyName::Up | KeyName::Down | KeyName::Escape))
-                if mods.none() && chat.recall_key(&pane.model, key) => {}
-            Some(name) => {
-                changed = chat.edit_key(name, mods, k.text.as_deref());
-            }
-            None => {
-                if let Some(text) = &k.text {
-                    chat.insert_text(text);
-                    changed = true;
-                }
-            }
-        }
+            name => chat.editor_key(&pane.model, name, mods, k.text.as_deref()),
+        };
         if changed {
             self.chat_editor_changed();
         }
@@ -606,6 +580,47 @@ impl AppState {
 }
 
 impl Chat {
+    /// A key for the message box (Enter to send is the caller's). Modifiers reach the editor
+    /// whole: Shift extends, Ctrl moves and deletes by word. Up and Down recall earlier prompts
+    /// only without modifiers. Returns whether the draft changed.
+    pub(super) fn editor_key(&mut self, model: &Model, name: Option<&KeyName>, mods: Mods, text: Option<&str>) -> bool {
+        let shortcut = mods.ctrl && !mods.alt;
+        match name {
+            Some(KeyName::Char('c' | 'C')) if shortcut => {
+                self.editor_copy(false);
+                false
+            }
+            Some(KeyName::Char('a' | 'A')) if shortcut => {
+                self.recall.cancel_load();
+                self.editor.select_all();
+                false
+            }
+            _ if self.locked() => false,
+            Some(KeyName::Char(c @ ('z' | 'Z' | 'y' | 'Y'))) if shortcut => {
+                // Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo, as in Windows text boxes.
+                self.undo_or_redo(matches!(c, 'y' | 'Y') || mods.shift)
+            }
+            Some(KeyName::Char('x' | 'X')) if shortcut => {
+                self.editor_copy(true);
+                true
+            }
+            Some(KeyName::Char('v' | 'V')) if shortcut => {
+                self.paste_clipboard(mods.shift);
+                true
+            }
+            Some(key @ (KeyName::Up | KeyName::Down | KeyName::Escape))
+                if mods.none() && self.recall_key(model, key) =>
+            {
+                false
+            }
+            Some(name) => self.edit_key(name, mods, text),
+            None => text.is_some_and(|text| {
+                self.insert_text(text);
+                true
+            }),
+        }
+    }
+
     pub(super) fn edit_key(&mut self, key: &KeyName, mods: Mods, text: Option<&str>) -> bool {
         self.recall.cancel_load();
         let edited = self.editor.key(key, mods, text);
