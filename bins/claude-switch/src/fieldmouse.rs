@@ -8,14 +8,16 @@
 //! context actions into the app's own popup menu. Each field records its [`FieldHit`] (its text
 //! rectangle as drawn) every frame, so a press uses the geometry the user sees.
 //!
-//! The Settings form owns its fields inside the toolkit. Its mouse selection is the form's own;
-//! this module adds the I-beam, the triple click and the same menu through the form's keys.
+//! The Settings form owns its fields inside the toolkit, which also does their mouse editing and
+//! builds their menu from the real selection (`Form::pointer_press`, `context_menu`). This
+//! module only routes to it: it holds the Settings drag like any other, so moves, edge-scroll
+//! wake-ups, the release and a cancel reach the form.
 
 use std::cell::RefCell;
 use std::time::Instant;
 
 use mdshared_ui::gfx::{Face, Gfx, Painter, Rect};
-use mdshared_ui::keys::{KeyName, Mods};
+use mdshared_ui::keys::Mods;
 use mdshared_ui::menu::{Item, Menu};
 use mdshared_ui::textfield::{ContextAction, FieldHit, Pointer, TextField};
 
@@ -68,6 +70,8 @@ fn into_area(area: Rect, (x, y): (f32, f32)) -> (f32, f32) {
 pub struct FieldMouse {
     pointer: Option<(f32, Pointer)>,
     held: Option<FieldId>,
+    /// A Settings drag was cancelled here; the form's own click run is reset on its next press.
+    settings_cancelled: bool,
 }
 
 impl FieldMouse {
@@ -124,6 +128,7 @@ impl FieldMouse {
         if let Some((_, pointer)) = &mut self.pointer {
             pointer.cancel();
         }
+        self.settings_cancelled |= matches!(self.held, Some(FieldId::Settings(_)));
         self.held = None;
     }
 
@@ -143,29 +148,6 @@ fn relabel(action: ContextAction, item: Item<ContextAction>) -> Item<u32> {
     let mut out = Item::new(index, item.label).enabled(item.enabled);
     out.separator_before = item.separator_before;
     out
-}
-
-/// The Settings form's version: the form keeps its selection to itself, so Cut and Copy are
-/// offered whenever the row has text and do nothing on an empty selection.
-fn settings_items(has_text: bool) -> Vec<Item<u32>> {
-    ["Cut", "Copy", "Paste", "Select all"]
-        .into_iter()
-        .enumerate()
-        .map(|(i, label)| Item::new(i as u32, label).enabled(i == 2 || has_text))
-        .collect()
-}
-
-/// The key that performs a menu action in a field that only takes keys.
-fn shortcut(index: u32) -> Option<KeyName> {
-    Some(KeyName::Char(['x', 'c', 'v', 'a'].get(index as usize).copied()?))
-}
-
-const CTRL: Mods = ctrl();
-
-const fn ctrl() -> Mods {
-    let mut mods = Mods { ctrl: false, shift: false, alt: false, control: false };
-    mods.ctrl = true;
-    mods
 }
 
 impl AppState {
@@ -223,10 +205,7 @@ impl AppState {
                 panel.focus_topic(id == FieldId::SessionTopic);
             }
             (FieldId::CompactName, Some(Dialog::Compact(compact))) => compact.focus_name(),
-            (FieldId::Settings(row), Some(Dialog::Settings(form))) => {
-                form.focus_text_row(row);
-            }
-            _ => {}
+            _ => {} // The Settings form focuses its own rows.
         }
     }
 
@@ -263,6 +242,13 @@ impl AppState {
     /// The pointer moved. `Some` while a field drag is held, with whether to redraw.
     pub(crate) fn field_drag(&mut self, x: f32, y: f32, now: Instant) -> Option<bool> {
         let id = self.field_mouse.held()?;
+        if let FieldId::Settings(_) = id {
+            let Some(Dialog::Settings(form)) = &mut self.dialog else {
+                self.field_mouse.cancel();
+                return Some(false);
+            };
+            return Some(with_gfx(|gfx| form.text_motion(x, y, now, gfx)));
+        }
         let mut mouse = std::mem::take(&mut self.field_mouse);
         let changed = self.with_field(id, |field, hit| hit.is_some_and(|hit| mouse.drag(field, hit, (x, y), now)));
         self.field_mouse = mouse;
@@ -275,8 +261,11 @@ impl AppState {
     /// The edge-scroll wake-up. True when the field scrolled.
     pub(crate) fn field_tick(&mut self, now: Instant) -> bool {
         let Some(id) = self.field_mouse.held() else { return false };
-        if self.field_mouse.deadline().is_none_or(|at| at > now) {
+        if self.field_deadline().is_none_or(|at| at > now) {
             return false;
+        }
+        if let (FieldId::Settings(_), Some(Dialog::Settings(form))) = (id, &mut self.dialog) {
+            return with_gfx(|gfx| form.text_tick(now, gfx));
         }
         let mut mouse = std::mem::take(&mut self.field_mouse);
         let changed = self.with_field(id, |field, hit| hit.is_some_and(|hit| mouse.tick(field, hit, now)));
@@ -284,21 +273,41 @@ impl AppState {
         changed.unwrap_or(false)
     }
 
-    /// The primary button went up. True when it ended a field drag.
-    pub(crate) fn field_release(&mut self) -> bool {
+    /// The next edge-scroll wake-up of the held drag, the Settings form's included.
+    pub(crate) fn field_deadline(&self) -> Option<Instant> {
+        match (self.field_mouse.held()?, &self.dialog) {
+            (FieldId::Settings(_), Some(Dialog::Settings(form))) => form.text_deadline(),
+            (FieldId::Settings(_), _) => None,
+            _ => self.field_mouse.deadline(),
+        }
+    }
+
+    /// The primary button went up at `(x, y)`. True when it ended a field drag.
+    pub(crate) fn field_release(&mut self, x: f32, y: f32, now: Instant) -> bool {
+        if let Some(FieldId::Settings(_)) = self.field_mouse.held() {
+            self.field_mouse.held = None;
+            if let Some(Dialog::Settings(form)) = &mut self.dialog {
+                let o = with_gfx(|gfx| form.text_release(x, y, now, gfx));
+                dialogs::settings_event(self, o);
+            }
+            return true;
+        }
         self.field_mouse.release()
     }
 
-    /// A Settings press: the form's own, plus a triple click selecting the whole row.
-    pub(crate) fn settings_press(&mut self, x: f32, y: f32, mods: Mods, clicks: u32) {
+    /// A Settings press. In a text row the toolkit places the caret, extends with Shift and
+    /// takes a word or the whole row on a double or triple click; the drag is then held here.
+    pub(crate) fn settings_press(&mut self, x: f32, y: f32, mods: Mods, clicks: u32, now: Instant, scale: f32) {
+        let cancelled = std::mem::take(&mut self.field_mouse.settings_cancelled);
+        self.field_mouse.held = None;
         let Some(Dialog::Settings(form)) = &mut self.dialog else { return };
-        let o = form.press(x, y, mods, clicks.min(3) as u8);
-        let triple = clicks >= 3 && form.text_row_at(x, y).is_some();
-        dialogs::settings_event(self, o);
-        if triple && let Some(Dialog::Settings(form)) = &mut self.dialog {
-            let o = form.key(&KeyName::Char('a'), CTRL, None);
-            dialogs::settings_event(self, o);
+        if cancelled {
+            form.cancel_text();
         }
+        let row = form.text_row_at(x, y);
+        let o = with_gfx(|gfx| form.pointer_press(x, y, mods, clicks.min(3) as u8, now, gfx, scale));
+        self.field_mouse.held = row.map(FieldId::Settings);
+        dialogs::settings_event(self, o);
     }
 
     /// A right press on a field opens Cut, Copy, Paste, Select all. True when it did.
@@ -307,9 +316,10 @@ impl AppState {
         self.mouse = (x, y);
         self.field_mouse.cancel();
         self.focus_field(id);
-        let items = if let FieldId::Settings(row) = id {
-            let Some(Dialog::Settings(form)) = &self.dialog else { return false };
-            settings_items(form.text_of(row).is_some_and(|t| !t.is_empty()))
+        let items = if let FieldId::Settings(_) = id {
+            let Some(Dialog::Settings(form)) = &mut self.dialog else { return false };
+            let Some(items) = form.text_menu(x, y) else { return false };
+            items.into_iter().map(|item| relabel(item.id, item)).collect()
         } else {
             let mut mouse = std::mem::take(&mut self.field_mouse);
             let items = self.with_field(id, |field, hit| {
@@ -332,15 +342,13 @@ impl AppState {
 
     /// An item of a field's menu was chosen.
     pub(crate) fn field_menu_chosen(&mut self, id: FieldId, index: u32) {
-        if let FieldId::Settings(row) = id {
+        let Some(&action) = ACTIONS.get(index as usize) else { return };
+        if let FieldId::Settings(_) = id {
             let Some(Dialog::Settings(form)) = &mut self.dialog else { return };
-            let Some(key) = shortcut(index) else { return };
-            form.focus_text_row(row);
-            let o = form.key(&key, CTRL, None);
+            let o = form.text_action(action);
             dialogs::settings_event(self, o);
             return;
         }
-        let Some(&action) = ACTIONS.get(index as usize) else { return };
         let edited = self.with_field(id, |field, _| {
             let before = field.text().to_owned();
             field.apply_context_action(action);
@@ -383,16 +391,16 @@ mod tests {
         assert!(app.field_press(hit.area.right() - 1.0, y, Mods::default(), now));
         assert_eq!(app.focus, Focus::Search);
         assert_eq!(app.search.caret(), (16, 16));
-        assert!(app.field_release());
+        assert!(app.field_release(0.0, 0.0, now));
         // A word, then the whole field, at the same place in quick succession.
         let x = hit.area.x + 2.0;
         app.field_press(x, y, Mods::default(), now + Duration::from_millis(600));
-        app.field_release();
+        app.field_release(0.0, 0.0, now);
         app.field_press(x, y, Mods::default(), now + Duration::from_millis(700));
-        app.field_release();
+        app.field_release(0.0, 0.0, now);
         assert_eq!(app.search.selected_text(), "alpha");
         app.field_press(x, y, Mods::default(), now + Duration::from_millis(800));
-        app.field_release();
+        app.field_release(0.0, 0.0, now);
         assert_eq!(app.search.selected_text(), "alpha beta gamma");
     }
 
@@ -405,11 +413,11 @@ mod tests {
         assert!(app.field_press(hit.area.x - 6.0, y, Mods::default(), now));
         assert_eq!(app.search.caret(), (0, 0));
         assert_eq!(app.field_drag(hit.area.right() - 1.0, y, now), Some(true));
-        assert!(app.field_release());
+        assert!(app.field_release(0.0, 0.0, now));
         assert_eq!(app.search.selected_text(), "alpha beta gamma");
         assert_eq!(app.field_drag(hit.area.x, y, now), None, "no drag after the release");
         app.field_press(hit.area.x, y, Mods::default(), now + Duration::from_secs(2));
-        app.field_release();
+        app.field_release(0.0, 0.0, now);
         let shift = Mods { shift: true, ..Mods::default() };
         app.field_press(hit.area.right() - 1.0, y, shift, now + Duration::from_secs(3));
         assert_eq!(app.search.selected_text(), "alpha beta gamma");
@@ -462,8 +470,5 @@ mod tests {
         assert_eq!(into_area(area, (4.0, 2.0)), (10.0, 20.0));
         assert_eq!(into_area(area, (200.0, 15.0)), (109.5, 20.0));
         assert_eq!(into_area(area, (50.0, 15.0)), (50.0, 15.0));
-        assert_eq!(shortcut(1), Some(KeyName::Char('c')));
-        assert_eq!(shortcut(4), None);
-        assert!(!settings_items(false)[0].enabled && settings_items(false)[2].enabled);
     }
 }

@@ -350,20 +350,25 @@ impl Draw<'_> {
             let w = p.measure(Face::Semibold, PILL_FONT, label) + 10.0;
             if w <= min - 2.0 { min } else { w }
         };
+        // The short forms are measured too: "Effort medium ▾" or "Effort xhigh ▾" is wider
+        // than the 79 px the chip has for "Effort low ▾".
+        let short_effort = format!("Effort {} ▾", effort.trim_end_matches(" (default)"));
+        let short_context = if compacted { format!("Context {after}") } else { context.clone() };
+        let (short_effort_w, short_context_w) = (fit(p, &short_effort, 79.0), fit(p, &short_context, 92.0));
         let mut effort = format!("Effort {effort} ▾");
         let mut context = context;
         let (mut effort_w, mut context_w) = (fit(p, &effort, 79.0), fit(p, &context, 92.0));
-        let right = if l.stacked { 0.0 } else { 216.0 + if self.wide { 62.0 } else { 0.0 } };
-        let room = r.w - right - (MODEL_W + 79.0 + 92.0 + 62.0 + 44.0 + 32.0 + 6.0 * 4.0);
-        if effort_w + context_w - 79.0 - 92.0 > room {
-            effort = format!("Effort {} ▾", chat.effort_label(info).trim_end_matches(" (default)"));
-            context = if compacted { format!("Context {after}") } else { context };
-            (effort_w, context_w) = (79.0, 92.0);
+        let right = if l.stacked { 0.0 } else { TOOLBAR_RIGHT + if self.wide { DETAILS_W } else { 0.0 } };
+        let room = r.w - right - (FIXED_CHIPS + short_effort_w + short_context_w);
+        if effort_w + context_w - short_effort_w - short_context_w > room {
+            (effort, context) = (short_effort, short_context);
+            (effort_w, context_w) = (short_effort_w, short_context_w);
         }
         // The permission mode, when the row has room left for it.
         let mode = chat.mode_label();
         let mode_w = fit(p, &mode, 84.0);
-        let mode_w = if room - (effort_w + context_w - 79.0 - 92.0) >= mode_w + 4.0 { mode_w } else { 0.0 };
+        let left = room - (effort_w + context_w - short_effort_w - short_context_w);
+        let mode_w = if left >= mode_w + 4.0 { mode_w } else { 0.0 };
         for (label, w, control) in [
             (model.as_str(), MODEL_W, Control::Model),
             (effort.as_str(), effort_w, Control::Effort),
@@ -535,6 +540,23 @@ fn compact_model(model: &str) -> String {
 }
 
 const MODEL_W: f32 = 104.0;
+/// The right-hand group on the toolbar's line: Attach, Terminal and Send with their gaps.
+const TOOLBAR_RIGHT: f32 = 216.0;
+/// The Details chip and its gap, when the right group has it.
+const DETAILS_W: f32 = 62.0;
+/// Model, Compact, Clear and "/ …", the five gaps between the six chips and the row's 1 px
+/// inset: with Effort and Context, exactly what the left group takes.
+const FIXED_CHIPS: f32 = MODEL_W + 62.0 + 44.0 + 32.0 + 5.0 * 4.0 + 1.0;
+/// The widest short Effort chip ("Effort medium ▾") and Context chip ("Context 999.9k"):
+/// the layout keeps room for them, and a test measures them against these.
+pub(super) const EFFORT_CHIP_MAX: f32 = 99.0;
+pub(super) const CONTEXT_CHIP_MAX: f32 = 92.0;
+
+/// The toolbar width the left chips need to share one line with the right group. Narrower, the
+/// layout puts the groups on two lines rather than let a chip shrink below its label.
+pub(super) fn toolbar_one_line(wide: bool) -> f32 {
+    TOOLBAR_RIGHT + if wide { DETAILS_W } else { 0.0 } + FIXED_CHIPS + EFFORT_CHIP_MAX + CONTEXT_CHIP_MAX
+}
 
 fn model_label(p: &mut Painter, model: &str) -> String {
     let mut name = compact_model(model);
@@ -551,6 +573,90 @@ mod tests {
     use crate::view::chat::{Layout, clipboard};
     use mdshared_text::Bitmap;
     use mdshared_ui::gfx::Gfx;
+
+    /// Every chip label fits its chip (the pill's debug assertion) and the chips stay apart and
+    /// inside the toolbar: each effort level, set or a model's default, each permission mode and
+    /// Context after a compaction, from the minimum window width up, at several display scales.
+    #[test]
+    fn toolbar_chips_fit_their_longest_labels_at_every_width_and_scale() {
+        use crate::view::chat::commands::EFFORT;
+        use crate::view::chat::effort::Start;
+        let mut gfx = Gfx::new();
+        let app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
+        let pal = app.pal();
+        // (how the effort is known, the model): every level set, and the defaults with "(default)".
+        let mut efforts: Vec<(Start, &str)> = EFFORT.iter().map(|&e| (Start::Set(e), "claude-sonnet-5-5")).collect();
+        for model in ["claude-opus-5-5", "claude-opus-4-7", "claude-sonnet-4-6"] {
+            efforts.push((Start::Default, model));
+        }
+        let modes = [
+            None,
+            Some("Default"),
+            Some("Accept edits"),
+            Some("Plan"),
+            Some("Auto"),
+            Some("Don't ask"),
+            Some("Bypass"),
+            Some("Manual"),
+        ];
+        let mut cases = Vec::new();
+        for (start, model) in &efforts {
+            cases.push((start.clone(), *model, Some("Don't ask")));
+        }
+        for mode in modes {
+            cases.push((Start::Default, "claude-opus-4-7", mode));
+        }
+        {
+            // The layout's reserve for the short labels holds what they measure.
+            let mut bitmap = Bitmap::new(8, 8);
+            let mut p = Painter::new(&mut bitmap, &mut gfx, 1.0);
+            for level in EFFORT.iter().chain(&["—"]) {
+                let w = p.measure(Face::Semibold, PILL_FONT, &format!("Effort {level} ▾")) + 10.0;
+                assert!(w <= EFFORT_CHIP_MAX, "Effort {level}: {w}");
+            }
+            for n in [0, 999, 99_999, 999_949, 9_999_999, 999_999_999_999] {
+                let w = p.measure(Face::Semibold, PILL_FONT, &format!("Context {}", tokens(n))) + 10.0;
+                assert!(w <= CONTEXT_CHIP_MAX, "Context {n}: {w}");
+            }
+        }
+        // Every 20 px, and around where the Details panel appears and the measure reaches its cap.
+        let widths = (760..=1600).step_by(20).chain([899, 900, 901, 1010, 1019, 1020, 1021, 1047, 1048, 1049]);
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            for width in widths.clone() {
+                let area = Rect::new(0.0, 0.0, width as f32, 480.0);
+                let mut bitmap = Bitmap::new((width as f32 * scale) as u32, (480.0 * scale) as u32);
+                let mut p = Painter::new(&mut bitmap, &mut gfx, scale);
+                for panel in [false, true] {
+                    let layout = Layout::new(area, panel, false, None, false, false);
+                    for compacted in [false, true] {
+                        let mut info = ChatInfo::default();
+                        info.context = Some(987_654);
+                        info.compacted = compacted;
+                        info.compacted_size = Some(987_654);
+                        for (start, model, mode) in &cases {
+                            info.model = Some((*model).into());
+                            let mut chat = Chat { layout, last_gate: Some(Gate::Ready), ..Default::default() };
+                            chat.set_starting_effort(start.clone());
+                            chat.mode_shown = *mode;
+                            let mut hits = Vec::new();
+                            let wide = area.w >= 900.0 || layout.side.w > 0.0;
+                            Draw { pal, focused: true, wide, hover: None, hits: &mut hits, pins: &[] }
+                                .toolbar(&mut p, &chat, &info);
+                            let what = format!("{width} px at {scale}x, panel {panel}, {start:?} {model} {mode:?}");
+                            for (i, (a, _)) in hits.iter().enumerate() {
+                                assert!(a.x >= layout.toolbar.x && a.right() <= layout.toolbar.right() + 0.5, "{what}");
+                                for (b, _) in hits.iter().skip(i + 1) {
+                                    let apart =
+                                        a.right() <= b.x || b.right() <= a.x || a.bottom() <= b.y || b.bottom() <= a.y;
+                                    assert!(apart, "{what}: {a:?} overlaps {b:?}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn narrow_and_wide_composers_rasterize_inside_box_and_toolbar_hits_do_not_overlap() {

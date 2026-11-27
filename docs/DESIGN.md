@@ -1024,6 +1024,13 @@ no turn or pending call, no menu); the next click is taken only after the indica
 mode that does not change or cannot be read within two seconds stops with a notice. The chip shows
 only where the toolbar row has room.
 
+**Toolbar chips never clip.** Every chip is at least as wide as its label. Effort and Context take
+their long forms ("medium (default)", "… after compact") where the row has room, else their short
+forms, which are measured too. The layout reserves the widest short forms ("Effort medium ▾",
+"Context 999.9k") and puts the two chip groups on two lines when one line cannot hold them with
+Attach, Terminal, Details and Send. A test lays out every effort level, mode and Context form from
+the 760 px minimum window up at several display scales.
+
 **Esc.** A card's Esc button writes one Escape only under the same checks as its choices: the screen
 still shows that question, the pending call's own prompt, or the same menu (a menu Chat cannot read
 is matched by its rows) whose footer offers Esc. It then waits as a choice does; a menu step ends as
@@ -1160,9 +1167,12 @@ a word, a triple click everything, and a drag past either end scrolls the text. 
 its text rectangle as drawn (`FieldHit`) every frame; a press in the box's padding goes to the
 nearest end. One drag is held at a time (`fieldmouse.rs`). A right click opens the toolkit's Cut,
 Copy, Paste, Select all (`TextField::context_menu`), drawn above a dialog; outside the selection it
-first moves the caret. Settings text rows keep the form's own mouse selection; the app adds the
-triple click, the I-beam and the same menu, applied through the form's Ctrl+X/C/V/A, with Cut and
-Copy enabled whenever the row has text. Colour rows and an open colour picker take no caret. A field under the picture overlay
+first moves the caret. Settings text rows, the hex box of a colour row included, use the
+toolkit's own mouse editing (`Form::pointer_press`/`pointer_motion`/`pointer_release`, edge scrolling
+through `text_scroll_deadline`) and its menu built from the real selection (`Form::context_menu`,
+`apply_context_action`); the app only holds the drag and draws the menu. Secret rows refuse Cut
+and Copy but take Paste; Settings has none today. An open dropdown or colour picker takes the pointer, so no
+text row under it gets the I-beam or the menu (`pointer_cursor_at`). A field under the picture overlay
 or the usage popup gets neither the menu nor the I-beam. The
 I-beam shows only over a field that takes the mouse now, the composer, the handover editor and
 terminal text.

@@ -59,7 +59,7 @@ impl AppState {
             self.usage_warnings.next,
             self.usage.popup.due,
             self.usage.cache_retry_at().filter(|_| self.config.show_usage),
-            self.field_mouse.deadline(),
+            self.field_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -425,7 +425,7 @@ impl AppState {
             return;
         }
         if matches!(self.dialog, Some(Dialog::Settings(_))) {
-            self.settings_press(x, y, cx.mods(), clicks);
+            self.settings_press(x, y, cx.mods(), clicks, cx.now(), cx.scale());
             return;
         }
         if self.dialog.is_some() {
@@ -494,7 +494,7 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
-        if self.field_release() {
+        if self.field_release(x, y, cx.now()) {
             return;
         }
         if self.chat_end_drag(Some((x, y))) {
