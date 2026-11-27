@@ -189,7 +189,14 @@ mod tests {
         assert_eq!(number(&KeyName::Char('2'), ctrl, true), None);
         assert_eq!(number(&KeyName::Char('2'), Mods { alt: true, ..ctrl }, false), None);
         assert_eq!(
-            crate::termkeys::key(Some(&KeyName::Char('2')), ctrl, None, &Default::default(), false),
+            crate::termkeys::key(
+                Some(&KeyName::Char('2')),
+                ctrl,
+                None,
+                &Default::default(),
+                false,
+                crate::termkeys::Keyboard::Classic,
+            ),
             crate::termkeys::KeyAction::Send(vec![0])
         );
     }

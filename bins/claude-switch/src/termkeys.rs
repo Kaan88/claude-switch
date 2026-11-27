@@ -8,6 +8,13 @@ use mdshared_ui::keys::{KeyName, Mods};
 
 use crate::actions;
 
+/// Key conventions of the launched program; not a negotiated terminal mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Keyboard {
+    Classic,
+    Claude,
+}
+
 /// What a key press in a terminal tab comes to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyAction {
@@ -77,7 +84,14 @@ fn printable(text: Option<&str>) -> Option<&str> {
 
 /// What a key press does in a terminal tab. `name` and `text` are the host's
 /// ([`mdshared_ui::host::KeyPress`]); `selected` says whether there is a selection to copy.
-pub fn key(name: Option<&KeyName>, mods: Mods, text: Option<&str>, modes: &Modes, selected: bool) -> KeyAction {
+pub fn key(
+    name: Option<&KeyName>,
+    mods: Mods,
+    text: Option<&str>,
+    modes: &Modes,
+    selected: bool,
+    keyboard: Keyboard,
+) -> KeyAction {
     let Some(name) = name else {
         // A key the toolkit has no name for: whatever text it typed.
         return printable(text).map_or(KeyAction::None, |t| KeyAction::Send(t.as_bytes().to_vec()));
@@ -100,7 +114,9 @@ pub fn key(name: Option<&KeyName>, mods: Mods, text: Option<&str>, modes: &Modes
     match name {
         // The classic encoder drops Shift on Return. Use the distinct CSI-u key rather
         // than sending a carriage return that would submit Claude Code's prompt.
-        KeyName::Enter if tm.shift && !tm.ctrl && !tm.alt => KeyAction::Send(b"\x1b[13;2u".to_vec()),
+        KeyName::Enter if keyboard == Keyboard::Claude && tm.shift && !tm.ctrl && !tm.alt => {
+            KeyAction::Send(b"\x1b[13;2u".to_vec())
+        }
         KeyName::Char(c) => {
             // AltGr is Ctrl+Alt on Windows: a key that typed a character with both held typed
             // that character (`@`, `€`, `{` on many layouts).
@@ -206,6 +222,7 @@ pub fn unescape(s: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Keyboard::{Classic, Claude};
 
     const NONE: Mods = Mods { ctrl: false, shift: false, alt: false, control: false };
     const CTRL: Mods = Mods { ctrl: true, ..NONE };
@@ -223,7 +240,7 @@ mod tests {
     }
 
     fn k(name: KeyName, mods: Mods, text: Option<&str>) -> KeyAction {
-        key(Some(&name), mods, text, &Modes::default(), false)
+        key(Some(&name), mods, text, &Modes::default(), false, Classic)
     }
 
     fn send(b: &[u8]) -> KeyAction {
@@ -236,8 +253,8 @@ mod tests {
         assert_eq!(k(KeyName::Char('a'), SHIFT, Some("A")), send(b"A"));
         assert_eq!(k(KeyName::Char('\u{e9}'), NONE, Some("\u{e9}")), send("\u{e9}".as_bytes()));
         assert_eq!(k(KeyName::Space, NONE, Some(" ")), send(b" "));
-        assert_eq!(key(None, NONE, Some("\u{20ac}"), &Modes::default(), false), send("\u{20ac}".as_bytes()));
-        assert_eq!(key(None, NONE, None, &Modes::default(), false), KeyAction::None);
+        assert_eq!(key(None, NONE, Some("\u{20ac}"), &Modes::default(), false, Classic), send("\u{20ac}".as_bytes()));
+        assert_eq!(key(None, NONE, None, &Modes::default(), false, Classic), KeyAction::None);
     }
 
     #[test]
@@ -263,20 +280,24 @@ mod tests {
         assert_eq!(k(KeyName::F(5), NONE, None), send(b"\x1b[15~"));
         assert_eq!(k(KeyName::Delete, NONE, None), send(b"\x1b[3~"));
         let app = Modes { app_cursor: true, ..Modes::default() };
-        assert_eq!(key(Some(&KeyName::Up), NONE, None, &app, false), send(b"\x1bOA"));
+        assert_eq!(key(Some(&KeyName::Up), NONE, None, &app, false, Classic), send(b"\x1bOA"));
         let newline = Modes { newline: true, ..Modes::default() };
-        assert_eq!(key(Some(&KeyName::Enter), NONE, None, &newline, false), send(b"\r\n"));
+        assert_eq!(key(Some(&KeyName::Enter), NONE, None, &newline, false, Classic), send(b"\r\n"));
         assert_eq!(k(KeyName::F(30), NONE, None), KeyAction::None);
     }
 
     #[test]
-    fn shift_enter_is_distinct_from_submit_in_both_return_modes() {
+    fn only_claude_gets_distinct_shift_enter_in_both_return_modes() {
         for newline in [false, true] {
             let modes = Modes { newline, ..Modes::default() };
-            assert_eq!(key(Some(&KeyName::Enter), SHIFT, Some("\r"), &modes, false), send(b"\x1b[13;2u"));
+            let enter = |mods, keyboard| key(Some(&KeyName::Enter), mods, Some("\r"), &modes, false, keyboard);
+            let plain = send(if newline { b"\r\n" } else { b"\r" });
+            assert_eq!(enter(SHIFT, Claude), send(b"\x1b[13;2u"));
+            assert_eq!(enter(NONE, Claude), plain);
+            assert_eq!(enter(SHIFT, Classic), plain);
+            assert_eq!(enter(CTRL_SHIFT, Claude), enter(CTRL, Classic));
+            assert_eq!(enter(Mods { shift: true, ..ALT }, Claude), enter(ALT, Classic));
         }
-        assert_eq!(k(KeyName::Enter, CTRL_SHIFT, None), k(KeyName::Enter, CTRL, None));
-        assert_eq!(k(KeyName::Enter, Mods { shift: true, ..ALT }, None), k(KeyName::Enter, ALT, None));
     }
 
     #[test]
@@ -294,8 +315,8 @@ mod tests {
         assert_eq!(k(KeyName::Char('v'), CTRL_SHIFT, None), KeyAction::Paste);
         assert_eq!(k(KeyName::Char('v'), CTRL, None), KeyAction::Paste);
         // Ctrl+C copies a selection, and is the program's interrupt without one.
-        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), true), KeyAction::Copy);
-        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), false), send(b"\x03"));
+        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), true, Classic), KeyAction::Copy);
+        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), false, Classic), send(b"\x03"));
     }
 
     #[test]
@@ -304,7 +325,7 @@ mod tests {
         assert_eq!(k(KeyName::PageDown, SHIFT, None), KeyAction::Page(-1));
         assert_eq!(k(KeyName::PageUp, NONE, None), send(b"\x1b[5~"));
         let alt = Modes { alt_screen: true, ..Modes::default() };
-        assert_eq!(key(Some(&KeyName::PageUp), SHIFT, None, &alt, false), send(b"\x1b[5;2~"));
+        assert_eq!(key(Some(&KeyName::PageUp), SHIFT, None, &alt, false, Classic), send(b"\x1b[5;2~"));
     }
 
     #[test]

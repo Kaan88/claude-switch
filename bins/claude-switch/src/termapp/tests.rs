@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn shift_enter_uses_the_shown_tabs_launch_executable_not_its_label_or_modes() {
+    let mut app = AppState::new(crate::source::Source::Demo, None, Default::default());
+    app.usage.demo_echo = true;
+    let shift_enter = KeyPress {
+        name: Some(KeyName::Enter),
+        mods: Mods { shift: true, ..Mods::default() },
+        text: Some("\r".into()),
+        repeat: false,
+    };
+    let cases: &[(&str, &[u8])] = &[
+        ("claude", b"\x1b[13;2u"),
+        (r"C:\Tools\Claude.EXE", b"\x1b[13;2u"),
+        ("pwsh.exe", b"\r"),
+        ("cmd.exe", b"\r"),
+        (r"C:\Tools\claude-helper.exe", b"\r"),
+    ];
+    for &(program, bytes) in cases {
+        let mut term = Term::for_command(&mdshared_pty::Command::new(program), (30, 4));
+        term.feed(b"\x1b[?2004h");
+        app.tabs.open(NewTab { label: "Claude".into(), color: [0; 3], account: None, session: None }, term);
+        app.term_key(Instant::now(), &shift_enter);
+        assert_eq!(std::mem::take(&mut app.usage.demo_keys), bytes, "{program}");
+    }
+}
+
+#[test]
 fn ended_tab_does_not_block_resume_and_typed_input_never_falls_back_to_it() {
     let mut st = AppState::new(crate::source::Source::Demo, None, Default::default());
     let mut term = Term::empty((10, 3));
@@ -56,13 +82,23 @@ fn a_terminal_drag_keeps_its_selection_until_right_click_copies_and_clears_it() 
     assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Copy("one\ntwo".into())));
     assert!(app.tabs.shown().unwrap().term.selection.is_none());
     assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Paste));
+}
 
-    // Empty copied text is not a reason to paste old clipboard contents.
+#[test]
+fn right_click_clears_blank_selection_without_touching_the_clipboard() {
+    let mut app = mouse_terminal();
+    let (x, y) = cell(&app, 2, 0);
     let (blank_x, blank_y) = cell(&app, 2, 2);
-    assert_eq!(app.term_pointer_press(x, blank_y, Button::Left, 1, plain), None);
-    assert!(app.term_move(blank_x, blank_y, plain));
-    assert!(app.term_release(blank_x, blank_y, Button::Left, plain));
-    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Copy(String::new())));
+    for shift in [false, true] {
+        let mods = Mods { shift, ..Mods::default() };
+        assert_eq!(app.term_pointer_press(x, y, Button::Left, 1, mods), None);
+        assert!(app.term_move(blank_x, blank_y, mods));
+        assert!(app.term_release(blank_x, blank_y, Button::Left, mods));
+        assert!(app.tabs.shown().unwrap().term.selection.is_some());
+        assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, mods), None, "neither copy nor paste");
+        assert!(app.tabs.shown().unwrap().term.selection.is_none());
+        assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, mods), Some(MouseClipboard::Paste));
+    }
 }
 
 #[test]

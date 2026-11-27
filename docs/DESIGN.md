@@ -244,12 +244,14 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   Ctrl+Tab and Ctrl+Shift+Tab (next and previous tab), Ctrl+Shift+W (close the tab), Ctrl+Shift+T (a
   plain shell in the selected session's folder), Ctrl+Shift+K (the command palette; Ctrl+K is the
   program's), Ctrl+Shift+C and Ctrl+V / Ctrl+Shift+V (copy, paste; Ctrl+C copies only while something is
-  selected) and Shift+Page Up/Down (scroll back). Shift+Enter alone sends `CSI 13;2u` so Claude
-  Code can distinguish it from Enter. Other keys keep the classic encoding; this is not full kitty
-  keyboard negotiation. A middle click on a tab closes it.
+  selected) and Shift+Page Up/Down (scroll back). Shift+Enter alone sends `CSI 13;2u` only when
+  Switch launched Claude Code in the tab, identified by the executable's filename, not its title
+  or transcript. Shells and other programs keep the classic Return encoding; this is not full
+  kitty keyboard negotiation. A middle click on a tab closes it.
 - **Mouse**: the terminal uses the arrow pointer. Drag selects (double click a word, triple click a
   line, Alt a block); the drag requests a redraw only when the selected cells change. Releasing the
   mouse does not copy. Right-click copies and clears the selection, or pastes when there is none.
+  A selection with no text clears without a clipboard read or write.
   A program tracking the mouse gets the clicks and drags instead, unless Shift is held at the
   press. Use Shift+drag and Shift+right-click to select and copy or paste in that case. As in
   Windows Terminal, Shift+right-click copies stream selections as one line; keyboard copy keeps
