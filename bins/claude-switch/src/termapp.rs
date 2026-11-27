@@ -430,10 +430,11 @@ impl AppState {
                 t.selecting = true;
                 None
             }
-            MouseButton::Right => t
-                .take_selected_text(mods.shift)
-                .map(MouseClipboard::Copy)
-                .or_else(|| t.ended.is_none().then_some(MouseClipboard::Paste)),
+            MouseButton::Right => match t.take_selected_text(mods.shift) {
+                Some(text) if !text.is_empty() => Some(MouseClipboard::Copy(text)),
+                Some(_) => None,
+                None => t.ended.is_none().then_some(MouseClipboard::Paste),
+            },
             _ => None,
         }
     }

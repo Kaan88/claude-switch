@@ -251,6 +251,7 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
 - **Mouse**: the terminal uses the arrow pointer. Drag selects (double click a word, triple click a
   line, Alt a block); the drag requests a redraw only when the selected cells change. Releasing the
   mouse does not copy. Right-click copies and clears the selection, or pastes when there is none.
+  A selection with no text clears without a clipboard read or write.
   A program tracking the mouse gets the clicks and drags instead, unless Shift is held at the
   press. Use Shift+drag and Shift+right-click to select and copy or paste in that case. As in
   Windows Terminal, Shift+right-click copies stream selections as one line; keyboard copy keeps

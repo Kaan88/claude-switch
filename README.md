@@ -66,8 +66,9 @@ Claude Switch checks its tabs and the running-session records across accounts be
 | Enter in an ended tab | Close the tab |
 
 The terminal uses an arrow pointer. Drag to select, then right-click to copy and clear the
-selection. Right-click with no selection to paste. When a program captures the mouse (such as
-Claude Code in fullscreen), hold **Shift** to use the terminal's own drag and right-click actions.
+selection. If it yields no text, right-click clears it without changing the clipboard. Right-click
+with no selection to paste. When a program captures the mouse (such as Claude Code in fullscreen),
+hold **Shift** to use the terminal's own drag and right-click actions.
 Shift+right-click copies a regular selection as one line; use Ctrl+C to keep its line breaks.
 You can also middle-click a terminal tab to close it.
 

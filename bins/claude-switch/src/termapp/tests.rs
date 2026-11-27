@@ -82,13 +82,23 @@ fn a_terminal_drag_keeps_its_selection_until_right_click_copies_and_clears_it() 
     assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Copy("one\ntwo".into())));
     assert!(app.tabs.shown().unwrap().term.selection.is_none());
     assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Paste));
+}
 
-    // Empty copied text is not a reason to paste old clipboard contents.
+#[test]
+fn right_click_clears_blank_selection_without_touching_the_clipboard() {
+    let mut app = mouse_terminal();
+    let (x, y) = cell(&app, 2, 0);
     let (blank_x, blank_y) = cell(&app, 2, 2);
-    assert_eq!(app.term_pointer_press(x, blank_y, Button::Left, 1, plain), None);
-    assert!(app.term_move(blank_x, blank_y, plain));
-    assert!(app.term_release(blank_x, blank_y, Button::Left, plain));
-    assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, plain), Some(MouseClipboard::Copy(String::new())));
+    for shift in [false, true] {
+        let mods = Mods { shift, ..Mods::default() };
+        assert_eq!(app.term_pointer_press(x, y, Button::Left, 1, mods), None);
+        assert!(app.term_move(blank_x, blank_y, mods));
+        assert!(app.term_release(blank_x, blank_y, Button::Left, mods));
+        assert!(app.tabs.shown().unwrap().term.selection.is_some());
+        assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, mods), None, "neither copy nor paste");
+        assert!(app.tabs.shown().unwrap().term.selection.is_none());
+        assert_eq!(app.term_pointer_press(x, y, Button::Right, 1, mods), Some(MouseClipboard::Paste));
+    }
 }
 
 #[test]

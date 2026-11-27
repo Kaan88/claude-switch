@@ -259,7 +259,7 @@ impl Term {
         self.selection.filter(|s| !s.is_empty()).map(|s| s.text(&self.screen)).filter(|t| !t.is_empty())
     }
 
-    /// Copy consumes the highlight. A selection of blank cells still counts as a copy, not a paste.
+    /// Consume the highlight and distinguish selected blank cells (`Some("")`) from no selection.
     pub fn take_selected_text(&mut self, single_line: bool) -> Option<String> {
         self.selecting = false;
         let selection = self.selection.take().filter(|s| !s.is_empty())?;

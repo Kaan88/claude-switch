@@ -640,7 +640,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
     the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide).
 65. **Done: Windows Terminal mouse gestures for terminal tabs and the Chat drawer.** Arrow pointer, drag to
-    select, and right-click to copy and clear the selection or paste safely. Unmodified clicks and drags go to
+    select, and right-click to copy and clear the selection or paste safely. A blank selection clears without
+    reading or writing the clipboard (covered by a test). Unmodified clicks and drags go to
     a program that asks for mouse reports; Shift keeps the gestures local. Checked against Windows Terminal 1.25
     source and with tests for pointer choice, selection, reporting and paste safety. Native clipboard gestures
     and Claude Code's own fullscreen auto-copy were not checked interactively. Switch does not handle clipboard
