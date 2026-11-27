@@ -27,6 +27,7 @@ mod compact_runner;
 mod conversation_demo;
 mod conversation_draw;
 mod conversation_search;
+mod delete;
 mod demo;
 mod demo_terminal;
 mod details;

@@ -180,6 +180,10 @@ pub struct AppState {
     pub undo_hide: Option<crate::session_marks::UndoHide>,
     pub archive_picks: HashSet<String>,
     pub archive_count: usize,
+    /// Where deleted sessions go: the Recycle Bin (in tests, a folder of the test's own).
+    pub recycle: std::sync::Arc<dyn claude_switch_core::delete::Bin>,
+    /// Copies whose original is deleted once the copy's transcript is written (`delete`).
+    pub copy_deletes: Vec<crate::delete::AfterCopy>,
     pub naming_job: Option<Job<crate::session_panel::NameResults>>,
     pub meaning: crate::meaning::Meaning,
     pub sections: Sections,
@@ -296,6 +300,8 @@ impl AppState {
             undo_hide: None,
             archive_picks: HashSet::new(),
             archive_count: 0,
+            recycle: crate::delete::default_bin(),
+            copy_deletes: Vec::new(),
             naming_job: None,
             meaning: Default::default(),
             sections: Sections::new(400.0, ROW_H),

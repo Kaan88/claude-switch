@@ -107,6 +107,7 @@ impl AppState {
                 let account = self.folder_open(&folder, App::Desktop).0.to_owned();
                 self.new_session_now(now, App::Desktop, &account, &folder);
             }
+            crate::delete::DELETE_ROW | crate::delete::COPY_DELETE => self.delete_action(id),
             ARCHIVE_OLD | ARCHIVE_ROW | ARCHIVE_FOLDER | UNARCHIVE_ROW | UNARCHIVE_SELECTED | UNARCHIVE_ALL
             | REPORT => {
                 self.archive_action(now, id);
@@ -254,7 +255,7 @@ impl AppState {
         match self.source.carry_warning(&self.config, &session, &account) {
             Some(text) => {
                 let title = format!("Open a copy as {}?", self.account_name(&account));
-                let then = Pending::Copy { id: id.to_string(), account };
+                let then = Pending::Copy { id: id.to_string(), account, delete: false };
                 self.dialog = Some(Dialog::Confirm { title, text, ok: "Continue".into(), then });
             }
             None => self.copy_now(now, id, &account),
@@ -262,6 +263,11 @@ impl AppState {
     }
 
     pub fn copy_now(&mut self, now: Instant, id: &str, account: &str) {
+        self.copy_now_then(now, id, account, false);
+    }
+
+    /// Opens a copy; with `delete`, the original is deleted once the copy's transcript is written.
+    pub fn copy_now_then(&mut self, now: Instant, id: &str, account: &str, delete: bool) {
         let Some(&i) = self.by_id.get(id) else { return };
         let session = self.sessions[i].clone();
         let copy_id = match crate::compact_open::session_id() {
@@ -278,6 +284,12 @@ impl AppState {
                 let done = format!("Opened a copy of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
                 if self.start_with_result(now, &l, None, Some(account), done, Some((&session.cwd, App::Cli))) {
                     self.remember_folder_open(&session.cwd, account, App::Cli);
+                    if delete && self.source.is_demo() {
+                        self.toast("Demo: the original was not deleted".into(), now);
+                    } else if delete {
+                        let tab = self.config.embedded_terminal.then_some(self.tabs.active).flatten();
+                        self.delete_after_copy(&session, &copy_id, account, tab);
+                    }
                 } else if !self.source.is_demo() {
                     self.marks.clear_parent(&copy_id);
                     self.save_marks();
@@ -542,6 +554,7 @@ impl AppState {
             Item::new(OPEN_DESKTOP, "Open in Desktop"),
             Item::new(OPEN_AS, "Open as…"),
             Item::new(OPEN_COPY, "Open a copy"),
+            crate::delete::copy_item(self.delete_block(&s.id)),
             Item::new(crate::compact_dialog::COMMAND, crate::compact_dialog::LABEL),
             Item::new(RENAME, "Rename").hint("F2").sep(),
             Item::new(SET_TOPIC, "Set topic…"),
@@ -550,6 +563,7 @@ impl AppState {
             Item::new(HIDE, "Session hidden").hint("Delete"),
             Item::new(HIDE_FOLDER, "Folder hidden").enabled(!s.cwd.as_os_str().is_empty()),
             archive_row_item(self.is_archived(s), self.row_flags(s)),
+            crate::delete::row_item(self.delete_block(&s.id)),
             Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(COPY_ID, "Copy session id").sep(),
             Item::new(COPY_PATH, "Copy folder path").enabled(!s.cwd.as_os_str().is_empty()),

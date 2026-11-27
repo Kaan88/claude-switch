@@ -41,6 +41,9 @@ pub struct InPlace {
     pub basis: u64,
     pub stage: Stage,
     pub since: Instant,
+    /// The handover dialog's "Delete the original session afterwards": once the first message
+    /// is taken and the tab follows the new session, the old one is deleted (`delete`).
+    pub delete_original: bool,
 }
 
 impl InPlace {
@@ -118,6 +121,7 @@ impl AppState {
             basis,
             stage: Stage::Clear,
             since: Instant::now(),
+            delete_original: false,
         });
         self.show_tab(tab);
         // Chat for this tab only; the saved default for new tabs stays as it was.
@@ -161,6 +165,24 @@ impl AppState {
         }
         self.rebuild_view();
         self.toast("Handed over: this tab continues from the summary.".into(), Instant::now());
+        if job.delete_original {
+            self.delete_after_in_place(tab, &job.from_session, &job.from_name, new);
+        }
+    }
+
+    /// The original of a handover that continued here, once the tab follows the new session:
+    /// deleted, unless it is not the one the tab left (or still runs, is open, is pinned).
+    pub(crate) fn delete_after_in_place(&mut self, tab: u64, old: &str, title: &str, new: &str) {
+        let after = Some("The handover continued here.");
+        let follows = self.tabs.get(tab).is_some_and(|t| {
+            t.resume_id.as_deref().or(t.session.as_deref()).is_some_and(|id| id.eq_ignore_ascii_case(new))
+        });
+        let result = if old.eq_ignore_ascii_case(new) || !follows {
+            crate::delete::Deleted::Kept("the tab does not show that it follows the new session yet.".into())
+        } else {
+            self.delete_session(old)
+        };
+        self.report_delete(Instant::now(), title, result, after);
     }
 }
 
@@ -181,6 +203,7 @@ mod tests {
             basis: 0,
             stage: Stage::Clear,
             since: now,
+            delete_original: false,
         };
         assert_eq!(job.deadline(), now + CLEAR_WAIT);
         job.stage = Stage::Follow;
@@ -216,6 +239,7 @@ mod tests {
             basis: 0,
             stage: Stage::Sending,
             since: now,
+            delete_original: false,
         });
         st.in_place_done(tab, new);
         assert!(st.info.is_some(), "the failure is reported");

@@ -171,3 +171,23 @@ fn demo_requires_provider_consent_and_preview_before_the_open_action() {
     st.forget_handover_consents();
     assert!(st.config.compact.consents.is_empty());
 }
+
+#[test]
+fn delete_the_original_is_off_each_time_and_toggles_by_click_or_alt_d() {
+    let mut st = app();
+    let now = Instant::now();
+    let source = st.selected_session().unwrap().clone();
+    let mut dialog = Compact::new(&st, source.clone(), None);
+    assert!(!dialog.delete_original, "off by default");
+    dialog.apply(&mut st, Ok(Update::Preview("## Goal\n\nContinue.".into())));
+    assert!(dialog.click(&mut st, now, DELETE_ORIGINAL, 0.0));
+    assert!(dialog.delete_original);
+    let alt = Mods { alt: true, ..Mods::default() };
+    assert_eq!(dialog.key(&KeyName::Char('d'), alt, None), Some(DELETE_ORIGINAL));
+    // The demo opens nothing and deletes nothing, and says so.
+    assert!(!dialog.click(&mut st, now, OK, 0.0));
+    assert!(st.by_id.contains_key(&source.id));
+    assert!(st.toasts.find(|t| t.contains("nothing was")).is_some());
+    let again = Compact::new(&st, source, None);
+    assert!(!again.delete_original, "not remembered between uses");
+}

@@ -909,3 +909,19 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     text yet readable, a failure in the warning colour on its wash, and that opened rows and groups stay
     clickable. The pictures were looked at for light, dark and both user themes; nothing was seen in the
     running app.
+72. **Delete a session from its menu, and optionally the original after a copy or a handover** (owner,
+    2026-11-27: "can a delete be added next to archive on context menu for sessions, and for copy and compact as an
+    option?"). **Done.** **Delete session…** after Archive session… moves the transcript and its own
+    `<session id>/` folder to the Recycle Bin (shell API with undo), removes the session's own marks and kept summary,
+    and leaves the desktop app's records alone (the confirmation says when the desktop app may still list it).
+    Disabled with the reason while running, open in a tab or pinned, and checked again when Delete is pressed
+    (running scan of every account under the launch lock, the saved pin). A partial move is reported. The handover
+    dialog's review step has "Delete the original session afterwards" (off each time); the copy case is a separate
+    row item, **Open a copy, then delete the original…**, rather than a checkbox, because Open a copy has no dialog
+    to hold one and a new dialog would slow every copy. The copy's original goes once the copy's transcript is
+    written. `/switch-compact` and automatic handover have no option. Checked: core tests over temporary folders
+    (what moves, the shared-junction case, linked folders, guards, partial failure, nothing else touched) with a
+    folder stand-in for the Recycle Bin; window tests for the menu items, disabled states, wording, demo,
+    re-checks, mark and summary cleanup, copy and in-place deletion. Not checked: the real Recycle Bin call
+    (`SHFileOperationW`) has not been run by a test or by hand, and the copy-written condition assumes Claude Code
+    writes the copied conversation into the new transcript with its first message (not verified on a live fork).

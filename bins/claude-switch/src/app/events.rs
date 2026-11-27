@@ -194,6 +194,9 @@ impl App for AppState {
                         self.next_poll = None;
                     } else {
                         self.poll_running();
+                        if self.check_copy_deletes(now) {
+                            cx.request_redraw_all();
+                        }
                         self.next_poll = Some(now + POLL);
                     }
                 }

@@ -18,6 +18,7 @@ pub mod archive;
 pub mod clock;
 pub mod compact;
 pub mod config;
+pub mod delete;
 pub mod folder_defaults;
 pub mod fulltext;
 pub mod grouping;

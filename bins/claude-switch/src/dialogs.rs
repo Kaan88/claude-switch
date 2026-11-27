@@ -53,6 +53,12 @@ pub enum Pending {
     Copy {
         id: String,
         account: String,
+        /// Delete the original once the copy is written (`delete`).
+        delete: bool,
+    },
+    /// Delete a session (to the Recycle Bin).
+    Delete {
+        id: String,
     },
     Remove {
         slug: String,
@@ -92,7 +98,7 @@ impl Pending {
     /// Whether the confirming button is the primary one, which Enter chooses: yes for opening
     /// something, no for what ends or removes something (there the safe choice, Cancel, is).
     pub fn ok_is_primary(&self) -> bool {
-        matches!(self, Pending::Open { .. } | Pending::Copy { .. } | Pending::RestoreTab)
+        matches!(self, Pending::Open { .. } | Pending::Copy { delete: false, .. } | Pending::RestoreTab)
     }
 }
 
@@ -438,7 +444,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
     match dialog {
         Dialog::Confirm { then, title, text, ok } => match (id, then) {
             (OK, Pending::Open { id, account, app }) => st.open_now(now, &id, &account, app),
-            (OK, Pending::Copy { id, account }) => st.copy_now(now, &id, &account),
+            (OK, Pending::Copy { id, account, delete }) => st.copy_now_then(now, &id, &account, delete),
+            (OK, Pending::Delete { id }) => st.delete_confirmed(now, &id),
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
             (OK, Pending::CloseOtherTabs(tab)) => st.close_other_tabs(tab),
             (OK | CANCEL, Pending::RestoreTab) => st.confirm_restore_tab(now, id == OK),
