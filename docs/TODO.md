@@ -676,6 +676,15 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     the terminal" for a panel that only shows information; say "Claude Code panel" and offer Close (Esc) only. With
     the card up, the composer's notice "No quiet, empty Claude Code prompt is visible" is noise: the card already
     says what is on screen.
+    Done (2026-11-27): a usage row (block characters, none at 0%, then "N% used") is drawn as a real bar in the
+    theme's colours with its percentage; rows starting with a spinner glyph (in the panel card, the permission
+    card's copied rows and a menu's title) keep the glyph in item 55's fixed slot; a menu without choices is a
+    "Claude Code panel" card with Close (Esc), or Open terminal when its footer offers no Esc; while a menu or panel
+    card is up, the composer's prompt notices are replaced by "Close Claude Code's panel above to send." (or the
+    menu's own notice). Checked: unit tests over the recorded /usage rows and a scripted panel. Not checked: the
+    card has not been seen in the running app; the "Scanning local sessions…" row is not recorded (its glyph is
+    assumed to be one of the working line's); the card still shows only the last ten of the panel's last fourteen
+    rows above its footer, so on a tall /usage panel the bars at its top are not in the card.
 69. **Code files in the side panel have no syntax highlighting, and their lines wrap mid-token** (owner, 2026-11-27,
     screenshot: `mk_ctx.py` in the docked viewer, plain text, `g[-1]` split across rows). The toolkit already has
     `mdshared-highlight` (`tokens(source, language, dark)`: syntect's bundled set plus small scanners for TOML,

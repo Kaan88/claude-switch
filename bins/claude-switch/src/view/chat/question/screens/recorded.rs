@@ -183,3 +183,16 @@ fn menus_and_panels_with_the_cursor_parked_elsewhere_are_cards_and_block_sends()
         assert!(sends_blocked(&screen), "{name}");
     }
 }
+
+#[test]
+fn usage_bars_read_their_percentage_and_other_rows_are_left_alone() {
+    let screen = recorded(PANEL_USAGE);
+    let row = |i: usize| clean(&screen.row_text(i)).1;
+    assert_eq!(usage_bar(&row(1)), Some((99, "99% used")));
+    assert_eq!(usage_bar(&row(5)), Some((64, "64% used")), "the empty part is coloured cells, not characters");
+    // A 0% bar is all coloured cells: only its words are text.
+    assert_eq!(usage_bar("  0% used"), Some((0, "0% used")));
+    for other in [row(0), row(2), row(14), "Plugins 2%".to_owned(), "120% used".to_owned()] {
+        assert_eq!(usage_bar(&other), None, "{other}");
+    }
+}

@@ -32,6 +32,12 @@ impl Suggestions {
     }
 }
 
+/// What the composer says while a read-only panel card is up.
+pub(super) const PANEL_UP: &str = "Close Claude Code's panel above to send.";
+/// Notices about the terminal's prompt that a menu or panel card makes redundant.
+const SCREEN_NOTICES: [&str; 3] =
+    [super::submission::CHECK, super::submission::NO_QUIET_PROMPT, super::submission::NOT_EMPTY];
+
 impl Chat {
     /// The picker and transcript use the same final rectangle, not the layout's maximum envelope.
     pub(super) fn suggestion_plan(&self, pins: &[String]) -> Option<Suggestions> {
@@ -50,12 +56,28 @@ impl Chat {
     }
 
     pub(super) fn notice(&self, info: &ChatInfo) -> Option<&'static str> {
+        // With a menu or panel card up, the card says what the screen shows: the composer only
+        // says why it waits, not that the terminal's prompt is not visible.
+        let card = self
+            .question
+            .menu
+            .as_ref()
+            .filter(|_| self.question.visible())
+            .map(|menu| if menu.panel() { PANEL_UP } else { super::Reason::Menu.label() });
+        let error = match (self.error, card) {
+            (Some(error), Some(card)) if SCREEN_NOTICES.contains(&error) => Some(card),
+            (error, _) => error,
+        };
+        let reason = |r: super::Reason| match card {
+            Some(card) if r == super::Reason::Menu => card,
+            _ => r.label(),
+        };
         self.reason
             .filter(|r| *r == super::Reason::Permission)
             .map(super::Reason::label)
-            .or(self.error)
+            .or(error)
             .or_else(|| self.recovery_notice())
-            .or_else(|| self.reason.map(super::Reason::label))
+            .or_else(|| self.reason.map(reason))
             .or_else(|| self.waiting())
             .or_else(|| self.held_notice())
             .or_else(|| self.recall.waiting().then_some("Loading earlier prompts…"))

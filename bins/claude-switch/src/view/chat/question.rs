@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use claude_switch_core::transcript::{ItemId, ItemKind, Question, ToolCard, ToolState};
 use mdshared_term::Screen;
-use mdshared_ui::gfx::{Face, Painter, Rect};
+use mdshared_ui::gfx::{Face, Painter, Rect, Rgb};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::textfield::{FieldColors, TextField};
 use mdshared_ui::theme::Palette;
@@ -335,6 +335,13 @@ pub(super) struct MenuShown {
     rows: Vec<String>,
     /// Its footer offers Esc.
     pub(super) esc: bool,
+}
+
+impl MenuShown {
+    /// It only shows information: no choices to pick.
+    pub(super) fn panel(&self) -> bool {
+        self.choices.is_empty()
+    }
 }
 
 fn menu_shown(screen: &Screen) -> Option<MenuShown> {
@@ -1521,6 +1528,19 @@ const STATUS: f32 = 22.0;
 const DETAIL_LINES: usize = 6;
 const BODY_LINES: usize = 4;
 const MENU_LINES: usize = 10;
+/// The widest a usage bar is drawn.
+const BAR_W: f32 = 320.0;
+
+/// A row copied from the CLI: a spinner row keeps its glyph in a fixed-width slot (as the working
+/// line does), so the animation does not move the text after it.
+#[allow(clippy::too_many_arguments)]
+fn copied_row(p: &mut Painter, face: Face, size: f32, x: f32, cy: f32, text: &str, color: Rgb, max: f32) {
+    if crate::view::working::spinner_row(text) {
+        crate::view::working::draw_line(p, size, x, cy, text, color, max);
+    } else {
+        p.text(face, size, x, cy, text, color, max);
+    }
+}
 
 /// The tool call as the transcript has it, a few lines for the card.
 fn detail(kind: &ItemKind) -> Vec<String> {
@@ -1567,12 +1587,12 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     };
     let wanted = wanted.or_else(|| chat.question.background.as_ref().map(|_| HEADER + LINE + 6.0)).or_else(|| {
         chat.question.menu.as_ref().map(|m| {
-            let body = if m.choices.is_empty() {
-                m.rows.len().min(MENU_LINES) as f32 * LINE
+            // A panel has no title row: its rows say what it is.
+            if m.choices.is_empty() {
+                HEADER + 6.0 + m.rows.len().min(MENU_LINES) as f32 * LINE
             } else {
-                m.choices.len() as f32 * (CHOICE + 4.0)
-            };
-            HEADER + LINE + 6.0 + body
+                HEADER + LINE + 6.0 + m.choices.len() as f32 * (CHOICE + 4.0)
+            }
         })
     });
     let Some(wanted) = wanted else {
@@ -1616,7 +1636,8 @@ impl Draw<'_> {
             _ if chat.question.step.is_some() => false,
             Some(Kind::Question(_)) => chat.question.answerable.is_some(),
             Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
-            _ => chat.question.menu.as_ref().is_some_and(|m| m.esc),
+            // A panel offers Close in its own footer instead.
+            _ => chat.question.menu.as_ref().is_some_and(|m| m.esc && !m.choices.is_empty()),
         };
         if escape {
             let r = Rect::new(inner.right() - 64.0, inner.y - 2.0, 64.0, HEADER + 2.0);
@@ -1649,18 +1670,15 @@ impl Draw<'_> {
     fn menu(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, hits: &mut Vec<(Rect, Target)>) {
         let pal = self.pal;
         let Some(menu) = chat.question.menu.clone() else { return };
+        if menu.choices.is_empty() {
+            return self.panel(p, chat, inner, &menu, hits);
+        }
         let mut y = inner.y;
         p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code menu", pal.muted, inner.w);
         y += HEADER;
         let title = if menu.title.is_empty() { "Choose in the terminal's menu" } else { menu.title.as_str() };
-        p.text(Face::Semibold, 12.5, inner.x, y + LINE / 2.0, title, pal.text, inner.w);
+        copied_row(p, Face::Semibold, 12.5, inner.x, y + LINE / 2.0, title, pal.text, inner.w);
         y += LINE + 6.0;
-        if menu.choices.is_empty() {
-            for row in menu.rows.iter().rev().take(MENU_LINES).rev() {
-                p.text(Face::Mono, 11.0, inner.x, y + LINE / 2.0, row, pal.muted, inner.w);
-                y += LINE;
-            }
-        }
         for (i, choice) in menu.choices.iter().enumerate() {
             let row = Rect::new(inner.x, y, inner.w, CHOICE);
             let target = Target::Chat(Control::Question(Hit::Option(i)));
@@ -1678,13 +1696,47 @@ impl Draw<'_> {
             y += CHOICE + 4.0;
         }
         let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
-        let note = if menu.choices.is_empty() { TERMINAL_ONLY } else { "" };
-        let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or(note);
+        let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or("");
         p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
         let open = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
         let target = Target::Chat(Control::Question(Hit::Open));
         super::paint::button(p, pal, open, "Open terminal", self.hover == Some(target), false);
         hits.push((open, target));
+    }
+
+    /// A CLI panel that only shows information (/usage, /status): its rows, usage bars drawn as
+    /// bars, and Close (Esc) when its footer offers Esc, else Open terminal.
+    fn panel(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, menu: &MenuShown, hits: &mut Vec<(Rect, Target)>) {
+        let pal = self.pal;
+        let mut y = inner.y;
+        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Claude Code panel", pal.muted, inner.w);
+        y += HEADER + 6.0;
+        for row in menu.rows.iter().rev().take(MENU_LINES).rev() {
+            let cy = y + LINE / 2.0;
+            match screens::usage_bar(row) {
+                Some((percent, label)) => {
+                    let label_w = p.measure(Face::Ui, 11.0, label);
+                    let track_w = (inner.w - label_w - 10.0).clamp(0.0, BAR_W);
+                    let track = Rect::new(inner.x, cy - 3.0, track_w, 6.0);
+                    p.rbox(track, 3.0, pal.bar);
+                    let filled = (track_w * f32::from(percent) / 100.0).round();
+                    if filled > 0.0 {
+                        p.rbox(Rect::new(track.x, track.y, filled.max(6.0), track.h), 3.0, pal.accent);
+                    }
+                    p.text(Face::Ui, 11.0, track.right() + 10.0, cy, label, pal.text, label_w + 2.0);
+                }
+                None => copied_row(p, Face::Mono, 11.0, inner.x, cy, row, pal.muted, inner.w),
+            }
+            y += LINE;
+        }
+        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
+        let status = chat.question.error.or_else(|| chat.question_notice()).unwrap_or("");
+        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 130.0).max(0.0));
+        let (label, hit) = if menu.esc { ("Close (Esc)", Hit::Escape) } else { ("Open terminal", Hit::Open) };
+        let r = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
+        let target = Target::Chat(Control::Question(hit));
+        super::paint::button(p, pal, r, label, self.hover == Some(target), false);
+        hits.push((r, target));
     }
 
     fn question(
@@ -1834,7 +1886,7 @@ impl Draw<'_> {
         }
         // The terminal's own words, including warnings such as a countdown.
         for line in shown.body.iter().rev().take(BODY_LINES).rev() {
-            p.text(Face::Ui, 11.0, inner.x, y + LINE / 2.0, line, pal.muted, inner.w);
+            copied_row(p, Face::Ui, 11.0, inner.x, y + LINE / 2.0, line, pal.muted, inner.w);
             y += LINE;
         }
         y += 8.0;

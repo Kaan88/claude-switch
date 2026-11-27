@@ -1409,3 +1409,22 @@ fn enter_in_a_forms_field_turns_the_page_and_submits_on_the_last_question() {
     assert_eq!(f.writes(), [b"\r".to_vec()], "Large is highlighted: chosen");
     assert!(f.chat().question.step.is_some());
 }
+
+#[test]
+fn a_panel_card_replaces_the_composers_prompt_notices() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen("\x1b[2J\x1b[H Usage\r\n  ✻ Scanning local sessions…\r\n  0% used\r\n\r\n Esc to close", now);
+    f.sync();
+    let menu = f.chat().question.menu.clone().expect("a panel card");
+    assert!(menu.panel() && menu.esc);
+    assert!(crate::view::working::spinner_row("✻ Scanning local sessions…"));
+    assert!(!crate::view::working::spinner_row("Resets Dec 2, 3am"));
+    f.chat().question.rect = Rect::new(0.0, 0.0, 400.0, 200.0);
+    f.chat().error = Some(crate::view::chat::submission::NO_QUIET_PROMPT);
+    let info = f.tab().pane.as_ref().unwrap().model.chat.clone();
+    assert_eq!(f.chat().notice(&info), Some(crate::view::chat::composer::PANEL_UP));
+    // Close is Esc, under the same checks as any menu.
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+}

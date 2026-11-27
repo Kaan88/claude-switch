@@ -334,6 +334,20 @@ pub(super) fn plan_keep(menu: &Menu) -> Option<usize> {
     menu.entries.iter().position(|e| PLAN_KEEP.iter().any(|keep| e.text.contains(keep)))
 }
 
+/// The block characters a /usage bar is drawn with; its empty part is coloured cells, so a 0%
+/// bar shows no characters at all (Claude Code 2.1.332).
+const BAR_BLOCKS: [char; 8] = ['█', '▉', '▊', '▋', '▌', '▍', '▎', '▏'];
+
+/// A usage bar row: block characters (none at 0%), then "N% used" (or "left"). The percentage
+/// and the words after the bar.
+pub(in crate::view::chat) fn usage_bar(row: &str) -> Option<(u8, &str)> {
+    let rest = row.trim().trim_start_matches(BAR_BLOCKS).trim_start();
+    let (digits, after) = rest.split_once('%')?;
+    (!digits.is_empty() && digits.len() <= 3 && digits.chars().all(|c| c.is_ascii_digit())).then_some(())?;
+    let percent: u8 = digits.parse().ok().filter(|p| *p <= 100)?;
+    matches!(after.trim(), "used" | "left").then_some((percent, rest))
+}
+
 /// The row a multi-select question draws, unnumbered, under "Type something": "Next" while another
 /// question follows, "Submit" on the last (Claude Code 2.1.332).
 pub(super) const SUBMIT_ROWS: [&str; 2] = ["Submit", "Next"];

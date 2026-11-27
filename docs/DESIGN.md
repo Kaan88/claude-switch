@@ -949,7 +949,11 @@ Any menu whose footer (an "Esc to …"/"Enter to …" hint, or arrows with navig
 last row by the input shows as a card when no question or permission card covers it: its title row
 and its numbered choices as buttons, answered like a question (arrows, then Enter once the screen
 shows the highlight on that row with the same title and choices); the step ends as soon as that
-menu is gone. A menu without numbered rows shows its rows read-only with Open terminal. While a
+menu is gone. A menu without numbered rows is a "Claude Code panel": its rows read-only (a usage row,
+block characters then "N% used", drawn as a bar in the theme's colours; a row starting with a spinner
+glyph keeps it in the working line's fixed slot, as every copied CLI row does), with Close (Esc) when
+its footer offers Esc and Open terminal otherwise; while it is up the composer says "Close Claude
+Code's panel above to send." instead of notices about the terminal's prompt. While a
 card shows a menu, sends are refused with "Choose in Claude Code's menu above" and the drawer stays
 closed; a slash command no longer opens the drawer by itself. A menu that may be a permission
 prompt never shows as a menu card: within 24 rows of its footer a "Do you want to"/"Would you like
