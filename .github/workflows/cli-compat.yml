@@ -49,6 +49,10 @@ jobs:
           path: cli-compat-marker
           key: cli-compat-${{ steps.find.outputs.version }}
           lookup-only: true
+          # The marker is saved on Linux and also looked up on Windows: without this a Windows
+          # runner adds "windows-only" to the cache's version and never finds it (on Linux it
+          # changes nothing, so markers saved before still count).
+          enableCrossOsArchive: true
       - name: Decide
         id: decide
         env:
@@ -81,14 +85,12 @@ jobs:
       result: ${{ steps.run.outputs.result }}
       # What was installed and checked: the issue and the marker name this one.
       installed: ${{ steps.installed.outputs.version }}
+      # Whether it was recorded: not when the installed version was already checked.
+      recorded: ${{ steps.decide.outputs.record }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Rust stable
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
       - name: Install Claude Code as a user does
         run: |
           Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
@@ -108,18 +110,52 @@ jobs:
           if ($version -ne $env:NEWEST) {
             "::warning::The newest Claude Code is $env:NEWEST, but the installer installed $version: this run checks $version, and the issue and the marker name it."
           }
-          "Checking Claude Code $version"
+          "Installed Claude Code $version"
           "version=$version" >> $env:GITHUB_OUTPUT
+      # The marker is saved under the installed version, so while the installer lags behind the
+      # newest release the first job finds none: the installed one is looked for here, and a
+      # version already checked is not recorded again (when started by hand it always is).
+      - name: Look for the marker of the installed version
+        id: seen
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cli-compat-marker
+          key: cli-compat-${{ steps.installed.outputs.version }}
+          lookup-only: true
+          # The marker is saved on Linux and also looked up on Windows: without this a Windows
+          # runner adds "windows-only" to the cache's version and never finds it (on Linux it
+          # changes nothing, so markers saved before still count).
+          enableCrossOsArchive: true
+      - name: Decide
+        id: decide
+        env:
+          VERSION: ${{ steps.installed.outputs.version }}
+          SEEN: ${{ steps.seen.outputs.cache-hit }}
+        run: |
+          $record = 'true'
+          if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -and $env:SEEN -eq 'true') {
+            "::notice::Claude Code $env:VERSION, the version the installer installs, was already checked."
+            $record = 'false'
+          }
+          "record=$record" >> $env:GITHUB_OUTPUT
+      - name: Set up Rust stable
+        if: steps.decide.outputs.record == 'true'
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       - name: Build the recorder
+        if: steps.decide.outputs.record == 'true'
         run: cargo build --locked --manifest-path tools/screen-recorder/Cargo.toml
       # Built here, before the API key is in any step's environment: the recorder's own build of
       # the check then finds it done, and runs no build script or proc macro (it also removes
       # the key from cargo's and the check's environment).
       - name: Build the check
+        if: steps.decide.outputs.record == 'true'
         run: cargo test --locked -p claude-switch --no-run
       # The only step with the key.
       - name: Record every script and check the recordings
         id: run
+        if: steps.decide.outputs.record == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -174,7 +210,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'The issue could not be written.' }
           "::warning::Chat no longer reads some screens of Claude Code $env:VERSION as expected; see the issue `"$title`"."
       - name: Fail when the check could not run
-        if: steps.run.outputs.result != 'ok' && steps.run.outputs.result != 'mismatch'
+        if: steps.decide.outputs.record == 'true' && steps.run.outputs.result != 'ok' && steps.run.outputs.result != 'mismatch'
         run: |
           "::error::The check could not run (sign-in, build or start-up); see the step above and the uploaded recordings."
           exit 1
@@ -182,7 +218,7 @@ jobs:
   remember:
     name: Remember the checked version
     needs: [version, check]
-    if: needs.check.result == 'success'
+    if: needs.check.result == 'success' && needs.check.outputs.recorded == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -196,3 +232,7 @@ jobs:
         with:
           path: cli-compat-marker
           key: cli-compat-${{ needs.check.outputs.installed }}
+          # The marker is saved on Linux and also looked up on Windows: without this a Windows
+          # runner adds "windows-only" to the cache's version and never finds it (on Linux it
+          # changes nothing, so markers saved before still count).
+          enableCrossOsArchive: true

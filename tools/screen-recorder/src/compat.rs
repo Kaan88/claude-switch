@@ -1236,6 +1236,41 @@ mod tests {
         assert!(check.contains("gh issue comment"), "a closed one gets the report as a comment");
     }
 
+    /// The steps of a job, each as its own text, from `- name:` / `- uses:` to the next one.
+    fn steps(job: &str) -> Vec<&str> {
+        let mut starts: Vec<usize> = job.match_indices("\n      - ").map(|(at, _)| at).collect();
+        starts.push(job.len());
+        starts.windows(2).map(|w| &job[w[0]..w[1]]).collect()
+    }
+
+    #[test]
+    fn in_the_workflow_a_version_already_checked_is_not_recorded_again_unless_started_by_hand() {
+        let text = workflow();
+        let at = |what: &str| text.find(what).unwrap_or_else(|| panic!("{what}"));
+        let check = &text[at("\n  check:")..at("\n  remember:")];
+        let remember = &text[at("\n  remember:")..];
+        let steps = steps(check);
+        let index = |name: &str| steps.iter().position(|s| s.contains(name)).unwrap_or_else(|| panic!("{name}"));
+        // Once installed, the installed version's marker is looked for, as the marker is saved.
+        let seen = index("name: Look for the marker of the installed version");
+        assert!(index("name: Installed version") < seen && seen < index("name: Decide"));
+        assert!(steps[seen].contains("key: cli-compat-${{ steps.installed.outputs.version }}"));
+        assert!(steps[seen].contains("lookup-only: true"));
+        assert!(remember.contains("key: cli-compat-${{ needs.check.outputs.installed }}"));
+        // Saved on Linux, looked for on Windows too: every lookup and the save are cross-OS.
+        assert_eq!(text.matches("enableCrossOsArchive: true").count(), 3);
+        // Started by hand it records whatever the cache says.
+        let decide = steps[index("name: Decide")];
+        assert!(decide.contains("$env:GITHUB_EVENT_NAME -ne 'workflow_dispatch' -and $env:SEEN -eq 'true'"));
+        // Nothing costly runs, and nothing fails or is remembered, when it does not record.
+        for name in ["Set up Rust stable", "Build the recorder", "Build the check", "Record every script"] {
+            assert!(steps[index(name)].contains("if: steps.decide.outputs.record == 'true'"), "{name}");
+        }
+        assert!(steps[index("name: Fail when")].contains("if: steps.decide.outputs.record == 'true' &&"));
+        assert!(check.contains("recorded: ${{ steps.decide.outputs.record }}"));
+        assert!(remember.contains("if: needs.check.result == 'success' && needs.check.outputs.recorded == 'true'"));
+    }
+
     #[test]
     fn the_stamp_is_a_date_and_a_time() {
         let stamp = stamp();
