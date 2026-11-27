@@ -120,3 +120,35 @@ fn a_desktop_session_opened_in_the_cli_asks_first_and_a_cli_one_does_not() {
     assert!(!Pending::Quit.ok_is_primary() && !Pending::CloseTab(1).ok_is_primary());
     assert!(Pending::Copy { id: cli.clone(), account: "main".into(), delete: false }.ok_is_primary());
 }
+
+#[test]
+fn a_session_continued_in_another_folder_is_listed_there_and_stays_there_after_a_scan() {
+    let mut app = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+    app.apply_scan(crate::demo::scan(&app.config));
+    let (id, old) = (app.sessions[1].id.clone(), app.sessions[1].cwd.clone());
+    let new = std::path::PathBuf::from(r"C:\work\moved-here");
+    assert_ne!(old, new);
+    assert!(app.set_session_folder(&id, &new));
+    let cwd = |app: &AppState| app.sessions[app.by_id[&id]].cwd.clone();
+    assert_eq!(cwd(&app), new);
+    assert!(app.all_groups.iter().any(|g| g.cwd == new));
+    // The next scan reads the transcript's first folder again; the mark wins.
+    app.apply_scan(crate::demo::scan(&app.config));
+    assert_eq!(cwd(&app), new);
+    assert_eq!(app.marks.folder(&id), Some(r"C:\work\moved-here"));
+}
+
+#[test]
+fn a_session_open_in_a_tab_is_not_moved() {
+    let mut app = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+    app.apply_scan(crate::demo::scan(&app.config));
+    let (id, old) = (app.sessions[1].id.clone(), app.sessions[1].cwd.clone());
+    app.tabs.open(
+        crate::tabs::NewTab { label: "Tab".into(), color: [0; 3], session: Some(id.clone()), account: None },
+        crate::term::Term::empty((80, 24)),
+    );
+    let folder = std::env::temp_dir();
+    app.continue_in_folder(std::time::Instant::now(), &id, &folder);
+    assert_eq!(app.sessions[app.by_id[&id]].cwd, old);
+    assert_eq!(app.marks.folder(&id), None);
+}

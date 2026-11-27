@@ -46,6 +46,7 @@ const COPY_ID: u32 = 27;
 const COPY_PATH: u32 = 28;
 const REVEAL: u32 = 29;
 const OPEN_FOLDER: u32 = 32;
+const MOVE_FOLDER: u32 = 33;
 const CHAT_LAYOUT: u32 = 30;
 const SET_TOPIC: u32 = 31;
 const MEANING_INDEX: u32 = 240;
@@ -159,6 +160,11 @@ impl AppState {
             OPEN_COPY => {
                 if let Some(s) = self.selected.clone() {
                     self.open_copy(now, &s);
+                }
+            }
+            MOVE_FOLDER => {
+                if let Some(s) = self.selected.clone() {
+                    self.pick_session_folder(now, &s);
                 }
             }
             OPEN_LAST => {
@@ -556,6 +562,7 @@ impl AppState {
             Item::new(OPEN_AS, "Open as…"),
             Item::new(OPEN_COPY, "Open a copy"),
             crate::delete::copy_item(self.delete_block(&s.id)),
+            Item::new(MOVE_FOLDER, "Continue in another folder…"),
             Item::new(crate::compact_dialog::COMMAND, crate::compact_dialog::LABEL),
             Item::new(RENAME, "Rename").hint("F2").sep(),
             Item::new(SET_TOPIC, "Set topic…"),
@@ -617,6 +624,52 @@ impl AppState {
 }
 
 impl AppState {
+    /// "Continue in another folder…": the system's folder picker, starting at the session's.
+    fn pick_session_folder(&mut self, now: Instant, id: &str) {
+        if self.source.is_demo() {
+            self.toast("Demo: the folder picker was not opened".into(), now);
+            return;
+        }
+        let Some(&i) = self.by_id.get(id) else { return };
+        let start = Some(self.sessions[i].cwd.clone()).filter(|cwd| cwd.is_dir());
+        let (proxy, id) = (self.proxy.clone(), id.to_owned());
+        mdshared_ui::platform::pick_folder_async(start.as_deref(), move |folder| {
+            if let Some(folder) = folder
+                && let Some(proxy) = proxy
+                && let Ok(proxy) = proxy.lock()
+            {
+                proxy.send(crate::state::Msg::SessionFolderPicked(id, folder));
+            }
+        });
+    }
+
+    /// Continues session `id` in `folder` as the current account: Claude Code resumes it there and
+    /// writes on into the same transcript, naming the new folder in what it writes from now on
+    /// (Claude Code 2.1.332). The app remembers the folder for the session, so the list, its
+    /// group and the next Open follow it. Only a session that is not open anywhere: it moves when
+    /// it starts again.
+    pub(crate) fn continue_in_folder(&mut self, now: Instant, id: &str, folder: &std::path::Path) {
+        let Some(&i) = self.by_id.get(id) else { return };
+        if !folder.is_dir() {
+            self.warn("Folder not found", folder.display().to_string());
+            return;
+        }
+        let open_here =
+            self.tabs.list.iter().any(|t| t.session.as_deref() == Some(id) || t.resume_id.as_deref() == Some(id));
+        if open_here || self.running_of(id).is_some() {
+            self.warn(
+                "Close the session first",
+                "A session continues in another folder when it starts again. Close it, then try again.".into(),
+            );
+            return;
+        }
+        if self.sessions[i].cwd != folder && !self.set_session_folder(id, folder) {
+            return;
+        }
+        let account = self.current().slug.clone();
+        self.open(now, id, account, App::Cli);
+    }
+
     /// Opens a session's or tab's working folder in Explorer, or says why not.
     pub(crate) fn open_working_folder(&mut self, now: Instant, folder: &std::path::Path) {
         if self.source.is_demo() {

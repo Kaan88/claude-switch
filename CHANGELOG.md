@@ -18,6 +18,9 @@
   `/config` kept in `.claude.json` (such as Chrome) are shared the same way. Replaced files are
   backed up in `%APPDATA%\claude-switch\settings-backups`.
 - Sessions and tabs: "Open working folder" in their menus.
+- Sessions: "Continue in another folder…" resumes a session in a folder you pick. Claude Code
+  writes on into the same transcript; the app remembers the folder, so the list, its group and
+  the next Open follow it.
 - New session: a folder that does not exist is offered to be created (Start again creates it).
 
 ## 0.1.4 (2026-11-27)

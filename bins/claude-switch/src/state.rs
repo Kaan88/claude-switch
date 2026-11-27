@@ -40,6 +40,8 @@ pub enum Msg {
     AttachPictures(u64, Vec<std::path::PathBuf>, bool),
     /// The folder chosen in the New session dialog's folder picker.
     FolderPicked(std::path::PathBuf),
+    /// The folder chosen to continue a session in: its id and the folder.
+    SessionFolderPicked(String, std::path::PathBuf),
     ArchiveReportSaved(crate::archive_report::ReportResult),
     ThemeFile(Result<Option<Box<claude_switch_core::config::theme::NamedTheme>>, String>),
     Tray(crate::tray::Event),
@@ -509,6 +511,12 @@ impl AppState {
                     })
                 }));
         self.sessions = scan.sessions;
+        // A session continued in another folder works there now (`Marks::folder`).
+        for s in &mut self.sessions {
+            if let Some(folder) = self.marks.folder(&s.id) {
+                s.cwd = folder.into();
+            }
+        }
         self.grouping.projects = scan.projects;
         self.grouping.transcript_stamps = scan.transcript_stamps;
         self.cancel_related();

@@ -175,6 +175,17 @@ impl Marks {
         self.clear_session_key(id, "parentSessionId");
     }
 
+    /// The folder session `id` was moved to with "Continue in another folder". Claude Code names
+    /// a new folder only in the records written there, and the list reads a session's folder
+    /// from its first records, so the move is kept here.
+    pub fn folder(&self, id: &str) -> Option<&str> {
+        self.data["sessions"][id]["folder"].as_str().filter(|s| !s.is_empty())
+    }
+
+    pub fn set_folder(&mut self, id: &str, file: &Path, folder: &Path) -> bool {
+        self.session(id, file, "folder", json!(folder.to_string_lossy()))
+    }
+
     pub fn topic(&self, id: &str) -> Option<&str> {
         crate::grouping::valid_topic(self.data["sessions"][id]["topic"].as_str()?)
     }
@@ -539,6 +550,30 @@ mod tests {
         assert!(disk.data["sessions"].get(gone).is_none());
         assert!(disk.hidden("cccccccc-0000-4000-8000-000000000003") && disk.folder_hidden("C:/w"));
         assert_eq!(disk.name(kept), Some("Kept"));
+    }
+
+    #[test]
+    fn a_moved_sessions_folder_is_kept_and_an_empty_one_is_none() {
+        let mut m = Marks::default();
+        let file = Path::new(r"C:\p\s.jsonl");
+        assert_eq!(m.folder("s"), None);
+        assert!(m.set_folder(
+            "s",
+            file,
+            Path::new(
+                r"C:\work
+ew"
+            )
+        ));
+        assert_eq!(
+            m.folder("s"),
+            Some(
+                r"C:\work
+ew"
+            )
+        );
+        assert!(m.set_folder("s", file, Path::new("")));
+        assert_eq!(m.folder("s"), None);
     }
 
     #[test]

@@ -225,6 +225,19 @@ impl AppState {
         self.marks.name(id).unwrap_or_default() == name.trim()
     }
 
+    /// Remembers that session `id` works in `folder` now (`Marks::folder`) and lists it there.
+    /// False when the mark could not be saved.
+    pub(crate) fn set_session_folder(&mut self, id: &str, folder: &std::path::Path) -> bool {
+        let Some(&i) = self.by_id.get(id) else { return false };
+        if !self.edit_marks(|st| st.marks.set_folder(id, &st.sessions[i].file.clone(), folder)) {
+            return false;
+        }
+        self.sessions[i].cwd = folder.to_path_buf();
+        self.all_groups = claude_switch_core::sessions::group_by_folder(&self.sessions);
+        self.rebuild_view();
+        true
+    }
+
     pub fn toggle_pin(&mut self, i: usize) {
         let Some(s) = self.sessions.get(i) else { return };
         if self.is_archived(s) {
