@@ -134,8 +134,10 @@ impl Chat {
             .or_else(|| self.held_notice())
             .or_else(|| self.recall.waiting().then_some("Loading earlier prompts…"))
             .or_else(|| {
-                self.queue.as_ref().map(|_| {
-                    if self.last_gate == Some(Gate::Running) {
+                self.queue.as_ref().map(|queue| {
+                    if queue.sends_now() {
+                        "Sends as soon as Claude Code's input reads empty."
+                    } else if self.last_gate == Some(Gate::Running) {
                         "A turn is running. This will be sent when it ends."
                     } else if self.drawer_focus {
                         "Queue paused while the terminal has focus."

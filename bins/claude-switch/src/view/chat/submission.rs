@@ -42,6 +42,9 @@ const IMAGE_KEY: &[u8] = b"\x1bv";
 pub(super) const CHECK: &str = "Open the terminal to check";
 pub(super) const NO_QUIET_PROMPT: &str = "No quiet, empty Claude Code prompt is visible. Check the terminal.";
 pub(super) const NOT_EMPTY: &str = "The CLI input line is not visibly empty. Wait or use the terminal.";
+pub(super) const INPUT_HAS_TEXT: &str =
+    "The CLI input line already contains text or an attachment. Check the terminal.";
+pub(super) const MENU_OPEN: &str = "Close the CLI menu in the terminal before sending.";
 pub(super) const BAD_TEXT: &str = "The draft has unsupported control characters.";
 pub(super) const CHANGED_CLIPBOARD: &str = "The clipboard changed. Paste the picture into Chat again.";
 const IMAGE_TIMEOUT_NOTICE: &str = "No image marker yet. The CLI may hold a picture; check the terminal. Draft kept.";
@@ -79,6 +82,9 @@ pub(super) struct Queue {
     /// Queued while a new chat's transcript was still to come: the reader starting on it is not
     /// another session.
     awaiting: bool,
+    /// Send now was asked for while the CLI's input did not read empty: the draft goes into the
+    /// running turn by itself once it does, instead of waiting for the turn's end.
+    now: bool,
 }
 
 struct Stop {
@@ -88,6 +94,11 @@ struct Stop {
 }
 
 impl Queue {
+    /// Send now was asked for and waits for an input that reads empty.
+    pub(super) fn sends_now(&self) -> bool {
+        self.now
+    }
+
     fn completed(&self, info: &ChatInfo) -> bool {
         self.generation == info.generation
             && info.latest.is_some_and(|(at, phase)| phase == ChatPhase::EndTurn && Some(at) > self.latest)
@@ -126,7 +137,7 @@ impl Chat {
     /// A draft queued behind the running turn, as Queue makes it.
     #[cfg(test)]
     pub(super) fn queue_draft(&mut self, generation: u64) {
-        self.queue = Some(Queue { generation, latest: None, stop: None, awaiting: false });
+        self.queue = Some(Queue { generation, latest: None, stop: None, awaiting: false, now: false });
     }
 
     pub(super) fn interrupt_submission(&mut self) {
@@ -220,14 +231,14 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
         return Some(NO_PASTE);
     }
     if screen::menu(&tab.term.screen) {
-        return Some("Close the CLI menu in the terminal before sending.");
+        return Some(MENU_OPEN);
     }
     if pane.model.error.is_some() && !chat.demo {
         return Some(Reason::Identity.label());
     }
     if !chat.demo && matches!(intent, Intent::Draft | Intent::Override) {
         if prompt(&tab.term.screen).is_some_and(|row| !row.is_empty()) {
-            return Some("The CLI input line already contains text or an attachment. Check the terminal.");
+            return Some(INPUT_HAS_TEXT);
         }
         if intent == Intent::Draft && gate == Gate::Ready && !idle_slash_prompt(&tab.term.screen, chat.quiet(now)) {
             return Some(CHECK);
@@ -274,6 +285,11 @@ impl AppState {
     fn send_with_intent(tab: &mut Tab, now: Instant, intent: Intent) {
         clear_recovery(tab, now);
         let error = blocked(tab, now, intent);
+        let drafted =
+            tab.pane.as_ref().is_some_and(|p| !p.chat.editor.text.trim().is_empty() || !p.chat.chips.is_empty());
+        if drafted && let Some(error) = error.filter(|e| super::screen_report::worth(e)) {
+            super::screen_report::save(tab, now, error);
+        }
         let stamp = Stamp::at(tab);
         let pane = tab.pane.as_mut().unwrap();
         let chat = &mut pane.chat;
@@ -290,8 +306,10 @@ impl AppState {
         };
         // Whatever passes by itself is waited for, not refused: a running turn, a prompt the CLI
         // is still drawing, a command's output, a new chat's transcript. The draft is held and
-        // goes out once the CLI's input is ready.
-        let waits = matches!(error, Some(e) if e == CHECK || e == NO_TRANSCRIPT || e == Reason::Slash.label());
+        // goes out once the CLI's input is ready. So does one the CLI's input still holds text
+        // for: never cleared by Chat, it goes once that text was sent or cleared in the terminal.
+        let waits = matches!(error, Some(e) if e == CHECK || e == NO_TRANSCRIPT || e == INPUT_HAS_TEXT
+            || e == Reason::Slash.label());
         // A picture needs the visibly empty input for its marker, whoever asked for the send.
         let picture_waits =
             chat.clipboard_sequence().is_some() && error.is_none() && !chat.demo && !clean_prompt(&tab.term.screen);
@@ -301,7 +319,19 @@ impl AppState {
                 latest: pane.model.chat.latest.map(|x| x.0),
                 stop: None,
                 awaiting: chat.awaiting_transcript,
+                now: false,
             });
+            chat.error = None;
+            chat.retry = None;
+            return;
+        }
+        // Send now while the input does not read empty: it may be mid-redraw, or hold what was
+        // typed in the terminal. The draft stays queued and goes by itself once it reads empty.
+        if intent == Intent::Now
+            && error == Some(NOT_EMPTY)
+            && let Some(queue) = chat.queue.as_mut()
+        {
+            queue.now = true;
             chat.error = None;
             chat.retry = None;
             return;
@@ -484,6 +514,9 @@ impl AppState {
                 return true;
             }
             if now >= wait.due || error.is_some_and(|e| e != NO_QUIET_PROMPT) {
+                if let Some(error) = error.filter(|e| super::screen_report::worth(e)) {
+                    super::screen_report::save(tab, now, error);
+                }
                 let chat = &mut tab.pane.as_mut().unwrap().chat;
                 chat.staging.command = None;
                 chat.refused(error.unwrap_or(NO_QUIET_PROMPT), Some(Intent::Slash));
@@ -506,7 +539,13 @@ impl AppState {
                 chat.refused("The session changed or ended. The queue was cancelled; draft kept.", None);
                 return true;
             }
-            let intent = if queue.interrupted(tab, now) { Intent::Interrupted } else { Intent::Draft };
+            let intent = if queue.interrupted(tab, now) {
+                Intent::Interrupted
+            } else if queue.now {
+                Intent::Now
+            } else {
+                Intent::Draft
+            };
             // The screen's idle input releases it as a newer completion does: the transcript may
             // never show one (an interrupted turn, a command, a resumed session).
             let idle = chat.screen_idle(&tab.term, now);
@@ -515,7 +554,7 @@ impl AppState {
             if may_write
                 && chat.waiting().is_none()
                 && !chat.enter_only()
-                && (intent == Intent::Interrupted || idle || queue.completed(&pane.model.chat))
+                && (matches!(intent, Intent::Interrupted | Intent::Now) || idle || queue.completed(&pane.model.chat))
                 && blocked(tab, now, intent).is_none()
                 && (chat.demo || clean_prompt(&tab.term.screen))
             {
@@ -544,6 +583,15 @@ impl AppState {
     pub(super) fn submit_slash(tab: &mut Tab, now: Instant, line: &str, from_editor: bool) {
         clear_recovery(tab, now);
         let error = blocked(tab, now, Intent::Slash);
+        // A command refused for a running turn while the screen reads idle, or for a screen Chat
+        // could not read: worth a report (a prompt still settling is waited for first).
+        let at_rest = error == Some(BUSY_CMD) && tab.pane.as_ref().is_some_and(|p| p.chat.screen_idle(&tab.term, now));
+        let report = error
+            .filter(|e| super::screen_report::worth(e) && *e != NO_QUIET_PROMPT)
+            .or(at_rest.then_some("A turn is running (the screen reads idle)"));
+        if let Some(why) = report {
+            super::screen_report::save(tab, now, why);
+        }
         let stamp = Stamp::at(tab);
         let pane = tab.pane.as_mut().unwrap();
         let chat = &mut pane.chat;

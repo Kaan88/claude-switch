@@ -14,6 +14,7 @@ pub(super) mod question;
 mod readme_shots;
 mod recall;
 mod rename;
+mod screen_report;
 mod shortcuts;
 pub(super) mod side;
 pub(super) mod submission;
@@ -223,6 +224,8 @@ pub struct Chat {
     last_output: Option<Instant>,
     /// When the terminal last got input from the user or from Chat.
     last_input: Option<Instant>,
+    /// When this tab last saved a screen report (`screen_report`).
+    last_report: Option<Instant>,
     /// A message or command Chat submitted: the output it was written after, and when.
     sent: Option<(u64, Instant)>,
     last_gate: Option<Gate>,

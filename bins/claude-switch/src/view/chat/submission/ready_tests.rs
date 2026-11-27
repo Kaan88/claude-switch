@@ -11,7 +11,8 @@ use crate::view::chat::question::screens::recorded::{
     ASK_OTHER, ASK_OTHER_FIRST, ASK_OTHER_LONG, ASK_OTHER_TYPED, FORM_OTHER, FORM_OTHER_FIRST, FORM_OTHER_TYPED,
 };
 use crate::view::chat::question::screens::recorded::{
-    PLAIN_EMPTIED, PLAIN_IDLE, PLAIN_INTERRUPTED, PLAIN_QUESTION, PLAIN_RESTORED, PLAIN_TYPED, WORKING_TOOL, recorded,
+    PLAIN_EMPTIED, PLAIN_IDLE, PLAIN_INTERRUPTED, PLAIN_QUESTION, PLAIN_RESTORED, PLAIN_TYPED, PLAIN_WORKING_TYPED,
+    WORKING_TOOL, recorded,
 };
 use crate::view::chat::question::{self, Hit};
 use std::ops::Not;
@@ -161,14 +162,43 @@ fn a_bell_asks_for_nothing_once_the_input_is_idle() {
 }
 
 #[test]
-fn text_on_the_cli_input_is_never_an_idle_prompt() {
+fn text_on_the_cli_input_is_never_an_idle_prompt_and_a_draft_waits_until_it_is_gone() {
     let mut f = Live::new();
     f.show(PLAIN_TYPED);
     assert_eq!(f.pass(SECOND), (Gate::Check, None));
     f.send("mine");
-    // Not queued behind someone's typed text: it would be appended to it.
-    assert!(f.chat().queue.is_none() && f.writes().is_empty());
-    assert!(f.chat().error.is_some_and(|e| e.contains("already contains text")));
+    // Held, never typed behind someone's text (it would be appended to it) and never clearing it.
+    assert!(f.chat().queue.is_some() && f.chat().error.is_none());
+    assert_eq!(f.pass(SECOND).0, Gate::Check);
+    assert!(f.writes().is_empty(), "the typed text is left alone");
+    // The text was sent or cleared in the terminal: the draft goes by itself.
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    assert_eq!(f.writes(), message("mine"));
+    assert!(f.chat().queue.is_none());
+}
+
+#[test]
+fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
+    let mut f = Live::new();
+    f.turn();
+    f.show(WORKING_TOOL);
+    assert_eq!(f.pass(SECOND), (Gate::Running, None));
+    f.send("next");
+    assert!(f.chat().queue.is_some() && f.writes().is_empty(), "queued behind the turn");
+    // Send now while the CLI's input holds text: no refusal, the request is kept.
+    f.show(PLAIN_WORKING_TYPED);
+    assert_eq!(f.pass(SECOND).0, Gate::Running);
+    let now = f.now;
+    AppState::chat_send(f.tab(), now, true);
+    assert!(f.chat().error.is_none() && f.chat().queue.as_ref().is_some_and(Queue::sends_now));
+    assert_eq!(f.chat().notice(&Default::default()), Some("Sends as soon as Claude Code's input reads empty."));
+    assert!(f.writes().is_empty());
+    // The input reads empty again while the turn still runs: the draft goes into it.
+    f.show(WORKING_TOOL);
+    assert_eq!(f.pass(SECOND).0, Gate::Running);
+    assert_eq!(f.writes(), message("next"));
+    assert!(f.chat().queue.is_none() && f.chat().editor.text.is_empty());
 }
 
 #[test]

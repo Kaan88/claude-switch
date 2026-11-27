@@ -228,11 +228,16 @@ impl AppState {
             let card = chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
             chat.settle(chat.screen_idle(&tab.term, now));
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
+            let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
             let changed = card | chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
             let advanced = Self::advance_submission(tab, now, may_write);
+            if tool {
+                // Chat says Claude Code may be waiting and cannot show why: keep what it read.
+                super::screen_report::save(tab, now, super::Reason::Tool.label());
+            }
             redraw |= shown && (changed || catalog || suggested || reported || advanced || collected || recalled);
         }
         redraw

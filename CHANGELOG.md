@@ -5,6 +5,14 @@
 - Chat: after `/model` (or another command that only prints, such as `/effort`), the session no
   longer reads as a running turn. Chat refused the next command, so the effort could not be changed
   after the model, and said Claude Code might be waiting for an answer.
+- Chat: Send now while Claude Code's input does not read empty is kept instead of refused: the
+  message goes by itself as soon as the input reads empty, still during the turn. A message sent
+  while the input holds text typed in the terminal waits until that text was sent or cleared there
+  (Chat never clears it), instead of being refused.
+- Chat: when it cannot send because of what it read on the screen, or says Claude Code may be
+  waiting for an answer, it keeps the screen and a note of why in
+  `%APPDATA%\claude-switch\screen-reports` (on this computer only; the newest 20, at most one a
+  minute per tab), so a screen it misreads can become a test.
 
 ## 0.1.3 (2026-11-27)
 
