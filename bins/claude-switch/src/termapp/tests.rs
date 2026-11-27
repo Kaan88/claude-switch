@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn shift_enter_uses_the_shown_tabs_launch_executable_not_its_label_or_modes() {
+    let mut app = AppState::new(crate::source::Source::Demo, None, Default::default());
+    app.usage.demo_echo = true;
+    let shift_enter = KeyPress {
+        name: Some(KeyName::Enter),
+        mods: Mods { shift: true, ..Mods::default() },
+        text: Some("\r".into()),
+        repeat: false,
+    };
+    let cases: &[(&str, &[u8])] = &[
+        ("claude", b"\x1b[13;2u"),
+        (r"C:\Tools\Claude.EXE", b"\x1b[13;2u"),
+        ("pwsh.exe", b"\r"),
+        ("cmd.exe", b"\r"),
+        (r"C:\Tools\claude-helper.exe", b"\r"),
+    ];
+    for &(program, bytes) in cases {
+        let mut term = Term::for_command(&mdshared_pty::Command::new(program), (30, 4));
+        term.feed(b"\x1b[?2004h");
+        app.tabs.open(NewTab { label: "Claude".into(), color: [0; 3], account: None, session: None }, term);
+        app.term_key(Instant::now(), &shift_enter);
+        assert_eq!(std::mem::take(&mut app.usage.demo_keys), bytes, "{program}");
+    }
+}
+
+#[test]
 fn ended_tab_does_not_block_resume_and_typed_input_never_falls_back_to_it() {
     let mut st = AppState::new(crate::source::Source::Demo, None, Default::default());
     let mut term = Term::empty((10, 3));

@@ -44,8 +44,7 @@ pub(crate) const CLASSIC_RENDERER: &str = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"
 /// screen, where the CLI's fullscreen renderer draws. Other programs are left as they are.
 /// Handover tabs name Claude Code by its absolute path (`…\claude.exe`), so the file stem counts.
 pub(crate) fn classic_renderer(launch: &mut Launch, enabled: bool) {
-    let stem = launch.program.file_stem().and_then(|s| s.to_str());
-    if enabled && stem.is_some_and(|s| s.eq_ignore_ascii_case("claude")) {
+    if enabled && term::is_claude_program(&launch.program) {
         launch.env.insert(CLASSIC_RENDERER.into(), "1".into());
     }
 }
@@ -303,7 +302,7 @@ impl AppState {
         }
         let modes = tab.term.screen.modes();
         let selected = tab.term.selected_text().is_some();
-        let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected);
+        let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected, tab.term.keyboard);
         match action {
             KeyAction::Command(c) => self.command(now, c, None),
             KeyAction::Copy => self.copy_selection(),

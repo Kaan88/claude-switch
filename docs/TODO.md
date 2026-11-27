@@ -652,8 +652,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     panels: terminal, details), show a value as a value (an effort level as a small meter or dots, context as a
     filling bar), never cut a label, and keep the row from jumping when a value changes. Item 43 covers the values
     being stale; this is the look.
-67. **Done: Shift+Enter starts a line in the terminal without sending.** Switch sends `CSI 13;2u` for Shift+Enter
-    alone, not a bare Enter. A scratch ConPTY run with Claude Code 2.1.332 showed two prompt rows with this
+67. **Done: Shift+Enter starts a line in the Claude Code terminal without sending.** Switch sends `CSI 13;2u`
+    for Shift+Enter alone in a tab launched as Claude Code. Shells and other programs retain classic Return
+    (covered by tests). A scratch ConPTY run with Claude Code 2.1.332 showed two prompt rows with this
     sequence even without kitty negotiation. The same run showed line breaks from the Chat composer's bracketed
     paste encoding (item 46); the composer test checks that Enter waits for the echo. No prompt was submitted.
     The desktop key path, other CLI versions and other programs were not checked interactively.
