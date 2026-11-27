@@ -202,9 +202,9 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         }
         Hit::AskRetry => {
             let Some(text) = retry_sentence(&chat.question.denials) else { return false };
-            // Into the message box, once it is empty: never sent from here.
-            chat.question.held = Some(text);
-            chat.land_held();
+            // Into the message box, once it is empty: never sent from here, and after any other
+            // text already waiting for the box.
+            chat.hold_text(text);
         }
         _ => return false,
     }

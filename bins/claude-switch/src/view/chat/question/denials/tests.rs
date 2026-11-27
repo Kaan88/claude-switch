@@ -169,6 +169,33 @@ fn ask_claude_to_retry_only_fills_the_message_box() {
 }
 
 #[test]
+fn ask_claude_to_retry_keeps_a_held_answer_and_adds_its_sentence_after_it() {
+    let mut f = Live::new();
+    f.show(BLOCKED_IDLE);
+    f.pass(QUIET * 2);
+    f.denied(20, "Write", "notes.txt", DenialKind::User);
+    f.pass(TICK);
+    // A "Chat about this" answer waits for the box, which holds a draft.
+    f.chat().editor.set("my own draft".into());
+    f.chat().question.held = Some("What I meant about the question".into());
+    assert!(f.click(Hit::AskRetry));
+    assert!(f.click(Hit::AskRetry), "twice is kept once");
+    assert_eq!(f.chat().editor.text, "my own draft");
+    f.chat().editor.set(String::new());
+    f.pass(TICK);
+    let sentence = "Please try again what was denied before, I allow it now: Write: notes.txt";
+    assert_eq!(
+        f.chat().editor.text,
+        format!(
+            "What I meant about the question
+
+{sentence}"
+        )
+    );
+    assert!(f.chat().question.held.is_none() && f.writes().is_empty());
+}
+
+#[test]
 fn review_runs_permissions_as_a_slash_command_and_the_clis_list_takes_the_card() {
     let mut f = Live::new();
     f.show(BLOCKED_IDLE);

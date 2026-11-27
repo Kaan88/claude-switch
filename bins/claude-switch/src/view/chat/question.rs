@@ -982,7 +982,30 @@ impl Chat {
         if collapse(self.question.field.text()) == *text {
             self.question.field.clear();
         }
-        self.question.held = Some(text.clone());
+        self.hold_text(text.clone());
+    }
+
+    /// Text for the message box joins what already waits for it there, never replacing it (the
+    /// same text twice is kept once), and lands once the box is empty.
+    fn hold_text(&mut self, text: String) {
+        match &mut self.question.held {
+            Some(held)
+                if *held == text
+                    || held.ends_with(&format!(
+                        "
+
+{text}"
+                    )) => {}
+            Some(held) => {
+                held.push_str(
+                    "
+
+",
+                );
+                held.push_str(&text);
+            }
+            None => self.question.held = Some(text),
+        }
         self.land_held();
     }
 
