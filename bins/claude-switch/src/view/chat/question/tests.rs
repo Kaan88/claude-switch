@@ -1967,11 +1967,11 @@ fn terminal_input_stops_every_card_key_sequence_before_its_next_key() {
     press(f.tab(), now, Hit::StopAgent(1));
     f.writes();
     typed(&mut f);
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
     f.show(AGENTS_OPEN, now);
     advance(f.tab(), now, true);
     assert!(f.writes().is_empty());
     assert!(f.chat().question.agent_step.is_none());
-    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
 
     // A rewind: no second Esc.
     let mut f = Fixture::idle();
@@ -2116,4 +2116,55 @@ fn a_question_comes_before_a_stopped_rewinds_card() {
     f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
     let pane = f.tab().pane.as_mut().unwrap();
     assert!(rewind_shown(&pane.chat.question, &pane.model));
+}
+
+#[test]
+fn an_interrupted_side_step_leaves_a_notice_not_a_stuck_card() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let typed = |f: &mut Fixture| f.tab().pane.as_mut().unwrap().note_terminal_input();
+    // A Stop agent interrupted while a main-turn call is pending without a prompt yet: when the
+    // call's permission prompt shows, the card answers it.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    f.show(AGENTS_IDLE, now);
+    f.sync();
+    assert!(!f.chat().question.agents.is_empty());
+    press(f.tab(), now, Hit::StopAgent(0));
+    assert_eq!(f.writes().len(), 1);
+    typed(&mut f);
+    assert!(f.chat().question.agent_step.is_none());
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+    assert!(!f.chat().question.failed, "only a notice");
+    // The agents end; the pending call then asks.
+    f.tab().pane.as_mut().unwrap().model.agents.iter_mut().for_each(|a| a.finished = Some(true));
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "the prompt is answered from the card");
+    assert_eq!(f.chat().question.error, None, "the notice was about the agent list");
+
+    // An answer whose Enter went: sent, so no "stopped" notice.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    press(f.tab(), now, Hit::Option(0));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    typed(&mut f);
+    assert!(f.chat().question.step.is_none());
+    assert_eq!(f.chat().question.error, None);
+    assert!(!f.chat().question.failed);
+
+    // An interrupted rewind keeps its notice on its own card, not as the next menu card's status.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    typed(&mut f);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(INTERRUPTED));
+    assert_eq!(f.chat().question.error, None);
+    f.chat().question.rewind = None;
+    f.show(MENU_MODEL, now);
+    f.sync();
+    assert!(f.chat().question.menu.is_some());
+    assert_eq!(f.chat().question.error, None);
 }

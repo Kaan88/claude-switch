@@ -626,6 +626,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Review fix (2026-11-27): terminal input, Cancel, or switching the tab to the terminal stops any card key sequence
     in flight (an answer, a form, Ctrl+B, Stop agent, a rewind) before its next key, with a notice, instead of letting
     it resume later from a screen it no longer knows.
+    Re-review (2026-11-27): only an answer stopped before its Enter marks its prompt as one for the terminal; an
+    interrupted Ctrl+B or Stop agent leaves a notice only (it goes when the card shows something else, so a later
+    permission prompt is still answered from the card), an answer whose Enter went ends quietly, and an interrupted
+    rewind keeps its notice on its own card.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·
