@@ -26,27 +26,56 @@ pub(super) fn start(options: Options) -> Result<String, String> {
     // Read now: the plugin removes its focus file as soon as this returns.
     let focus = options.focus_file.as_deref().map(Path::new).map(super::focus_from_file).transpose()?;
     let label = super::name_of(&ready.roots, &ready.session);
-    let job = serde_json::json!({
-        "args": job_args(&options, &ready.session.id),
-        "focus": focus,
-        "label": label,
-    });
+    let job = job_bytes(&job_args(&options, &ready.session.id), focus.as_deref(), &label)?;
     let key = new_key()?;
     let path = job_path(&key).ok_or("Invalid background job name.")?;
-    write_new(&path, job.to_string().as_bytes()).map_err(|_| "Could not write the background handover job.")?;
-    let started = std::env::current_exe().map_err(|_| "Could not locate Claude Switch.".to_owned()).and_then(|exe| {
+    write_new(&path, &job).map_err(|_| "Could not write the background handover job.")?;
+    let launched = std::env::current_exe().map_err(|_| std::io::Error::other("no exe")).and_then(|exe| {
         let until = Instant::now() + Duration::from_secs(30);
         super::window::spawn_window(&exe, &format!("compact {JOB_FLAG} {key}"), until)
-            .map_err(|_| "Could not start the background handover.".to_owned())
     });
-    if let Err(e) = started {
-        let _ = std::fs::remove_file(&path);
-        return Err(e);
+    match launched_line(launched, &label) {
+        Ok(line) => Ok(line),
+        Err(e) => {
+            // Not started for certain (the launcher failed before Windows started it), so the
+            // job will never be read.
+            let _ = std::fs::remove_file(&path);
+            Err(e)
+        }
     }
-    Ok(format!(
-        "Claude Switch is making the handover of \u{201c}{label}\u{201d} in the background and will show the \
-         result in its window. Nothing more to do in this chat."
-    ))
+}
+
+/// The caller's line for the launcher's result. A launcher that ran out of time may already
+/// have started the process, so that is neither a failure nor a reason to remove the job (the
+/// process removes it when it reads it; an unread one goes with the day-old cleanup).
+fn launched_line(launched: std::io::Result<()>, label: &str) -> Result<String, String> {
+    match launched {
+        Ok(()) => Ok(format!(
+            "Claude Switch is making the handover of \u{201c}{label}\u{201d} in the background and will show the \
+             result in its window. Nothing more to do in this chat."
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Ok(format!(
+            "Windows was slow to start Claude Switch's background handover of \u{201c}{label}\u{201d}; it may have \
+             started. If it did, Claude Switch shows the result in its window: check there before retrying. Nothing \
+             more to do in this chat."
+        )),
+        Err(_) => Err("Could not start the background handover.".into()),
+    }
+}
+
+/// The job as written, refused here (not in the detached process, after the caller was told
+/// it started) when it would exceed what the process reads.
+fn job_bytes(args: &[String], focus: Option<&str>, label: &str) -> Result<Vec<u8>, String> {
+    let job = serde_json::json!({ "args": args, "focus": focus, "label": label }).to_string().into_bytes();
+    if job.len() as u64 > MAX_JOB {
+        return Err(format!(
+            "The focus text is too large for a background handover ({} KiB once written; at most {} KiB). Shorten it \
+             or remove control characters, then try again.",
+            job.len().div_ceil(1024),
+            MAX_JOB / 1024
+        ));
+    }
+    Ok(job)
 }
 
 /// The detached process: runs the job and shows a failure the window has not shown, or the
@@ -405,5 +434,29 @@ mod tests {
         assert!(!old_job.exists());
         assert!(other.iter().all(|p| p.exists()) && folder.is_dir(), "only the job pattern, only files");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_slow_launcher_is_not_a_failure_and_keeps_the_job() {
+        let ok = launched_line(Ok(()), "Work").unwrap();
+        assert!(ok.contains("in the background") && ok.contains("Nothing more to do"));
+        let slow = launched_line(Err(std::io::ErrorKind::TimedOut.into()), "Work").unwrap();
+        assert!(slow.contains("may have started") && slow.contains("before retrying"), "{slow}");
+        assert!(launched_line(Err(std::io::Error::other("Windows did not start the window")), "Work").is_err());
+    }
+
+    #[test]
+    fn an_oversized_job_is_refused_before_anything_starts() {
+        let args = ["--session".to_owned(), ID.to_owned(), "--open".to_owned()];
+        // Under the 64,000-byte focus limit, but six bytes a character once escaped.
+        let control = "\u{1}".repeat(63_000);
+        let e = job_bytes(&args, Some(&control), "Work").unwrap_err();
+        assert!(e.contains("too large") && e.contains("256 KiB"), "{e}");
+        // The largest plain focus fits and is read back as written.
+        let plain = "x".repeat(64_000);
+        let job = job_bytes(&args, Some(&plain), "Work").unwrap();
+        let (options, label) = parse_job(&job).unwrap();
+        assert_eq!((options.focus.as_deref(), label.as_str()), (Some(plain.as_str()), "Work"));
+        assert!(parse_job(&job_bytes(&args, None, "Work").unwrap()).unwrap().0.focus.is_none());
     }
 }

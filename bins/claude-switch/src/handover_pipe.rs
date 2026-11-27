@@ -12,8 +12,8 @@
 //! - A client gets [`READ_WAIT`] to write its request; repeated connect errors back off.
 //! - The payload is a fixed versioned list of validated words (`compact_cli::encode_request`),
 //!   at most [`MAX_REQUEST`] bytes, decoded and revalidated by the receiving window; the reply is
-//!   `opened`, `continuing`, `shown` (a failure notice) or `failed:` and the app's own message,
-//!   which the window shows as well.
+//!   `opened`, `continuing`, `shown` (a notice was shown), `shown:` and the reason the window has
+//!   put on screen, or `failed:` and a reason nobody has seen (its wait ran out, it was closing).
 
 use std::time::Duration;
 
@@ -38,38 +38,123 @@ pub enum Outcome {
 pub enum Sent {
     /// No Claude Switch window of this user is listening.
     NotRunning,
-    /// The running window answered; an error is one it shows in its window as well.
+    /// The running window answered. An error here is one it did not show (its own wait ran out,
+    /// it was closing, or the answer could not be read).
     Answered(Result<Outcome, String>),
+    /// The window refused the request and shows why in its window.
+    Shown(String),
     /// A window is there but gave no answer (refused, busy, closed or timed out), so it may not
     /// have shown anything.
     NoAnswer(String),
 }
 
-pub fn reply(result: &Result<Outcome, String>) -> Vec<u8> {
-    match result {
-        Ok(Outcome::NewTab) => b"opened".to_vec(),
-        Ok(Outcome::InPlace) => b"continuing".to_vec(),
-        Ok(Outcome::Shown) => b"shown".to_vec(),
-        Err(e) => {
-            let mut text = format!("failed:{e}");
-            while text.len() > MAX_REPLY {
-                text.pop();
-            }
-            text.into_bytes()
-        }
+/// The window's answer to one request.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Answer {
+    Done(Outcome),
+    /// Refused, with the reason the window has put on screen.
+    Shown(String),
+    /// Refused or not known, with a reason nobody has seen yet.
+    Failed(String),
+}
+
+pub fn reply(answer: &Answer) -> Vec<u8> {
+    let (prefix, e) = match answer {
+        Answer::Done(Outcome::NewTab) => return b"opened".to_vec(),
+        Answer::Done(Outcome::InPlace) => return b"continuing".to_vec(),
+        Answer::Done(Outcome::Shown) => return b"shown".to_vec(),
+        Answer::Shown(e) => ("shown:", e),
+        Answer::Failed(e) => ("failed:", e),
+    };
+    let mut text = format!("{prefix}{e}");
+    while text.len() > MAX_REPLY {
+        text.pop();
+    }
+    text.into_bytes()
+}
+
+pub fn read_reply(bytes: &[u8]) -> Sent {
+    match bytes {
+        b"opened" => return Sent::Answered(Ok(Outcome::NewTab)),
+        b"continuing" => return Sent::Answered(Ok(Outcome::InPlace)),
+        b"shown" => return Sent::Answered(Ok(Outcome::Shown)),
+        _ => {}
+    }
+    let text = std::str::from_utf8(bytes).ok();
+    let clean = |e: &str| (!e.trim().is_empty()).then(|| e.chars().filter(|c| !c.is_control()).collect::<String>());
+    if let Some(e) = text.and_then(|s| s.strip_prefix("shown:")).and_then(clean) {
+        return Sent::Shown(e);
+    }
+    let e = text.and_then(|s| s.strip_prefix("failed:")).and_then(clean);
+    Sent::Answered(Err(e.unwrap_or_else(|| "The running Claude Switch did not confirm opening a Claude tab.".into())))
+}
+
+/// A request queued for the window: the window takes it, or the pipe thread whose wait ran out
+/// cancels it, never both, so the caller can be told for certain that it was not opened.
+#[derive(Clone, Debug, Default)]
+pub struct Ticket(std::sync::Arc<std::sync::atomic::AtomicU8>);
+
+impl Ticket {
+    const TAKEN: u8 = 1;
+    const CANCELLED: u8 = 2;
+
+    fn settle(&self, to: u8) -> bool {
+        use std::sync::atomic::Ordering::AcqRel;
+        self.0.compare_exchange(0, to, AcqRel, std::sync::atomic::Ordering::Acquire).is_ok()
+    }
+
+    /// The window's side: false when the request was cancelled and must not be acted on.
+    pub fn take(&self) -> bool {
+        self.settle(Self::TAKEN)
+    }
+
+    /// The waiting side: false when the window has already taken it.
+    pub fn cancel(&self) -> bool {
+        self.settle(Self::CANCELLED)
     }
 }
 
-pub fn read_reply(bytes: &[u8]) -> Result<Outcome, String> {
-    match bytes {
-        b"opened" => return Ok(Outcome::NewTab),
-        b"continuing" => return Ok(Outcome::InPlace),
-        b"shown" => return Ok(Outcome::Shown),
-        _ => {}
-    }
-    match std::str::from_utf8(bytes).ok().and_then(|s| s.strip_prefix("failed:")) {
-        Some(e) if !e.trim().is_empty() => Err(e.chars().filter(|c| !c.is_control()).collect()),
-        _ => Err("The running Claude Switch did not confirm opening a Claude tab.".into()),
+/// How long the pipe thread still waits once the window has taken a request it gave up on
+/// (inside the caller's own five spare seconds).
+pub const TAKEN_WAIT: Duration = Duration::from_secs(3);
+
+/// The pipe thread's wait for the window's result: errors from the window are shown there; a
+/// wait that runs out cancels the request when the window has not taken it yet.
+pub fn await_window(
+    rx: &std::sync::mpsc::Receiver<Result<Outcome, String>>,
+    ticket: &Ticket,
+    wait: Duration,
+    taken_wait: Duration,
+) -> Answer {
+    use std::sync::mpsc::RecvTimeoutError::{Disconnected, Timeout};
+    let result = match rx.recv_timeout(wait) {
+        Ok(result) => result,
+        Err(Disconnected) if ticket.cancel() => {
+            return Answer::Failed(
+                "Claude Switch closed before opening the handover. The saved handover is kept.".into(),
+            );
+        }
+        Err(Timeout) if ticket.cancel() => {
+            return Answer::Failed(
+                "Timed out waiting for the window, so the handover was not opened. The saved handover is kept; \
+                 try again."
+                    .into(),
+            );
+        }
+        Err(_) => match rx.recv_timeout(taken_wait) {
+            Ok(result) => result,
+            Err(_) => {
+                return Answer::Failed(
+                    "Timed out waiting for the window. The outcome is unknown and the tab may still open; check \
+                     for it before retrying."
+                        .into(),
+                );
+            }
+        },
+    };
+    match result {
+        Ok(outcome) => Answer::Done(outcome),
+        Err(e) => Answer::Shown(e),
     }
 }
 
@@ -374,7 +459,7 @@ mod win {
             let _ = tx.send(read_message(pipe.0, MAX_REPLY));
         });
         match rx.recv_timeout(REPLY_WAIT + Duration::from_secs(5)) {
-            Ok(Some(bytes)) => Sent::Answered(read_reply(&bytes)),
+            Ok(Some(bytes)) => read_reply(&bytes),
             Ok(None) => Sent::NoAnswer("Claude Switch closed the handover request without an answer.".into()),
             Err(_) => Sent::NoAnswer(
                 "Timed out waiting for Claude Switch. The outcome is unknown; check for the tab before retrying."
@@ -505,8 +590,9 @@ mod win {
         fn same_user_request_gets_the_answer_and_a_second_claim_is_refused() {
             let suffix = format!("-test-{}", std::process::id());
             assert_eq!(send_on(&suffix, b"x"), Sent::NotRunning);
-            let answer =
-                |request: Vec<u8>| reply(&if request == b"open" { Ok(Outcome::NewTab) } else { Err("no".into()) });
+            let answer = |request: Vec<u8>| {
+                reply(&if request == b"open" { Answer::Done(Outcome::NewTab) } else { Answer::Shown("no".into()) })
+            };
             let Claim::Mine(listener) = claim_on(&suffix) else { panic!("first claim") };
             assert!(matches!(claim_on(&suffix), Claim::Taken), "only the first window holds the name");
             // A request sent before the window serves waits in the pipe.
@@ -517,7 +603,7 @@ mod win {
             std::thread::sleep(Duration::from_millis(200));
             listener.serve(answer);
             assert_eq!(early.join().unwrap(), Sent::Answered(Ok(Outcome::NewTab)));
-            assert_eq!(send_on(&suffix, b"other"), Sent::Answered(Err("no".into())));
+            assert_eq!(send_on(&suffix, b"other"), Sent::Shown("no".into()));
             let long = vec![b'a'; MAX_REQUEST + 1];
             assert!(matches!(send_on(&suffix, &long), Sent::NoAnswer(_)));
             assert_eq!(send_on(&suffix, b"open"), Sent::Answered(Ok(Outcome::NewTab)), "still serves after a refusal");
@@ -526,7 +612,7 @@ mod win {
         #[test]
         fn a_client_that_never_writes_does_not_block_the_next() {
             let suffix = format!("-test-idle-{}", std::process::id());
-            serving(&suffix, |_| reply(&Ok(Outcome::InPlace)));
+            serving(&suffix, |_| reply(&Answer::Done(Outcome::InPlace)));
             let sid = me().unwrap();
             let path = name(&sid, &suffix);
             // SAFETY: NUL-terminated path; the handle is owned and closed at the end.
@@ -549,15 +635,61 @@ mod tests {
 
     #[test]
     fn replies_round_trip_and_anything_else_is_not_success() {
-        assert_eq!(read_reply(&reply(&Ok(Outcome::NewTab))), Ok(Outcome::NewTab));
-        assert_eq!(read_reply(&reply(&Ok(Outcome::InPlace))), Ok(Outcome::InPlace));
-        assert_eq!(read_reply(&reply(&Ok(Outcome::Shown))), Ok(Outcome::Shown));
-        assert_eq!(read_reply(&reply(&Err("Sign in first.".into()))), Err("Sign in first.".into()));
-        for bad in [b"".as_slice(), b"opened\n", b"failed:", b"process started", b"\xff\xfe"] {
-            assert!(read_reply(bad).is_err());
+        for outcome in [Outcome::NewTab, Outcome::InPlace, Outcome::Shown] {
+            assert_eq!(read_reply(&reply(&Answer::Done(outcome))), Sent::Answered(Ok(outcome)));
         }
-        assert_eq!(read_reply(b"failed:a\x1b[2Jb"), Err("a[2Jb".into()));
-        assert!(reply(&Err("x".repeat(5000))).len() <= MAX_REPLY);
+        assert_eq!(read_reply(&reply(&Answer::Shown("Sign in first.".into()))), Sent::Shown("Sign in first.".into()));
+        assert_eq!(read_reply(&reply(&Answer::Failed("Closing.".into()))), Sent::Answered(Err("Closing.".into())));
+        for bad in [b"".as_slice(), b"opened\n", b"failed:", b"shown:", b"shown: ", b"process started", b"\xff\xfe"] {
+            assert!(matches!(read_reply(bad), Sent::Answered(Err(_))), "{bad:?}: not success and not shown");
+        }
+        assert_eq!(read_reply(b"failed:a\x1b[2Jb"), Sent::Answered(Err("a[2Jb".into())));
+        assert_eq!(read_reply(b"shown:a\x1b[2Jb"), Sent::Shown("a[2Jb".into()));
+        assert!(reply(&Answer::Shown("x".repeat(5000))).len() <= MAX_REPLY);
+    }
+
+    #[test]
+    fn a_ticket_is_taken_or_cancelled_never_both() {
+        let ticket = Ticket::default();
+        assert!(ticket.clone().cancel());
+        assert!(!ticket.take(), "a cancelled request is never acted on");
+        let ticket = Ticket::default();
+        assert!(ticket.take());
+        assert!(!ticket.cancel() && !ticket.take());
+    }
+
+    #[test]
+    fn the_wait_says_exactly_what_happened() {
+        use std::sync::mpsc::channel;
+        let short = Duration::from_millis(20);
+        // Answered: an error from the window is one it showed.
+        let (tx, rx) = channel();
+        tx.send(Err("No tab.".into())).unwrap();
+        assert_eq!(await_window(&rx, &Ticket::default(), short, short), Answer::Shown("No tab.".into()));
+        tx.send(Ok(Outcome::NewTab)).unwrap();
+        assert_eq!(await_window(&rx, &Ticket::default(), short, short), Answer::Done(Outcome::NewTab));
+        // Not taken in time: cancelled, so certainly not opened.
+        let ticket = Ticket::default();
+        let Answer::Failed(e) = await_window(&rx, &ticket, short, short) else { panic!() };
+        assert!(e.contains("was not opened"), "{e}");
+        assert!(!ticket.take());
+        // Taken but slow: the window's answer is still awaited a little.
+        let ticket = Ticket::default();
+        assert!(ticket.take());
+        let late = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(60));
+            tx.send(Ok(Outcome::InPlace)).unwrap();
+            tx
+        });
+        assert_eq!(await_window(&rx, &ticket, short, Duration::from_secs(5)), Answer::Done(Outcome::InPlace));
+        let tx = late.join().unwrap();
+        // Taken and never answered: unknown, and the text says the tab may still open.
+        let Answer::Failed(e) = await_window(&rx, &ticket, short, short) else { panic!() };
+        assert!(e.contains("unknown") && e.contains("may still open"), "{e}");
+        // The window went away without handling it.
+        drop(tx);
+        let Answer::Failed(e) = await_window(&rx, &Ticket::default(), short, short) else { panic!() };
+        assert!(e.contains("closed before opening"), "{e}");
     }
 
     #[test]

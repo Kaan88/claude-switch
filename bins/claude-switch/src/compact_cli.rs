@@ -216,7 +216,8 @@ fn run(options: Options) -> Result<Option<String>, Failed> {
         basis: Some(data.basis()),
     };
     match handover_pipe::send(&encode_request(&request)?) {
-        handover_pipe::Sent::Answered(Err(message)) => return Err(Failed { message, shown: true }),
+        handover_pipe::Sent::Shown(message) => return Err(Failed { message, shown: true }),
+        handover_pipe::Sent::Answered(Err(message)) => return Err(message.into()),
         handover_pipe::Sent::Answered(Ok(handover_pipe::Outcome::NewTab)) => {
             eprintln!("Claude Switch: opened the handover tab in the running window.{}", note(dropped.as_deref()));
         }
@@ -462,7 +463,7 @@ pub fn forward_to_running(request: &Handoff, ack: &str) -> bool {
             acknowledge(ack, result.is_ok());
             true
         }
-        handover_pipe::Sent::NoAnswer(e) => {
+        handover_pipe::Sent::Shown(e) | handover_pipe::Sent::NoAnswer(e) => {
             eprintln!("claude-switch compact: {e}");
             acknowledge(ack, false);
             true

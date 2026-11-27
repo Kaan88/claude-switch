@@ -516,9 +516,14 @@ request kinds. A handover is a versioned list of the same validated words as the
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
 decoded and revalidated by the window, which then continues in place when one of its tabs runs
 the session (see "Continuing in place"; with `--as`, only a tab of that account) and otherwise
-opens only an app-owned saved handover in a new tab. The answer is `continuing`, `opened` or the
-window's error, which the window also shows as an error notice (including a request it could not
-decode or load). A notice is a version line, `claude-switch-handover-failed-1` (shown as an error notice) or
+opens only an app-owned saved handover in a new tab. The answer is `continuing`, `opened`, `shown:` and
+the window's error when the window has put it on screen (its own refusal, or an error notice for a
+request it could not decode or load), or `failed:` and a reason nobody has seen yet: the window was
+closing, or its own 30-second wait ran out. That wait is settled with a ticket the window must take
+before acting on the request: when the window has not taken it, the pipe thread cancels it and
+answers that the handover was not opened (the window then drops it); when the window has taken it,
+the thread waits 3 seconds more and otherwise answers that the outcome is unknown and the tab may
+still open. An answer the client cannot read counts as not shown. A notice is a version line, `claude-switch-handover-failed-1` (shown as an error notice) or
 `claude-switch-handover-note-1` (an info notice), then one line of at most 1,500 bytes with no
 control characters; it brings the window to the front, acts on nothing, and the answer is `shown`. A client that gets no answer (refused, busy,
 closed or timed out) knows the window may have shown nothing. When no window listens, the CLI starts Claude Switch
@@ -549,16 +554,20 @@ handover request and launches no Claude process.
 that asked is not blocked, and nothing about the outcome goes back into that chat as a tool
 result its agent could act on. It runs the quick checks first (provider consent, OpenCode, the
 session, the account; an error there is the command's one line), reads the focus file at once
-(the plugin removes it when the command returns), and writes a job, the same options as words
+(the plugin removes it when the command returns), refuses a job over 256 KiB (focus text full of control
+characters can pass 64,000 bytes when escaped) with a clear line, and writes a job, the same options as words
 with the session fixed to the ID found, the focus text and the session's name, to a new
 app-named file `cs-handover-job-<pid>-<nanos>.json` in the user's temporary folder. It then starts
 `claude-switch compact --background-job <that name>` through the same fixed PowerShell
 ShellExecute bootstrap as the handover window: a GUI process with no console window and none of
-the caller's handles, so the caller's shell call ends and the process is not its child. That
+the caller's handles, so the caller's shell call ends and the process is not its child. When
+the bootstrap fails, the job is removed and the command fails; when it runs out of its 30 seconds,
+Windows may already have started the process, so the job stays and the line says the handover may
+have started and to check Switch before retrying. That
 process reads and removes the job, parses its words with the same parser and limits as typed
 options (a job cannot name a file, a working folder or another job), and runs `compact --open`.
-Success shows as the tab or the continuation in place. A failure the window answered is already
-on screen; any other failure (the transcript, the summary, no answer from the window, the new
+Success shows as the tab or the continuation in place. A failure the window answered with `shown:` is already
+on screen; any other failure (a `failed:` answer included) (the transcript, the summary, no answer from the window, the new
 window not confirming) goes to the running window as a failure notice, and when no window takes
 it, to a message box. When the Settings default agent was dropped for a new tab, the same
 sentence the foreground prints (the agent was not found for that account, so the new chat starts
