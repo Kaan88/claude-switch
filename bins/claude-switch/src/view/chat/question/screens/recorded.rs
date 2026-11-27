@@ -42,6 +42,16 @@ pub(in crate::view::chat) const MENU_MODEL: &str = include_str!("../fixtures/men
 pub(in crate::view::chat) const MENU_EFFORT: &str = include_str!("../fixtures/menu_effort.txt");
 pub(in crate::view::chat) const PANEL_USAGE: &str = include_str!("../fixtures/panel_usage.txt");
 pub(in crate::view::chat) const MENU_CONFIG: &str = include_str!("../fixtures/menu_config.txt");
+pub(in crate::view::chat) const BG_HINT: &str = include_str!("../fixtures/bg_hint.txt");
+pub(in crate::view::chat) const BG_MOVED: &str = include_str!("../fixtures/bg_moved.txt");
+pub(in crate::view::chat) const AGENTS_IDLE: &str = include_str!("../fixtures/agents_idle.txt");
+pub(in crate::view::chat) const AGENTS_OPEN: &str = include_str!("../fixtures/agents_open.txt");
+pub(in crate::view::chat) const AGENTS_FIRST: &str = include_str!("../fixtures/agents_first.txt");
+pub(in crate::view::chat) const AGENTS_SECOND: &str = include_str!("../fixtures/agents_second.txt");
+pub(in crate::view::chat) const AGENTS_STOPPED: &str = include_str!("../fixtures/agents_stopped.txt");
+pub(in crate::view::chat) const AGENTS_CLOSED: &str = include_str!("../fixtures/agents_closed.txt");
+pub(in crate::view::chat) const AGENTS_SHELL: &str = include_str!("../fixtures/agents_shell.txt");
+pub(in crate::view::chat) const REWIND_IDLE: &str = include_str!("../fixtures/rewind_idle.txt");
 
 fn sends_blocked(screen: &Screen) -> bool {
     !crate::view::chat::submission::screen::clean_prompt(screen)

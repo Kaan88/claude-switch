@@ -11,6 +11,7 @@
 //! before should have led to (the highlight moved, the box ticked, the text typed, the next
 //! question or the review opened), and "Submit answers" only once the review reads every answer
 //! as picked.
+mod background;
 pub(super) mod screens;
 
 use std::path::Path;
@@ -55,9 +56,6 @@ const ASKING: &str = "Waiting for your answer";
 const APPROVING: &str = "Waiting for your approval";
 const ESC: &[u8] = b"\x1b";
 const NO_ESC: &str = "This menu does not offer Esc. Use the terminal.";
-const CTRL_B: &[u8] = b"\x02";
-const NOT_BACKGROUND: &str = "The command did not move to the background. Check the terminal.";
-const NO_HINT: &str = "The terminal no longer offers to run this command in the background.";
 const NOT_TICKED: &str = "The terminal did not tick or clear that box, so nothing more was sent. Check the terminal.";
 const NO_NEXT: &str = "The terminal did not show the next question, so nothing more was sent. Check the terminal.";
 const NO_REVIEW: &str =
@@ -255,6 +253,8 @@ pub enum Hit {
     Open,
     /// Ctrl+B for the running shell command.
     Background,
+    /// Stop the background agent the card offers at this place.
+    StopAgent(usize),
     /// Esc: leave the menu, or decline the question or prompt.
     Escape,
     /// A form's previous and next question in the card (nothing is sent).
@@ -375,10 +375,14 @@ pub(super) struct Card {
     shown: Option<Shown>,
     /// A CLI menu with no question or permission card for it.
     pub(super) menu: Option<MenuShown>,
-    /// The running shell call the CLI offers to move to the background, with its command.
-    background: Option<(ItemId, String)>,
+    /// The running shell call the CLI offers to move to the background.
+    background: Option<background::Shell>,
     /// A Ctrl+B in flight: for which call, until when, and the output it was written after.
-    background_step: Option<(ItemId, Instant, u64)>,
+    background_step: Option<(background::Shell, Instant, u64)>,
+    /// The background agents the CLI's list shows running, which Chat can stop.
+    agents: Vec<background::AgentOffer>,
+    /// A Stop agent in flight. It outlives the pending call: the main turn may move on meanwhile.
+    agent_step: Option<background::AgentStep>,
     /// The pending call's offset while Chat may answer it: its drawer stays closed.
     pub(super) answerable: Option<u64>,
     /// The card answers a permission prompt, not a question.
@@ -456,7 +460,8 @@ impl Card {
     }
 
     pub(super) fn deadline(&self) -> Option<Instant> {
-        self.step.as_ref().map(|step| step.due).or(self.background_step.map(|(_, due, _)| due))
+        let background = self.background_step.as_ref().map(|(_, due, _)| *due);
+        self.step.as_ref().map(|step| step.due).or(background).or(self.agent_step.as_ref().map(|step| step.due))
     }
 }
 
@@ -893,7 +898,9 @@ impl Chat {
             }
             let field = std::mem::take(&mut self.question.field);
             let held = self.question.held.take();
-            self.question = Card { item, field, held, ..Card::default() };
+            let agent_step = self.question.agent_step.take();
+            let error = self.question.error.filter(|_| agent_step.is_some());
+            self.question = Card { item, field, held, agent_step, error, ..Card::default() };
             if item.is_none() {
                 self.question.field.clear();
             }
@@ -911,18 +918,21 @@ impl Chat {
         });
         let answerable = answerable.map(|p| p.item.offset);
         // Any other menu the screen shows, unless a question or prompt card already covers it.
-        let menu = (shown.is_none() && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
-            .then(|| menu_shown(screen))
-            .flatten();
+        // A Stop agent in flight drives the CLI's agent list itself.
+        let menu = (shown.is_none()
+            && self.question.agent_step.is_none()
+            && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
+        .then(|| menu_shown(screen))
+        .flatten();
         changed |= self.question.menu != menu;
-        let background = pending.as_ref().filter(|p| p.alone && shown.is_none() && menu.is_none()).and_then(|p| {
-            let Kind::Tool(ItemKind::Tool { card: Some(ToolCard::Shell { command, .. }), .. }) = p.kind else {
-                return None;
-            };
-            screens::background_hint(screen).then(|| (p.item, collapse(command.lines().next().unwrap_or_default())))
-        });
+        let covered = shown.is_some() || menu.is_some();
+        let background = pending.as_ref().filter(|_| !covered).and_then(|p| background::shell_offer(Some(p), screen));
         changed |= self.question.background != background;
         self.question.background = background;
+        let question = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_)));
+        let agents = if covered || question { Vec::new() } else { background::agent_offers(model, screen) };
+        changed |= self.question.agents != agents;
+        self.question.agents = agents;
         self.question.menu = menu;
         // Only a question or permission card has a field: no hidden card keeps the keyboard.
         let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some();
@@ -935,7 +945,8 @@ impl Chat {
     }
 
     pub(super) fn question_notice(&self) -> Option<&'static str> {
-        (self.question.step.is_some() || self.question.background_step.is_some()).then_some(WAITING)
+        let card = &self.question;
+        (card.step.is_some() || card.background_step.is_some() || card.agent_step.is_some()).then_some(WAITING)
     }
 
     /// The composer's notice while a card's text waits for it.
@@ -994,7 +1005,10 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         return true;
     }
     if hit == Hit::Background {
-        return press_background(tab, now);
+        return background::press_background(tab, now);
+    }
+    if let Hit::StopAgent(which) = hit {
+        return background::press_stop(tab, now, which);
     }
     if let Some(menu) = chat.question.menu.clone() {
         return press_menu(tab, now, hit, menu);
@@ -1250,49 +1264,6 @@ fn escape(tab: &mut Tab, now: Instant, item: Option<ItemId>, subject: Subject) -
     true
 }
 
-/// Ctrl+B, only while the CLI still offers it for the same call, which alone is pending.
-fn press_background(tab: &mut Tab, now: Instant) -> bool {
-    let chat = &tab.pane.as_ref().unwrap().chat;
-    if chat.question.background_step.is_some() {
-        return false;
-    }
-    let Some((item, _)) = chat.question.background.clone() else {
-        tab.pane.as_mut().unwrap().chat.question_failed(NO_HINT);
-        return true;
-    };
-    if !ready(tab) {
-        tab.pane.as_mut().unwrap().chat.question_failed(BLOCKED);
-        return true;
-    }
-    let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
-    match write(tab, CTRL_B) {
-        Ok(()) => {
-            let chat = &mut tab.pane.as_mut().unwrap().chat;
-            chat.question.error = None;
-            chat.question.background_step = Some((item, now + STEP, epoch));
-        }
-        Err(error) => tab.pane.as_mut().unwrap().chat.question_failed(error),
-    }
-    true
-}
-
-/// Ends a Ctrl+B in flight: done once newer output no longer shows the hint or the call ended.
-fn advance_background(tab: &mut Tab, now: Instant) -> bool {
-    let pane = tab.pane.as_mut().unwrap();
-    let Some((item, due, epoch)) = pane.chat.question.background_step else { return false };
-    let ended = pending(&pane.model).is_none_or(|p| p.item != item);
-    let moved = pane.chat.output_epoch != epoch && !screens::background_hint(&tab.term.screen);
-    if ended || moved {
-        pane.chat.question.background_step = None;
-    } else if now >= due {
-        pane.chat.question.background_step = None;
-        pane.chat.question_failed(NOT_BACKGROUND);
-    } else {
-        return false;
-    }
-    true
-}
-
 /// A click in a CLI menu's card: the same checks, against the menu's title and choices.
 fn press_menu(tab: &mut Tab, now: Instant, hit: Hit, shown: MenuShown) -> bool {
     if hit == Hit::Escape {
@@ -1355,7 +1326,9 @@ fn arrived(tab: &mut Tab, step: &mut Step, now: Instant) -> Result<(), &'static 
 /// Moves an answer in flight on; true when the card changed.
 pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_mut().expect("Chat pane");
-    let changed = pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen) | advance_background(tab, now);
+    let changed = pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen)
+        | background::advance_background(tab, now)
+        | background::advance_agent(tab, now, may_write);
     let pane = tab.pane.as_mut().expect("Chat pane");
     let changed = changed | pane.chat.clear_busy();
     let Some(mut step) = pane.chat.question.step.clone() else { return changed };
@@ -1584,7 +1557,7 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         }),
         None => None,
     };
-    let wanted = wanted.or_else(|| chat.question.background.as_ref().map(|_| HEADER + LINE + 6.0)).or_else(|| {
+    let wanted = wanted.or_else(|| background::height(&chat.question)).or_else(|| {
         chat.question.menu.as_ref().map(|m| {
             // A panel has no title row: its rows say what it is.
             if m.choices.is_empty() {
@@ -1646,24 +1619,6 @@ impl Draw<'_> {
             hits.push((r, target));
         }
         p.restore(clip);
-    }
-
-    /// The running shell command the CLI offers to move to the background.
-    fn background(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, hits: &mut Vec<(Rect, Target)>) {
-        let pal = self.pal;
-        let Some((_, command)) = chat.question.background.clone() else { return };
-        let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Running a shell command", pal.muted, inner.w);
-        y += HEADER;
-        p.text(Face::Mono, 11.5, inner.x, y + LINE / 2.0, &command, pal.text, inner.w);
-        y += LINE + 6.0;
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
-        let status = chat.question.error.or_else(|| chat.question.background_step.map(|_| WAITING)).unwrap_or("");
-        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 160.0).max(0.0));
-        let r = Rect::new(row.right() - 150.0, row.y, 150.0, row.h);
-        let target = Target::Chat(Control::Question(Hit::Background));
-        super::paint::button(p, pal, r, "Run in background", self.hover == Some(target), false);
-        hits.push((r, target));
     }
 
     /// A CLI menu, picker or dialog: its choices as buttons, or its rows read-only.

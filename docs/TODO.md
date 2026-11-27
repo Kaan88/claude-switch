@@ -567,6 +567,17 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     CLI's grey next-prompt suggestion as a chip that fills the composer (never sends Tab).
 53. **Background controls**: "Run in background" on a running Bash row (Ctrl+B, only while the CLI shows its hint and
     that tool alone is pending); "Stop agent" through the CLI's agent panel under the same rules.
+    Done (2026-11-27): Run in background now needs the CLI's "(ctrl+b to run in background)" row under that call's own
+    `Bash(command)` row and ends on "Running in the background" or the call's end; Stop agent is a card row per
+    running background agent, driven ↓, ↓ to the agent, `x`, Esc (DESIGN.md, "Background controls"). Checked: unit
+    tests over screens recorded from Claude Code 2.1.332 in a scratch folder (Haiku, 100 x 40): the Ctrl+B hint and the
+    backgrounded row; two background agents in one run through idle, list open, each highlight, stopped and closed;
+    the list mid-turn beside a running shell command; Esc in the list does not interrupt a running turn (recorded,
+    not a test). Not checked: the card has not been seen or clicked in the running app; PowerShell's row (assumed
+    `PowerShell(command)`); an agent whose description the list cuts with "…" (not offered); how a finished agent's
+    row reads (not offered); offering a second stop while the hint row reads "↓ to resume subagent" (not offered);
+    the sidecar `.meta.json` of 2.1.332 has no `finished` field (it has `stoppedByUser`), so the transcript never
+    knows an agent finished and the screen decides.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·

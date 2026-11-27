@@ -16,8 +16,24 @@ const MENU_FOOTERS: [&str; 9] = [
     // The plan approval's only hint; it wraps onto the plan file's path (Claude Code 2.1.332).
     "ctrl+g to edit",
 ];
-/// The hint the CLI shows under a running shell command that can move to the background, lower case.
-const BACKGROUND_HINT: &str = "ctrl+b to run in background";
+/// The row the CLI shows under a running shell command that can move to the background.
+const BACKGROUND_HINT: &str = "(ctrl+b to run in background)";
+/// How the call's block reads once the command runs in the background.
+const BACKGROUNDED: &str = "Running in the background";
+/// How far above the input row the Ctrl+B hint may be (the working line comes between), how many
+/// rows of output above it its call's row may be, and how far up a backgrounded call is looked for.
+const HINT_ROWS: usize = 8;
+const BLOCK_ROWS: usize = 12;
+const MOVED_ROWS: usize = 24;
+/// The hints under the input box about the agent list: its entry in the input's hint row, and
+/// the list's own hints while it has the keys.
+const LIST_MANAGE: &str = "↓ to manage";
+const LIST_SELECT: &str = "↑/↓ to select";
+/// With the highlight on an agent: "enter to view · x to stop" (or "x to clear" once it ended),
+/// with "ctrl+x ctrl+k to stop all agents" after them when there are several.
+const LIST_VIEW: &str = "enter to view";
+const LIST_STOP: &str = "x to stop";
+const LIST_CLEAR: &str = "x to clear";
 /// How many rows above its footer a panel's card copies when it cannot tell where the panel
 /// starts.
 const PANEL_ROWS: usize = 14;
@@ -371,11 +387,157 @@ fn selected(screen: &Screen, row: usize) -> String {
     collapse(&text)
 }
 
-/// The CLI offers Ctrl+B for the running command: its hint is by the input.
-pub(super) fn background_hint(screen: &Screen) -> bool {
-    let cursor = screen.cursor().row;
-    (cursor.saturating_sub(6)..(cursor + 6).min(screen.rows()))
-        .any(|row| screen.row_text(row).to_lowercase().contains(BACKGROUND_HINT))
+/// The live input row: a `❯` row between two solid rules, the lowest on the screen. It is found
+/// without the cursor, which the CLI parks in its agent list while that has the keys.
+pub(super) fn input_row(screen: &Screen) -> Option<usize> {
+    let text = |r: usize| screen.row_text(r).trim().to_owned();
+    (1..screen.rows().saturating_sub(1))
+        .rev()
+        .find(|&r| text(r).starts_with('❯') && solid_rule(&text(r - 1)) && solid_rule(&text(r + 1)))
+}
+
+/// The row that opens a tool call's block, `Tool(summary)`, with or without its bullet (it blinks
+/// while the call runs): whether it names this shell command (cut with "…" when long).
+fn names_command(row: &str, tool: &str, command: &str) -> bool {
+    let row = collapse(row.trim().trim_start_matches('●'));
+    let Some(inner) = row.strip_prefix(tool).and_then(|r| r.strip_prefix('(')) else { return false };
+    let command = collapse(command.lines().next().unwrap_or_default());
+    match inner.strip_suffix(')') {
+        Some(whole) if whole == command => true,
+        _ => {
+            inner.trim_end_matches(')').strip_suffix('…').is_some_and(|cut| !cut.is_empty() && command.starts_with(cut))
+        }
+    }
+}
+
+/// The CLI offers Ctrl+B for this running shell command: its "(ctrl+b to run in background)" row
+/// ends the call's own block, whose `Tool(command)` row is above it, a few rows over the input box
+/// (Claude Code 2.1.332, `bg_hint`).
+pub(super) fn background_hint(screen: &Screen, tool: &str, command: &str) -> bool {
+    let Some(input) = input_row(screen) else { return false };
+    let hint =
+        (input.saturating_sub(HINT_ROWS)..input).rev().find(|&r| clean(&screen.row_text(r)).1 == BACKGROUND_HINT);
+    let Some(hint) = hint else { return false };
+    (hint.saturating_sub(BLOCK_ROWS)..hint).rev().any(|r| names_command(&screen.row_text(r), tool, command))
+}
+
+/// The call's block says the command now runs in the background (`bg_moved`).
+pub(super) fn backgrounded(screen: &Screen, tool: &str, command: &str) -> bool {
+    let Some(input) = input_row(screen) else { return false };
+    (input.saturating_sub(MOVED_ROWS)..input).any(|r| {
+        names_command(&screen.row_text(r), tool, command)
+            && clean(&screen.row_text(r + 1)).1.trim_start_matches('⎿').trim_start().starts_with(BACKGROUNDED)
+    })
+}
+
+/// Where the CLI's agent list has the keys, by the hint row under the input box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ListKeys {
+    /// The input has them; its hint row offers "↓ to manage".
+    Input,
+    /// The list has them, its highlight on the main session ("↑/↓ to select").
+    Select,
+    /// The highlight is on a running agent ("enter to view · x to stop").
+    Stop,
+    /// The highlight is on an agent that has ended ("enter to view · x to clear").
+    Clear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AgentState {
+    /// Its status starts with how long it has run ("5s · ↓ 37.8k tokens").
+    Running,
+    Stopped,
+    /// Anything else (and the main session): Chat does not stop it.
+    Other,
+}
+
+/// One row of the agent list: `● main` first, then `◯ type  description  status`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AgentRow {
+    pub name: String,
+    pub description: String,
+    pub state: AgentState,
+}
+
+/// The agent list the CLI draws under its input box while background agents exist (Claude Code
+/// 2.1.332, the `agents_*` fixtures).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AgentList {
+    pub keys: ListKeys,
+    /// The main session first.
+    pub rows: Vec<AgentRow>,
+    pub highlight: Option<usize>,
+}
+
+impl AgentList {
+    /// The rows without their states, to tell that the list is still the same one.
+    pub fn names(&self) -> Vec<(&str, &str)> {
+        self.rows.iter().map(|r| (r.name.as_str(), r.description.as_str())).collect()
+    }
+}
+
+fn agent_row(row: &str) -> Option<(bool, AgentRow)> {
+    let row = row.trim();
+    let highlighted = row.starts_with('❯');
+    let row = row.trim_start_matches('❯').trim_start();
+    let rest = row.strip_prefix(['●', '◯'])?.strip_prefix(' ')?;
+    if rest == "main" {
+        let main = AgentRow { name: "main".into(), description: String::new(), state: AgentState::Other };
+        return Some((highlighted, main));
+    }
+    let parts: Vec<&str> = rest.split("  ").map(str::trim).filter(|p| !p.is_empty()).collect();
+    let [name, description, status] = parts[..] else { return None };
+    let state = if status.starts_with(|c: char| c.is_ascii_digit()) {
+        AgentState::Running
+    } else if status.starts_with("stopped ") {
+        AgentState::Stopped
+    } else {
+        AgentState::Other
+    };
+    Some((highlighted, AgentRow { name: name.into(), description: description.into(), state }))
+}
+
+/// The agent list under the input box, and where its keys are; `None` for anything else.
+pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
+    let input = input_row(screen)?;
+    let hint = screen.row_text(input + 2).trim().to_owned();
+    let parts: Vec<String> = hint.split(" · ").map(collapse).collect();
+    let has = |part: &str| parts.iter().any(|p| p == part);
+    let keys = match () {
+        _ if hint == LIST_SELECT => ListKeys::Select,
+        _ if parts.first().is_some_and(|p| p == LIST_VIEW) && has(LIST_STOP) => ListKeys::Stop,
+        _ if parts.first().is_some_and(|p| p == LIST_VIEW) && has(LIST_CLEAR) => ListKeys::Clear,
+        // The input's hint row ends with the effort, after a gap.
+        _ if parts.iter().any(|p| p == LIST_MANAGE || p.starts_with(&format!("{LIST_MANAGE} "))) => ListKeys::Input,
+        _ => return None,
+    };
+    // A notice (usage, a tip) may sit between the hint row and the list.
+    let first = (input + 3..(input + 6).min(screen.rows()))
+        .find(|&r| agent_row(&screen.row_text(r)).is_some_and(|(_, row)| row.name == "main"))?;
+    let mut rows = Vec::new();
+    let mut highlight = None;
+    for r in first..screen.rows() {
+        let text = screen.row_text(r);
+        if text.trim().is_empty() {
+            break;
+        }
+        let (highlighted, row) = agent_row(&text)?;
+        if highlighted {
+            if highlight.is_some() {
+                return None;
+            }
+            highlight = Some(rows.len());
+        }
+        rows.push(row);
+    }
+    let fits = match keys {
+        ListKeys::Input => highlight.is_none(),
+        ListKeys::Select => highlight == Some(0),
+        ListKeys::Stop => highlight.is_some_and(|h| h > 0 && rows[h].state == AgentState::Running),
+        ListKeys::Clear => highlight.is_some_and(|h| h > 0),
+    };
+    (fits && rows.len() > 1).then_some(AgentList { keys, rows, highlight })
 }
 
 /// The plan approval menu: its question right above the choices, one of which keeps planning.

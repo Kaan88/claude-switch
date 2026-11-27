@@ -1150,11 +1150,21 @@ is matched by its rows) whose footer offers Esc. It then waits as a choice does;
 soon as the menu is gone. Stop keeps its own rule: Escape at most once per freshly verified turn.
 
 **Background controls.** While the only pending call is a shell command (Bash or PowerShell), no
-prompt or menu shows, and the CLI's "ctrl+b to run in background" hint is within six rows of the
-input, a card offers Run in background. A click re-checks all of that and writes one Ctrl+B; it is
-done once newer output no longer shows the hint or the call ended, and stops with a notice after two
-seconds otherwise. Stop agent is not offered: the key that opens the CLI's agent panel is unverified
-(once that panel is open, it shows as a menu card).
+prompt or menu shows, and the CLI's "(ctrl+b to run in background)" row closes that call's own block
+(its `Bash(command)` row above it, the input box a few rows below), a card offers Run in background.
+A click re-checks all of that and writes one Ctrl+B; it is done once the call ended or newer output
+shows the call's row followed by "Running in the background", and stops with a notice after two
+seconds otherwise. Stop agent goes through the CLI's agent list, the rows it draws under the input
+box while background agents exist (`● main`, then `◯ type  description  status`). The card offers
+it for an agent the transcript knows (its type and description, not known to have finished) that
+the list shows once, running (its status starts with how long it has run), while the input is
+clean and empty and its hint row offers "↓ to manage". The keys, each only once newer output shows
+what the one before led to: ↓ (the list takes the keys, "↑/↓ to select", highlight on main), ↓ one
+row at a time to the agent (the hint then reads "enter to view · x to stop"), `x` (the row reads
+"stopped", the hint "x to clear"), Esc (the input has the keys again). Esc there leaves a running
+turn alone. Left is never sent: at the input it opens "Background this session?". After a stop
+the hint row reads "↓ to resume subagent" and other agents are no longer offered until it offers
+"↓ to manage" again. Recorded from Claude Code 2.1.332 (`bg_*`, `agents_*`).
 
 A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click
 says so instead of writing, and it ends (or fails) in a hidden tab too. A menu that stays open after

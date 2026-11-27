@@ -820,21 +820,6 @@ fn a_toggle_that_keeps_its_menu_open_is_done_once_its_row_changed() {
 }
 
 #[test]
-fn a_ctrl_b_in_a_hidden_tab_still_ends() {
-    let mut f = Fixture::tool("cargo test --workspace");
-    let now = Instant::now();
-    f.screen(&running(true), now);
-    f.sync();
-    assert!(press(f.tab(), now, Hit::Background));
-    assert!(f.chat().waiting().is_some(), "chat work, so a hidden tab progresses too");
-    let id = f.tab;
-    assert!(f.app.tabs.activate(crate::tabs::SESSIONS));
-    f.app.progress_chat_tabs(now + STEP, true);
-    let chat = &f.app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
-    assert!(chat.question.background_step.is_none());
-}
-
-#[test]
 fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
     let mut f = Fixture::idle();
     let now = Instant::now();
@@ -852,54 +837,242 @@ fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
     assert!(f.chat().question.menu.is_none(), "a menu far above the input is old output");
 }
 
-fn running(hint: bool) -> String {
-    let hint = if hint { "  ctrl+b to run in background" } else { "  esc to interrupt" };
-    format!("\x1b[2J\x1b[H● Bash(npm test)\r\n  ⎿  Running…\r\n\r\n✻ Testing… (12s)\r\n{hint}")
+impl Fixture {
+    /// A screen recorded from Claude Code, as newer output.
+    fn show(&mut self, fixture: &str, now: Instant) {
+        self.tab().term.screen = screens::recorded::recorded(fixture);
+        self.chat().output(now, true, false);
+    }
+
+    /// A background agent the transcript knows, not known to have finished.
+    fn agent(&mut self, description: &str) {
+        let pane = self.tab().pane.as_mut().unwrap();
+        pane.model.agents.push(claude_switch_core::transcript::Subagent {
+            id: format!("a-{description}"),
+            agent_type: Some("general-purpose".into()),
+            description: Some(description.into()),
+            ..Default::default()
+        });
+    }
+}
+
+const PING: &str = "ping -n 40 127.0.0.1";
+
+#[test]
+fn recorded_background_screens_read_as_offered_and_moved() {
+    use screens::recorded::*;
+    let hint = recorded(BG_HINT);
+    assert!(screens::background_hint(&hint, "Bash", PING));
+    assert!(!screens::background_hint(&hint, "Bash", "ping -n 41 127.0.0.1"), "another command");
+    assert!(!screens::background_hint(&hint, "PowerShell", PING), "another tool");
+    assert!(!screens::backgrounded(&hint, "Bash", PING));
+    let moved = recorded(BG_MOVED);
+    assert!(screens::backgrounded(&moved, "Bash", PING));
+    assert!(!screens::background_hint(&moved, "Bash", PING));
+    // The hint row of the input box offers the agent list, but no shell command is offered there.
+    assert!(!screens::background_hint(&recorded(AGENTS_IDLE), "Bash", PING));
 }
 
 #[test]
-fn run_in_background_is_offered_only_with_the_clis_hint_and_waits_for_it_to_go() {
-    let mut f = Fixture::tool("npm test");
+fn run_in_background_is_offered_only_under_its_calls_hint_and_ends_once_it_moved() {
+    use screens::recorded::*;
     let now = Instant::now();
-    f.screen(&running(false), now);
+    let mut f = Fixture::tool(PING);
+    f.show(REWIND_IDLE, now);
     f.sync();
     assert!(f.chat().question.background.is_none(), "no hint, no button");
     assert!(press(f.tab(), now, Hit::Background));
     assert!(f.writes().is_empty());
-    assert_eq!(f.chat().question.error, Some(NO_HINT));
+    assert_eq!(f.chat().question.error, Some(background::NO_HINT));
 
-    let mut f = Fixture::tool("npm test");
-    f.screen(&running(true), now);
+    let mut f = Fixture::tool(PING);
+    f.show(BG_HINT, now);
     f.sync();
-    assert_eq!(f.chat().question.background.as_ref().map(|b| b.1.as_str()), Some("npm test"));
+    assert_eq!(f.chat().question.background.as_ref().map(|b| b.command.as_str()), Some(PING));
     assert!(press(f.tab(), now, Hit::Background));
-    assert_eq!(f.writes(), [CTRL_B.to_vec()]);
+    assert_eq!(f.writes(), [b"\x02".to_vec()]);
     press(f.tab(), now, Hit::Background);
     assert!(f.writes().is_empty(), "one at a time");
     assert_eq!(f.chat().question.error, Some(WAITING));
     advance(f.tab(), now, true);
     assert!(f.chat().question.background_step.is_some(), "the same screen proves nothing");
-    f.screen(&running(false), now);
+    f.show(BG_MOVED, now);
     advance(f.tab(), now, true);
     assert!(f.chat().question.background_step.is_none() && f.chat().question.error.is_none());
 
     // The hint stays: the CLI did not take it.
-    let mut f = Fixture::tool("npm test");
-    f.screen(&running(true), now);
+    let mut f = Fixture::tool(PING);
+    f.show(BG_HINT, now);
     press(f.tab(), now, Hit::Background);
-    f.screen(&running(true), now);
+    f.show(BG_HINT, now);
     advance(f.tab(), now + STEP, true);
-    assert_eq!(f.chat().question.error, Some(NOT_BACKGROUND));
+    assert_eq!(f.chat().question.error, Some(background::NOT_BACKGROUND));
+
+    // The call ended meanwhile: nothing to wait for.
+    let mut f = Fixture::tool(PING);
+    f.show(BG_HINT, now);
+    press(f.tab(), now, Hit::Background);
+    f.resolve();
+    advance(f.tab(), now, true);
+    assert!(f.chat().question.background_step.is_none() && f.chat().question.error.is_none());
 
     // Two calls pending: the hint may be for either.
-    let mut f = Fixture::tool("npm test");
+    let mut f = Fixture::tool(PING);
     let pane = f.tab().pane.as_mut().unwrap();
     pane.model
         .items
         .insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: shell("toolu_0", "cargo build"), timestamp: None });
-    f.screen(&running(true), now);
+    f.show(BG_HINT, now);
     f.sync();
     assert!(f.chat().question.background.is_none());
+}
+
+#[test]
+fn a_ctrl_b_in_a_hidden_tab_still_ends() {
+    use screens::recorded::*;
+    let mut f = Fixture::tool(PING);
+    let now = Instant::now();
+    f.show(BG_HINT, now);
+    f.sync();
+    assert!(press(f.tab(), now, Hit::Background));
+    assert!(f.chat().waiting().is_some(), "chat work, so a hidden tab progresses too");
+    let id = f.tab;
+    assert!(f.app.tabs.activate(crate::tabs::SESSIONS));
+    f.app.progress_chat_tabs(now + STEP, true);
+    let chat = &f.app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
+    assert!(chat.question.background_step.is_none());
+}
+
+#[test]
+fn recorded_agent_lists_read_with_their_keys_and_states() {
+    use screens::recorded::*;
+    use screens::{AgentState, ListKeys};
+    let list = |fixture: &str| screens::agent_list(&recorded(fixture));
+    let idle = list(AGENTS_IDLE).expect("the list under the idle input");
+    assert_eq!((idle.keys, idle.highlight), (ListKeys::Input, None));
+    assert_eq!(idle.names(), [("main", ""), ("general-purpose", "First pinger"), ("general-purpose", "Second pinger")]);
+    assert_eq!(idle.rows[1].state, AgentState::Running);
+    assert!(crate::view::chat::submission::screen::clean_prompt(&recorded(AGENTS_IDLE)));
+    let shown = |fixture: &str| list(fixture).map(|l| (l.keys, l.highlight));
+    assert_eq!(shown(AGENTS_OPEN), Some((ListKeys::Select, Some(0))));
+    assert_eq!(shown(AGENTS_FIRST), Some((ListKeys::Stop, Some(1))));
+    assert_eq!(shown(AGENTS_SECOND), Some((ListKeys::Stop, Some(2))));
+    assert_eq!(shown(AGENTS_STOPPED), Some((ListKeys::Clear, Some(2))));
+    assert_eq!(list(AGENTS_STOPPED).unwrap().rows[2].state, AgentState::Stopped);
+    assert!(!crate::view::chat::submission::screen::clean_prompt(&recorded(AGENTS_OPEN)), "the list has the keys");
+    // After a stop the hint row offers "↓ to resume subagent": not the list Chat drives.
+    assert_eq!(shown(AGENTS_CLOSED), None);
+    assert!(crate::view::chat::submission::screen::clean_prompt(&recorded(AGENTS_CLOSED)));
+    // Mid-turn, with a shell command running too.
+    let shell = list(AGENTS_SHELL).expect("the list while a turn runs");
+    assert_eq!((shell.keys, shell.rows.len()), (ListKeys::Input, 2));
+    assert!(list(BG_HINT).is_none() && list(REWIND_IDLE).is_none());
+}
+
+#[test]
+fn stop_agent_walks_the_list_one_checked_key_at_a_time() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.show(AGENTS_IDLE, now);
+    f.sync();
+    assert!(f.chat().question.agents.is_empty(), "the transcript does not know these agents");
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    f.sync();
+    let offered: Vec<_> = f.chat().question.agents.iter().map(|a| (a.description.clone(), a.row)).collect();
+    assert_eq!(offered, [("First pinger".to_owned(), 1), ("Second pinger".to_owned(), 2)]);
+    assert!(f.chat().question.menu.is_none());
+
+    assert!(press(f.tab(), now, Hit::StopAgent(1)));
+    assert_eq!(f.writes(), [down(1)]);
+    assert!(f.chat().waiting().is_some(), "the composer waits meanwhile");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the same screen proves nothing");
+    f.show(AGENTS_OPEN, now);
+    advance(f.tab(), now, false);
+    assert!(f.writes().is_empty(), "no write while the window does not allow one");
+    assert!(f.chat().question.menu.is_none(), "the list is driven, not shown as a menu card");
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(AGENTS_FIRST, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)], "one row at a time, past the first agent");
+    f.show(AGENTS_SECOND, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"x".to_vec()]);
+    f.show(AGENTS_STOPPED, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\x1b".to_vec()]);
+    f.show(AGENTS_CLOSED, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().question.agent_step.is_none() && f.chat().question.error.is_none());
+    assert!(f.chat().waiting().is_none());
+}
+
+#[test]
+fn stop_agent_stops_when_the_screen_shows_anything_else() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let start = |f: &mut Fixture| {
+        f.agent("First pinger");
+        f.agent("Second pinger");
+        f.show(AGENTS_IDLE, now);
+        f.sync();
+    };
+    // The list did not open: no more keys, a notice and the drawer.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    press(f.tab(), now, Hit::StopAgent(0));
+    f.writes();
+    f.show(REWIND_IDLE, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.chat().question.error, Some(background::NO_LIST));
+    assert_eq!(f.chat().drawer, Drawer::Manual);
+    assert!(f.chat().question.agent_step.is_none());
+
+    // The highlight landed elsewhere than the next row.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    press(f.tab(), now, Hit::StopAgent(0));
+    f.writes();
+    f.show(AGENTS_SECOND, now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty(), "never x on another agent");
+    assert_eq!(f.chat().question.error, Some(background::NO_LIST));
+
+    // x did not stop it.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    press(f.tab(), now, Hit::StopAgent(1));
+    for screen in [AGENTS_OPEN, AGENTS_FIRST, AGENTS_SECOND] {
+        f.show(screen, now);
+        advance(f.tab(), now, true);
+    }
+    assert_eq!(f.writes().last(), Some(&b"x".to_vec()));
+    f.show(AGENTS_SECOND, now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(background::NOT_STOPPED));
+
+    // The agent the card offers is gone from the list by the click: nothing is written.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.tab().term.screen = recorded(AGENTS_CLOSED);
+    assert!(press(f.tab(), now, Hit::StopAgent(1)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(background::NO_AGENT));
+
+    // An agent known to have finished, or one the transcript holds twice, is not offered.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.tab().pane.as_mut().unwrap().model.agents[0].finished = Some(true);
+    f.agent("Second pinger");
+    f.sync();
+    assert!(f.chat().question.agents.is_empty());
 }
 
 #[test]
@@ -1010,7 +1183,8 @@ fn the_busy_notice_goes_once_the_other_keys_have_gone_even_with_a_draft_queued()
     f.chat().editor.set("next message".into());
     f.chat().queue_draft(0);
     f.sync();
-    f.chat().question.background_step = Some((ItemId { offset: AT, block: 0 }, now + STEP, 0));
+    let shell = background::Shell { item: ItemId { offset: AT, block: 0 }, tool: "Bash".into(), command: "x".into() };
+    f.chat().question.background_step = Some((shell, now + STEP, 0));
     assert!(press(f.tab(), now, Hit::Option(0)));
     assert!(f.writes().is_empty());
     assert_eq!(f.chat().question.error, Some(WAITING));
