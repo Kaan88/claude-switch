@@ -127,9 +127,9 @@ and in the README, not committed, and not copied to the installed clone
 
 Status of items 23 to 60 (2026-11-27, merged into `main` after two reviews by Claude Fable and the fixes
 of both): built and passing format, lint and the test suite: 23 to 31, 34 to 48, 50 to 55, 57, 58 and 60.
-Partly: 47 (no `!` toggle in the composer; see the item), 53 (no Stop agent; the key that opens the CLI's agent panel
-is not known). Not built: 22, 32 (later; fonts need toolkit work), 49 (rewind, waits for a live check of
-42 and 48), 56 (later), 59 (idea only). Item 14 for Settings text rows waits for the toolkit pin move
+Partly: 47 (no `!` toggle in the composer). 22, 53 (with Stop agent), 49 (rewind), 56 and 59 were built on
+2026-11-27, 49 and 53 against recorded screens and 49 before a live check of 42 and 48 (see the items). Not built:
+32 (later; fonts need toolkit work). Item 14 for Settings text rows waits for the toolkit pin move
 (toolkit 7da7b22). Nothing was tried against a live Claude Code: the screen shapes the cards read (the
 comment field after Tab, permission prompt phrases, full paths in Edit prompts, the /model picker, menu
 footers, the Ctrl+B hint), the in-place handover's paste echo within 2 s, two real windows and the pipe
@@ -573,6 +573,18 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 49. **Rewind from a prompt bubble**: "Rewind to here…" on user bubbles; Esc Esc at a verified empty prompt, Up until
     the highlighted row equals the chosen prompt, the action chosen by its row text, every step re-verified; build
     after 42 and 48 have proven the gate.
+    Built (2026-11-27) before 42 and 48 were proven live: both are built and unit-tested, but neither card has been
+    driven against a live CLI by the app, so this one uses the same verified-gate rules without that proof. "Rewind
+    to here…" is in the conversation's right-click menu over a typed prompt (DESIGN.md, "Rewind"). Checked: unit
+    tests over screens recorded from Claude Code 2.1.332 in a scratch folder (Haiku, 100 x 40): the idle prompt, the
+    list opening on "(current)", each Up, the choices without and with code changes (and the highlight moved down),
+    the input holding the prompt after "Restore conversation", Esc from the choices back to the list and from the
+    list back to the prompt, a prompt of several lines and a long one as the list cuts them; Up at the top changes
+    nothing (recorded). Not checked: the menu item and the card have not been seen or clicked in the running app; a
+    list long enough to scroll (the one-row scroll rule is untested); what "Summarize from here", "Summarize up to
+    here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
+    text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
+    a rewind and the reader does not follow `parentUuid` branches.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).
@@ -581,6 +593,17 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     CLI's grey next-prompt suggestion as a chip that fills the composer (never sends Tab).
 53. **Background controls**: "Run in background" on a running Bash row (Ctrl+B, only while the CLI shows its hint and
     that tool alone is pending); "Stop agent" through the CLI's agent panel under the same rules.
+    Done (2026-11-27): Run in background now needs the CLI's "(ctrl+b to run in background)" row under that call's own
+    `Bash(command)` row and ends on "Running in the background" or the call's end; Stop agent is a card row per
+    running background agent, driven ↓, ↓ to the agent, `x`, Esc (DESIGN.md, "Background controls"). Checked: unit
+    tests over screens recorded from Claude Code 2.1.332 in a scratch folder (Haiku, 100 x 40): the Ctrl+B hint and the
+    backgrounded row; two background agents in one run through idle, list open, each highlight, stopped and closed;
+    the list mid-turn beside a running shell command; Esc in the list does not interrupt a running turn (recorded,
+    not a test). Not checked: the card has not been seen or clicked in the running app; PowerShell's row (assumed
+    `PowerShell(command)`); an agent whose description the list cuts with "…" (not offered); how a finished agent's
+    row reads (not offered); offering a second stop while the hint row reads "↓ to resume subagent" (not offered);
+    the sidecar `.meta.json` of 2.1.332 has no `finished` field (it has `stoppedByUser`), so the transcript never
+    knows an agent finished and the screen decides.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·

@@ -1,0 +1,41 @@
+cursor 31 80
+ ▐▛███▛█   Claude Code v2.1.332
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   ~\Desktop\cs-scratch\play
+
+
+❯ Start two background subagents with the Agent tool in one message, both general-purpose with
+  run_in_background true. The first has the description "First pinger" and runs the Bash command
+  ping -n 150 127.0.0.1 then replies done. The second has the description "Second pinger" and runs
+  ping -n 151 127.0.0.1 then replies done. After starting them, end your turn without waiting.
+
+● 2 background agents launched (↓ to manage)
+   ├ First pinger
+   └ Second pinger
+
+● Both background pingers are running, and I'm not waiting on them.
+
+  - First pinger runs ping -n 150 127.0.0.1 and replies "done" when it finishes.
+  - Second pinger runs ping -n 151 127.0.0.1 and replies "done" when it finishes.
+
+  I'll be notified when each one completes.
+
+✻ Waiting for 2 background agents to finish
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑/↓ to select
+  You've used 90% of your weekly limit · resets Dec 1, 8am (Europe/City) · /usage-credits to …
+
+❯ ● main
+  ◯ general-purpose  First pinger                                              5s · ↓ 37.7k tokens
+  ◯ general-purpose  Second pinger                                             5s · ↓ 37.5k tokens
+
+
+
+
+
+
+
+

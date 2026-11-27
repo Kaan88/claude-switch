@@ -164,7 +164,8 @@ impl Chat {
     }
 }
 
-fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'static str> {
+/// Why a send of this kind cannot go now; `None` when it can.
+pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'static str> {
     let pane = tab.pane.as_ref().unwrap();
     let chat = &pane.chat;
     let (gate, reason) = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);

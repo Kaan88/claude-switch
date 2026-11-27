@@ -1162,11 +1162,42 @@ is matched by its rows) whose footer offers Esc. It then waits as a choice does;
 soon as the menu is gone. Stop keeps its own rule: Escape at most once per freshly verified turn.
 
 **Background controls.** While the only pending call is a shell command (Bash or PowerShell), no
-prompt or menu shows, and the CLI's "ctrl+b to run in background" hint is within six rows of the
-input, a card offers Run in background. A click re-checks all of that and writes one Ctrl+B; it is
-done once newer output no longer shows the hint or the call ended, and stops with a notice after two
-seconds otherwise. Stop agent is not offered: the key that opens the CLI's agent panel is unverified
-(once that panel is open, it shows as a menu card).
+prompt or menu shows, and the CLI's "(ctrl+b to run in background)" row closes that call's own block
+(its `Bash(command)` row above it, the input box a few rows below), a card offers Run in background.
+A click re-checks all of that and writes one Ctrl+B; it is done once the call ended or newer output
+shows the call's row followed by "Running in the background", and stops with a notice after two
+seconds otherwise. Stop agent goes through the CLI's agent list, the rows it draws under the input
+box while background agents exist (`● main`, then `◯ type  description  status`). The card offers
+it for an agent the transcript knows (its type and description, not known to have finished) that
+the list shows once, running (its status starts with how long it has run), while the input is
+clean and empty and its hint row offers "↓ to manage". The keys, each only once newer output shows
+what the one before led to: ↓ (the list takes the keys, "↑/↓ to select", highlight on main), ↓ one
+row at a time to the agent (the hint then reads "enter to view · x to stop"), `x` (the row reads
+"stopped", the hint "x to clear"), Esc (the input has the keys again). Esc there leaves a running
+turn alone. Left is never sent: at the input it opens "Background this session?". After a stop
+the hint row reads "↓ to resume subagent" and other agents are no longer offered until it offers
+"↓ to manage" again. Recorded from Claude Code 2.1.332 (`bg_*`, `agents_*`).
+
+**Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
+typed, in a tab with Chat. It goes through the CLI's own rewind list and never edits the transcript.
+The first Esc only at an idle, quiet, empty prompt with no turn, pending call or menu (the checks of
+a direct slash command); it shows nothing, so the second follows 150 ms later only while the screen
+still shows that same prompt. The list ("Rewind", "Restore the code and/or conversation to the point
+before…", each prompt over a row naming its code changes, "(current)", "Enter to continue · Esc to
+cancel") must open on "(current)"; then one Up at a time, each only once the highlight moved one
+entry up (or the list scrolled by one), until the highlighted row reads the chosen prompt: its first
+line, whole, or cut with "…" (a prompt of several lines always is). A later prompt the same row could
+read stops it before Enter. Enter must lead to the prompt's choices, under "Restore to the point
+before you sent this message:" with the prompt quoted; the card shows that screen's rows and its
+numbered choices (for example "Restore code and conversation", "Restore conversation", "Restore
+code", "Summarize from here", "Summarize up to here", "Never mind") and chooses nothing by itself. A
+click moves the highlight one row at a time and Enter goes on the choice only with the same choices
+on screen; it is done when neither rewind screen shows and the input is back (Claude Code then puts
+the prompt back on its input after a conversation restore). Cancel writes Esc (back to the list),
+then Esc (back to the prompt). Each step has a two second deadline (eight for the last Enter); any
+mismatch stops, says why in the card (Open terminal, Close) and opens the drawer. The rewind writes
+nothing to the transcript, and the reader follows the file as written, so the Chat view still shows
+the turns after the chosen prompt. Recorded from Claude Code 2.1.332 (`rewind_*`).
 
 A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click
 says so instead of writing, and it ends (or fails) in a hidden tab too. A menu that stays open after

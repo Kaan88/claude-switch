@@ -1,0 +1,41 @@
+cursor 18 2
+ ▐▛███▛█   Claude Code v2.1.332
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   ~\Desktop\cs-scratch\play
+
+
+❯ Run exactly this command with the Bash tool and nothing else: ping -n 40 127.0.0.1
+
+  Bash(ping -n 40 127.0.0.1)
+  ⎿  Pinging 127.0.0.1 with 32 bytes of data:
+     Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+     Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+     Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+     … +1 line (3s)
+     (ctrl+b to run in background)
+
+✽ Warping… (4s · ↓ 90 tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents        ◐ medium · /effort
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

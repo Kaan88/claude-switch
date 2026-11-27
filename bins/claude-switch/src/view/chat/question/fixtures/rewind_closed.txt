@@ -1,0 +1,41 @@
+cursor 24 2
+ ▐▛███▛█   Claude Code v2.1.332
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   ~\Desktop\cs-scratch\play
+
+
+❯ Reply with just the word alpha.
+
+● alpha
+
+✻ Sautéed for 1s · done 2:22 PM
+
+❯ Reply with just the word bravo.
+
+● bravo
+
+✻ Churned for 1s · done 2:22 PM
+
+❯ Reply with just the word charlie.
+
+● charlie
+
+✻ Churned for 0s · done 2:22 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
+
+
+
+
+
+
+
+
+
+
+
+
