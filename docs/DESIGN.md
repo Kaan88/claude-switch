@@ -248,7 +248,10 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   Switch launched Claude Code in the tab, identified by the executable's filename, not its title
   or transcript, and only while Claude Code is what the screen shows: on the main screen (its
   classic view), or on the alternate screen while the cursor is in its input box (a `❯` row between
-  solid rules, which its full-screen view draws there too). Any other program on the alternate
+  solid rules, which its full-screen view draws there too). The box's top is the nearest rule with a
+  `❯` row under it, so rule lines in a draft do not end it; a draft taller than the screen is known
+  by Claude Code's mode line under a rule below the cursor. In doubt inside such a box Shift+Enter
+  stays Claude Code's, since a plain Return would submit the unfinished draft. Any other program on the alternate
   screen, such as an editor Claude Code opened, gets the classic Return. Shells and other programs
   keep the classic Return encoding; this is not full kitty keyboard negotiation. A middle click on a tab closes it.
 - **Mouse**: the terminal uses the arrow pointer. Drag selects (double click a word, triple click a
@@ -1241,7 +1244,11 @@ click moves the highlight one row at a time and Enter goes on the choice only wi
 on screen; it is done when neither rewind screen shows and the input is back (Claude Code then puts
 the prompt back on its input after a conversation restore). Cancel writes Esc (back to the list),
 then Esc (back to the prompt). Each step has a two second deadline (eight for the last Enter); any
-mismatch stops, says why in the card (Open terminal, Close) and opens the drawer. The rewind writes
+mismatch stops, says why in the card (Open terminal, Close) and opens the drawer. A rewind that
+stops with its list on screen closes it with one Esc, checked on the next screen, and says so (not
+after Cancel, whose own Esc may still be on its way); when
+its choices are on screen or no key can go, the card says the rewind screen is still open, keeps its
+place over the panel card while that screen shows, and goes once it is gone. The rewind writes
 nothing to the transcript, and the reader follows the file as written, so the Chat view still shows
 the turns after the chosen prompt. Recorded from Claude Code 2.1.332 (`rewind_*`).
 
@@ -1249,6 +1256,15 @@ A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for
 says so instead of writing, and it ends (or fails) in a hidden tab too. A menu that stays open after
 Enter (a toggle) is done as soon as newer output shows the chosen row changed; one that shows no
 change at all by the deadline still stops with a notice.
+
+Terminal input stops a card's key sequence in flight (an answer, a form, Ctrl+B, Stop agent, a rewind)
+before its next key, as do Cancel and switching the tab to the terminal. Keys, pastes, mouse clicks
+(with their drags and releases) and wheel notches sent as arrow keys count; a mouse move without a
+button counts as no input at all, and a wheel report to a program that asked for the mouse leaves
+card sequences going (each still checks the screen before its key) while still counting as input
+for a send. Only an answer stopped before its Enter leaves its prompt to the terminal; an answer
+whose Enter went ends quietly, a Ctrl+B or Stop agent leaves a notice that goes with its card, and a
+rewind says so on its own card.
 
 Every screen pattern lives in `view/chat/question/screens.rs`.
 

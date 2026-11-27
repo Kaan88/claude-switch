@@ -108,6 +108,11 @@ impl Pane {
         self.chat.invalidate_input(&self.model.chat, self.transcript_end());
     }
 
+    /// A wheel report to the program: input, but not one that stops Chat's card key sequences.
+    pub(crate) fn note_terminal_wheel(&mut self) {
+        self.chat.invalidate_pointer_input(&self.model.chat, self.transcript_end());
+    }
+
     fn note_composer_input(&mut self) {
         self.chat.watermark_input(&self.model.chat, self.transcript_end());
     }

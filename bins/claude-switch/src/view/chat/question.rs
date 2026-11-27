@@ -855,14 +855,32 @@ impl Chat {
     /// Terminal input, Cancel, or a switch away from Chat: every card key sequence in flight
     /// stops before its next key and says so, instead of going on later from a screen it no
     /// longer knows. True when one did.
+    ///
+    /// Only an answer stopped before its Enter marks its prompt as one to answer in the terminal:
+    /// the user is answering it there. An answer whose Enter went was sent, so it ends quietly (its
+    /// text still goes to the composer). A rewind keeps its own notice on its card; a Ctrl+B or a
+    /// Stop agent leaves a notice only, which goes when the card shows something else, so a later
+    /// prompt for the pending call is still answered from the card.
     pub(in crate::view::chat) fn interrupt_card(&mut self) -> bool {
         let card = &mut self.question;
         let rewind = card.rewind.as_mut().filter(|r| r.in_flight()).map(|r| r.interrupt(INTERRUPTED)).is_some();
-        let keys = card.step.is_some() || card.background_step.take().is_some() || card.agent_step.take().is_some();
-        if keys || rewind {
-            self.question_failed(INTERRUPTED);
+        let side = card.background_step.take().is_some() | card.agent_step.take().is_some();
+        if side {
+            card.error = Some(INTERRUPTED);
         }
-        keys || rewind
+        let answer = match self.question.step.take() {
+            Some(step) if step.stage == Stage::Sent => {
+                self.hold(&step);
+                false
+            }
+            Some(step) => {
+                self.question.step = Some(step);
+                self.question_failed(INTERRUPTED);
+                true
+            }
+            None => false,
+        };
+        rewind || side || answer
     }
 
     fn question_failed(&mut self, error: &'static str) {
@@ -947,25 +965,41 @@ impl Chat {
             Kind::Tool(_) => shown.as_ref().is_some_and(|s| s.matched),
         });
         let answerable = answerable.map(|p| p.item.offset);
+        // A rewind that stopped and left its screen open keeps its card (its reason and that the
+        // screen is still open) while that screen shows, and goes once it is gone.
+        let rewind_screen = screens::rewind_list(screen).is_some() || screens::rewind_actions(screen).is_some();
+        let left_open = self.question.rewind.as_ref().is_some_and(|r| r.failed() && r.note == Some(rewind::LEFT_OPEN));
+        if left_open && !rewind_screen {
+            self.question.rewind = None;
+            changed = true;
+        }
+        let rewind_holds = self.question.rewind.as_ref().is_some_and(|r| !r.failed() || (left_open && rewind_screen));
         // Any other menu the screen shows, unless a question or prompt card already covers it.
-        // A Stop agent or a rewind drives the CLI's list itself (a stopped rewind no longer does).
+        // A Stop agent or a rewind drives the CLI's list itself; so does a stopped one left open.
         let menu = (!self.menus_off
             && shown.is_none()
             && self.question.agent_step.is_none()
-            && self.question.rewind.as_ref().is_none_or(rewind::Rewind::failed)
+            && !rewind_holds
             && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
         .then(|| menu_shown(screen))
         .flatten();
         changed |= self.question.menu != menu;
         let covered = shown.is_some() || menu.is_some();
         let background = pending.as_ref().filter(|_| !covered).and_then(|p| background::shell_offer(Some(p), screen));
-        changed |= self.question.background != background;
+        let background_changed = self.question.background != background;
+        changed |= background_changed;
         self.question.background = background;
         let question = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_)));
         let agents = if covered || question { Vec::new() } else { background::agent_offers(model, screen) };
+        let other = self.question.menu != menu || self.question.agents != agents;
         changed |= self.question.agents != agents;
         self.question.agents = agents;
         self.question.menu = menu;
+        // An interruption's notice is about the card that was shown: not the next one's status.
+        if (other || background_changed) && !self.question.failed && self.question.error == Some(INTERRUPTED) {
+            self.question.error = None;
+            changed = true;
+        }
         // Only a question or permission card has a field: no hidden card keeps the keyboard.
         let field = matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))) || shown.is_some();
         if !field && std::mem::take(&mut self.question.focus) {

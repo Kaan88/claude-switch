@@ -1967,11 +1967,11 @@ fn terminal_input_stops_every_card_key_sequence_before_its_next_key() {
     press(f.tab(), now, Hit::StopAgent(1));
     f.writes();
     typed(&mut f);
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
     f.show(AGENTS_OPEN, now);
     advance(f.tab(), now, true);
     assert!(f.writes().is_empty());
     assert!(f.chat().question.agent_step.is_none());
-    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
 
     // A rewind: no second Esc.
     let mut f = Fixture::idle();
@@ -2116,4 +2116,137 @@ fn a_question_comes_before_a_stopped_rewinds_card() {
     f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
     let pane = f.tab().pane.as_mut().unwrap();
     assert!(rewind_shown(&pane.chat.question, &pane.model));
+}
+
+#[test]
+fn an_interrupted_side_step_leaves_a_notice_not_a_stuck_card() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let typed = |f: &mut Fixture| f.tab().pane.as_mut().unwrap().note_terminal_input();
+    // A Stop agent interrupted while a main-turn call is pending without a prompt yet: when the
+    // call's permission prompt shows, the card answers it.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    f.show(AGENTS_IDLE, now);
+    f.sync();
+    assert!(!f.chat().question.agents.is_empty());
+    press(f.tab(), now, Hit::StopAgent(0));
+    assert_eq!(f.writes().len(), 1);
+    typed(&mut f);
+    assert!(f.chat().question.agent_step.is_none());
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+    assert!(!f.chat().question.failed, "only a notice");
+    // The agents end; the pending call then asks.
+    f.tab().pane.as_mut().unwrap().model.agents.iter_mut().for_each(|a| a.finished = Some(true));
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "the prompt is answered from the card");
+    assert_eq!(f.chat().question.error, None, "the notice was about the agent list");
+
+    // An answer whose Enter went: sent, so no "stopped" notice.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    press(f.tab(), now, Hit::Option(0));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    typed(&mut f);
+    assert!(f.chat().question.step.is_none());
+    assert_eq!(f.chat().question.error, None);
+    assert!(!f.chat().question.failed);
+
+    // An interrupted rewind keeps its notice on its own card, not as the next menu card's status.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    typed(&mut f);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(INTERRUPTED));
+    assert_eq!(f.chat().question.error, None);
+    f.chat().question.rewind = None;
+    f.show(MENU_MODEL, now);
+    f.sync();
+    assert!(f.chat().question.menu.is_some());
+    assert_eq!(f.chat().question.error, None);
+}
+
+#[test]
+fn hover_and_wheel_reports_leave_a_card_key_sequence_alone_but_a_click_stops_it() {
+    use mdshared_ui::host::Button;
+    use screens::recorded::*;
+    let now = Instant::now();
+    let start = |f: &mut Fixture| {
+        f.agent("First pinger");
+        f.agent("Second pinger");
+        f.show(AGENTS_IDLE, now);
+        f.sync();
+        press(f.tab(), now, Hit::StopAgent(1));
+        f.writes();
+        // The program asks for every mouse move, as Claude Code's full-screen view does.
+        f.tab().term.feed(b"\x1b[?1003h\x1b[?1006h");
+        let area = mdshared_ui::gfx::Rect::new(0.0, 0.0, 800.0, 400.0);
+        f.app.layout_terminals(area, area, 1.0);
+    };
+    let plain = Mods::default();
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.app.term_move(20.0, 20.0, plain);
+    f.app.term_move(60.0, 40.0, plain);
+    assert!(f.tab().term.last_cell.is_some(), "the moves were reported to the program");
+    f.app.mouse = (60.0, 40.0);
+    f.app.term_wheel(-120.0, plain);
+    assert!(f.chat().question.agent_step.is_some(), "hover and wheel reports go to the program only");
+    assert_eq!(f.chat().question.error, None);
+
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.app.term_press(20.0, 20.0, Button::Left, 1, plain);
+    assert!(f.chat().question.agent_step.is_none(), "a click may pick something in the CLI");
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+}
+
+#[test]
+fn a_rewind_left_open_keeps_its_card_over_the_list_until_the_list_is_gone() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    for screen in [REWIND_OPEN, REWIND_UP1, REWIND_UP2] {
+        f.show(screen, now);
+        advance(f.tab(), now, true);
+    }
+    // Ambiguous; the closing Esc did not close the list.
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now + STEP, true);
+    let r = f.rewind().unwrap();
+    assert_eq!((r.error, r.note), (Some(rewind::AMBIGUOUS), Some(rewind::LEFT_OPEN)));
+    f.sync();
+    assert!(f.chat().question.menu.is_none(), "the list is not offered as a panel card");
+    let pane = f.tab().pane.as_mut().unwrap();
+    assert!(rewind_shown(&pane.chat.question, &pane.model), "the rewind's card says why");
+    // The user closes it in the terminal: the card goes with it.
+    f.show(REWIND_CLOSED, now);
+    f.sync();
+    assert!(f.rewind().is_none());
+}
+
+#[test]
+fn a_cancel_that_stops_sends_no_esc_on_top_of_its_own() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert!(press(f.tab(), now, Hit::Escape));
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec()]);
+    // The CLI does not repaint: the list still shows when the cancel times out.
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty(), "no third Esc");
+    let r = f.rewind().unwrap();
+    assert_eq!((r.error, r.note), (Some(rewind::NOT_CANCELLED), Some(rewind::LEFT_OPEN)));
 }

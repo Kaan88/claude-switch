@@ -296,6 +296,9 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     // A key that may not be written now waits like any other, and its deadline still holds: a
     // dialog over the window must not keep the composer locked and resume the keys much later.
     let held = matches!(next, Next::Key(..)) && !may_write;
+    // A cancel's own Esc may still be on its way (the CLI did not repaint): another would land on
+    // whatever it led to, so a cancel that stops never closes the list itself.
+    let cancelling = matches!(rewind.stage, Stage::Cancelling(_));
     let next = if held { Next::Wait } else { next };
     let deadline = match rewind.stage {
         Stage::FirstEsc => rewind.due.is_some_and(|due| now >= due + ESC_LATEST),
@@ -351,7 +354,7 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         Next::Wait => return false,
     }
     if rewind.failed() && rewind.note.is_none() {
-        leave(tab, &mut rewind, may_write, now);
+        leave(tab, &mut rewind, may_write && !cancelling, now);
     }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
     if (rewind.failed() || rewind.stage == Stage::Leaving) && chat.drawer == Drawer::Closed {

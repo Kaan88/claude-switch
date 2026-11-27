@@ -604,6 +604,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Claude Code 2.1.332 leaves out of it). A rewind that stops with its list on screen closes it with one checked Esc
     and says so, or says the rewind screen is still open (its choices are on screen, or no key could go). A question,
     permission prompt or CLI menu takes the card from a stopped rewind, whose notice comes back afterwards.
+    Re-review (2026-11-27): a rewind that stopped with its screen still open keeps its card (why it stopped, and
+    that the screen is open) over the generic panel card while that screen shows, and goes once it is gone.
+    A Cancel that times out with the list still on screen sends no closing Esc on top of its own; it says the
+    screen is still open.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).
@@ -626,6 +630,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     Review fix (2026-11-27): terminal input, Cancel, or switching the tab to the terminal stops any card key sequence
     in flight (an answer, a form, Ctrl+B, Stop agent, a rewind) before its next key, with a notice, instead of letting
     it resume later from a screen it no longer knows.
+    Re-review (2026-11-27): only an answer stopped before its Enter marks its prompt as one for the terminal; an
+    interrupted Ctrl+B or Stop agent leaves a notice only (it goes when the card shows something else, so a later
+    permission prompt is still answered from the card), an answer whose Enter went ends quietly, and an interrupted
+    rewind keeps its notice on its own card. Mouse moves without a button no longer count as terminal input (they stopped a
+    rewind or form when the pointer crossed the drawer with mouse tracking on), and wheel reports no longer stop card
+    key sequences; clicks still do, since they can pick a row in the CLI.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·
@@ -850,6 +860,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     input box, and `CSI 13;2u` started a second input line there. Not checked: a terminal editor opened with Ctrl+G
     (Claude Code offers Notepad on this computer, a window of its own, so none was opened); a program that draws such a box on the alternate screen would get
     Claude Code's Shift+Enter.
+    Re-review (2026-11-27): a draft holding a rule line, the cursor on one, or a draft taller than the screen turned
+    Shift+Enter into a plain Return that would submit the draft. The box's top is now the nearest rule with a `❯` row
+    under it, and a draft whose top scrolled away is known by the mode line under the box ("shift+tab to cycle",
+    "? for shortcuts" or "esc to interrupt"; only the first was seen in a recording).
 68. **The `/usage` card loses the terminal's bars, and its spinner line jumps** (owner, 2026-11-27, screenshot of the
     read-only menu card for /usage). The card copies the panel's rows as plain text, so the usage bars the terminal
     draws (coloured cells or block characters) are missing; copy each cell's colours and draw the rows as the
