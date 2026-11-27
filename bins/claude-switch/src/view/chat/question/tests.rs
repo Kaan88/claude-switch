@@ -1859,6 +1859,23 @@ fn with_menus_off_menus_and_permission_prompts_stay_in_the_terminal() {
     assert!(f.chat().question.approval, "on again: the card is back");
 }
 
+#[test]
+fn rewind_from_the_menu_starts_only_in_the_shown_tab_with_chat_on() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    let tab = f.tab;
+    f.chat().enabled = false;
+    assert!(!f.app.rewind_from_menu(tab, ids[1], now + QUIET), "Chat was switched off after the menu opened");
+    assert!(f.writes().is_empty() && f.rewind().is_none());
+    assert!(!f.app.rewind_from_menu(tab + 1, ids[1], now + QUIET), "another tab");
+    f.chat().enabled = true;
+    assert!(f.app.rewind_from_menu(tab, ids[1], now + QUIET));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+}
+
 /// A recorded screen with one text replaced, as the CLI would draw another prompt's choices.
 fn recorded_with(fixture: &str, from: &str, to: &str) -> Screen {
     assert!(fixture.contains(from));

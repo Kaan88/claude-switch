@@ -241,7 +241,7 @@ impl AppState {
             .is_some_and(|pane| pane.chat.enabled && (pane.chat.queue.is_some() || pane.chat.waiting().is_some()))
     }
 
-    pub(super) fn arm_chat_tick(&self, cx: &mut Cx<'_, Msg>) {
+    pub(in crate::view) fn arm_chat_tick(&self, cx: &mut Cx<'_, Msg>) {
         let listing = self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.popups.loading_files());
         if listing || self.tabs.list.iter().any(Self::has_chat_work) {
             cx.wake_at(cx.now() + SUBMISSION_POLL);

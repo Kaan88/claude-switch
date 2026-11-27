@@ -10,12 +10,13 @@
 use std::ops::Range;
 
 use mdshared_ui::gfx::Rect;
+use mdshared_ui::host::Cx;
 use mdshared_ui::menu::{Item, Menu};
 use mdshared_ui::platform;
 
 use super::rows::{Id, Row};
 use super::{Page, Ui};
-use crate::state::{AppState, MenuKind};
+use crate::state::{AppState, MenuKind, Msg};
 
 /// One end of a selection: a row and a byte offset in its body's text.
 pub(super) type End = (Id, usize);
@@ -228,7 +229,7 @@ impl AppState {
         true
     }
 
-    pub fn conversation_menu_chosen(&mut self, tab: u64, id: u32) {
+    pub fn conversation_menu_chosen(&mut self, cx: &mut Cx<'_, Msg>, tab: u64, id: u32) {
         if self.tabs.active != Some(tab) {
             return;
         }
@@ -236,14 +237,34 @@ impl AppState {
         let Some(pane) = self.shown_pane(width) else { return };
         if id == REWIND {
             let Some(item) = pane.ui.menu_item() else { return };
-            if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.is_some()) {
-                crate::view::chat::question::rewind::start(tab, std::time::Instant::now(), item);
-            }
-            return;
+            // As Send: the newest screen before the first Esc, then the tick that carries the rest.
+            self.term_woke(cx);
+            self.rewind_from_menu(tab, item, cx.now());
+            return self.arm_chat_tick(cx);
         }
         if let Some(text) = pane.ui.menu_text(id) {
             platform::set_clipboard_text(&text);
         }
+    }
+}
+
+impl AppState {
+    /// Rewind to the prompt at `item` from the conversation menu of `tab`: only while that tab is
+    /// shown with Chat on (the menu may have been opened before Chat was switched off). The caller
+    /// has read the newest screen. True when the rewind started or said why it could not.
+    pub(crate) fn rewind_from_menu(
+        &mut self,
+        tab: u64,
+        item: claude_switch_core::transcript::ItemId,
+        now: std::time::Instant,
+    ) -> bool {
+        if self.tabs.active != Some(tab) {
+            return false;
+        }
+        let chat_on = |t: &&mut crate::tabs::Tab| t.pane.as_ref().is_some_and(|p| p.chat.enabled);
+        let Some(t) = self.tabs.get_mut(tab).filter(chat_on) else { return false };
+        crate::view::chat::question::rewind::start(t, now, item);
+        true
     }
 }
 
