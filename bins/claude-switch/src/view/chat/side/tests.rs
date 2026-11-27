@@ -130,7 +130,7 @@ fn task_and_agent_hits_expand_detail_and_refuse_reassigned_rows() {
     let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
     let mut side = Details::default();
     let mut draw = |details: &mut Details, model: &Model, page| {
-        details.draw(&mut p, &DARK, Frame { tab: TAB, area, side: page, model, cwd: demo.cwd(), hover: None })
+        details.draw(&mut p, &DARK, Frame::page(TAB, area, page, model, demo.cwd(), None))
     };
     let closed = draw(&mut side, &model, Side::Tasks);
     let task = hit(&model, Side::Tasks, 0, Part::Expand);
@@ -175,14 +175,8 @@ fn painted_file_name_and_arrow_are_disjoint_and_removed_markdown_is_not_opened()
     let mut gfx = Gfx::new();
     let expand = hit(&pane.model, Side::Files, 0, Part::Expand);
     let open = hit(&pane.model, Side::Files, 0, Part::Open);
-    let frame = Frame {
-        tab: TAB,
-        area: pane.chat.layout.side,
-        side: Side::Files,
-        model: &pane.model,
-        cwd: demo.cwd(),
-        hover: Some(Target::Chat(Control::Detail(open))),
-    };
+    let hover = Some(Target::Chat(Control::Detail(open)));
+    let frame = Frame::page(TAB, pane.chat.layout.side, Side::Files, &pane.model, demo.cwd(), hover);
     bmp.clear(DARK.pane);
     let hits = pane.chat.details.draw(&mut Painter::new(&mut bmp, &mut gfx, 1.0), &DARK, frame);
     assert_eq!(hits[0].1, Target::Chat(Control::Detail(expand)));
@@ -232,14 +226,7 @@ fn mcp_tasks_list_after_shells_and_open_their_result_or_their_call() {
     let mut bmp = Bitmap::new(280, 500);
     let mut gfx = Gfx::new();
     let mut draw = |details: &mut Details, model: &Model| {
-        let frame = Frame {
-            tab: TAB,
-            area: Rect::new(0.0, 0.0, 280.0, 500.0),
-            side: Side::Shells,
-            model,
-            cwd: demo.cwd(),
-            hover: None,
-        };
+        let frame = Frame::page(TAB, Rect::new(0.0, 0.0, 280.0, 500.0), Side::Shells, model, demo.cwd(), None);
         details.draw(&mut Painter::new(&mut bmp, &mut gfx, 1.0), &DARK, frame)
     };
     let hits = draw(details, model);
@@ -292,4 +279,73 @@ fn a_task_opens_the_newest_plan_update_and_only_when_there_is_one() {
     let newest = put_tool(&mut model, demo.cwd(), 9, "TodoWrite", "plan", ToolState::Ok);
     put_tool(&mut model, demo.cwd(), 12, "Read", "plan", ToolState::Ok);
     assert_eq!(open(&model), Some(Action::Jump(newest)));
+}
+
+/// Chat's panel: one list of sections in place of the tabs. A section shows only when it has
+/// something, its head folds it, and every target says which page it belongs to, so what a tab's
+/// row did is still reachable.
+#[test]
+fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let cwd = demo.cwd();
+    let mut model = Model::new(Source::File(demo.path().into()), cwd.into(), || {});
+    let mut details = Details::default();
+    details.refresh_all(&model, cwd);
+    assert!(!details.has_sections(&model), "an empty session has nothing to show");
+    let area = Rect::new(0.0, 0.0, 280.0, 600.0);
+    let mut bmp = Bitmap::new(280, 600);
+    let mut gfx = Gfx::new();
+    let mut draw = |details: &mut Details, model: &Model| {
+        let diff = crate::view::look::Diff::fallback(&DARK);
+        let frame = Frame { tab: TAB, area, side: Side::Tasks, sections: true, model, cwd, hover: None, diff };
+        let hits = details.draw(&mut Painter::new(&mut bmp, &mut gfx, 1.0), &DARK, frame);
+        hits.into_iter()
+            .map(|(_, target)| match target {
+                Target::Chat(Control::Detail(hit)) => (hit.side, hit.index, hit.part),
+                other => panic!("{other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(draw(&mut details, &model).is_empty());
+
+    std::fs::write(cwd.join("notes.md"), "# Notes").unwrap();
+    model.tasks = vec![
+        Task { content: "Done".into(), status: TaskStatus::Completed },
+        Task { content: "Doing".into(), status: TaskStatus::InProgress },
+    ];
+    model.agents = vec![
+        Subagent { id: "done".into(), finished: Some(true), ..Default::default() },
+        Subagent { id: "busy".into(), finished: Some(false), ..Default::default() },
+    ];
+    put_tool(&mut model, cwd, 2, "Edit", "notes.md", ToolState::Ok);
+    model.revision += 1;
+    details.refresh_all(&model, cwd);
+    assert!(details.has_sections(&model));
+    assert_eq!((details.files.len(), details.files[0].added, details.files[0].removed), (1, 0, 0));
+    let hits = draw(&mut details, &model);
+    let heads: Vec<Side> = hits.iter().filter(|h| h.2 == Part::Fold).map(|h| h.0).collect();
+    assert_eq!(heads, [Side::Tasks, Side::Shells, Side::Files], "Progress, Background, Changed files; no Outputs");
+    // Each task's row expands it.
+    assert_eq!(
+        hits.iter().filter(|h| h.0 == Side::Tasks && h.2 == Part::Expand).map(|h| h.1).collect::<Vec<_>>(),
+        [0, 1]
+    );
+    // In Background the running agent comes first; each keeps its own index.
+    assert_eq!(
+        hits.iter().filter(|h| h.0 == Side::Agents && h.2 == Part::Expand).map(|h| h.1).collect::<Vec<_>>(),
+        [1, 0]
+    );
+    // A changed file's name opens it and its arrow lists its edits.
+    assert!(hits.contains(&(Side::Files, 0, Part::Open)) && hits.contains(&(Side::Files, 0, Part::Expand)));
+    // The targets act as the tabs' rows did.
+    let open = hit(&model, Side::Agents, 1, Part::Open);
+    assert_eq!(details.action(&model, TAB, Side::Agents, open), Some(Action::AgentTranscript("busy".into())));
+    let fold = hit(&model, Side::Tasks, 0, Part::Fold);
+    assert_eq!(details.action(&model, TAB, Side::Tasks, fold), Some(Action::Fold(Side::Tasks)));
+    // Folded, a section keeps its head and hides its rows.
+    details.folded.insert(Side::Tasks);
+    let hits = draw(&mut details, &model);
+    assert!(hits.contains(&(Side::Tasks, 0, Part::Fold)));
+    assert!(!hits.iter().any(|h| h.0 == Side::Tasks && h.2 == Part::Expand));
+    assert!(hits.iter().any(|h| h.0 == Side::Agents));
 }

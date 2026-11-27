@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Chat: the Details panel is one scrolling list of sections in place of its five tabs.
+  **Progress** is the task list with "2 of 3", a thin bar and a mark per task (done, current,
+  waiting). **Background** has the agents, the background shells with their output and the MCP
+  tasks, running ones first. **Changed files** lists each file with its lines added and removed;
+  the name opens the file and the arrow lists its edits. **Outputs** is as before. A section with
+  nothing in it is not shown, and each folds from its heading. Everything the tabs did is still
+  there: full output, Stop…, jump to an edit, open an agent's transcript.
+- Chat: the Details panel opens by itself when it has a first thing to show and is closed when
+  it has nothing, until you open or close it yourself with Details; then it stays as you left it.
+  While it is closed and Claude works, the task list's progress ("2 of 3") stands at the right
+  end of the working line and opens the panel.
+
 - Chat: a question of Claude's, a permission prompt and a Claude Code menu now stand where the
   message box is, in the same box, instead of in a card over it. The message box is not shown
   while such a card waits (nothing can be sent then anyway); a draft is kept and comes back with

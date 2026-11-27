@@ -30,6 +30,10 @@ impl AppState {
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return Rect::default() };
         let chat = &mut pane.chat;
         chat.shell_count = pane.model.running_shells();
+        // The panel opens when it has a first section to show and closes when none is left,
+        // unless the user opened or closed it.
+        chat.details.refresh_all(&pane.model, &pane.cwd);
+        chat.side_hidden = !chat.side_choice.unwrap_or_else(|| chat.details.has_sections(&pane.model));
         let running = chat.shell_count != 0;
         let reveal = matches!(chat.side, Side::Shells | Side::Outputs);
         let (panel, drawer, chips, notice) = (
@@ -122,11 +126,17 @@ impl AppState {
             || chat.last_gate == Some(super::Gate::Running) && chat.can_stop(info);
         let stop = running.then_some(stop_ready);
         pane.ui.set_offer(chat.question.background_inline());
+        // With the panel closed the working line shows the task list's progress.
+        pane.ui.show_progress(l.side.w <= 0.0);
         // The pending call the card asks about has not started: its line says it waits.
         let own = asking && chat.question.answerable.is_some() && chat.question.answerable == info.pending;
         pane.ui.set_awaiting(super::question::pending(&pane.model).filter(|_| own).map(|p| p.item));
         pane.ui.set_diff_colours(diff);
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
+        if let Some(r) = pane.ui.progress_rect() {
+            // "2 of 3" on the working line opens the panel, as its own button does.
+            self.hits.push((r, Target::Chat(Control::Panel)));
+        }
         if let Some(r) = pane.ui.offer_rect() {
             // "Run in background" on the command's line: the same click as the card's button.
             self.hits.push((r, Target::Chat(Control::Question(super::question::Hit::Background))));
@@ -145,26 +155,6 @@ impl AppState {
             let clip = p.clip(l.side);
             p.fill(l.side, pal.pane);
             p.fill(Rect::new(l.side.x, l.side.y, p.px(), l.side.h), pal.line);
-            let w = (l.side.w - 12.0) / 5.0;
-            let shells = format!("Shells {}", pane.model.shells.len() + pane.model.mcp_tasks.len());
-            for (i, (side, name)) in [
-                (Side::Tasks, "Tasks"),
-                (Side::Agents, "Agents"),
-                (Side::Shells, shells.as_str()),
-                (Side::Files, "Files"),
-                (Side::Outputs, "Outputs"),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                hit(
-                    p,
-                    Rect::new(l.side.x + 6.0 + w * i as f32, l.side.y + 10.0, w - 2.0, 27.0),
-                    name,
-                    Control::Side(side),
-                    chat.side == side,
-                );
-            }
             detail_hits = chat.details.draw(
                 p,
                 pal,
@@ -172,6 +162,8 @@ impl AppState {
                     tab: tab_id,
                     area: l.side,
                     side: chat.side,
+                    sections: true,
+                    diff,
                     model: &pane.model,
                     cwd: &pane.cwd,
                     hover: hover.filter(|_| details_active),

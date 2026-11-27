@@ -22,7 +22,6 @@ pub enum Control {
     Open,
     Grip,
     Panel,
-    Side(Side),
     Detail(super::side::Hit),
     Shells,
     Editor,
@@ -67,6 +66,7 @@ impl AppState {
         }
         if pane.chat.enabled {
             pane.chat.side = Side::Shells;
+            pane.chat.side_choice = Some(true);
             pane.chat.side_hidden = false;
         } else {
             pane.ui.show_details(Side::Shells);
@@ -76,8 +76,9 @@ impl AppState {
     fn detail_control(&mut self, hit: super::side::Hit) {
         let Some(tab) = self.tabs.shown_mut() else { return };
         let Some(pane) = &mut tab.pane else { return };
+        // Chat's panel shows every section: a target says which it belongs to.
         let side = if pane.chat.enabled {
-            pane.chat.side
+            hit.side()
         } else if let Some(side) = pane.ui.detail_side() {
             side
         } else {
@@ -506,10 +507,10 @@ impl AppState {
             Control::Drawer => chat.toggle_drawer(),
             Control::Open if chat.drawer == Drawer::Closed => chat.open_drawer(),
             Control::Open => chat.drawer_focus = true,
-            Control::Panel => chat.side_hidden = !chat.side_hidden,
-            Control::Side(side) => {
-                chat.side = side;
-                chat.details.reset_scroll();
+            Control::Panel => {
+                // The user's own choice: it holds whatever the panel has to show.
+                chat.side_choice = Some(chat.side_hidden);
+                chat.side_hidden = !chat.side_hidden;
             }
             Control::Remove(i) if i < chat.chips.len() && !chat.locked() => {
                 chat.recall.end();

@@ -15,6 +15,8 @@ impl Details {
         }
         let key = Key::Shell(id);
         self.expanded.insert(key.clone());
+        // Its section of Chat's panel shows it.
+        self.folded.remove(&Side::Shells);
         self.reveal = Some(key);
     }
 
@@ -60,8 +62,8 @@ impl Details {
         }
     }
 
-    pub(super) fn extra_lines(&self, out: &mut Lines, p: &mut Painter, f: &Frame<'_>, width: f32) {
-        if f.side == Side::Outputs {
+    pub(super) fn extra_lines(&self, out: &mut Lines, p: &mut Painter, f: &Frame<'_>, width: f32, side: Side) {
+        if side == Side::Outputs {
             for (i, output) in f.model.output_list.iter().enumerate() {
                 out.push(37.0, Line::Output(i, output.title.clone(), output.meta()));
             }

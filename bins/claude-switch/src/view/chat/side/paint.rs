@@ -1,23 +1,51 @@
 use std::path::Path;
 
-use mdshared_ui::gfx::{Face, Painter, Rect, Wrap};
+use claude_switch_core::transcript::TaskStatus;
+use mdshared_ui::gfx::{Face, Painter, Rect, Wrap, mix};
+use mdshared_ui::glyph;
 use mdshared_ui::theme::Palette;
 
 use super::{Details, Hit, Key, Model, Part, Side, plan_update, task_key, task_status};
 use crate::state::Target;
 use crate::view::chat::Control;
+use crate::view::look;
 
 pub(super) const ROW: f32 = 26.0;
 const INDENT: f32 = 22.0;
 const BODY_SIZE: f32 = 11.5;
+/// A section's head, and a row of a section's own list (a task, a changed file).
+const SECTION: f32 = 30.0;
+const ITEM: f32 = 28.0;
 
 pub(in crate::view) struct Frame<'a> {
     pub tab: u64,
     pub area: Rect,
+    /// The page shown (the Session view's tab), or the section last asked for (Chat).
     pub side: Side,
+    /// Chat's panel: every section that has something, in one scrolling list. Otherwise the
+    /// one page `side` names, under its heading (the Session view).
+    pub sections: bool,
     pub model: &'a Model,
     pub cwd: &'a Path,
     pub hover: Option<Target>,
+    /// The colours of added and removed lines.
+    pub diff: look::Diff,
+}
+
+impl<'a> Frame<'a> {
+    /// One page under its heading, as the Session view shows it.
+    #[cfg(test)]
+    pub(super) fn page(
+        tab: u64,
+        area: Rect,
+        side: Side,
+        model: &'a Model,
+        cwd: &'a Path,
+        hover: Option<Target>,
+    ) -> Self {
+        let diff = look::Diff::fallback(&mdshared_ui::theme::DARK);
+        Self { tab, area, side, sections: false, model, cwd, hover, diff }
+    }
 }
 
 pub(super) enum Line {
@@ -42,17 +70,46 @@ pub(super) enum Line {
     Tail(claude_switch_core::transcript::ItemId, Vec<String>),
     Actions(usize, Vec<(&'static str, Part)>),
     Output(usize, String, String),
+    /// A section's head: its name, a note at the right (a count), and whether it is folded.
+    Section {
+        title: &'static str,
+        note: String,
+        folded: bool,
+    },
+    /// The task list's progress: done of all.
+    Bar(usize, usize),
+    /// A task with its mark: done, current or waiting. The row expands to the whole text.
+    Task {
+        label: String,
+        status: TaskStatus,
+        index: usize,
+        expanded: bool,
+    },
+    /// A changed file: its name opens it when `opens`, the arrow lists its edits.
+    File {
+        name: String,
+        added: usize,
+        removed: usize,
+        index: usize,
+        expanded: bool,
+        opens: bool,
+    },
+    /// A hairline between sections.
+    Rule,
 }
 
 pub(super) struct Lines {
-    lines: Vec<(f32, f32, Line)>,
+    /// Each line's top, height, the page its targets belong to, and what it is.
+    lines: Vec<(f32, f32, Side, Line)>,
     pub(super) height: f32,
     reveal: Option<(f32, f32)>,
+    /// The page the lines being added belong to.
+    side: Side,
 }
 
 impl Lines {
     pub(super) fn push(&mut self, h: f32, line: Line) {
-        self.lines.push((self.height, h, line));
+        self.lines.push((self.height, h, self.side, line));
         self.height += h;
     }
 
@@ -64,23 +121,31 @@ impl Lines {
 
 impl Details {
     pub(in crate::view) fn draw(&mut self, p: &mut Painter, pal: &Palette, f: Frame<'_>) -> Vec<(Rect, Target)> {
-        self.refresh(f.model, f.cwd, f.side);
+        if f.sections {
+            self.refresh_all(f.model, f.cwd);
+        } else {
+            self.refresh(f.model, f.cwd, f.side);
+        }
         self.visible_shells.clear();
         let area = f.area;
-        let heading = match f.side {
-            Side::Tasks => "Tasks",
-            Side::Agents => "Agents",
-            Side::Files => "Changed files · from tool results",
-            Side::Shells if f.model.mcp_tasks.is_empty() => "Background shells",
-            Side::Shells => "Background shells and MCP tasks",
-            Side::Outputs => "Session outputs",
-        };
-        p.text(Face::Semibold, 12.0, area.x + 12.0, area.y + 53.0, heading, pal.muted, area.w - 24.0);
+        // A page has its heading over the list; Chat's sections name themselves.
+        let top = if f.sections { 8.0 } else { 64.0 };
+        if !f.sections {
+            let heading = match f.side {
+                Side::Tasks => "Tasks",
+                Side::Agents => "Agents",
+                Side::Files => "Changed files · from tool results",
+                Side::Shells if f.model.mcp_tasks.is_empty() => "Background shells",
+                Side::Shells => "Background shells and MCP tasks",
+                Side::Outputs => "Session outputs",
+            };
+            p.text(Face::Semibold, 12.0, area.x + 12.0, area.y + 53.0, heading, pal.muted, area.w - 24.0);
+        }
         let body = Rect::new(
             area.x + 8.0,
-            area.y + 64.0,
+            area.y + top,
             (area.w - 18.0).max(0.0),
-            (area.h - if self.message.is_some() { 101.0 } else { 70.0 }).max(0.0),
+            (area.h - top - if self.message.is_some() { 37.0 } else { 6.0 }).max(0.0),
         );
         if let Some(message) = self.message {
             p.text(Face::Ui, BODY_SIZE, body.x + 4.0, body.bottom() + 15.0, message, pal.warn, body.w - 8.0);
@@ -89,7 +154,7 @@ impl Details {
             return Vec::new();
         }
         let width = (body.w - INDENT - 9.0).max(1.0);
-        let rows = self.lines(p, &f, width);
+        let rows = if f.sections { self.sections(p, &f, width) } else { self.lines(p, &f, width) };
         self.max = (rows.height - body.h).max(0.0);
         if let Some((start, end)) = rows.reveal {
             self.offset = self.offset.max(end - body.h).min(start);
@@ -101,8 +166,9 @@ impl Details {
         if rows.lines.is_empty() {
             p.text(Face::Ui, 12.0, body.x + 4.0, body.y + 15.0, "Nothing to show yet", pal.muted, body.w - 8.0);
         }
-        let first = rows.lines.partition_point(|(y, h, _)| *y + *h <= self.offset);
-        for (y, h, line) in &rows.lines[first..] {
+        let ink = f.diff.on(pal.pane);
+        let first = rows.lines.partition_point(|(y, h, _, _)| *y + *h <= self.offset);
+        for (y, h, side, line) in &rows.lines[first..] {
             let r = Rect::new(body.x, body.y + y - self.offset, body.w, *h);
             if r.y >= body.bottom() {
                 break;
@@ -111,7 +177,7 @@ impl Details {
                 let t = Target::Chat(Control::Detail(Hit {
                     tab: f.tab,
                     revision: f.model.revision,
-                    side: f.side,
+                    side: *side,
                     index,
                     part,
                 }));
@@ -216,7 +282,9 @@ impl Details {
                     }
                 }
                 Line::Output(index, title, meta) => {
-                    let r = r.inset(2.0);
+                    // In Chat's panel an output lines up with the sections' rows.
+                    let inset = if f.sections { 8.0 } else { 2.0 };
+                    let r = Rect::new(r.x + inset, r.y + 2.0, (r.w - 2.0 * inset).max(0.0), r.h - 4.0);
                     let hot = button(r, *index, Part::Open);
                     p.frame(r, 5.0, if hot { pal.hover } else { pal.bar }, pal.line);
                     let icon = f.model.output_list.get(*index).map(|o| o.embed().icon());
@@ -226,6 +294,95 @@ impl Details {
                     let tx = r.x + if icon.is_some() { 28.0 } else { 7.0 };
                     p.text(Face::Semibold, 11.5, tx, r.y + 10.0, title, pal.text, r.right() - tx - 7.0);
                     p.text(Face::Ui, 10.5, tx, r.y + 25.0, meta, pal.muted, r.right() - tx - 7.0);
+                }
+                Line::Section { title, note, folded } => {
+                    let row = Rect::new(r.x, r.y + 2.0, r.w, r.h - 4.0);
+                    let hot = button(row, 0, Part::Fold);
+                    if hot {
+                        p.rbox(row, 5.0, pal.hover);
+                    }
+                    let chevron = if *folded { glyph::RIGHT } else { glyph::DOWN };
+                    p.icon(chevron, 10.0, row.right() - 11.0, row.cy() + 0.5, pal.faint);
+                    let note_w = p.text_right(Face::Ui, 12.0, row.right() - 24.0, row.cy(), note, pal.muted);
+                    let room = (row.w - 40.0 - note_w).max(0.0);
+                    p.text(Face::Semibold, 12.5, row.x + 8.0, row.cy(), title, pal.text, room);
+                }
+                Line::Bar(done, all) => {
+                    let track = Rect::new(r.x + 8.0, r.y + 2.0, (r.w - 16.0).max(0.0), 4.0);
+                    p.rbox(track, 2.0, pal.line);
+                    if *done > 0 && *all > 0 {
+                        let w = (track.w * *done as f32 / *all as f32).round().max(4.0);
+                        p.rbox(Rect::new(track.x, track.y, w, track.h), 2.0, pal.accent);
+                    }
+                }
+                Line::Task { label, status, index, expanded } => {
+                    let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
+                    let hot = button(row, *index, Part::Expand);
+                    if hot || *expanded {
+                        p.rbox(row, 5.0, if hot { pal.hover } else { pal.on });
+                    }
+                    let ground = match (hot, *expanded) {
+                        (true, _) => pal.hover,
+                        (false, true) => pal.on,
+                        _ => pal.pane,
+                    };
+                    let dot = Rect::new(row.x + 8.0, row.cy() - 8.0, 16.0, 16.0);
+                    match status {
+                        TaskStatus::Completed => {
+                            p.rbox(dot, 8.0, mix(ground, pal.accent, 0.28));
+                            p.icon(glyph::CHECK, 10.0, dot.cx(), dot.cy(), pal.accent);
+                        }
+                        TaskStatus::InProgress => {
+                            p.rbox(dot, 8.0, pal.accent);
+                            p.rbox(dot.inset(1.5), 6.5, ground);
+                            p.rbox(dot.inset(5.0), 3.0, pal.accent);
+                        }
+                        TaskStatus::Pending => {
+                            p.rbox(dot, 8.0, pal.faint);
+                            p.rbox(dot.inset(1.5), 6.5, ground);
+                        }
+                    }
+                    let (face, ink) = match status {
+                        TaskStatus::Completed => (Face::Ui, pal.muted),
+                        TaskStatus::InProgress => (Face::Semibold, pal.text),
+                        TaskStatus::Pending => (Face::Ui, pal.text),
+                    };
+                    p.text(face, 12.5, row.x + 34.0, row.cy(), label, ink, (row.w - 42.0).max(0.0));
+                }
+                Line::File { name, added, removed, index, expanded, opens } => {
+                    let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
+                    let arrow = Rect::new(row.right() - 24.0, row.y, 24.0, row.h);
+                    let main = Rect::new(row.x, row.y, row.w - 24.0, row.h);
+                    let arrow_hot = button(arrow, *index, Part::Expand);
+                    // Without a file to open, the whole row lists its edits.
+                    let main_hot =
+                        if *opens { button(main, *index, Part::Open) } else { button(main, *index, Part::Expand) };
+                    if main_hot {
+                        p.rbox(main, 5.0, pal.hover);
+                    }
+                    if arrow_hot || *expanded {
+                        p.rbox(arrow, 5.0, if arrow_hot { pal.hover } else { pal.on });
+                    }
+                    p.icon(glyph::DOC, 14.0, row.x + 16.0, row.cy(), pal.muted);
+                    let chevron = if *expanded { glyph::DOWN } else { glyph::RIGHT };
+                    p.icon(chevron, 10.0, arrow.cx(), arrow.cy() + 0.5, if *expanded { pal.accent } else { pal.faint });
+                    let end = arrow.x - 6.0;
+                    let minus = p.text_right(Face::Semibold, 11.5, end, row.cy(), &format!("−{removed}"), ink.del);
+                    let plus =
+                        p.text_right(Face::Semibold, 11.5, end - minus - 6.0, row.cy(), &format!("+{added}"), ink.add);
+                    let room = (end - minus - plus - 16.0 - (row.x + 34.0)).max(0.0);
+                    p.text(
+                        Face::Ui,
+                        12.5,
+                        row.x + 34.0,
+                        row.cy(),
+                        name,
+                        if main_hot { pal.accent } else { pal.text },
+                        room,
+                    );
+                }
+                Line::Rule => {
+                    p.fill(Rect::new(r.x + 8.0, r.cy(), (r.w - 16.0).max(0.0), p.px()), pal.line);
                 }
             }
         }
@@ -238,27 +395,83 @@ impl Details {
         hits
     }
 
+    /// Chat's panel: Progress, Background, Changed files and Outputs, each only when it has
+    /// something, each with a head that folds it.
+    fn sections(&self, p: &mut Painter, f: &Frame<'_>, width: f32) -> Lines {
+        let mut out = Lines { lines: Vec::new(), height: 0.0, reveal: None, side: Side::Tasks };
+        let m = f.model;
+        let mut started = false;
+        let mut section = |out: &mut Lines, side: Side, title: &'static str, note: String| {
+            if std::mem::replace(&mut started, true) {
+                out.push(13.0, Line::Rule);
+            }
+            out.side = side;
+            let folded = self.folded.contains(&side);
+            out.push(SECTION, Line::Section { title, note, folded });
+            !folded
+        };
+        if !m.tasks.is_empty() {
+            let done = m.tasks.iter().filter(|t| t.status == TaskStatus::Completed).count();
+            if section(&mut out, Side::Tasks, "Progress", format!("{done} of {}", m.tasks.len())) {
+                out.push(14.0, Line::Bar(done, m.tasks.len()));
+                self.side_lines(&mut out, p, f, width, Side::Tasks);
+            }
+        }
+        let running = m.agents.iter().filter(|a| a.finished == Some(false)).count()
+            + m.running_shells()
+            + m.mcp_tasks.iter().filter(|t| t.status == claude_switch_core::transcript::McpStatus::Running).count();
+        let background = m.agents.len() + m.shells.len() + m.mcp_tasks.len();
+        if background > 0 {
+            let note = if running > 0 { format!("{running} running") } else { background.to_string() };
+            // The section folds under the shells' page; its agents keep their own targets.
+            if section(&mut out, Side::Shells, "Background", note) {
+                self.side_lines(&mut out, p, f, width, Side::Agents);
+                self.side_lines(&mut out, p, f, width, Side::Shells);
+            }
+        }
+        if !self.files.is_empty() && section(&mut out, Side::Files, "Changed files", self.files.len().to_string()) {
+            self.side_lines(&mut out, p, f, width, Side::Files);
+        }
+        if !m.output_list.is_empty() && section(&mut out, Side::Outputs, "Outputs", m.output_list.len().to_string()) {
+            self.side_lines(&mut out, p, f, width, Side::Outputs);
+        }
+        out
+    }
+
+    /// One page, as the Session view shows it under its tab.
     fn lines(&self, p: &mut Painter, f: &Frame<'_>, width: f32) -> Lines {
-        let mut out = Lines { lines: Vec::new(), height: 0.0, reveal: None };
-        match f.side {
+        let mut out = Lines { lines: Vec::new(), height: 0.0, reveal: None, side: f.side };
+        self.side_lines(&mut out, p, f, width, f.side);
+        out
+    }
+
+    /// The rows of one page, added to `out` with that page's targets.
+    fn side_lines(&self, out: &mut Lines, p: &mut Painter, f: &Frame<'_>, width: f32, side: Side) {
+        out.side = side;
+        match side {
             Side::Tasks => {
                 let opens = plan_update(f.model).is_some();
                 for (index, task) in f.model.tasks.iter().enumerate() {
                     let key = task_key(index, &task.content);
                     let expanded = self.expanded.contains(&key);
                     let (mark, status) = task_status(task.status);
-                    let label = format!("{mark}  {}", first_line(&task.content));
-                    out.push(
-                        ROW,
-                        Line::Header {
-                            label,
-                            index,
-                            expanded,
-                            active: task.status == claude_switch_core::transcript::TaskStatus::InProgress,
-                            split: opens,
-                            opens,
-                        },
-                    );
+                    if f.sections {
+                        let label = first_line(&task.content).to_owned();
+                        out.push(ITEM, Line::Task { label, status: task.status, index, expanded });
+                    } else {
+                        let label = format!("{mark}  {}", first_line(&task.content));
+                        out.push(
+                            ROW,
+                            Line::Header {
+                                label,
+                                index,
+                                expanded,
+                                active: task.status == TaskStatus::InProgress,
+                                split: opens,
+                                opens,
+                            },
+                        );
+                    }
                     if expanded {
                         let top = out.height;
                         out.detail(p, width, format!("{status}\n{}", task.content));
@@ -268,12 +481,18 @@ impl Details {
                                 Line::Button { label: "Show the latest plan update".into(), index, part: Part::Open },
                             );
                         }
-                        self.reveal(&mut out, &key, top);
+                        self.reveal(out, &key, top);
                     }
                 }
             }
             Side::Agents => {
-                for (index, agent) in f.model.agents.iter().enumerate() {
+                // In Chat's Background section the running agents come first.
+                let mut order: Vec<usize> = (0..f.model.agents.len()).collect();
+                if f.sections {
+                    order.sort_by_key(|&i| f.model.agents[i].finished != Some(false));
+                }
+                for index in order {
+                    let agent = &f.model.agents[index];
                     let key = Key::Agent(agent.id.clone());
                     let expanded = self.expanded.contains(&key);
                     let (mark, status) = match agent.finished {
@@ -324,7 +543,7 @@ impl Details {
                                 },
                             );
                         }
-                        self.reveal(&mut out, &key, top);
+                        self.reveal(out, &key, top);
                     }
                 }
             }
@@ -334,17 +553,31 @@ impl Details {
                     let expanded = self.expanded.contains(&key);
                     let name = Path::new(&file.path).file_name().and_then(|s| s.to_str()).unwrap_or(&file.path);
                     let opens = file.file.as_ref().is_some_and(|f| f.supports_default_app());
-                    out.push(
-                        ROW,
-                        Line::Header {
-                            label: first_line(name).to_owned(),
-                            index,
-                            expanded,
-                            active: false,
-                            split: true,
-                            opens,
-                        },
-                    );
+                    if f.sections {
+                        out.push(
+                            ITEM,
+                            Line::File {
+                                name: first_line(name).to_owned(),
+                                added: file.added,
+                                removed: file.removed,
+                                index,
+                                expanded,
+                                opens,
+                            },
+                        );
+                    } else {
+                        out.push(
+                            ROW,
+                            Line::Header {
+                                label: first_line(name).to_owned(),
+                                index,
+                                expanded,
+                                active: false,
+                                split: true,
+                                opens,
+                            },
+                        );
+                    }
                     if expanded {
                         let top = out.height;
                         let suffix = if file.file.is_none() {
@@ -358,13 +591,12 @@ impl Details {
                         for (j, edit) in file.edits.iter().enumerate() {
                             out.push(ROW, Line::Button { label: edit.label.clone(), index, part: Part::Edit(j) });
                         }
-                        self.reveal(&mut out, &key, top);
+                        self.reveal(out, &key, top);
                     }
                 }
             }
-            Side::Shells | Side::Outputs => self.extra_lines(&mut out, p, f, width),
+            Side::Shells | Side::Outputs => self.extra_lines(out, p, f, width, side),
         }
-        out
     }
 
     pub(super) fn reveal(&self, out: &mut Lines, key: &Key, top: f32) {

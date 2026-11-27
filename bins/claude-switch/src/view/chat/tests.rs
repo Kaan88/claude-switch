@@ -757,3 +757,38 @@ fn caret_keys_move_and_select_by_character_word_line_and_draft_like_a_windows_te
     press(&mut chat, KeyName::Escape, plain);
     assert_eq!(chat.editor.text, "one\ntwo");
 }
+
+/// The Details panel opens when it has a first section to show and is closed when it has none,
+/// unless the user opened or closed it: that choice holds.
+#[test]
+fn the_details_panel_follows_what_it_has_to_show_until_the_user_chooses() {
+    use super::readme_shots as shots;
+    fn chat(st: &mut crate::state::AppState, id: u64) -> &mut Chat {
+        &mut shots::tab(st, id).pane.as_mut().unwrap().chat
+    }
+    let area = Rect::new(0.0, 80.0, 1280.0, 800.0);
+    let demo = crate::demo::Transcript::new_showcase(None).unwrap();
+    let (mut st, id) = shots::chat_window(true, &demo);
+    st.layout_chat(area);
+    assert!(chat(&mut st, id).layout.side.w > 0.0, "tasks and a changed file: the panel is open");
+    chat(&mut st, id).side_choice = Some(false);
+    st.layout_chat(area);
+    assert_eq!(chat(&mut st, id).layout.side.w, 0.0, "closed by the user, it stays closed");
+
+    // A new session has nothing to show.
+    let empty = crate::demo::Transcript::new_empty().unwrap();
+    let mut st = shots::window(true);
+    let id = shots::claude_tab(&mut st, "Another tab");
+    let source = crate::view::model::Source::File(empty.path().into());
+    let mut pane = st.new_session_pane(source, empty.cwd().into());
+    pane.chat.scripted = true;
+    pane.chat.enabled = true;
+    pane.ui.set_chat(true);
+    shots::tab(&mut st, id).pane = Some(pane);
+    st.layout_chat(area);
+    assert_eq!(chat(&mut st, id).layout.side.w, 0.0, "nothing to show: the panel is closed");
+    assert!(chat(&mut st, id).side_hidden);
+    chat(&mut st, id).side_choice = Some(true);
+    st.layout_chat(area);
+    assert!(chat(&mut st, id).layout.side.w > 0.0, "opened by the user, it stays open");
+}

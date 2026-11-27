@@ -156,7 +156,7 @@ enum Drawer {
     Auto(Reason),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Side {
     #[default]
     Tasks,
@@ -195,7 +195,10 @@ pub struct Chat {
     drawer_focus: bool,
     reason: Option<Reason>,
     suppressed: Option<Reason>,
+    /// The Details panel is closed: by the user's own choice, else because it has no section.
     side_hidden: bool,
+    /// The user opened (`true`) or closed the panel: it then stays so, whatever it has to show.
+    side_choice: Option<bool>,
     side: Side,
     pub(super) details: side::Details,
     shell_count: usize,

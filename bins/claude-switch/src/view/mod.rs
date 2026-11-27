@@ -398,9 +398,13 @@ impl AppState {
         let Some(pane) = &mut tab.pane else { return };
         if output || pane.next.is_none_or(|at| at <= now) {
             pane.model.poll();
-            let side =
-                pane.chat.detail_side().or_else(|| (!pane.chat.enabled).then(|| pane.ui.detail_side()).flatten());
-            if side == Some(chat::Side::Shells) && !pane.ui.overlay_open() {
+            // Chat's panel lists the shells among its sections; the Session view on their page.
+            let shells = if pane.chat.enabled {
+                pane.chat.detail_side().is_some()
+            } else {
+                pane.ui.detail_side() == Some(chat::Side::Shells)
+            };
+            if shells && !pane.ui.overlay_open() {
                 for &id in pane.chat.details.visible_shells.iter().take(6) {
                     pane.model.request_shell_tail(id);
                 }
@@ -465,6 +469,8 @@ impl AppState {
                         tab,
                         area,
                         side,
+                        sections: false,
+                        diff,
                         model: &pane.model,
                         cwd: &pane.cwd,
                         hover: hover.filter(|_| details_active),

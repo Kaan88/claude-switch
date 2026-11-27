@@ -125,6 +125,11 @@ pub struct Ui {
     awaiting: Option<ItemId>,
     /// The colours of added and removed lines, from the terminal's theme.
     diff: Option<super::look::Diff>,
+    /// Chat's Details panel is closed: the working line shows the task list's progress, and a
+    /// click on it opens the panel.
+    progress: bool,
+    /// Where the last frame drew that progress.
+    progress_rect: Option<Rect>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -213,6 +218,17 @@ impl Ui {
     /// The colours of added and removed lines, from the window's terminal theme.
     pub fn set_diff_colours(&mut self, diff: super::look::Diff) {
         self.diff = Some(diff);
+    }
+
+    /// Chat's Details panel is closed: the task list's progress ("2 of 3") stands at the right
+    /// end of the working line.
+    pub(super) fn show_progress(&mut self, shown: bool) {
+        self.progress = shown;
+    }
+
+    /// Where the last frame drew the task list's progress, for the host to take its click.
+    pub(super) fn progress_rect(&self) -> Option<Rect> {
+        self.progress_rect
     }
 
     /// Where the last frame drew "Run in background", for the host to take its click.
@@ -391,6 +407,7 @@ impl Ui {
             self.body = if self.chat { self.chat_reading.place(body) } else { body };
             self.layout(m, pal, p.scale);
             self.offer_rect = None;
+            self.progress_rect = None;
             self.paint_rows(p, pal, m);
             self.paint_working(p, pal, m);
             self.scrollbar =
@@ -540,7 +557,21 @@ impl Ui {
         let y = body.y + self.rows_end() - self.offset;
         let clip = p.clip(body);
         let cy = y + super::working::CHAT_LINE / 2.0 + 2.0;
-        super::working::draw_chat_line(p, pal, body.x, cy, &work.label, body.w);
+        let mut room = body.w;
+        if self.progress && !m.tasks.is_empty() && body.w >= 320.0 {
+            use claude_switch_core::transcript::TaskStatus;
+            let done = m.tasks.iter().filter(|t| t.status == TaskStatus::Completed).count();
+            let label = format!("{done} of {}", m.tasks.len());
+            let w = p.measure(Face::Ui, 12.0, &label) + 34.0;
+            let r = Rect::new(body.right() - w, cy - 12.0, w, 24.0);
+            let hot = r.contains(self.mouse.0, self.mouse.1);
+            p.frame(r, 12.0, if hot { pal.hover } else { pal.page }, super::look::edge(pal));
+            p.icon(mdshared_ui::glyph::TASK, 12.0, r.x + 14.0, cy, pal.muted);
+            p.text(Face::Ui, 12.0, r.x + 24.0, cy, &label, if hot { pal.text } else { pal.muted }, w);
+            self.progress_rect = intersection(r, body);
+            room -= w + 12.0;
+        }
+        super::working::draw_chat_line(p, pal, body.x, cy, &work.label, room);
         p.restore(clip);
     }
 
