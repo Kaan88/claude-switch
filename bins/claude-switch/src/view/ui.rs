@@ -19,9 +19,9 @@ use super::links::NamedFile;
 use super::model::{Follow, Group, Model};
 use super::outputs::{Destination, Output};
 use super::working::{Footer, Turn};
-pub use markdown::Panel;
+pub use markdown::{Panel, Reading};
 use rows::{HEAD, Id, Row, Rows, Style, Tone};
-use scroll::{Drag, GUTTER, Scrollbar, Surface};
+use scroll::{Drag, GUTTER, Scrollbar, Surface, Visibility};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Page {
@@ -87,6 +87,9 @@ pub struct Ui {
     scrollbar: Option<Scrollbar>,
     scroll_drag: Option<Drag>,
     scroll_hot: Option<Surface>,
+    conversation_visibility: Visibility,
+    markdown_visibility: Visibility,
+    chat_reading: Reading,
     selection: Option<select::Selection>,
     /// The message a right-click menu was opened on.
     menu_row: Option<Id>,
@@ -132,6 +135,13 @@ impl Ui {
             self.chat = chat;
             self.cache = None;
             self.scroll_drag = None;
+        }
+    }
+
+    pub fn set_chat_reading(&mut self, reading: Reading) {
+        if self.chat_reading != reading {
+            self.chat_reading = reading;
+            self.cache = None;
         }
     }
 
@@ -270,25 +280,37 @@ impl Ui {
         self.scrollbar = None;
         self.body = Rect::default();
         if visible {
-            let rail = if self.chat { content.w.min(790.0) } else { content.w };
-            let left = content.x + (content.w - rail) / 2.0;
-            self.body = Rect::new(left, top, rail - GUTTER, content.h);
+            let body = Rect::new(content.x, top, (content.w - GUTTER).max(0.0), content.h);
+            self.body = if self.chat { self.chat_reading.place(body) } else { body };
             self.layout(m, pal, p.scale);
             self.paint_rows(p, pal, m, phase, motion);
             self.scrollbar =
                 Scrollbar::new(Rect::new(self.body.right() + 1.0, top, GUTTER - 1.0, self.body.h), self.max);
             if let Some(bar) = self.scrollbar {
-                bar.draw(
-                    p,
-                    pal,
-                    self.offset,
-                    mouse,
-                    self.scroll_drag.is_some_and(|d| d.surface == Surface::Conversation),
-                );
+                let dragging = self.scroll_drag.is_some_and(|d| d.surface == Surface::Conversation);
+                let hot = dragging || bar.track.contains(mouse.0, mouse.1);
+                let alpha = self.conversation_visibility.observe(self.offset, hot, now, motion);
+                bar.draw(p, pal, self.offset, mouse, dragging, alpha);
+            } else {
+                self.conversation_visibility = Visibility::default();
             }
+        } else {
+            self.conversation_visibility = Visibility::default();
         }
         if let Some(dock) = dock {
             self.draw_markdown(p, pal, dock, m);
+            if let Some(pane) = &self.markdown
+                && let Some(bar) = pane.scroll
+            {
+                let dragging = self.scroll_drag.is_some_and(|d| d.surface == Surface::Markdown);
+                let hot = dragging || bar.track.contains(mouse.0, mouse.1);
+                let alpha = self.markdown_visibility.observe(pane.offset(), hot, now, motion);
+                bar.draw(p, pal, pane.offset(), mouse, dragging, alpha);
+            } else {
+                self.markdown_visibility = Visibility::default();
+            }
+        } else {
+            self.markdown_visibility = Visibility::default();
         }
         p.fill(Rect::new(x, footer, width, p.px()), pal.line);
         if self.page == Page::Conversation {
@@ -443,15 +465,22 @@ impl Ui {
         self.hits.push((r, act));
     }
 
-    pub fn draw_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect, m: &Model, mouse: (f32, f32)) {
+    pub fn draw_overlay(
+        &mut self,
+        p: &mut Painter,
+        pal: &Palette,
+        window: Rect,
+        m: &Model,
+        mouse: (f32, f32),
+        radius: f32,
+    ) {
         let Some(overlay) = &mut self.overlay else { return };
         self.mouse = mouse;
         self.hits.clear();
-        p.fill_a(window, pal.title, 0.75);
         let bounds =
             Rect::new(window.x + window.w * 0.065, window.y + window.h * 0.07, window.w * 0.87, window.h * 0.86);
         overlay.bounds = bounds;
-        p.rbox(bounds, 10.0, pal.popup);
+        p.frame(bounds, radius, pal.popup, pal.popup_line);
         let frame = Rect::new(bounds.x + 14.0, bounds.y + 13.0, (bounds.w - 28.0).max(1.0), (bounds.h - 66.0).max(1.0));
         if let Some(image) = &overlay.image {
             paint_image(p, image, frame, 4.0, true);
@@ -471,7 +500,11 @@ impl Ui {
         self.overlay.is_some()
     }
     pub fn animating(&self) -> bool {
-        self.busy_visible && !self.overlay_open()
+        (self.busy_visible || self.scroll_deadline().is_some()) && !self.overlay_open()
+    }
+
+    pub fn scroll_deadline(&self) -> Option<Instant> {
+        [self.conversation_visibility.deadline(), self.markdown_visibility.deadline()].into_iter().flatten().min()
     }
 }
 

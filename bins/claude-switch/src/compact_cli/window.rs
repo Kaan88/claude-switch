@@ -137,7 +137,7 @@ pub(super) fn acknowledge(key: &str, opened: bool) {
 }
 
 #[cfg(windows)]
-fn spawn_window(exe: &Path, arguments: &str, until: Instant) -> std::io::Result<()> {
+pub(super) fn spawn_window(exe: &Path, arguments: &str, until: Instant) -> std::io::Result<()> {
     use claude_switch_core::{Place, launch};
     use std::io;
     use std::path::PathBuf;
@@ -182,7 +182,7 @@ fn spawn_window(exe: &Path, arguments: &str, until: Instant) -> std::io::Result<
 }
 
 #[cfg(not(windows))]
-fn spawn_window(exe: &Path, arguments: &str, _: Instant) -> std::io::Result<()> {
+pub(super) fn spawn_window(exe: &Path, arguments: &str, _: Instant) -> std::io::Result<()> {
     use claude_switch_core::{Place, launch};
     let mut spec = launch::shell(&std::env::temp_dir());
     spec.program = exe.to_owned();

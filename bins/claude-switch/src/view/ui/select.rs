@@ -4,17 +4,19 @@
 //! so it can cross messages. Rows are named by their stable [`Id`], so a selection survives the
 //! relayout that appends a message. Copy joins the selected part of each row with a blank line.
 //! The right-click menu offers Copy and Select all and, over a message, Copy message (its text as
-//! shown) and Copy as Markdown (its source). Code blocks carry their own Copy button (`paint`).
+//! shown) and Copy as Markdown (its source); over a typed prompt in a Chat tab, Rewind to here…
+//! (`chat::question::rewind`). Code blocks carry their own Copy button (`paint`).
 
 use std::ops::Range;
 
 use mdshared_ui::gfx::Rect;
+use mdshared_ui::host::Cx;
 use mdshared_ui::menu::{Item, Menu};
 use mdshared_ui::platform;
 
 use super::rows::{Id, Row};
 use super::{Page, Ui};
-use crate::state::{AppState, MenuKind};
+use crate::state::{AppState, MenuKind, Msg};
 
 /// One end of a selection: a row and a byte offset in its body's text.
 pub(super) type End = (Id, usize);
@@ -30,6 +32,8 @@ pub(super) const COPY: u32 = 0;
 pub(super) const SELECT_ALL: u32 = 1;
 pub(super) const COPY_MESSAGE: u32 = 2;
 pub(super) const COPY_MARKDOWN: u32 = 3;
+/// Over a prompt in a Chat tab: rewind the session to before it, through the CLI.
+pub(super) const REWIND: u32 = 4;
 
 fn text_of(row: &Row) -> Option<&str> {
     row.body.as_ref().map(|b| b.text())
@@ -175,6 +179,14 @@ impl Ui {
         Some(items)
     }
 
+    /// The transcript item of the message the menu was opened over.
+    pub(super) fn menu_item(&self) -> Option<claude_switch_core::transcript::ItemId> {
+        match self.menu_row {
+            Some(super::rows::Id::Message(id)) => Some(id),
+            _ => None,
+        }
+    }
+
     /// The text an item of the menu copies, or `None` for Select all.
     pub(super) fn menu_text(&mut self, id: u32) -> Option<String> {
         let message = || {
@@ -203,22 +215,58 @@ impl AppState {
             return false;
         }
         let Some(pane) = self.shown_pane(width) else { return false };
-        let Some(items) = pane.ui.context_menu(x, y) else { return false };
+        let Some(mut items) = pane.ui.context_menu(x, y) else { return false };
+        // Rewind goes through the tab's own CLI, from a prompt the user typed.
+        let prompt = pane.ui.menu_item().and_then(|id| pane.model.items.get(&id)).is_some_and(|item| {
+            // Only what the CLI's rewind list shows: never a slash command.
+            matches!(&item.kind, claude_switch_core::transcript::ItemKind::Prompt { synthetic: false, text, .. }
+                if crate::view::chat::question::rewind::listed(text))
+        });
+        if prompt && pane.chat.enabled {
+            items.push(Item::new(REWIND, "Rewind to here…").sep());
+        }
         self.session_view.text_focus = true;
         self.mouse = (x, y);
         self.menu = Some((MenuKind::Conversation(tab), Menu::new(items, x, y, false)));
         true
     }
 
-    pub fn conversation_menu_chosen(&mut self, tab: u64, id: u32) {
+    pub fn conversation_menu_chosen(&mut self, cx: &mut Cx<'_, Msg>, tab: u64, id: u32) {
         if self.tabs.active != Some(tab) {
             return;
         }
         let width = self.session_view.area.w;
         let Some(pane) = self.shown_pane(width) else { return };
+        if id == REWIND {
+            let Some(item) = pane.ui.menu_item() else { return };
+            // As Send: the newest screen before the first Esc, then the tick that carries the rest.
+            self.term_woke(cx);
+            self.rewind_from_menu(tab, item, cx.now());
+            return self.arm_chat_tick(cx);
+        }
         if let Some(text) = pane.ui.menu_text(id) {
             platform::set_clipboard_text(&text);
         }
+    }
+}
+
+impl AppState {
+    /// Rewind to the prompt at `item` from the conversation menu of `tab`: only while that tab is
+    /// shown with Chat on (the menu may have been opened before Chat was switched off). The caller
+    /// has read the newest screen. True when the rewind started or said why it could not.
+    pub(crate) fn rewind_from_menu(
+        &mut self,
+        tab: u64,
+        item: claude_switch_core::transcript::ItemId,
+        now: std::time::Instant,
+    ) -> bool {
+        if self.tabs.active != Some(tab) {
+            return false;
+        }
+        let chat_on = |t: &&mut crate::tabs::Tab| t.pane.as_ref().is_some_and(|p| p.chat.enabled);
+        let Some(t) = self.tabs.get_mut(tab).filter(chat_on) else { return false };
+        crate::view::chat::question::rewind::start(t, now, item);
+        true
     }
 }
 

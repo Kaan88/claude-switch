@@ -75,36 +75,39 @@ impl Ui {
                         tone
                     };
                     let hot = frame_hit(header, action);
-                    let ground = if pal.dark { pal.field } else { pal.pane };
+                    // Tool rows recede behind the answers: no box, only a soft fill when opened,
+                    // hovered or failed, and an accent outline while a jump points at the row.
+                    let failed = matches!(row.tone, Tone::Warning);
                     let jumped = self.tool_jump.is_some_and(|(id, _)| row.id == Id::Tool(id));
-                    p.frame(
-                        frame,
-                        5.0,
-                        if hot && !row.open { pal.hover } else { ground },
-                        if jumped { pal.accent } else { pal.line },
-                    );
-                    if row.open {
-                        if hot {
-                            p.rbox(header.inset(p.px()), 4.0, pal.hover);
-                        }
-                        if row.style == Style::Tool {
-                            p.fill(
-                                Rect::new(frame.x + 3.0, header.bottom(), (frame.w - 6.0).max(0.0), p.px()),
-                                pal.line,
-                            );
-                        }
+                    let panel = if pal.dark { pal.field } else { pal.pane };
+                    let wash = mix(pal.page, pal.warn_bg, 0.75);
+                    let fill = match (row.open, failed) {
+                        (true, true) => Some(mix(panel, pal.warn_bg, 0.5)),
+                        (true, false) => Some(panel),
+                        (false, true) => Some(wash),
+                        (false, false) => None,
+                    };
+                    if jumped {
+                        p.frame(frame, 5.0, fill.unwrap_or(pal.page), pal.accent);
+                    } else if let Some(fill) = fill {
+                        p.rbox(frame, 5.0, fill);
+                    }
+                    let mut ground = fill.unwrap_or(pal.page);
+                    if hot {
+                        p.rbox(header, 5.0, pal.hover);
+                        ground = pal.hover;
                     }
                     let badge = if row.background && header.w >= 120.0 {
-                        let badge = Rect::new(header.right() - 92.0, header.y + 3.0, 68.0, header.h - 6.0);
+                        let badge = Rect::new(header.right() - 76.0, header.y + 3.0, 68.0, header.h - 6.0);
                         let Id::Tool(id) = row.id else { unreachable!() };
                         let hot = frame_hit(badge, Action::Shell(id));
                         p.rbox(badge, 4.0, if hot { pal.hover } else { pal.on });
                         p.text_center(Face::Semibold, 10.5, badge, "background", pal.accent);
-                        72.0
+                        76.0
                     } else {
                         0.0
                     };
-                    draw_tool_line(p, pal, header, row, color, if hot { pal.hover } else { ground }, badge);
+                    draw_tool_line(p, pal, header, row, color, ground, badge);
                     self.busy_visible |= row.busy && header.bottom() > body.y;
                 }
                 Style::Files => {
@@ -244,36 +247,45 @@ fn thumb_fit(w: f32, h: f32, slot: Rect, scale: f32) -> Rect {
     Rect::new(slot.x, slot.y, (w * k).max(1.0), (h * k).max(1.0))
 }
 
+/// One quiet line: a chevron, the status, the tool's name and its target, all in the muted
+/// colours (the duration fainter still), set close after each other like a note. A failure keeps
+/// its status in the warning colour; a running call keeps the pulsing accent.
 fn draw_tool_line(p: &mut Painter, pal: &Palette, r: Rect, row: &Row, status: [u8; 3], ground: [u8; 3], badge: f32) {
-    let face = Face::Mono;
-    let size = 11.5;
-    let pad = 8.0_f32.min(r.w * 0.1);
+    let (face, size) = (Face::Ui, 11.5);
+    let quiet = legible(pal.muted, ground, 4.5);
+    let faint = legible(pal.faint, ground, 3.0);
+    let status = if matches!(row.tone, Tone::Muted) { faint } else { legible(status, ground, 4.5) };
+    let pad = 6.0_f32.min(r.w * 0.1);
     let cy = r.cy();
-    let end = (r.right() - pad - 13.0).max(r.x + pad);
-    let mut x = r.x + pad;
     let arrow = if row.open { "⌄" } else { "›" };
-    p.text_center(Face::Semibold, 14.0, Rect::new(end, r.y, (r.right() - pad - end).max(0.0), r.h), arrow, pal.muted);
+    p.text_center(Face::Ui, 12.0, Rect::new(r.x + pad, r.y, 10.0, r.h), arrow, faint);
+    let mut x = r.x + pad + 15.0;
+    let end = (r.right() - pad - badge).max(x);
+    let gap = 7.0;
     if row.style == Style::Group {
-        let width = end - x;
-        let sw = (p.measure(face, size, &row.stamp) + 7.0).min(width * 0.56);
-        p.text(face, size, x, cy, &row.title, pal.text, (width - sw).max(0.0));
-        p.text(face, size, end - sw, cy, &row.stamp, legible(status, ground, 4.5), sw);
+        let shown = p.text(face, size, x, cy, &row.title, quiet, ((end - x) * 0.7).max(0.0));
+        x += shown + gap;
+        p.text(face, size, x, cy, &row.stamp, status, (end - x).max(0.0));
         return;
     }
-    let end = (end - badge).max(x);
     let available = end - x;
-    let status_w = (p.measure(face, size, &row.stamp) + 7.0).min(available * 0.41);
-    let duration_w =
-        if row.duration.is_empty() { 0.0 } else { (p.measure(face, size, &row.duration) + 7.0).min(available * 0.27) };
-    let rest = (available - status_w - duration_w).max(0.0);
-    let name_w = if row.target.is_empty() { rest } else { (p.measure(face, size, &row.title) + 7.0).min(rest * 0.61) };
-    p.text(face, size, x, cy, &row.stamp, legible(status, ground, 4.5), status_w);
-    x += status_w;
-    p.text(face, size, x, cy, &row.title, legible(pal.accent, ground, 4.5), name_w);
-    x += name_w;
-    p.text(face, size, x, cy, &row.target, pal.text, (rest - name_w).max(0.0));
-    p.text(face, size, end - duration_w, cy, &row.duration, pal.muted, duration_w);
+    let duration_w = if row.duration.is_empty() { 0.0 } else { p.measure(face, 11.0, &row.duration) + gap };
+    if !row.stamp.is_empty() {
+        x += p.text(face, size, x, cy, &row.stamp, status, available * 0.4) + gap;
+    }
+    // A notice has no status: its title carries a warning or accent tone.
+    let name = if row.stamp.is_empty() && !matches!(row.tone, Tone::Muted) { status } else { quiet };
+    let room = (end - x - duration_w).max(0.0);
+    let name_max = if row.target.is_empty() { room } else { room * 0.6 };
+    x += p.text(face, size, x, cy, &row.title, name, name_max) + gap;
+    if !row.target.is_empty() {
+        x += p.text(face, size, x, cy, &row.target, quiet, (end - x - duration_w).max(0.0)) + gap;
+    }
+    p.text(face, 11.0, x.min(end - duration_w), cy, &row.duration, faint, duration_w);
 }
+
+#[cfg(test)]
+mod quiet_tests;
 
 #[cfg(test)]
 mod thumb_tests {

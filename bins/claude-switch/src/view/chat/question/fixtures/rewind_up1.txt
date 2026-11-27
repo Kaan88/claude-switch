@@ -1,0 +1,41 @@
+cursor 34 13
+
+
+❯ Reply with just the word alpha.
+
+● alpha
+
+✻ Sautéed for 1s · done 2:22 PM
+
+❯ Reply with just the word bravo.
+
+● bravo
+
+✻ Churned for 1s · done 2:22 PM
+
+❯ Reply with just the word charlie.
+
+● charlie
+
+✻ Churned for 0s · done 2:22 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Rewind
+
+  Restore the code and/or conversation to the point before…
+
+    Reply with just the word alpha.
+    No code changes
+
+    Reply with just the word bravo.
+    No code changes
+
+  ❯ Reply with just the word charlie.
+    No code changes
+
+    (current)
+
+
+
+  Enter to continue · Esc to cancel
+

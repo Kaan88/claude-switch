@@ -1,0 +1,24 @@
+cursor 22 77
+
+
+
+
+
+❯ Use the AskUserQuestion tool now (no other tools) with one question: header "Colour", question
+  "Which colour do you prefer?", options Red (warm), Green (calm), Blue (cool). multiSelect false.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Colour
+
+Which colour do you prefer?
+
+  1. Red (warm)
+     A warm, energetic red.
+  2. Green (calm)
+     A calm, natural green.
+  3. Blue (cool)
+     A cool, steady blue.
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 5. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Notepad · Esc to cancel

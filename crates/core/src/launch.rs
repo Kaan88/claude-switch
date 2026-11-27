@@ -8,7 +8,7 @@ use crate::util::write_json;
 #[cfg(windows)]
 mod desktop;
 mod history;
-pub use history::{Reservation, record_verified_owner, reserve, with_archive_check};
+pub use history::{Reservation, record_verified_owner, reserve, with_archive_check, with_delete_check};
 #[cfg(test)]
 mod tests;
 use crate::{Account, App, Config, Launch, Place, Refusal, Roots, Running, Session, account as find_account};

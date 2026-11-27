@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and
+  its own folder (subagents, tool results) to the Recycle Bin and removes its Claude Switch marks and
+  summary. It is unavailable, with the reason, while the session runs, is open in a tab or is pinned,
+  and checks again when you press Delete. The desktop app's own record is left alone. **Open a copy,
+  then delete the original…** deletes the original once the copy is written, and the handover dialog
+  has **Delete the original session afterwards** (off by default). The Delete key still hides.
+- `/switch-compact` runs the handover in the background and returns at once; Switch shows the new
+  tab or continuation, or a notice (a message box when no window is open) when it fails. Leftover
+  background job files older than a day are removed at start.
+- Chat: questions with several choices (checkboxes) and forms of several questions are answered from
+  the chat, one question at a time with Back, Next and Submit; every key is checked against the
+  screen first. The `/usage` panel shows as a card with real usage bars.
+- Chat: tool calls are quiet one-line rows in the muted colour, so Claude's text stands out; failed
+  calls still stand out. Command results and `!` shell output show as foldable cards.
+- Chat: **Rewind to here…** on a prompt you typed (right-click), driving Claude Code's rewind list
+  with a screen check before every key; you pick what to restore. **Stop agent** for a running
+  background agent, and **Run in background** only under the running command's own hint.
+- Settings › Chat: the order of the chips under the message box, up to three of your own commands
+  as chips, and **Answer menus from the chat**.
+- Search by meaning (off by default, Settings › Sessions): a model you pick summarizes sessions from
+  the excerpts Suggest names already sends, after a confirmation; search then finds sessions by what
+  they were about, **Ask about past sessions…** answers questions, and Topics can group by subject.
+- OpenCode: **New OpenCode tab…** runs your normal OpenCode in a folder, and **In OpenCode** in the
+  handover preview continues a session there with the handover as the first prompt.
+- Themes: your own themes, imported and exported as files, and one consistent control per setting in
+  Appearance. Text on a transparent terminal is cleaner, and popups no longer turn transparency off.
+- Terminal: Windows Terminal mouse behaviour (arrow pointer, drag to select, right-click copies or
+  pastes; Shift when a program uses the mouse). Shift+Enter starts a new line in Claude tabs.
+- Chat: a reading width, scrollbars that fade, and a grouped toolbar with an effort meter.
+- Side panel: code files get syntax colours, line numbers and indented wrapping.
 - Handover: continues in place by default. When a Claude Switch tab runs the session (dialog,
   automatic handover, `compact --open` and `/switch-compact`), Switch sends `/clear` there, follows
   the tab to the new session and sends the handover as its first message, through the Chat view's

@@ -223,7 +223,7 @@ fn a_message_of_several_lines_keeps_its_breaks_and_waits_for_the_input_line() {
     let now = Instant::now();
     assert_eq!(f.send("first line\nsecond line", now), None);
     let writes = std::mem::take(&mut f.chat().writes);
-    assert_eq!(writes, [mdshared_term::input::encode_paste("first line\nsecond line", true)], "no Enter yet");
+    assert_eq!(writes, [b"\x1b[200~first line\rsecond line\x1b[201~".to_vec()], "no Enter outside the paste yet");
     assert!(f.chat().waiting().is_some());
     assert!(AppState::advance_submission(f.tab(), now, true));
     assert_eq!(f.chat().writes, [b"\r".to_vec()], "Enter once the input line shows both lines");

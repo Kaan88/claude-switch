@@ -7,13 +7,15 @@
 //! animator decides whether anything moves: the app's Reduce motion, Windows' reduced-motion
 //! setting and high contrast all make the switch instant.
 
-use super::{AppState, Form, PAGES, SettingsEvent, appearance, page_form, terminal_appearance};
+use super::{
+    AppState, Form, PAGES, SettingsEvent, appearance, page_form, terminal_appearance, theme_editor::Editor, tiles,
+};
+use crate::windowlook::Cards;
 use mdshared_ui::anim::{Animator, PageEffect, PageTransition, fluent};
 use mdshared_ui::cursor::Cursor;
 use mdshared_ui::gfx::{Face, Gfx, Painter, Rect};
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::menu::Item;
-use mdshared_ui::overlay::draw_backdrop_presence;
 use mdshared_ui::settings::{Outcome, Style, Value};
 use mdshared_ui::textfield::ContextAction;
 use std::time::Instant;
@@ -67,9 +69,27 @@ fn fit(form: &mut Form, p: &mut Painter, mut viewport: Rect) -> Rect {
     viewport
 }
 
+fn draw_form(
+    form: &mut Form,
+    p: &mut Painter,
+    st: &AppState,
+    viewport: Rect,
+    caret: bool,
+    anim: &mut Animator,
+    category: &str,
+) {
+    // A native dropdown/picker can extend into the form's margins. Give its
+    // whole viewport an opaque backing only while that nested popup is open.
+    let cards = if form.popup_open() { Cards::for_frame(st, p) } else { Cards::Native };
+    cards.draw(p, viewport, st.pal().popup, |p| {
+        form.draw_animated(p, st.pal(), viewport, caret, anim, ("settings", category))
+    });
+}
+
 pub struct Settings {
     index: usize,
     pub(in super::super) form: Form,
+    pub(super) editor: Option<Editor>,
     rail_focus: bool,
     key_used: bool,
     hover: Option<usize>,
@@ -88,6 +108,7 @@ impl Settings {
         Self {
             index,
             form: page_form(st, index),
+            editor: None,
             rail_focus: true,
             key_used: false,
             hover: None,
@@ -112,6 +133,7 @@ impl Settings {
                 self.leaving = Some((self.index, old));
             }
             self.index = index;
+            self.editor = None;
             self.swatch_hover = None;
         }
     }
@@ -131,14 +153,17 @@ impl Settings {
 
     /// The first frame after a switch: draws the page being left in the region, saves it for
     /// the cross-fade and puts the region back as it was, for the new page to be drawn on.
-    fn begin_switch(&mut self, p: &mut Painter, pal: &mdshared_ui::theme::Palette, region: Rect, anim: &mut Animator) {
+    fn begin_switch(&mut self, p: &mut Painter, st: &AppState, region: Rect, anim: &mut Animator) {
         let Some((index, mut old)) = self.leaving.take() else { return };
         if !anim.animates() {
             return self.switch.cancel(anim);
         }
         let under = p.snapshot(region);
         let viewport = fit(&mut old, p, self.layout.viewport);
-        old.draw_animated(p, pal, viewport, false, anim, ("settings", PAGES[index].0));
+        draw_form(&mut old, p, st, viewport, false, anim, PAGES[index].0);
+        if index == 0 || PAGES[index].0 == super::TERMINAL {
+            appearance::draw(p, st, &old, None, false);
+        }
         let snapshot = p.snapshot(region);
         under.restore(p.bmp);
         self.switch.begin_with(anim, snapshot, p.scale, PageEffect::Crossfade);
@@ -159,16 +184,17 @@ impl Settings {
         anim: &mut Animator,
     ) {
         let pal = st.pal();
-        let radius = st.appearance.radius;
-        let shadow = if st.high_contrast { 0.0 } else { st.appearance.shadow };
+        let cards = Cards::for_frame(st, p);
+        let radius = cards.decoration(st.appearance.radius);
+        let shadow = if st.high_contrast { 0.0 } else { cards.decoration(st.appearance.shadow) };
         if self.category() == super::TERMINAL {
             terminal_appearance::sync(&mut self.form, &st.config.appearance, st.high_contrast, p.frost_key().is_some());
         }
         let viewport = self.place(p, window);
-        draw_backdrop_presence(p, pal, window.w, window.h, presence);
+        cards.dim(p, pal, window, presence);
         let rail = self.layout.rail;
-        let shadow = shadow * if pal.dark { 1.0 } else { mdshared_ui::gfx::LIGHT_SHADOW };
-        p.soft_shadow(rail, radius, &mdshared_ui::gfx::Shade::POPUP, shadow);
+        let rail_shadow = shadow * if pal.dark { 1.0 } else { mdshared_ui::gfx::LIGHT_SHADOW };
+        p.soft_shadow(rail, radius, &mdshared_ui::gfx::Shade::POPUP, rail_shadow);
         p.frame(rail, radius, pal.popup, pal.popup_line);
         p.text(Face::Semibold, 17.0, rail.x + 18.0, rail.y + 33.0, "Settings", pal.text, rail.w - 36.0);
         for (i, &(label, _)) in PAGES.iter().enumerate() {
@@ -196,17 +222,25 @@ impl Settings {
         }
         let mut style = Style::CLASSIC;
         style.radius = radius;
-        style.soft_shadow = Some(if st.high_contrast { 0.0 } else { st.appearance.shadow });
+        style.soft_shadow = Some(shadow);
         style.backdrop = 0.0;
         let region = self.switch_region(window);
         for form in std::iter::once(&mut self.form).chain(self.leaving.as_mut().map(|(_, f)| f)) {
             form.set_style(style);
             form.set_high_contrast(st.high_contrast);
         }
-        self.begin_switch(p, pal, region, anim);
-        self.form.draw_animated(p, pal, viewport, true, anim, ("settings", self.category()));
-        if self.index == 0 {
-            appearance::draw(p, st, &self.form, self.swatch_hover);
+        self.begin_switch(p, st, region, anim);
+        let category = self.category();
+        draw_form(&mut self.form, p, st, viewport, true, anim, category);
+        if let Some(editor) = &self.editor {
+            let note = editor.note(&self.form);
+            let r = Rect::new(rail.x, rail.bottom() + 8.0, rail.w, 60.0);
+            p.frame(r, cards.decoration(6.0), pal.popup, pal.popup_line);
+            let (summary, detail) = note.split_once(" · ").unwrap_or((&note, ""));
+            p.text(Face::Semibold, 12.0, r.x + 8.0, r.y + 18.0, summary, pal.text, r.w - 16.0);
+            p.text(Face::Ui, 11.5, r.x + 8.0, r.y + 40.0, detail, pal.muted, r.w - 16.0);
+        } else if self.has_palettes() {
+            appearance::draw(p, st, &self.form, self.swatch_hover, self.key_used && !self.rail_focus);
         }
         // After the page and before anything over it: the menus and pickers are the form's own
         // and are drawn inside it, so only the blend is left.
@@ -214,10 +248,19 @@ impl Settings {
     }
 
     fn swatch_at(&self, x: f32, y: f32) -> Option<(u32, usize)> {
-        (self.index == 0 && self.form.colour_open().is_none()).then(|| appearance::hit(&self.form, x, y)).flatten()
+        self.has_palettes().then(|| tiles::hit(&self.form, x, y)).flatten()
+    }
+    fn has_palettes(&self) -> bool {
+        self.editor.is_none() && (self.index == 0 || self.category() == super::TERMINAL)
     }
 
-    pub(crate) fn key(&mut self, key: &KeyName, mods: Mods, text: Option<&str>) -> SettingsEvent {
+    pub(crate) fn key(
+        &mut self,
+        config: &claude_switch_core::Config,
+        key: &KeyName,
+        mods: Mods,
+        text: Option<&str>,
+    ) -> SettingsEvent {
         self.key_used = true;
         if self.rail_focus {
             let next = match key {
@@ -233,6 +276,12 @@ impl Settings {
                 _ => return SettingsEvent::Form(Outcome::Redraw),
             };
             return SettingsEvent::Page(next);
+        }
+        if self.has_palettes()
+            && self.form.colour_open().is_none()
+            && let Some(outcome) = tiles::key(&mut self.form, config, key)
+        {
+            return SettingsEvent::Form(outcome);
         }
         let first = self.first_row();
         let was_first = self.form.focus_id() == first;
@@ -302,10 +351,13 @@ impl Settings {
     fn press_with(&mut self, x: f32, y: f32, press: impl FnOnce(&mut Form) -> Outcome) -> SettingsEvent {
         self.pressed = None;
         self.key_used = false;
-        let swatch = self.swatch_at(x, y);
+        self.swatch_pressed = self.swatch_at(x, y);
+        if let Some((id, _)) = self.swatch_pressed {
+            self.rail_focus = false;
+            self.form.focus_row(id);
+            return SettingsEvent::Form(Outcome::Redraw);
+        }
         let outcome = press(&mut self.form);
-        // A press that only closed the form's open dropdown is not a choice.
-        self.swatch_pressed = swatch.filter(|_| outcome == Outcome::None);
         if self.layout.rail.contains(x, y) && outcome == Outcome::Closed {
             // The native form dismisses its open dropdown or picker first, returning
             // Redraw (or a reverted colour), not Closed. Do not click through them.
@@ -439,7 +491,7 @@ mod tests {
                     settings.form.rows().iter().enumerate().filter_map(|(i, row)| row.id().map(|id| (i, id))).collect();
                 let mods = Mods::default();
                 for (row, id) in controls {
-                    settings.key(&KeyName::Tab, mods, None);
+                    settings.key(&st.config, &KeyName::Tab, mods, None);
                     assert_eq!(settings.form.focus_id(), Some(id), "{label}");
                     let control = settings.form.control_rect(row);
                     assert!(control.w > 0.0 && control.h > 0.0);
@@ -458,11 +510,11 @@ mod tests {
                     assert!(p.measure(Face::Ui, 13.5, name) <= room, "{label}: {name}");
                     assert!(p.measure(Face::Ui, 11.5, help) <= room, "{label}: {help} (room {room})");
                 }
-                settings.key(&KeyName::Tab, mods, None);
+                settings.key(&st.config, &KeyName::Tab, mods, None);
                 let close = settings.form.close_rect();
                 assert!(settings.form.focus_on_close());
                 assert!(close.y >= body.bottom() && close.bottom() < card.bottom());
-                settings.key(&KeyName::Tab, mods, None);
+                settings.key(&st.config, &KeyName::Tab, mods, None);
                 assert!(settings.rail_focus);
             }
         }
@@ -487,7 +539,7 @@ mod tests {
         settings.press(swatch.cx(), swatch.cy(), mods, 1);
         settings.release(swatch.cx(), swatch.cy());
         assert!(settings.form.colour_open().is_some());
-        assert!(matches!(settings.key(&KeyName::Escape, mods, None), SettingsEvent::Form(Outcome::Redraw)));
+        assert!(matches!(settings.key(&st.config, &KeyName::Escape, mods, None), SettingsEvent::Form(Outcome::Redraw)));
         assert!(settings.form.colour_open().is_none());
         settings.press(swatch.cx(), swatch.cy(), mods, 1);
         settings.release(swatch.cx(), swatch.cy());
@@ -531,13 +583,13 @@ mod tests {
         };
 
         open(&mut settings, &mut p);
-        settings.key(&KeyName::Escape, mods, None);
+        settings.key(&st.config, &KeyName::Escape, mods, None);
         assert!(!settings.colour_open());
         assert_eq!(settings.form.colour(id), before, "Escape restores");
 
         open(&mut settings, &mut p);
         assert!(
-            matches!(settings.key(&KeyName::Enter, mods, None), SettingsEvent::Form(Outcome::Changed { id: c, .. }) if c == id)
+            matches!(settings.key(&st.config,&KeyName::Enter, mods, None), SettingsEvent::Form(Outcome::Changed { id: c, .. }) if c == id)
         );
         assert!(!settings.colour_open());
         let applied = settings.form.colour(id);

@@ -44,6 +44,14 @@ fn bounded(text: &str) -> String {
     out
 }
 
+/// Without the blank lines around it; the first line keeps its indent, which is part of the output
+/// (`git status --short`).
+fn blank_lines_trimmed(text: &str) -> &str {
+    let text = text.trim_end();
+    let first = text.len() - text.trim_start().len();
+    &text[text[..first].rfind('\n').map_or(0, |i| i + 1)..]
+}
+
 /// The record's text, if it is one of these records.
 pub(super) fn parse(text: &str) -> Option<Local> {
     let text = text.trim_start();
@@ -57,7 +65,8 @@ pub(super) fn parse(text: &str) -> Option<Local> {
     let both = |out: &str, err: &str| {
         let (stdout, stderr) = (tag(text, out), tag(text, err));
         (stdout.is_some() || stderr.is_some()).then(|| {
-            let (stdout, stderr) = (stdout.unwrap_or("").trim(), stderr.unwrap_or("").trim());
+            let (stdout, stderr) =
+                (blank_lines_trimmed(stdout.unwrap_or("")), blank_lines_trimmed(stderr.unwrap_or("")));
             let joined = [stdout, stderr].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n");
             (bounded(&joined), stdout.is_empty() && !stderr.is_empty())
         })
@@ -103,6 +112,16 @@ mod tests {
         assert_eq!(
             parse("<bash-stdout></bash-stdout><bash-stderr>fatal: not a repository</bash-stderr>"),
             Some(Local::ShellOutput { text: "fatal: not a repository".into(), failed: true })
+        );
+        assert_eq!(
+            parse("<bash-stdout>\n  \n M docs/TODO.md\n?? notes.txt\n</bash-stdout><bash-stderr></bash-stderr>"),
+            Some(Local::ShellOutput { text: " M docs/TODO.md\n?? notes.txt".into(), failed: false }),
+            "blank lines go, the first line keeps its indent"
+        );
+        assert_eq!(
+            parse("<bash-stdout>  \n</bash-stdout><bash-stderr></bash-stderr>"),
+            Some(Local::ShellOutput { text: String::new(), failed: false }),
+            "a command that printed nothing"
         );
         assert_eq!(parse("Plain prompt mentioning <bash-input>"), None);
         assert_eq!(parse("<command-name>/effort</command-name>"), None);

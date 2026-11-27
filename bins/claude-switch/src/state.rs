@@ -41,9 +41,18 @@ pub enum Msg {
     /// The folder chosen in the New session dialog's folder picker.
     FolderPicked(std::path::PathBuf),
     ArchiveReportSaved(crate::archive_report::ReportResult),
+    ThemeFile(Result<Option<Box<claude_switch_core::config::theme::NamedTheme>>, String>),
     Tray(crate::tray::Event),
     /// Another process of this user asked to open a handover tab (`handover_pipe`).
-    Handover(Box<crate::compact_cli::Loaded>, std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>),
+    /// The ticket says whether the pipe thread gave up on it first (then it is not acted on).
+    Handover(
+        Box<crate::compact_cli::Loaded>,
+        std::sync::mpsc::Sender<Result<crate::handover_pipe::Outcome, String>>,
+        crate::handover_pipe::Ticket,
+    ),
+    /// A handover from another process failed (a background `/switch-compact`'s reason, or a
+    /// request the pipe thread could not load), or opened with a note. Shown as a notice only.
+    HandoverNotice(crate::compact_cli::Notice),
 }
 
 /// The height of a folder heading and of a session row in the list.
@@ -171,7 +180,12 @@ pub struct AppState {
     pub undo_hide: Option<crate::session_marks::UndoHide>,
     pub archive_picks: HashSet<String>,
     pub archive_count: usize,
+    /// Where deleted sessions go: the Recycle Bin (in tests, a folder of the test's own).
+    pub recycle: std::sync::Arc<dyn claude_switch_core::delete::Bin>,
+    /// Copies whose original is deleted once the copy's transcript is written (`delete`).
+    pub copy_deletes: Vec<crate::delete::AfterCopy>,
     pub naming_job: Option<Job<crate::session_panel::NameResults>>,
+    pub meaning: crate::meaning::Meaning,
     pub sections: Sections,
     pub collapsed: HashSet<String>,
     pub selected: Option<String>,
@@ -286,7 +300,10 @@ impl AppState {
             undo_hide: None,
             archive_picks: HashSet::new(),
             archive_count: 0,
+            recycle: crate::delete::default_bin(),
+            copy_deletes: Vec::new(),
             naming_job: None,
+            meaning: Default::default(),
             sections: Sections::new(400.0, ROW_H),
             collapsed: HashSet::new(),
             selected: None,
@@ -349,6 +366,7 @@ impl AppState {
             s.error("Session marks are read-only", error);
         }
         s.rebuild_accounts();
+        s.load_meaning();
         s
     }
 
@@ -466,7 +484,7 @@ impl AppState {
         changed |= self.take_conversation_search();
         changed |= self.take_related();
         let selected = self.selected_session().map(|s| s.file.clone());
-        self.take_naming_job() | self.session_size.take(selected.as_deref()) | changed
+        self.take_naming_job() | self.take_meaning_job() | self.session_size.take(selected.as_deref()) | changed
     }
 
     pub fn apply_scan(&mut self, scan: Scan) {
@@ -603,6 +621,10 @@ impl AppState {
         self.info = Some(InfoBar::new(Severity::Error, title, text).closable(true));
     }
 
+    pub fn note(&mut self, title: &str, text: String) {
+        self.info = Some(InfoBar::new(Severity::Info, title, text).closable(true));
+    }
+
     pub fn warn(&mut self, title: &str, text: String) {
         self.info = Some(InfoBar::new(Severity::Warning, title, text).closable(true));
     }
@@ -632,7 +654,11 @@ fn appearance(config: &Config, forced_dark: Option<bool>, high_contrast: bool) -
         let a = &config.appearance;
         let base = crate::termtheme::palettes::get(dark, if dark { &a.dark_theme } else { &a.light_theme });
         let mut tokens = Tokens::new(dark);
-        tokens.palette = crate::windowlook::palette(&base.palette, &look, platform::system_accent());
+        let system = platform::system_accent();
+        tokens.palette = match crate::termtheme::named::selected(a, dark) {
+            Some(t) => crate::termtheme::named::palette(t, a, system),
+            None => crate::windowlook::palette(&base.palette, &look, system),
+        };
         tokens
     };
     let terminal =

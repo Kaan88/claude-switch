@@ -44,8 +44,7 @@ pub(crate) const CLASSIC_RENDERER: &str = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"
 /// screen, where the CLI's fullscreen renderer draws. Other programs are left as they are.
 /// Handover tabs name Claude Code by its absolute path (`…\claude.exe`), so the file stem counts.
 pub(crate) fn classic_renderer(launch: &mut Launch, enabled: bool) {
-    let stem = launch.program.file_stem().and_then(|s| s.to_str());
-    if enabled && stem.is_some_and(|s| s.eq_ignore_ascii_case("claude")) {
+    if enabled && term::is_claude_program(&launch.program) {
         launch.env.insert(CLASSIC_RENDERER.into(), "1".into());
     }
 }
@@ -57,6 +56,12 @@ fn button_of(b: Button) -> Option<MouseButton> {
         Button::Right => Some(MouseButton::Right),
         _ => None,
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MouseClipboard {
+    Copy(String),
+    Paste,
 }
 
 impl AppState {
@@ -297,7 +302,8 @@ impl AppState {
         }
         let modes = tab.term.screen.modes();
         let selected = tab.term.selected_text().is_some();
-        let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected);
+        let keyboard = termkeys::keyboard_now(tab.term.keyboard, &tab.term.screen);
+        let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected, keyboard);
         match action {
             KeyAction::Command(c) => self.command(now, c, None),
             KeyAction::Copy => self.copy_selection(),
@@ -342,21 +348,26 @@ impl AppState {
         }
     }
 
-    pub fn copy_selection(&mut self) {
+    fn copy_selection(&mut self) {
         let Some(tab) = self.tabs.shown_mut() else { return };
-        if let Some(text) = tab.term.selected_text() {
+        if let Some(text) = tab.term.take_selected_text(false).filter(|t| !t.is_empty()) {
             platform::set_clipboard_text(&text);
         }
-        tab.term.selection = None;
     }
 
     pub fn paste(&mut self) {
-        if self.chat_paste() {
+        if !self.chat_paste() {
+            self.paste_terminal(platform::clipboard_text);
+        }
+    }
+
+    fn paste_terminal(&mut self, clipboard_text: impl FnOnce() -> Option<String>) {
+        if self.tabs.shown().is_none_or(|tab| tab.term.ended.is_some()) {
             return;
         }
         self.flush_drop_before_input();
         self.note_chat_terminal_input();
-        let text = platform::clipboard_text();
+        let text = clipboard_text();
         if let Some(tab) = self.tabs.shown_mut() {
             if !tab.term.screen.modes().bracketed_paste && text.as_ref().is_some_and(|s| s.contains(['\r', '\n'])) {
                 self.warn(
@@ -371,14 +382,33 @@ impl AppState {
         }
     }
 
-    /// A press on the terminal shown: a report to the program, or the start of a selection.
+    /// A press on the terminal shown, including clipboard actions targeted at the drawer itself.
     pub fn term_press(&mut self, x: f32, y: f32, button: Button, clicks: u32, mods: Mods) {
-        let (area, Some(m)) = (self.term_area, self.metrics) else { return };
-        let Some(tab) = self.tabs.shown_mut() else { return };
+        match self.term_pointer_press(x, y, button, clicks, mods) {
+            Some(MouseClipboard::Copy(text)) => {
+                platform::set_clipboard_text(&text);
+            }
+            Some(MouseClipboard::Paste) => self.paste_terminal(platform::clipboard_text),
+            None => {}
+        }
+    }
+
+    fn term_pointer_press(
+        &mut self,
+        x: f32,
+        y: f32,
+        button: Button,
+        clicks: u32,
+        mods: Mods,
+    ) -> Option<MouseClipboard> {
+        let (area, m) = (self.term_area, self.metrics?);
+        let tab = self.tabs.shown_mut()?;
         let t = &mut tab.term;
         let modes = t.screen.modes();
-        let Some(b) = button_of(button) else { return };
-        if termkeys::mouse_to_program(&modes, mods.shift) {
+        let b = button_of(button)?;
+        // Windows Terminal passes mouse input to a tracking program before trying local
+        // selection or clipboard actions. Shift suppresses those reports.
+        if t.ended.is_none() && termkeys::mouse_to_program(&modes, mods.shift) {
             if let Some((row, col)) = m.cell_at(area, x, y) {
                 let ev =
                     MouseEvent { kind: MouseKind::Press, button: Some(b), col, row, mods: termkeys::term_mods(mods) };
@@ -391,13 +421,22 @@ impl AppState {
                 t.reported = Some(b);
                 t.last_cell = Some((row, col));
             }
-            return;
+            return None;
         }
-        if b == MouseButton::Left {
-            let at = t.view(true).point_at(&t.screen, &m, area, x, y);
-            let kind = if mods.alt { SelectionKind::Block } else { SelectionKind::Stream };
-            t.selection = Some(Selection::start(&t.screen, at, kind, clicks.clamp(1, 3) as u8));
-            t.selecting = true;
+        match b {
+            MouseButton::Left => {
+                let at = t.view(true).point_at(&t.screen, &m, area, x, y);
+                let kind = if mods.alt { SelectionKind::Block } else { SelectionKind::Stream };
+                t.selection = Some(Selection::start(&t.screen, at, kind, clicks.clamp(1, 3) as u8));
+                t.selecting = true;
+                None
+            }
+            MouseButton::Right => match t.take_selected_text(mods.shift) {
+                Some(text) if !text.is_empty() => Some(MouseClipboard::Copy(text)),
+                Some(_) => None,
+                None => t.ended.is_none().then_some(MouseClipboard::Paste),
+            },
+            _ => None,
         }
     }
 
@@ -411,7 +450,7 @@ impl AppState {
             return t.extend_selection(at);
         }
         let modes = t.screen.modes();
-        if !termkeys::mouse_to_program(&modes, mods.shift) {
+        if t.ended.is_some() || !termkeys::mouse_to_program(&modes, mods.shift) {
             return false;
         }
         let cell = match t.reported {
@@ -425,7 +464,11 @@ impl AppState {
             let ev =
                 MouseEvent { kind: MouseKind::Move, button: t.reported, col, row, mods: termkeys::term_mods(mods) };
             if let Some(bytes) = input::encode_mouse(ev, &modes) {
-                if let Some(pane) = &mut tab.pane {
+                // A drag belongs to its press, which counted as input; a hover is no input at
+                // all: it must not stop a send or a card's keys halfway.
+                if t.reported.is_some()
+                    && let Some(pane) = &mut tab.pane
+                {
                     pane.note_terminal_input();
                 }
                 t.write(&bytes);
@@ -473,6 +516,10 @@ impl AppState {
         if lines == 0 {
             return;
         }
+        if t.ended.is_some() {
+            t.scroll_by(lines);
+            return;
+        }
         let modes = t.screen.modes();
         match termkeys::wheel(&modes, mods.shift) {
             Wheel::Scroll => t.scroll_by(lines),
@@ -486,8 +533,9 @@ impl AppState {
             }
             Wheel::Report => {
                 let Some(m) = metrics else { return };
+                // The program scrolls; card keys go on, each checking the screen first.
                 if let Some(pane) = &mut tab.pane {
-                    pane.note_terminal_input();
+                    pane.note_terminal_wheel();
                 }
                 let (row, col) = m.cell_clamped(area, x, y, t.screen.cols(), t.screen.rows());
                 let button = if lines > 0 { MouseButton::WheelUp } else { MouseButton::WheelDown };

@@ -140,6 +140,7 @@ impl AppState {
                 match self.list_mode() {
                     Mode::Projects => self.config.group_by_folder ^= true,
                     Mode::Recent => self.config.show_sittings ^= true,
+                    Mode::Topics if self.config.meaning.on() => self.config.meaning.group_topics ^= true,
                     _ => return,
                 }
                 self.save_config();
@@ -226,7 +227,7 @@ impl AppState {
                 MenuKind::Tab(tab) => return self.tab_menu_chosen(cx.now(), tab, id),
                 MenuKind::Chat(tab, mode) => return self.chat_menu_chosen(cx, tab, mode, id),
                 MenuKind::Field(field) => return self.field_menu_chosen(field, id),
-                MenuKind::Conversation(tab) => return self.conversation_menu_chosen(tab, id),
+                MenuKind::Conversation(tab) => return self.conversation_menu_chosen(cx, tab, id),
             };
             self.command(cx.now(), id, anchor);
         }

@@ -217,16 +217,38 @@ impl AppState {
         let Some(listener) = self.compact.listener.take() else { return };
         let roots = roots.clone();
         listener.serve(move |bytes| {
-            let result = (|| {
-                let args = crate::compact_cli::decode_request(&bytes)?;
-                let request = crate::compact_cli::load(&roots, args)?;
-                let (tx, rx) = std::sync::mpsc::channel();
-                proxy.lock().map_err(|_| "Claude Switch is closing.")?.send(Msg::Handover(Box::new(request), tx));
-                rx.recv_timeout(crate::handover_pipe::REPLY_WAIT).map_err(
-                    |_| "Timed out waiting for the window. The outcome is unknown; check for the tab before retrying.",
-                )?
-            })();
-            crate::handover_pipe::reply(&result)
+            use crate::compact_cli::Notice;
+            use crate::handover_pipe::{Answer, Outcome, REPLY_WAIT, TAKEN_WAIT, Ticket};
+            let post = |msg: Msg| -> Result<(), String> {
+                proxy.lock().map_err(|_| "Claude Switch is closing.")?.send(msg);
+                Ok(())
+            };
+            // A background handover's failure or note: shown as a notice, nothing else.
+            if let Some(notice) = crate::compact_cli::decode_notice(&bytes) {
+                let answer = match notice.and_then(|n| post(Msg::HandoverNotice(n))) {
+                    Ok(()) => Answer::Done(Outcome::Shown),
+                    Err(e) => Answer::Failed(e),
+                };
+                return crate::handover_pipe::reply(&answer);
+            }
+            let answer =
+                match crate::compact_cli::decode_request(&bytes).and_then(|a| crate::compact_cli::load(&roots, a)) {
+                    // Shown here as well (the caller may run in the background, with nobody
+                    // reading its output); `shown:` only once it is posted to the window.
+                    Err(e) => match post(Msg::HandoverNotice(Notice::Failed(e.clone()))) {
+                        Ok(()) => Answer::Shown(e),
+                        Err(_) => Answer::Failed(e),
+                    },
+                    Ok(request) => {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let ticket = Ticket::default();
+                        match post(Msg::Handover(Box::new(request), tx, ticket.clone())) {
+                            Ok(()) => crate::handover_pipe::await_window(&rx, &ticket, REPLY_WAIT, TAKEN_WAIT),
+                            Err(e) => Answer::Failed(e),
+                        }
+                    }
+                };
+            crate::handover_pipe::reply(&answer)
         });
     }
 

@@ -64,6 +64,9 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     if let Some(topic) = st.marks.topic(&s.id) {
         facts.push(("Topic", topic.to_owned()));
     }
+    if let Some(about) = st.meaning_summary(&s.id) {
+        facts.push(("About", about.to_owned()));
+    }
     for (label, value) in facts {
         p.text(Face::Ui, 12.0, x, y + 9.0, label, pal.muted, LABEL_W - 8.0);
         p.text(Face::Ui, 13.0, x + LABEL_W, y + 9.0, &value, pal.text, w - LABEL_W);

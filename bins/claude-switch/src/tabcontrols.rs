@@ -189,7 +189,14 @@ mod tests {
         assert_eq!(number(&KeyName::Char('2'), ctrl, true), None);
         assert_eq!(number(&KeyName::Char('2'), Mods { alt: true, ..ctrl }, false), None);
         assert_eq!(
-            crate::termkeys::key(Some(&KeyName::Char('2')), ctrl, None, &Default::default(), false),
+            crate::termkeys::key(
+                Some(&KeyName::Char('2')),
+                ctrl,
+                None,
+                &Default::default(),
+                false,
+                crate::termkeys::Keyboard::Classic,
+            ),
             crate::termkeys::KeyAction::Send(vec![0])
         );
     }
@@ -272,7 +279,7 @@ mod tests {
         app.tab_menu_chosen(now, tab, COPY_BASE + 1);
         assert!(matches!(
             app.dialog,
-            Some(Dialog::Confirm { then: Pending::Copy { id: ref got, ref account }, .. }) if got == &id && account == "work"
+            Some(Dialog::Confirm { then: Pending::Copy { id: ref got, ref account, .. }, .. }) if got == &id && account == "work"
         ));
         app.tab_menu_chosen(now, tab, COMPACT);
         assert!(matches!(app.dialog, Some(Dialog::Compact(_))));

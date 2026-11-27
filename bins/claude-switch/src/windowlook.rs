@@ -12,6 +12,8 @@ use mdshared_ui::tokens::{ACCENT_CONTRAST, accented, legible};
 
 use crate::dialogs;
 use crate::state::{AppState, Msg};
+mod overlay;
+pub(crate) use overlay::Cards;
 
 /// `base` (one of `termtheme::palettes`) with Claude's clay as its own accent, then the accent
 /// the appearance asks for put in: clay stays available on every palette.
@@ -29,26 +31,59 @@ pub fn apply(st: &AppState, cx: &mut Cx<'_, Msg>) {
     cx.anim().set_policy(if st.high_contrast { Policy::Never } else { st.appearance.motion.policy() });
 }
 
-fn popup<T: Clone>(
+fn popup<T: Clone + PartialEq>(
     cx: &mut Cx<'_, Msg>,
     p: &mut Painter,
     window: Rect,
     pal: &Palette,
     menu: &mut Menu<T>,
     style: (Look, bool),
-    id: impl AsId,
+    (id, switches): (impl AsId, &[(T, bool)]),
 ) {
     let id = Id::new(id);
-    menu.set_look(style.0);
-    menu.set_high_contrast(style.1);
+    let (look, hc) = style;
+    menu.set_look(look);
+    menu.set_high_contrast(hc);
     let t = cx.anim().value_from(id, 0.0_f32, 1.0, document::MENU.enter);
     if t < 1.0 {
-        menu.draw_in_presence(p, pal, window, t);
+        menu.draw_entering_with(p, window, t, mdshared_ui::menu::Entrance::Drop, |p, m| {
+            m.draw_in(p, pal, window);
+            menu_switches(p, pal, m, switches);
+        });
         cx.animating(menu.presence_bounds());
     } else {
         menu.draw_in_animated(p, pal, window, cx.anim(), id);
+        menu_switches(p, pal, menu, switches);
         cx.animating(menu.drawn_bounds());
     }
+}
+
+fn menu_switches<T: Clone + PartialEq>(p: &mut Painter, pal: &Palette, menu: &Menu<T>, switches: &[(T, bool)]) {
+    use mdshared_ui::toggle::{self, Toggle};
+    if switches.is_empty() {
+        return;
+    }
+    let clip = p.clip(menu.rect().inset(1.0));
+    for (i, item) in menu.items.iter().enumerate() {
+        if let Some((_, on)) = switches.iter().find(|(id, _)| id == &item.id) {
+            let row = menu.row_rect(i);
+            // Keep a column for Ctrl+D and Delete to the right of the switch.
+            let r = Rect::new(
+                row.right() - 64.0 - toggle::TOGGLE_W,
+                row.cy() - toggle::TOGGLE_H / 2.0,
+                toggle::TOGGLE_W,
+                toggle::TOGGLE_H,
+            );
+            toggle::draw_toggle(
+                p,
+                pal,
+                r,
+                &Toggle::new(*on),
+                toggle::Look { hovered: menu.hover == Some(i), disabled: !item.enabled, ..Default::default() },
+            );
+        }
+    }
+    p.restore(clip);
 }
 
 pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Rect) {
@@ -57,14 +92,17 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
     let mut look = st.appearance.menu_look();
     look.soft_shadow = !st.high_contrast;
     look.shadow &= !st.high_contrast;
-    let style = (look, st.high_contrast);
+    let cards = Cards::for_frame(st, p);
+    let style = (cards.menu(look), st.high_contrast);
     if let Some(menu) = st.accounts_dd.menu_mut() {
-        popup(cx, p, window, &pal, menu, style, "accounts-menu");
+        popup(cx, p, window, &pal, menu, style, ("accounts-menu", &[]));
     }
     // A field's menu over a dialog belongs above it.
     let over_dialog = st.dialog.is_some();
+    let switches = matches!(st.menu, Some((crate::state::MenuKind::Row, _))).then(|| st.row_switches());
+    let switches = switches.as_ref().map_or(&[][..], |rows| rows.as_slice());
     if !over_dialog && let Some((kind, menu)) = &mut st.menu {
-        popup(cx, p, window, &pal, menu, style, ("popup", *kind));
+        popup(cx, p, window, &pal, menu, style, (("popup", *kind), switches));
     }
     let t = if st.dialog.is_some() {
         cx.animating(window);
@@ -74,11 +112,14 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
     };
     dialogs::draw(st, cx, p, window, t);
     if over_dialog && let Some((kind, menu)) = &mut st.menu {
-        popup(cx, p, window, &pal, menu, style, ("popup", *kind));
+        popup(cx, p, window, &pal, menu, style, (("popup", *kind), switches));
     }
     if let Some(palette) = &mut st.palette {
         let t = cx.anim().value_from("palette-enter", 0.0_f32, 1.0, document::MENU.enter);
-        palette.draw_presence(p, &pal, window, TITLE_H, true, t);
+        let r = palette.layout(window, TITLE_H);
+        mdshared_ui::anim::pop(p, r.inset(-18.0), t, (0.0, -mdshared_ui::menu::MENU_DROP), |p| {
+            cards.draw(p, r, pal.popup_line, |p| palette.draw(p, &pal, window, TITLE_H, true));
+        });
         if t < 1.0 {
             cx.animating(palette.presence_bounds());
         }
@@ -89,6 +130,49 @@ pub fn draw_overlays(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, w
 mod tests {
     use super::*;
     use mdshared_ui::{appearance::AccentFrom, cover::contrast, gfx::mix, theme};
+
+    #[test]
+    fn a_menu_switch_keeps_the_row_label_and_shortcut_in_place() {
+        use mdshared_text::Bitmap;
+        use mdshared_ui::{
+            gfx::{Face, Gfx},
+            menu::Item,
+        };
+        let window = Rect::new(0.0, 0.0, 320.0, 220.0);
+        let pal = theme::DARK;
+        let mut bmp = Bitmap::new(320, 220);
+        let mut gfx = Gfx::new();
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        let mut m = Menu::new(
+            vec![Item::new(1, "Pinned").hint("Ctrl+D"), Item::new(2, "Session hidden").hint("Delete")],
+            16.0,
+            16.0,
+            false,
+        )
+        .min_width(244.0);
+        m.draw_in(&mut p, &pal, window);
+        let before = p.bmp.pixels.clone();
+        menu_switches(&mut p, &pal, &m, &[(1, true), (2, false)]);
+        let mut changed = [false; 2];
+        for (i, item) in m.items.iter().enumerate() {
+            let r = m.row_rect(i);
+            let label_end = r.x + 10.0 + p.measure(Face::Ui, m.look().text, &item.label);
+            let hint_left = r.right() - 10.0 - p.measure(Face::Ui, 12.0, &item.hint);
+            for y in r.y as usize..r.bottom() as usize {
+                for x in r.x as usize..r.right() as usize {
+                    let off = (y * 320 + x) * 4;
+                    if before[off..off + 4] != p.bmp.pixels[off..off + 4] {
+                        assert!(x as f32 > label_end && (x as f32) < hint_left);
+                        changed[i] = true;
+                    }
+                }
+            }
+        }
+        assert_eq!(changed, [true, true]);
+        if let Some(dir) = std::env::var_os("CS_THEME_SHOTS") {
+            p.bmp.write_png(&std::path::Path::new(&dir).join("menu-switches.png")).unwrap();
+        }
+    }
 
     #[test]
     fn clay_is_readable_on_light_surfaces_and_its_button_label_is_readable_in_both_themes() {

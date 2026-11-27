@@ -36,7 +36,7 @@ pub fn draw_history_row(st: &mut AppState, p: &mut Painter, id: &str, x: f32, y:
 
 impl Compact {
     pub fn draw(&mut self, d: &mut Draw<'_>, p: &mut Painter, w: f32, h: f32) {
-        let height = if self.phase == Phase::Preview { 454.0_f32 } else { 410.0_f32 };
+        let height = if self.phase == Phase::Preview { 480.0_f32 } else { 410.0_f32 };
         let card = dialog_card(660.0_f32.min(w - 28.0), height.min(h - 24.0), w, h);
         let footer = d.card(p, card);
         let body = Rect::new(card.x + DIALOG_PAD, card.y + 51.0, card.w - DIALOG_PAD * 2.0, footer.y - card.y - 51.0);
@@ -211,18 +211,39 @@ impl Compact {
             );
             editor_y += h + 4.0;
         }
-        self.draw_editor(d, p, Rect::new(body.x, body.y + editor_y, body.w, (body.h - 34.0 - editor_y).max(0.0)), true);
+        self.draw_editor(d, p, Rect::new(body.x, body.y + editor_y, body.w, (body.h - 60.0 - editor_y).max(0.0)), true);
+        self.draw_delete_box(d, p, Rect::new(body.x, footer.y - 50.0, body.w, 20.0));
         d.footer(
             p,
             footer,
             &[
                 (if self.in_place { "Continue here" } else { "Open in CLI" }, true, OK),
+                ("In OpenCode", false, OPENCODE),
                 ("Cancel", false, CANCEL),
                 ("Back", false, BACK),
                 ("Save as…", false, SAVE),
                 ("Copy", false, COPY),
             ],
         );
+    }
+
+    /// "Delete the original session afterwards" (Alt+D), off each time the dialog opens.
+    fn draw_delete_box(&self, d: &mut Draw<'_>, p: &mut Painter, row: Rect) {
+        let label = format!("{} (to the Recycle Bin)  ·  Alt+D", crate::delete::CHECKBOX);
+        let box_ = Rect::new(row.x, row.cy() - 8.0, 16.0, 16.0);
+        let hot = d.hover == Some(Target::Dialog(DELETE_ORIGINAL));
+        p.frame(
+            box_,
+            3.0,
+            if self.delete_original { d.pal.accent } else { d.pal.field },
+            if hot { d.pal.accent } else { d.pal.line },
+        );
+        if self.delete_original {
+            p.text_center(Face::Semibold, 11.0, box_, "✓", d.pal.on_accent);
+        }
+        let w = p.measure(Face::Ui, FONT, &label).min(row.w - 24.0);
+        p.text(Face::Ui, FONT, box_.right() + 8.0, row.cy(), &label, d.pal.text, row.w - 24.0);
+        d.hits.push((Rect::new(row.x, row.y, 24.0 + w, row.h), Target::Dialog(DELETE_ORIGINAL)));
     }
 
     fn draw_history(&self, d: &mut Draw<'_>, p: &mut Painter, body: Rect, footer: Rect) {

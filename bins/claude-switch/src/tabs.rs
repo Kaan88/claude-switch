@@ -50,6 +50,8 @@ pub struct Tab {
     pub term: Term,
     pub pane: Option<crate::view::Pane>,
     pub attention: crate::attention::TabAttention,
+    /// An OpenCode tab: the folder it runs in. Not a Claude session: no account, transcript or pane.
+    pub opencode: Option<PathBuf>,
 }
 
 impl Tab {
@@ -128,6 +130,7 @@ impl Tabs {
             cwd: None,
             term,
             pane: None,
+            opencode: None,
             attention: Default::default(),
         });
         self.active = Some(id);
@@ -321,6 +324,9 @@ pub fn draw(
             p.fill(Rect::new(gx - 8.0, gy - 8.0, 16.0, 16.0), under);
             match color {
                 None => p.icon(glyph::OUTLINE, 13.0, gx, gy, if s.active { pal.accent } else { pal.muted }),
+                Some(_) if tabs.get(*id).is_some_and(|t| t.opencode.is_some()) => {
+                    p.icon(crate::opencode_tab::GLYPH, 13.0, gx, gy, if s.active { pal.accent } else { pal.muted });
+                }
                 Some(c) => p.rbox(Rect::new(gx - 4.5, gy - 4.5, 9.0, 9.0), 4.5, *c),
             }
         }

@@ -10,6 +10,9 @@ Claude Switch is a small Windows desktop app for people who work across Claude C
 - Start a new CLI session in a chosen folder or open a copy of an existing session.
 - Make an editable handover with an OpenCode model and open it in a brand-new Claude Code session.
 - Keep separate logins while sharing transcripts and settings.
+- In Chat, the composer separates session values, actions and panels; effort is shown with a five-dot meter.
+- Choose the Chat conversation's reading width in **Settings → Sessions**. The Markdown viewer keeps its own width control.
+- Preview named code files with syntax colours, line numbers and wrapped lines in the side panel.
 - Check OpenCode’s version and active sessions in **Settings → OpenCode**, confirm a service restart, or open OpenCode Config Studio when installed.
 - Open handovers that are too long for the command line by asking the new session to read the saved Markdown file.
 
@@ -61,9 +64,15 @@ Claude Switch checks its tabs and the running-session records across accounts be
 | Ctrl+Shift+K | Open the command palette |
 | Ctrl+Shift+C / Ctrl+V or Ctrl+Shift+V | Copy / paste |
 | Ctrl+C | Copy if text is selected; otherwise send Ctrl+C to the program |
+| Shift+Enter in a Claude Code tab | Add a line without sending; shell tabs keep their normal Enter behavior |
 | Shift+Page Up / Shift+Page Down | Scroll back / forward |
 | Enter in an ended tab | Close the tab |
 
+The terminal uses an arrow pointer. Drag to select, then right-click to copy and clear the
+selection. If it yields no text, right-click clears it without changing the clipboard. Right-click
+with no selection to paste. When a program captures the mouse (such as Claude Code in fullscreen),
+hold **Shift** to use the terminal's own drag and right-click actions.
+Shift+right-click copies a regular selection as one line; use Ctrl+C to keep its line breaks.
 You can also middle-click a terminal tab to close it.
 
 The OpenCode controls are in **Settings → OpenCode**; there is no separate keyboard shortcut.
@@ -130,6 +139,9 @@ use the same numbered continuation name as the editor. `--open` saves the handov
 the session, continues there in place; otherwise it opens the new session as a tab in the running
 window (beside the source session's tab), or starts Claude Switch with that tab when it is not
 running. It waits for the window's confirmation, not for Claude Code to accept the prompt. Use the GUI to review first.
+Add `--background` (with `--open`) to return at once: Claude Switch makes and opens the handover in a
+separate process and shows the result in its window, or in a message box when it has no window to show a
+failure in.
 A native `claude.exe` must be on `PATH`. Switch finds native OpenCode on `PATH`, in common
 install directories, or via an absolute `OPENCODE_EXE` override. Handovers over 15,000 UTF-16
 code units are saved in full; the new session's initial prompt asks it to read the saved
@@ -168,6 +180,10 @@ letters or digits start each segment; letters, digits, `-`, and `_` continue it;
 segments. An invalid first-word name stops the command. Remaining text is literal focus; with
 no first-word prefix, the entire text is focus and the configured agent default is used.
 The plugin leaves the new session name to Claude Switch’s numbered continuation default.
+The command runs in the background (`compact --open --background`): the chat gets one line saying the
+handover started and its turn ends there, so the old session does not carry on. Claude Switch then shows the
+continued session, or why the handover failed, in its own window. The plugin needs a Claude Switch that
+knows `--background`; an older one on `PATH` refuses it as an unknown option.
 
 ## Licence
 
@@ -380,4 +396,21 @@ In **Settings → Terminal**, choose Block, Bar, or Underline and optionally ena
 The terminal program’s explicit cursor style still takes precedence. **Background opacity**
 goes from 60% to 100% (the default) when Mica or Acrylic is active on Windows 11 22H2 or later.
 These settings apply to open tabs and to Chat’s terminal drawer. **Ctrl+Shift+E** opens or closes
-the drawer in Chat.
+the drawer in Chat. Translucent terminals use grayscale text edges. Dim text can still have a
+darker cell background because the toolkit raises its opacity for contrast.
+Opening the **⋯** menu leaves the terminal at its chosen opacity. Popups have their own
+solid cards; only a modal dialog dims the terminal, and the backdrop still shows through.
+
+## Named themes
+
+Named palettes live alongside the built-ins. Each has its own window colours, selection,
+terminal foreground and background, and 16 ANSI colours. **Automatic** terminal colours
+follow the selected palette; choosing a specific terminal scheme still overrides it.
+
+In **Settings → Appearance**, click a named swatch to choose a dark or light palette.
+With **Accent source → Default**, built-ins use Claude’s clay and named themes use their saved accent.
+Under **Theme library**, choose **Customize…**, give the draft a name, and edit its colours.
+**Generate shades** uses the draft's window background and accent as a starting point.
+The contrast readout updates as you edit. **Save and use** applies the draft; **Save as new**
+keeps the original. **Import…** opens a theme file as a draft, and **Export file…** writes
+only the palette to a new JSON file.

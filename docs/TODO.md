@@ -127,9 +127,9 @@ and in the README, not committed, and not copied to the installed clone
 
 Status of items 23 to 60 (2026-11-27, merged into `main` after two reviews by Claude Fable and the fixes
 of both): built and passing format, lint and the test suite: 23 to 31, 34 to 48, 50 to 55, 57, 58 and 60.
-Partly: 47 (no `!` toggle in the composer), 53 (no Stop agent; the key that opens the CLI's agent panel
-is not known). Not built: 22, 32 (later; fonts need toolkit work), 49 (rewind, waits for a live check of
-42 and 48), 56 (later), 59 (idea only). Item 14 for Settings text rows waits for the toolkit pin move
+Partly: 47 (no `!` toggle in the composer). 22, 53 (with Stop agent), 49 (rewind), 56 and 59 were built on
+2026-11-27, 49 and 53 against recorded screens and 49 before a live check of 42 and 48 (see the items). Not built:
+32 (later; fonts need toolkit work). Item 14 for Settings text rows waits for the toolkit pin move
 (toolkit 7da7b22). Nothing was tried against a live Claude Code: the screen shapes the cards read (the
 comment field after Tab, permission prompt phrases, full paths in Edit prompts, the /model picker, menu
 footers, the Ctrl+B hint), the in-place handover's paste echo within 2 s, two real windows and the pipe
@@ -145,7 +145,7 @@ Nothing below was tried against a live Claude Code session, the real desktop app
 the owner's checks are what is left. To check live first: the empty-prompt and slash-echo detection
 (items 7, 10, 11), the picture send (11), the desktop launch through the package alias (2), Stop via
 the CLI's shell manager (17), the new chat's name via `--name` (21), and the installer's PATH task (19).
-Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked and are not built.
+Item 10 C and D (CLI menus as cards, Quick commands settings) were built later as items 48 and 22.
 
 
 1. **A newly added third account keeps saying "Not signed in" under usage** although its sign-in tab
@@ -299,7 +299,16 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
 22. **Later: Settings › Chat › Quick commands** (owner, 2026-11-26: "note D"), artboard D of the
     mock-ups: which chips show under the message box and in what order, the user's own commands with
     arguments, back to the defaults, and the switch for answering the CLI's menus from the chat
-    (artboard C, not picked). Not started.
+    (artboard C, not picked). **Done (2026-11-27):** a Chat page in Settings (after Sessions) with
+    seven chip slots (dropdowns: a picked chip swaps, None hides), three own command lines as chips
+    after the others (shown when they fit whole; a click runs the line with the direct-slash checks),
+    Restore defaults, and "Answer menus from the chat" (off: no menu, picker, plan or permission card;
+    questions keep theirs). Stored under `chat`; older files load the defaults, unknown chip keys and
+    `chat` fields from newer versions are kept through merged saves. The mock-ups (artboards C and D)
+    are not in the repository, so the page follows the existing Settings conventions instead of the
+    drawing. Checked: unit tests for reading, merging, slot swaps, validation, the page, the toolbar
+    order and fit, and the switch's gate. Not checked: a running app, a live Claude Code session, the
+    owner's mock-up.
 23. **Fresh chats refuse every send: "The terminal is showing a full-screen view"** (owner,
     2026-11-26, after 0.1.1). Likely cause, not yet confirmed on the owner's machine: Claude Code now
     starts new sessions in its fullscreen renderer (the `tui` setting, research preview; default for
@@ -469,6 +478,18 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
     otherwise (DESIGN.md: no generated permission answers). Also in the screenshot: the conversation
     above was empty in a fresh handover session (check that the Chat view attaches to the new
     transcript).
+    Forms done (2026-11-27): several questions and multi-select ones are answered from the card too
+    (DESIGN.md, "Forms"): picks in the card, then one Submit that drives the CLI's form key by key
+    and presses "Submit answers" only once the review matches. Checked: unit tests over screens
+    recorded from Claude Code 2.1.332 (a two-question form with a multi-select first, its typed
+    "Type something", the Next row, the second question and the review; one multi-select question
+    with its Submit row and review; two single-choice questions and their review) and over a scripted
+    terminal for the whole run and each way it stops. Not checked: the card has not been seen or
+    clicked in the running app; a form has not been driven end to end by the app against a live CLI
+    (the recorded screens were reached by hand-written key scripts); a typed answer on a
+    single-choice question inside a form (its row with text is not recorded, so only that the text
+    is on that row is checked); a multi-select as the last of several questions (its row is assumed
+    to read "Submit", "Next" is accepted too); a typed answer long enough to wrap.
 39. **A tab rename is a label only** (owner, 2026-11-26: renamed the toolkit session's tab to "toolkit"; search
     does not find it and other sessions cannot reach it by that name). "Rename tab…" (`tabcontrols.rs`, dialog in
     `dialogs.rs:549`) sets `Tab::rename` in memory only: it is not in `terminal-tabs.json` (lost on restart), not in
@@ -539,6 +560,20 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 47. **Command results and shell mode in the conversation**: `<local-command-stdout>` and `<bash-input>`/`<bash-stdout>`
     records as mono cards under their command (filtered out today, `prompt_clean.rs`); interactive panels get a
     card; a `!` toggle in the composer once shell mode by paste is verified.
+    **Done except the `!` toggle** (2026-11-27, branch `fix/items-47-tools`). The records were already read into
+    finished rows (`transcript/local.rs`); this pass gave them item 71's quiet look. One-line replies (at most 140
+    characters, which covers the shapes found read-only in this machine's transcripts: "Set model to …", "Goal
+    set: …", "Settings dialog dismissed", "Reconnected to …") sit on their command's row. Longer output
+    (`/context`) and shell output are muted mono cards under the row. They now get their real height (before,
+    an always-open output or plan card kept a one-line height and was drawn over the rows below) and fold on a
+    click. A shell output's first-line indent is kept (`git status --short`). An empty `<local-command-stdout>`
+    no longer leaves its command's name to label the next output. Real transcripts also hold shell mode as
+    one record with two text blocks (`<bash-input>` then `<bash-stdout>`). The reader stopped at the first
+    block and lost the output; it now reads every block. Checked: parser, reader and row unit tests (the
+    shapes copied from real records), plus a bitmap test with `/model`, `/context` and two shell commands
+    (one failing) in light and dark, whose pictures were looked at. Not built: the `!` toggle. Shell mode
+    by paste was not checked against a real Claude Code: that needs an interactive CLI session driven
+    through a terminal, which this pass did not start. Nothing was seen in the running app.
 48. **CLI menus and dialogs as cards**: any menu, picker or startup dialog the CLI shows (the native /model and
     /effort pickers, /config, /permissions, /mcp, folder trust, the fullscreen offer, settings errors, MCP sign-in
     and elicitation, the rate-limit menu) is copied from the screen into a card with its rows as buttons, answered
@@ -547,6 +582,32 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 49. **Rewind from a prompt bubble**: "Rewind to here…" on user bubbles; Esc Esc at a verified empty prompt, Up until
     the highlighted row equals the chosen prompt, the action chosen by its row text, every step re-verified; build
     after 42 and 48 have proven the gate.
+    Built (2026-11-27) before 42 and 48 were proven live: both are built and unit-tested, but neither card has been
+    driven against a live CLI by the app, so this one uses the same verified-gate rules without that proof. "Rewind
+    to here…" is in the conversation's right-click menu over a typed prompt (DESIGN.md, "Rewind"). Checked: unit
+    tests over screens recorded from Claude Code 2.1.332 in a scratch folder (Haiku, 100 x 40): the idle prompt, the
+    list opening on "(current)", each Up, the choices without and with code changes (and the highlight moved down),
+    the input holding the prompt after "Restore conversation", Esc from the choices back to the list and from the
+    list back to the prompt, a prompt of several lines and a long one as the list cuts them; Up at the top changes
+    nothing (recorded). Not checked: the menu item and the card have not been seen or clicked in the running app; a
+    list long enough to scroll (the one-row scroll rule is untested); what "Summarize from here", "Summarize up to
+    here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
+    text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
+    a rewind and the reader does not follow `parentUuid` branches.
+    Review fixes (2026-11-27): every key on the choices needs them to quote the chosen prompt (the CLI could have
+    been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
+    prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list
+    that leaves a prompt out stops instead of taking an earlier prompt worded alike.
+    A key held back (a dialog over the window) no longer waits forever: the step's deadline still holds, and a second
+    Esc that cannot go within about 0.75 s of the first stops the rewind rather than going late.
+    "Rewind to here…" is offered only on prompts the list shows (not on slash commands such as `/context`, which
+    Claude Code 2.1.332 leaves out of it). A rewind that stops with its list on screen closes it with one checked Esc
+    and says so, or says the rewind screen is still open (its choices are on screen, or no key could go). A question,
+    permission prompt or CLI menu takes the card from a stopped rewind, whose notice comes back afterwards.
+    Re-review (2026-11-27): a rewind that stopped with its screen still open keeps its card (why it stopped, and
+    that the screen is open) over the generic panel card while that screen shows, and goes once it is gone.
+    A Cancel that times out with the list still on screen sends no closing Esc on top of its own; it says the
+    screen is still open.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).
@@ -555,6 +616,26 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     CLI's grey next-prompt suggestion as a chip that fills the composer (never sends Tab).
 53. **Background controls**: "Run in background" on a running Bash row (Ctrl+B, only while the CLI shows its hint and
     that tool alone is pending); "Stop agent" through the CLI's agent panel under the same rules.
+    Done (2026-11-27): Run in background now needs the CLI's "(ctrl+b to run in background)" row under that call's own
+    `Bash(command)` row and ends on "Running in the background" or the call's end; Stop agent is a card row per
+    running background agent, driven ↓, ↓ to the agent, `x`, Esc (DESIGN.md, "Background controls"). Checked: unit
+    tests over screens recorded from Claude Code 2.1.332 in a scratch folder (Haiku, 100 x 40): the Ctrl+B hint and the
+    backgrounded row; two background agents in one run through idle, list open, each highlight, stopped and closed;
+    the list mid-turn beside a running shell command; Esc in the list does not interrupt a running turn (recorded,
+    not a test). Not checked: the card has not been seen or clicked in the running app; PowerShell's row (assumed
+    `PowerShell(command)`); an agent whose description the list cuts with "…" (not offered); how a finished agent's
+    row reads (not offered); offering a second stop while the hint row reads "↓ to resume subagent" (not offered);
+    the sidecar `.meta.json` of 2.1.332 has no `finished` field (it has `stoppedByUser`), so the transcript never
+    knows an agent finished and the screen decides.
+    Review fix (2026-11-27): terminal input, Cancel, or switching the tab to the terminal stops any card key sequence
+    in flight (an answer, a form, Ctrl+B, Stop agent, a rewind) before its next key, with a notice, instead of letting
+    it resume later from a screen it no longer knows.
+    Re-review (2026-11-27): only an answer stopped before its Enter marks its prompt as one for the terminal; an
+    interrupted Ctrl+B or Stop agent leaves a notice only (it goes when the card shows something else, so a later
+    permission prompt is still answered from the card), an answer whose Enter went ends quietly, and an interrupted
+    rewind keeps its notice on its own card. Mouse moves without a button no longer count as terminal input (they stopped a
+    rewind or form when the pointer crossed the drawer with mouse tracking on), and wheel reports no longer stop card
+    key sequences; clicks still do, since they can pick a row in the CLI.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·
@@ -563,13 +644,34 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     fixed-width slot (the widest glyph of the set, centred) and start the text at a fixed x; use tabular figures, or a
     fixed slot per counter, so changing digits do not move what follows (`view/working.rs`, and the Session view's
     copy of the line).
-56. **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
+56. **Done (branch `fix/items-56-59`): search and group sessions by meaning.** Settings › Sessions › Search by
+    meaning (off by default): the model is Claude Haiku via the CLI on the workers' account (Suggest names' isolated
+    run) or an OpenCode model (the handover summarizer's isolated run, its own tool-less agent); List models fills
+    the choice. Palette: "Summarize sessions for search by meaning…" (confirmed; sends Suggest names' payload for up
+    to 100 visible, not hidden, stale sessions in requests of 20; keeps summary, keywords and subject per session
+    in `meaning.json`, re-sent only when the prompts change) and "Ask about past sessions…" (confirmed; sends the
+    question and the kept summaries only; the answer is kept and repeated without a request). With it on, the
+    list's search also matches summaries locally, Details shows "About", and Topics gets a "By meaning" grouping
+    by subject across projects. Everything runs on a worker job with Cancel; DESIGN.md, Session organization.
+    Checked: core tests with a fake model (payload identical to Suggest names', batching, unchanged sessions not
+    re-sent, partial results kept on failure and cancel, answer parsing and cache, local matching of "where we
+    fixed push"), window tests on the demo source (off by default, confirmation text names model and data, index
+    → search → Topics by subject, question → kept answer without a second request, Cancel), the OpenCode search
+    agent's config, fmt, clippy and the workspace tests. Not checked: any real Claude or OpenCode request (none was
+    made during development), answer quality of a real model, the dialogs and the Settings rows by eye in the
+    running app, and timing with a large `meaning.json`.
+    Review fixes (`fix/review-meaning`): the subjects sent with a Summarize request now come only from visible, not
+    hidden sessions (they came from every kept summary); sessions with no readable prompt or no answer get a
+    marker, so they are no longer re-sent and offered on every run and "Nothing to summarize" is reached.
+    Second review fix: a request whose answer parses to nothing (prose, a refusal, cut-off output) now fails the
+    run and marks none of its sessions, and a "not answered" marker is retried when another model is chosen.
+    Original request: **Later: search and group sessions by meaning** (owner, 2026-11-27: "agent selectable like compact in settings.
     later item. not now."). Today search is literal text and Related is word overlap (DESIGN.md, Session
     organization). Wanted: a search that finds a session by what it was about ("where we fixed push"), questions
     about past sessions, and grouping by meaning across projects. Done by a model the owner picks in Settings, the
     same way as the handover's summarizer (an OpenCode worker/model or the Claude CLI), opt-in, sending only the
     excerpts "Suggest names" already sends, with a confirmation before a run that sends anything. An on-device
-    embedding model was the alternative offered; not chosen. Not started.
+    embedding model was the alternative offered; not chosen.
 57. **Better handovers: a fitting focus chosen by itself, and a sharper fixed format** (owner, 2026-11-27, from a
     cc-fable review of six real handovers: sections cut mid-word at 800 characters, "Standing instructions" turned
     into a to-do list, a permission guessed ("presumably approved"), job and session ids missing, space spent on
@@ -601,12 +703,56 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     pull request (repo and number), saved output file, Markdown file (opens the side panel), audio or other binary
     (kind and size). Where a cheap preview exists (a picture, the first page of a PDF if the toolkit can render it),
     show it as the thumbnail; otherwise the icon. The Details panel's Outputs uses the same labels.
-59. **Maybe, idea only: OpenCode as a tab type, and as a handover target** (owner, 2026-11-27: "opencode makes more
+59. **Done (branch `fix/items-56-59`, owner: "full 59"): OpenCode as a tab type and as a handover target.** Palette
+    "New OpenCode tab…" (folder-only picker) starts the owner's normal OpenCode (own config, plugins, Magic Context;
+    Claude Code variables stripped) as a terminal tab with its own label and glyph and no account, transcript, live
+    record, send gate or Chat view. The handover preview's "In OpenCode" opens one in the source folder beside the
+    source tab with the handover as `--prompt` (checked: `opencode --help`, v2.4.1, `opencode [flags] [<directory>]`,
+    `--prompt`, `--continue`); long or option-like text becomes a request to read the saved handover file. Restore:
+    running OpenCode tabs are saved by folder and reopen with `--continue` (the folder's last OpenCode session; the
+    first prompt is never repeated). DESIGN.md, Terminal tabs. Checked: unit tests for the launch (args order, no
+    OpenCode overrides, Claude variables and PWD removed), first-prompt rules, the folder-only dialog opening a
+    non-Claude tab, placement beside the source tab with no marks written, and save/decode/restore of OpenCode
+    rows beside Claude rows; fmt, clippy, workspace tests. Not checked: starting the real OpenCode TUI in a tab
+    (only `--help` was run, in a scratch folder), whether `--prompt` submits at once or waits for Enter, how
+    `--continue` behaves in a folder with no OpenCode session, the button and dialog by eye, and the `compact
+    --open` CLI and auto-handover, which still continue only in Claude.
+    Review fix (`fix/review-meaning`): two OpenCode tabs of one folder both reopened `--continue` onto the same
+    session; now only the first per folder does, the others start fresh (OpenCode's session id could not be learned
+    without a model request; see DESIGN.md). A never-used tab that is first in its folder still reopens the
+    folder's last session.
+    Original idea: **Maybe, idea only: OpenCode as a tab type, and as a handover target** (owner, 2026-11-27: "opencode makes more
     sense as a tab ... leave this as a maybe idea"). A "New OpenCode tab" entry with the folder picker, running the
     owner's normal OpenCode (Magic Context enabled, unlike the bridge's jobs), and "Continue in OpenCode" sending the
     handover text as its first prompt, e.g. when a Claude account hits its limit. Codex CLI support was considered
     and not chosen: every layer of the app is Claude Code specific (accounts, transcripts, live records, the send
-    gate's screen rules). Not started; decide before building.
+    gate's screen rules). Decided 2026-11-27: build it all.
+    **Design proposal (2026-11-27; built as above, except restore, which reopens with `--continue`).**
+    - *New OpenCode tab*: a palette and New-menu entry that opens the existing New session folder picker without
+      the account choice, then starts a tab like "New shell tab" does: `launch::shell`'s sanitized environment
+      (Claude Code variables stripped) with `opencode_cli::find_program()` as the program and the folder as cwd.
+      No `OPENCODE_CONFIG_CONTENT`, `OPENCODE_DISABLE_CLAUDE_CODE` or project-config override, so the owner's normal
+      config, plugins and Magic Context apply; label "OpenCode · <folder>"; ended tabs show "(ended)" as shells do.
+    - *What a non-Claude tab must skip* (most of it already does for shell tabs, which have no session id):
+      accounts (no account picker, colour, usage or "Open as"; OpenCode has its own providers); transcripts and
+      the session index (OpenCode keeps sessions in its own store, so the tab is never a row in Recent, Threads,
+      Related or search, and cannot be resumed, copied or archived); live records and `running.rs` (no
+      already-running safeguard; closing the tab is the only stop); the send gate and the Chat view (both read
+      Claude Code's screen and transcript; the tab is terminal-only, the Chat/Session view toggle disabled);
+      handover, auto-handover and the Details panel's Tasks/Files/Agents. Tab restore would reopen only "OpenCode in
+      <folder>" (a fresh start, not the conversation) or nothing; the latter is simpler. The work is one tab-kind
+      flag checked where tabs with a session id are assumed today, not a new abstraction layer.
+    - *Continue in OpenCode*: a third choice beside This tab / A new tab in the handover preview. It needs the TUI's
+      first-prompt flag (`opencode <folder> --prompt <text>`, to be confirmed with `opencode --help` on this
+      computer before building), the same long-text rule as Claude (above ~15,000 UTF-16 units pass a short prompt
+      that names the saved handover file), and optionally `--model` from a picker. No provenance in `marks.json`
+      (there is no Claude session to link), and the Claude source session is left as is.
+    - *Effort*: the tab about a day (launch, menu entry, guarding Chat view/Details/restore against the new kind,
+      tests); Continue in OpenCode another half day once the prompt flag is verified. Risk is low because shell
+      tabs already prove the non-Claude path; the main cost is auditing every `session`-assuming code path.
+    - *Recommendation*: build the plain OpenCode tab first, terminal-only, no restore, as the owner's fallback when a
+      Claude account hits its limit; add Continue in OpenCode only after the prompt flag is confirmed, and do not
+      try to index or chat-view OpenCode sessions (that would be the Codex-sized rewrite already rejected).
 60. **Clearer names for the two archives** (owner, 2026-11-27: yes). Settings › Sessions "Show archived sessions"
     becomes "Show sessions archived in the desktop app" (help: "Claude Desktop's own archive. Switch's Archive is
     separate."); the Archived chip becomes "Archived here"; the details row "Archived: yes, in the desktop app"
@@ -619,6 +765,28 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     compact: Could not read the transcript." on a 112 MB transcript. Cause: the `claude-switch` on PATH was built
     before `a6d6b84` (64 MiB limit, now 2 GiB); current `main` reads that transcript. The CLI and the automatic
     handover now say why a read failed instead of dropping the reason.
+    **Done** (2026-11-27, branch `fix/item-61`): `compact --open --background`, which the skill now runs, does the
+    quick checks (consent, OpenCode, session, account), reads the focus file, writes an app-named job file to the
+    temp folder and starts `compact --background-job <name>` through the window's fixed ShellExecute bootstrap (no
+    console, no inherited handles), then prints one line and exits. The detached process revalidates the job with
+    the same parser and runs `compact --open`; the result is the tab or the continuation in place, a failure is a
+    notice in the running window (a new pipe request kind that only shows text) or a message box when no window
+    takes it. The window now also shows a handover request it could not load. The skill tells the agent to report
+    the one line and end its turn, not wait, poll, retry or resume. Owner's decisions (2026-11-27), built: a
+    dropped Settings default agent is an info notice in the window (same pipe request kind, a note version); no
+    fallback to the blocking call; each window start removes job files over a day old (job name pattern, plain
+    files only). Checked: format, lint, tests (job and notice encoding and revalidation, both notice kinds, job
+    file read once and removed, cleanup keeps other names, folders and new files, option rules). Not checked: a real `/switch-compact`
+    run; that the detached process survives the end of Claude Code's Bash call on Windows (the same bootstrap
+    already starts the window from the skill); the message box; the window's notices on screen; the cleanup on a real temp folder. Left: an old
+    `claude-switch` on `PATH` refuses `--background` (no fallback, by decision).
+    Review fixes (2026-11-27): the window answers `shown:` only for errors it put on screen and `failed:` for the
+    rest (its own wait ran out, closing, unreadable answer), which the background process then reports; a queued
+    request carries a ticket, so after the 30-second wait it is cancelled when the window has not taken it (the
+    answer says it was not opened) and otherwise the answer says the outcome is unknown and the tab may still
+    open; a launcher that runs out of time keeps the job and says the handover may have started; a job over
+    256 KiB is refused before starting. Tested: reply kinds, ticket, the wait's four outcomes, launcher result,
+    job size.
 62. **Dark text in a transparent terminal gets a dark outline** (owner, 2026-11-27, two screenshots: the grey
     tool-result rows such as "Shell cwd was reset to ..." and the dim session-name rule "═══ Claude-switch handover
     file · continued ═══"). Selection is fine. With terminal opacity below 100 % dim and dark glyphs show a dark
@@ -626,6 +794,16 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     and then laid over the backdrop. Glyph edges must blend with the real background colour (premultiplied alpha,
     grayscale rather than ClearType antialiasing over transparency), and a cell with the default background must not
     paint an opaque box behind its text.
+    **App-side fix done; toolkit change outstanding.** Translucent frames now request grayscale font
+    masks, including on cells promoted to opaque. Bitmap tests composite grey glyphs over black
+    and white. Not checked against the owner's desktop. At e951766, `mdshared-text` already uses
+    premultiplied source-over. `mdshared-ui::termview::draw::Background::alpha` calls `for_ink`
+    for each distinct foreground, sometimes returning 255 beside translucent spaces. Expose a
+    uniform-default-background option on `BackgroundOpacity`: use `normal` on every default cell,
+    retaining 255 for selection, block cursor, inverse and explicit backgrounds. Use that option
+    here when available. No toolkit or pin change.
+    **Later (owner, 2026-11-27: "put 62 on for later"):** the toolkit option above is parked; ask the
+    toolkit session for it when this comes back, then move the pin and use it here.
 63. **Settings › Appearance: flexible, customizable colours and theming, and one kind of control per choice**
     (owner, 2026-11-27, screenshot of Appearance; "more flexible, customizable color and theming"). Today the dark
     palette is chosen with swatches and a dropdown ("Neutral") side by side, the light palette with swatches and a
@@ -636,25 +814,58 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     (window background, surfaces, text, dim text, accent, selection, and the terminal's 16 ANSI colours and its
     background and foreground), starting from any built-in palette or generated from a base colour and an accent;
     contrast checked as the user edits; import and export of a theme as a file.
+    **Done.** Named palette swatches on Appearance and Terminal, a draft editor for both colour
+    modes, generation from background and accent, contrast feedback, save/rename/copy, and
+    versioned theme files. Short plain choices use segments; boolean menu marks for pinned/hidden
+    use the Settings switch. Tests cover draft isolation, window and ANSI colours, bitmap rendering,
+    pointer and keyboard selection, file round trips and migration with stale writers and unknown
+    settings. Native file picker interaction and the owner's live desktop were not checked.
+    **Known mixed-version limit:** If two Switch versions share a settings file, a version from
+    before named themes replaces the whole `appearance` object when it saves appearance changes.
+    This drops `appearance.themes`. A `darkTheme` such as `user-1` survives, but without its
+    palette definition Switch falls back to a built-in.
 64. **A scrollbar that fades, and page width options** (owner, 2026-11-27). Scrollbars show while scrolling or
     under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
-    the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide).
-65. **The terminal should behave as Windows Terminal does with the mouse** (owner, 2026-11-27: "instead of normal
-    pointer like in windows terminal, I get text selection like behaviour ... still I want default windows terminal
-    behaviour"). The arrow pointer over the terminal, not the I-beam; drag to select; right-click copies the
-    selection and clears it, or pastes when nothing is selected (Windows Terminal's default), even though Claude
-    Code copies a selection by itself. Check what Windows Terminal does over a mouse-reporting program (Claude Code)
-    and match it, Shift-drag included.
+    the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide). **Done:** the Chat
+    conversation has its own width in Settings → Sessions; the Markdown viewer keeps its existing width
+    control. Both scrollbars show on movement or hover and fade, or snap away with reduced motion.
+    Rendering and timing tests cover the layouts; visual inspection in a running app has not been checked.
+65. **Done: Windows Terminal mouse gestures for terminal tabs and the Chat drawer.** Arrow pointer, drag to
+    select, and right-click to copy and clear the selection or paste safely. A blank selection clears without
+    reading or writing the clipboard (covered by a test). Unmodified clicks and drags go to
+    a program that asks for mouse reports; Shift keeps the gestures local. Checked against Windows Terminal 1.25
+    source and with tests for pointer choice, selection, reporting and paste safety. Native clipboard gestures
+    and Claude Code's own fullscreen auto-copy were not checked interactively. Switch does not handle clipboard
+    writes via OSC 52. If application-driven OSC 52 copy is wanted, the toolkit needs a bounded parser event
+    for validated, decoded clipboard writes (no clipboard reads); the owner should decide when Switch may honor it.
 66. **A better design for the composer's chips** (owner, 2026-11-27): Model, Effort, Context, Compact, Clear, the
     slash menu, Attach, Terminal and Details look like the same flat button and their labels are cut ("Effort
     mediu…"). Group them by kind (state the session is in: model, effort, context; actions: compact, clear;
     panels: terminal, details), show a value as a value (an effort level as a small meter or dots, context as a
     filling bar), never cut a label, and keep the row from jumping when a value changes. Item 43 covers the values
-    being stale; this is the look.
-67. **Shift+Enter in the terminal sends instead of starting a new line** (owner, 2026-11-27). In Windows Terminal
-    Shift+Enter gives Claude Code a new line; in Switch's terminal it reaches the CLI as a plain Enter. Send what
-    Claude Code reads as Shift+Enter (check the key encoding it accepts: the win32 input mode or kitty keyboard
-    sequence it asks for, or ESC CR), and check the same for the Chat composer's paste of line breaks (item 46).
+    being stale; this is the look. **Done:** distinct state, action and panel surfaces, fixed-width values,
+    effort dots and two-row layout at narrow widths. Context remains a token count: no verified limit is
+    reported, so a filling bar would mislead. Owner question: should a trustworthy limit become available
+    from Claude Code, should it be used for a context bar? Unknown model names that do not fit show
+    "Model" rather than a cut label. Composer rendering and layout tests, workspace Clippy and tests
+    passed; visual inspection in a running app has not been checked.
+67. **Done: Shift+Enter starts a line in the Claude Code terminal without sending.** Switch sends `CSI 13;2u`
+    for Shift+Enter alone in a tab launched as Claude Code. Shells and other programs retain classic Return
+    (covered by tests). A scratch ConPTY run with Claude Code 2.1.332 showed two prompt rows with this
+    sequence even without kitty negotiation. The same run showed line breaks from the Chat composer's bracketed
+    paste encoding (item 46); the composer test checks that Enter waits for the echo. No prompt was submitted.
+    The desktop key path, other CLI versions and other programs were not checked interactively.
+    Review fix (2026-11-27): the tab's launch name alone sent `CSI 13;2u` to any program in it, such as an editor
+    Claude Code opened. Now it goes on the main screen (the classic view) and on the alternate screen only while the
+    cursor is in Claude Code's input box. Checked by recording Claude Code 2.1.332 with its full-screen view turned on
+    for that session only (`--settings '{"tui":"fullscreen"}'`): it draws on the alternate screen, with the same
+    input box, and `CSI 13;2u` started a second input line there. Not checked: a terminal editor opened with Ctrl+G
+    (Claude Code offers Notepad on this computer, a window of its own, so none was opened); a program that draws such a box on the alternate screen would get
+    Claude Code's Shift+Enter.
+    Re-review (2026-11-27): a draft holding a rule line, the cursor on one, or a draft taller than the screen turned
+    Shift+Enter into a plain Return that would submit the draft. The box's top is now the nearest rule with a `❯` row
+    under it, and a draft whose top scrolled away is known by the mode line under the box ("shift+tab to cycle",
+    "? for shortcuts" or "esc to interrupt"; only the first was seen in a recording).
 68. **The `/usage` card loses the terminal's bars, and its spinner line jumps** (owner, 2026-11-27, screenshot of the
     read-only menu card for /usage). The card copies the panel's rows as plain text, so the usage bars the terminal
     draws (coloured cells or block characters) are missing; copy each cell's colours and draw the rows as the
@@ -664,19 +875,53 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     the terminal" for a panel that only shows information; say "Claude Code panel" and offer Close (Esc) only. With
     the card up, the composer's notice "No quiet, empty Claude Code prompt is visible" is noise: the card already
     says what is on screen.
-69. **Code files in the side panel have no syntax highlighting, and their lines wrap mid-token** (owner, 2026-11-27,
-    screenshot: `mk_ctx.py` in the docked viewer, plain text, `g[-1]` split across rows). The toolkit already has
-    `mdshared-highlight` (`tokens(source, language, dark)`: syntect's bundled set plus small scanners for TOML,
-    Kotlin, Swift, PowerShell, Dockerfile; plain above 256 KiB); add it as a dependency at the same pin and colour
-    the literal view in `view/ui/markdown.rs` (`text_lines`) by the file's extension, with colours that keep
-    contrast on every palette. Wrap long code lines at a word or operator boundary with a hanging indent under the
-    line's own indentation (or offer "Wrap: off" with horizontal scrolling), and show line numbers in a gutter.
-    Markdown files keep their rendered view; their fenced code blocks should get the same highlighting if they do
-    not already.
-70. **Any popup turns the terminal's transparency off** (owner, 2026-11-27, screenshot: the ⋯ menu open over a
-    transparent terminal, which went opaque). Deliberate today: `termapp/paint.rs` paints the terminal at 100 %
-    whenever anything is over it (menu, dialog, tooltip, toast, picture, undo bar), because those overlays'
-    shadows, rounded edges and scrims use the opaque painter. Keep the terminal at its set opacity under a popup:
-    draw overlay shadows and edges so they blend over the frosted backdrop (or give the overlay its own opaque
-    card while the terminal behind stays translucent), and dim with a translucent scrim only for modal dialogs.
-    Same area as item 62 (glyph blending over transparency); check both together.
+    Done (2026-11-27): a usage row (block characters, none at 0%, then "N% used") is drawn as a real bar in the
+    theme's colours with its percentage; rows starting with a spinner glyph (in the panel card, the permission
+    card's copied rows and a menu's title) keep the glyph in item 55's fixed slot; a menu without choices is a
+    "Claude Code panel" card with Close (Esc), or Open terminal when its footer offers no Esc; while a menu or panel
+    card is up, the composer's prompt notices are replaced by "Close Claude Code's panel above to send." (or the
+    menu's own notice). Checked: unit tests over the recorded /usage rows and a scripted panel. Not checked: the
+    card has not been seen in the running app; the "Scanning local sessions…" row is not recorded (its glyph is
+    assumed to be one of the working line's). The card reads a panel from its own top (see DESIGN.md), so the bars
+    at the top of a tall /usage panel are in it; the selected settings tab as the card's title is tested only on a
+    scripted screen, since the recorded screens keep no styles.
+69. **Syntax highlighting, wrapping and line numbers in the code viewer** (owner, 2026-11-27).
+    **Done:** literal code files use extension-based `mdshared-highlight` colours adjusted for palette
+    contrast, source line numbers, and boundary-aware wrapping with hanging indentation. Unknown
+    languages and files above 256 KiB stay plain; a token wider than the panel splits at a character.
+    Markdown stays rendered, with the existing fenced-code highlighting. Rendering, wrapping,
+    contrast and language tests cover the viewer; visual inspection in a running app was not checked.
+70. **Any popup turns the terminal's transparency off** (owner, 2026-11-27; screenshot: the ⋯ menu
+    over a transparent terminal). **Done.** The grid and margins keep their set opacity under
+    menus, dialogs, tooltips, toasts, pictures and the undo bar. The overlay has its own solid
+    card; only modal dialogs dim the rest of the window with a translucent scrim. A bitmap test
+    opens the ⋯ menu over normal and dim glyphs, checks the entrance and settled card, and checks
+    tooltip bounds and modal dimming over black and white. The separate per-cell contrast issue
+    in item 62 still needs its toolkit change. Not checked on the owner's live desktop.
+71. **Tool use pulls the eye away from Claude's text** (owner, 2026-11-27, screenshot of bordered "✓ done Read
+    C:\…  53 ms" rows and "5 tool calls" boxes). **Done.** Tool rows and groups lost their box: one low line
+    (22 px, 1 px apart) in the theme's muted text with the tool name no longer in the accent colour and in the UI
+    face rather than mono, a faint "✓" and duration (set right after the target), a leading chevron, and a little
+    air before the next answer. A failure keeps "✗ failed" in the warning colour on a soft wash of the theme's
+    warning ground; a running call keeps its accent pulse. Hover, open and jump fills come from palette tokens.
+    A bitmap test draws a synthetic conversation in the light and dark palettes, every built-in theme and two
+    user-made themes (through the app's own theme code) and checks: no accent, no border, quieter than the answer
+    text yet readable, a failure in the warning colour on its wash, and that opened rows and groups stay
+    clickable. The pictures were looked at for light, dark and both user themes; nothing was seen in the
+    running app.
+72. **Delete a session from its menu, and optionally the original after a copy or a handover** (owner,
+    2026-11-27: "can a delete be added next to archive on context menu for sessions, and for copy and compact as an
+    option?"). **Done.** **Delete session…** after Archive session… moves the transcript and its own
+    `<session id>/` folder to the Recycle Bin (shell API with undo), removes the session's own marks and kept summary,
+    and leaves the desktop app's records alone (the confirmation says when the desktop app may still list it).
+    Disabled with the reason while running, open in a tab or pinned, and checked again when Delete is pressed
+    (running scan of every account under the launch lock, the saved pin). A partial move is reported. The handover
+    dialog's review step has "Delete the original session afterwards" (off each time); the copy case is a separate
+    row item, **Open a copy, then delete the original…**, rather than a checkbox, because Open a copy has no dialog
+    to hold one and a new dialog would slow every copy. The copy's original goes once the copy's transcript is
+    written. `/switch-compact` and automatic handover have no option. Checked: core tests over temporary folders
+    (what moves, the shared-junction case, linked folders, guards, partial failure, nothing else touched) with a
+    folder stand-in for the Recycle Bin; window tests for the menu items, disabled states, wording, demo,
+    re-checks, mark and summary cleanup, copy and in-place deletion. Not checked: the real Recycle Bin call
+    (`SHFileOperationW`) has not been run by a test or by hand, and the copy-written condition assumes Claude Code
+    writes the copied conversation into the new transcript with its first message (not verified on a live fork).

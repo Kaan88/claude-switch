@@ -244,20 +244,63 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   Ctrl+Tab and Ctrl+Shift+Tab (next and previous tab), Ctrl+Shift+W (close the tab), Ctrl+Shift+T (a
   plain shell in the selected session's folder), Ctrl+Shift+K (the command palette; Ctrl+K is the
   program's), Ctrl+Shift+C and Ctrl+V / Ctrl+Shift+V (copy, paste; Ctrl+C copies only while something is
-  selected) and Shift+Page Up/Down (scroll back). A middle click on a tab closes it.
-- **Mouse**: the wheel scrolls the scrollback 3 lines a notch, is reported to a program that asked for
-  the mouse, and is arrow keys on the alternate screen of one that did not. Drag selects (double click a
-  word, triple click a line, Alt a block); with mouse reporting on, Shift+drag selects. The drag requests
-  a redraw only when the selected cells change. Copying is by key only, not on release.
-  The window chooses the mouse pointer from the current frame's hit map, including when a tab or
-  overlay changes under a stationary pointer. Leaving the client resets the app pointer to the
-  arrow; the host still supplies native resize cursors at window edges. Only the front layer
-  receives hover while a menu, dialog or command palette is open.
+  selected) and Shift+Page Up/Down (scroll back). Shift+Enter alone sends `CSI 13;2u` only when
+  Switch launched Claude Code in the tab, identified by the executable's filename, not its title
+  or transcript, and only while Claude Code is what the screen shows: on the main screen (its
+  classic view), or on the alternate screen while the cursor is in its input box (a `❯` row between
+  solid rules, which its full-screen view draws there too). The box's top is the nearest rule with a
+  `❯` row under it, so rule lines in a draft do not end it; a draft taller than the screen is known
+  by Claude Code's mode line under a rule below the cursor. In doubt inside such a box Shift+Enter
+  stays Claude Code's, since a plain Return would submit the unfinished draft. Any other program on the alternate
+  screen, such as an editor Claude Code opened, gets the classic Return. Shells and other programs
+  keep the classic Return encoding; this is not full kitty keyboard negotiation. A middle click on a tab closes it.
+- **Mouse**: the terminal uses the arrow pointer. Drag selects (double click a word, triple click a
+  line, Alt a block); the drag requests a redraw only when the selected cells change. Releasing the
+  mouse does not copy. Right-click copies and clears the selection, or pastes when there is none.
+  A selection with no text clears without a clipboard read or write.
+  A program tracking the mouse gets the clicks and drags instead, unless Shift is held at the
+  press. Use Shift+drag and Shift+right-click to select and copy or paste in that case. As in
+  Windows Terminal, Shift+right-click copies stream selections as one line; keyboard copy keeps
+  the line breaks. A right-click paste in the Chat drawer goes to the terminal, not the composer,
+  and uses the same safety checks as keyboard paste.
+  The wheel scrolls the scrollback 3 lines a notch, is reported to a program that asked for the
+  mouse, and is arrow keys on the alternate screen of one that did not. Shift keeps the wheel
+  local. The window chooses the pointer from the current frame's hit map, including when a tab or
+  overlay changes under a stationary pointer. Leaving the client resets it to an arrow; the host
+  still supplies native resize cursors at window edges. Only the front layer receives hover while
+  a menu, dialog or command palette is open.
 
 **The safeguard, for tabs.** A session open in a tab counts as running at once, before any
 `sessions/<pid>.json` says so: opening it again shows its running tab ("Already open in a tab"), and the list
 shows it as running in this app. Closing a tab whose program runs asks first; closing the window with
 running tabs asks once for all of them. Dropping a tab's pseudo-terminal ends its program.
+
+**OpenCode tabs.** The palette's **New OpenCode tab…** opens the New session picker with the folder
+only (no account or app) and starts the owner's normal OpenCode there: `opencode_cli::find_program`
+(native `opencode.exe`), the plain shell's sanitized environment (Claude Code's config and session
+variables removed, `PWD` removed because OpenCode prefers it to the process folder) and no OpenCode
+overrides, so the owner's own config, plugins and Magic Context apply, unlike the handover and
+search jobs. The installed CLI (v2.4.1, `opencode --help`) is `opencode [flags] [<directory>]` with
+`--prompt <text>` and `--continue`; options go before the folder. The tab is labelled “OpenCode ·
+<folder>” and shows a terminal glyph instead of an account colour. It has no session id, account,
+launch folder in the Claude sense or pane, so it is never a list row, gets no Chat or Session view,
+live-record matching, send gate, usage, handover or auto-handover, exactly as a shell tab; its folder is
+kept in its own field. The handover preview's **In OpenCode** keeps the edited handover as Open does
+and opens such a tab in the source session's folder, beside the source's tab, with the text as
+`--prompt` (one native argument, no shell). Above 15,000 UTF-16 units, or when the text starts with
+`-` (so OpenCode's parser cannot read it as an option), the prompt instead asks to read the saved
+handover file; OpenCode may ask permission to read it, since it is outside the project. The Claude
+session is left as it is and nothing is recorded in `marks.json`. Whether `--prompt` submits at once or
+waits for Enter was not checked (that would need a model request). Saved tabs keep a running OpenCode
+tab as `{"kind":"opencode","folder","active"}` beside the Claude rows in `terminal-tabs.json`
+(older builds skip such rows). Restoring reopens the first such tab of a folder with `--continue`,
+OpenCode's last session there (possibly a later one started elsewhere, or an older one when that tab
+was never used), and further tabs of the same folder fresh, so two tabs never show one session; a
+first prompt is never repeated. OpenCode's own session id is not kept: `--session <id>` with a new id
+does not create the session at startup (checked with `--standalone` in a scratch folder), and
+whether a later first message keeps that id could only be seen with a model request, so it is not
+relied on.
+A folder that is gone is listed in the "Tabs not reopened" notice.
 
 **Not there:** more than one terminal in a tab, search or links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host
@@ -295,10 +338,16 @@ completion flag is shown as unknown rather than guessed.
 
 Chat and Session view use the same conversation projection, painting and input. Prompts sit in
 right-aligned tinted bubbles; cardless answers use a palette-accent Claude mark and body-size prose
-(16 logical px in Chat, 14 in Session view). Indented, bordered mono tool rows show recorded status,
-the tool and its target, and the time between use and result timestamps when both are valid and
-ordered. Runs of four or more consecutive tools start collapsed. Expand a row for the bounded
-details and any output pictures; a group can be expanded independently of its rows.
+(16 logical px in Chat, 14 in Session view). Tool rows recede behind the answers: indented, low
+one-line notes without a box, in the palette's muted text (the name included, no accent) with the
+status and duration fainter, a chevron in front and the duration right after the target. They sit
+close together and close under the answer that announced them. A failed call keeps its status in
+the warning colour on a soft wash of the warning ground; a running call keeps its pulsing accent
+status. Hovering fills the line with the hover colour; an opened row or group sits on the field or
+pane colour. Each row shows the recorded status, the tool and its target, and the time between use
+and result timestamps when both are valid and ordered. Runs of four or more consecutive tools start
+collapsed into one quiet "N tool calls" line. Expand a row for the bounded details and any output
+pictures; a group can be expanded independently of its rows.
 
 **Selecting and copying.** A selection runs from an anchor to a focus, each a row (by its stable
 identity, so it survives an appended message) and a byte in that row's shown text, so a drag or
@@ -355,6 +404,17 @@ does not follow links in the document; images and optional math/diagram engine j
 in both renderer surfaces. **Open in editor** rechecks the named file and asks the OS to open it
 with its default association. Ctrl+click on an inline file link instead reveals it. HTTP(S) links
 in answers still open in the browser; transcript attachments still use the picture pipeline.
+Chat's conversation has its own Narrow, Medium, Wide or Full reading width in Settings → Sessions,
+stored per window in `window.ini` (`chat_reading`); it uses the same column sizes as the viewer.
+The composer stays centred and capped independently. Conversation and Markdown scrollbars appear
+on scrolling or hover, hold briefly, then fade; with reduced motion they disappear without a fade.
+Their tracks remain interactive even when hidden.
+Named UTF-8 code files in the viewer use extension-based syntax highlighting, with token colours
+adjusted for contrast against the current page palette. Line numbers mark source lines; wrapped
+continuations prefer whitespace or operator boundaries and hang under the original indentation.
+An overlong token must split at a UTF-8 character boundary. Highlighting is cached, and unknown
+languages and files over 256 KiB remain plain; file previews still stop at the existing 1 MiB limit.
+Rendered Markdown retains the renderer's existing fenced-code syntax highlighting.
 
 Only the visible pane requests polling: on terminal output, with a 500 ms fallback. Reader and
 picture work run off the window thread; worker results wake the window rather than making it redraw
@@ -492,13 +552,22 @@ window that cannot create the channel says so. Known limit: another local user c
 name first (a pipe name is first come). The owner check then stops every client from writing to
 it, so no request leaks, but each window starts as a second window: it restores no tabs and
 handovers sent with `--open` fail. That is a local denial of service only, needs a second local
-account, and is not worked around. It carries one
-request kind only: a versioned list of the same validated words as the window arguments (session
+account, and is not worked around. It carries two
+request kinds. A handover is a versioned list of the same validated words as the window arguments (session
 ID, account, saved handover file name, optional agent, optional hex-encoded title), at most 2 KiB,
 decoded and revalidated by the window, which then continues in place when one of its tabs runs
 the session (see "Continuing in place"; with `--as`, only a tab of that account) and otherwise
-opens only an app-owned saved handover in a new tab. The answer is `continuing`, `opened` or the
-window's error. When no window listens, the CLI starts Claude Switch
+opens only an app-owned saved handover in a new tab. The answer is `continuing`, `opened`, `shown:` and
+the window's error when the window has put it on screen (its own refusal, or an error notice for a
+request it could not decode or load), or `failed:` and a reason nobody has seen yet: the window was
+closing, or its own 30-second wait ran out. That wait is settled with a ticket the window must take
+before acting on the request: when the window has not taken it, the pipe thread cancels it and
+answers that the handover was not opened (the window then drops it); when the window has taken it,
+the thread waits 3 seconds more and otherwise answers that the outcome is unknown and the tab may
+still open. An answer the client cannot read counts as not shown. A notice is a version line, `claude-switch-handover-failed-1` (shown as an error notice) or
+`claude-switch-handover-note-1` (an info notice), then one line of at most 1,500 bytes with no
+control characters; it brings the window to the front, acts on nothing, and the answer is `shown`. A client that gets no answer (refused, busy,
+closed or timed out) knows the window may have shown nothing. When no window listens, the CLI starts Claude Switch
 itself as the normal window (saved tabs, then the handover tab), which first offers the request
 to a window that started meanwhile. On Windows, that window is
 ShellExecuted through a fixed non-interactive PowerShell bootstrap run without a console window, so it
@@ -521,6 +590,32 @@ the outcome is unknown: check for the tab before retrying. Tab creation is not
 confirmation that the CLI accepted the prompt or remained running. Exit codes are 0 for success,
 1 for runtime errors and 2 for usage errors. `--demo` uses synthetic text and model IDs; it sends no
 handover request and launches no Claude process.
+
+`compact --open --background` (what `/switch-compact` runs) returns within seconds so the chat
+that asked is not blocked, and nothing about the outcome goes back into that chat as a tool
+result its agent could act on. It runs the quick checks first (provider consent, OpenCode, the
+session, the account; an error there is the command's one line), reads the focus file at once
+(the plugin removes it when the command returns), refuses a job over 256 KiB (focus text full of control
+characters can pass 64,000 bytes when escaped) with a clear line, and writes a job, the same options as words
+with the session fixed to the ID found, the focus text and the session's name, to a new
+app-named file `cs-handover-job-<pid>-<nanos>.json` in the user's temporary folder. It then starts
+`claude-switch compact --background-job <that name>` through the same fixed PowerShell
+ShellExecute bootstrap as the handover window: a GUI process with no console window and none of
+the caller's handles, so the caller's shell call ends and the process is not its child. When
+the bootstrap fails, the job is removed and the command fails; when it runs out of its 30 seconds,
+Windows may already have started the process, so the job stays and the line says the handover may
+have started and to check Switch before retrying. That
+process reads and removes the job, parses its words with the same parser and limits as typed
+options (a job cannot name a file, a working folder or another job), and runs `compact --open`.
+Success shows as the tab or the continuation in place. A failure the window answered with `shown:` is already
+on screen; any other failure (a `failed:` answer included) (the transcript, the summary, no answer from the window, the new
+window not confirming) goes to the running window as a failure notice, and when no window takes
+it, to a message box. When the Settings default agent was dropped for a new tab, the same
+sentence the foreground prints (the agent was not found for that account, so the new chat starts
+as plain Claude) goes to the window as an info notice, or to an information message box. A job
+file stays behind only if that process dies before reading it; each Claude Switch window start
+(not `--demo`) removes, off the startup path, plain files in the temporary folder whose names match
+the job pattern exactly and that are more than a day old, and nothing else.
 
 Setup's optional **Add Claude Switch to PATH** task is checked by default. It appends the install
 folder to `HKCU\Environment\Path` without changing the existing value type or claiming an
@@ -628,17 +723,37 @@ bracketed paste only when requested by the program. They do not send Enter.
 
 The Appearance page controls the window. The window theme is System, Light or Dark;
 `--theme light|dark` overrides that preference. A dark and a light palette are chosen separately
-(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as a row of swatches beside
-its choice; a click on a swatch chooses it. Dark: Neutral (the toolkit's dark), Near black, Warm,
+(saved as `darkTheme` and `lightTheme` under `appearance`), each shown as named swatches.
+A click on the preview or caption chooses it; Tab focuses a row and Left/Right or Home/End changes
+the choice. On a row without the current selection, Right starts at the first swatch, Left at the
+last, and Enter or Space leaves the selection alone. Terminal presets use the same control.
+Dark: Neutral (the toolkit's dark), Near black, Warm,
 Blue-grey and High contrast (the toolkit's); light: Paper, Warm, Cool (the toolkit's light, warm and
 cool) and High contrast. Every palette has its own terminal colours, which Automatic terminal colours
 follow; the table of palettes and their terminal colours is `termtheme/palettes.rs`, the one place
 to change them. An unknown saved id (from a newer version) is kept and shown as the first palette.
 Windows high contrast takes priority over all of them. The toolkit's appearance model supplies the
-accent (Claude's clay by default on every palette, held to 7:1 on the high-contrast ones, or system
-or picked), dialog and menu corners, optional soft shadows, and the system-aware motion policy.
+accent options (Default, System or Custom), dialog and menu corners, optional soft shadows, and
+the system-aware motion policy. Default uses Claude's clay on built-ins (held to 7:1 on the
+high-contrast ones) and the saved accent on named themes.
 Mica and Acrylic are optional on Windows 11 22H2 or later; the title bar is capped at 15%
 compositor colour. Terminal opacity is set separately below. The tab strip stays opaque.
+
+Named palettes are stored by stable `user-` id under `appearance.themes`. The existing
+`darkTheme` and `lightTheme` keys select them as well as built-ins; no settings rewrite is
+needed to upgrade. The name is display text, never a path. Window surfaces and automatic
+terminal colours resolve by id, even when two palettes have identical window colours.
+Theme files are versioned JSON containing only a name, base palette and `#RRGGBB` colours.
+Import validates the whole file including all 16 ANSI colours; export creates a new file.
+
+The Appearance library opens the selected dark or light palette as a draft. A built-in is
+always copied; a user theme can be renamed, updated or saved under a new name. Generate shades
+rebuilds surfaces, text and terminal colours from the draft's page and accent. Edits stay in
+the form until Save. The editor reports the weakest text, dim text, selection, accent or terminal
+pair, or the focused ANSI colour against the terminal background. Contrast below 4.5:1 is
+flagged, not forbidden. The existing system/custom accent choice and Windows high contrast
+still take priority. Settings use switches for booleans and segmented controls for short plain
+choices. Session and folder context menus use the same switch drawing for pinned/hidden states.
 
 Automatic terminal colours use the chosen palette's terminal colours (Neutral is `#101010`).
 Match window uses the window bar background. Custom uses the background, text and accent picked on
@@ -659,7 +774,7 @@ but a polling tick no longer redraws the window unless visible state changes.
 
 ## Settings pages
 
-The category list at left selects one page at right: Appearance, Terminal, Sessions, Usage,
+The category list at left selects one page at right: Appearance, Terminal, Sessions, Chat, Usage,
 Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
 closing Settings. Each window remembers the last page while it runs; category selection is not saved.
@@ -810,7 +925,8 @@ pins, live sessions, embedded tabs, recent launch reservations and transcript mo
 times, then saves the marks as one update. An incomplete running scan refuses the operation.
 Archived rows are omitted from ordinary views but found in searches; the Archived here chip
 appears only while there are archived sessions in the index. Unarchiving preserves Hide marks.
-No archive operation relocates, deletes, or edits a transcript.
+No archive operation relocates, deletes, or edits a transcript (deleting is separate: see
+[Deleting a session](#deleting-a-session)).
 The session menu explains why a pinned or running row cannot be archived. Folder archive
 remains available because its preview can include other eligible rows.
 
@@ -820,6 +936,55 @@ the latest local handover filename if present, and the local stats reader for tu
 context/output tokens (`~` denotes an estimate). Unknown dates or statistics are shown as
 `—`. Rendering is pure; Save As warns about conversation text, writes a new file without
 replacing an existing destination, and offers to open it explicitly. No AI or network is used.
+
+## Deleting a session
+
+**Delete session…** in a session row's menu (right after Archive session…) moves the session to
+the Windows Recycle Bin; nothing is deleted permanently by Switch. It moves the one real
+transcript `<config dir>/projects/<encoded folder>/<session id>.jsonl` and, when present, the
+`<session id>/` folder beside it (subagents, tool results), which belong only to that session.
+The path is followed to the real file first, so a transcript reached from several accounts
+through the shared `projects` junction is moved once. The transcript must be a plain file named
+after the session inside a `projects/<folder>/` folder; a session folder that is itself a link is
+left in place (and said so), never followed. The transcript goes first: if it does not move,
+nothing does. A folder that then does not move is reported as a partial deletion with its path
+and reason, never silently. The desktop app's records (`claude-code-sessions/…/local_*.json`)
+are not touched; when the session has one, the confirmation says the desktop app may still list
+it. The move uses the shell (`SHFileOperationW`, `FOF_ALLOWUNDO`, no confirmation and no error
+UI, with `FOF_WANTNUKEWARNING`: where the drive has no Recycle Bin or the file is too large for
+it, the shell asks before deleting permanently, and declining keeps it). Switch checks that each
+path is gone afterwards.
+
+Afterwards the session's own entry in `marks.json` (name, topic, pin, hide, archive, seen time,
+handover links) is removed through the marks' merge, so another window's changes elsewhere are
+kept; other sessions' entries, including links that name it, are kept. Its summary in
+`meaning.json` is removed. (A summarizing run already going when the session is deleted can write
+its summary back; it names a session no longer listed and is never shown.)
+
+It is refused, with the item disabled and the reason as its hint (Running, Open in a tab,
+Pinned), while the session runs (a live pid in any account's `sessions/`, including the
+desktop app's), while a tab of this window shows it, or while it is pinned. The confirmation
+names the title, folder and "moved to the Recycle Bin"; **Delete** is not the default button
+(Enter and Escape cancel). Pressing it checks again: the window's own state, the saved pin (another
+window may have pinned it), then, under the launch reservation lock, the running sessions of every
+account and launches reserved a moment ago; an incomplete running check refuses. `--demo` deletes
+nothing and says so. The Delete key still toggles **Session hidden**.
+
+**Delete the original afterwards.** The row menu's **Open a copy, then delete the original…**
+(after Open a copy) opens a copy as the current account after one confirmation (which carries the
+cold-cache warning when it applies) and deletes the original once Claude Code has written the
+copy's transcript (a record of the copy's session id at its head; Claude Code writes it with the
+copy's first message). Until then the original is kept; if the copy's tab ends first, it is kept
+and a notice says why (a copy in an external terminal is waited for while the window runs). The check runs with the running poll. Plain **Open a copy** is unchanged and
+deletes nothing. The handover dialog's review step has a checkbox **Delete the original session
+afterwards** (Alt+D), off each time the dialog opens. It acts only after the handover fully
+succeeded: a new handover tab (or OpenCode tab) started, or, continuing in place, the first
+message taken and the tab following the new session; there it also refuses unless the tab follows a
+session other than the original. Every case uses the same checks, Recycle Bin path and mark
+cleanup as Delete session…; when a check fails then, the original is kept with a notice naming
+the reason (a handover opened in a new tab from the session's own tab therefore keeps it until that
+tab is closed and it is deleted by hand). `/switch-compact`, `compact --open` and automatic handover
+have no such option.
 
 ## Background notices and notification area
 
@@ -919,9 +1084,15 @@ Permission prompts). Stop sends Escape at most once per freshly
 verified active turn.
 **Command results and shell mode.** A `<local-command-stdout>` (or `-stderr`) record becomes a finished
 row named after the slash command before it, and `<bash-input>` with its `<bash-stdout>`/`<bash-stderr>`
-becomes a "Shell" row (`! command`), both with the output as mono text, always open, cut at 60 lines or
-6,000 characters, escape sequences removed (`transcript/local.rs`). They never count as pending calls.
-Interactive panels that print their result the same way get the same row. The composer has no `!`
+becomes a "Shell" row (`! command`). Both are quiet tool rows (see the conversation look above). A
+one-line reply of at most 140 characters ("Set model to …", "Settings dialog dismissed") sits on the
+row as its target and opens on a click like any tool. Longer output and shell output are a mono card
+under the row in the muted text colour, open at first and folded by a click (no output, one line); a shell
+command whose output is only stderr is a failed row. Output is cut at 60 lines or 6,000 characters,
+escape sequences and surrounding blank lines removed, the first line's indent kept
+(`transcript/local.rs`). They never count as pending calls. Interactive panels that print their
+result the same way (`/context`, `/usage`, `/config`, `/mcp`) get the same row; a command that
+printed nothing shows no row and does not lend its name to the next output. The composer has no `!`
 toggle: whether a pasted `!` enters the CLI's shell mode is unverified.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
@@ -949,7 +1120,16 @@ Any menu whose footer (an "Esc to …"/"Enter to …" hint, or arrows with navig
 last row by the input shows as a card when no question or permission card covers it: its title row
 and its numbered choices as buttons, answered like a question (arrows, then Enter once the screen
 shows the highlight on that row with the same title and choices); the step ends as soon as that
-menu is gone. A menu without numbered rows shows its rows read-only with Open terminal. While a
+menu is gone. A menu without numbered rows is a "Claude Code panel", read from its own top: under the
+nearest full-width solid rule above its footer, without the settings dialog's tab row ("Settings
+Status Config Usage Stats"), whose selected (inverse) tab becomes the card's title. A panel taller
+than the terminal has no rule on screen; it is then read from the top of the screen, unless the rows
+above its footer show conversation (a `❯`, `●` or `⎿` row), when only its last 14 rows are. The card
+grows to fit, up to its usual cap, and names the rows it has no room for. Its rows are read-only (a usage row,
+block characters then "N% used", drawn as a bar in the theme's colours; a row starting with a spinner
+glyph keeps it in the working line's fixed slot, as every copied CLI row does), with Close (Esc) when
+its footer offers Esc and Open terminal otherwise; while it is up the composer says "Close Claude
+Code's panel above to send." instead of notices about the terminal's prompt. While a
 card shows a menu, sends are refused with "Choose in Claude Code's menu above" and the drawer stays
 closed; a slash command no longer opens the drawer by itself. A menu that may be a permission
 prompt never shows as a menu card: within 24 rows of its footer a "Do you want to"/"Would you like
@@ -960,8 +1140,8 @@ above do not count; with no rule in those 24 rows, all of them do. Unless a ques
 prompt left to the terminal (drawer, notice).
 
 **Questions.** A pending `AskUserQuestion` call in the main transcript is shown as a card built from
-the call's input (header, question, options with descriptions), never from the screen. Chat answers
-only one single-choice question: before any key it requires the live screen to show a menu footer,
+the call's input (header, question, options with descriptions), never from the screen. A lone
+single-choice question is answered by one click: before any key it requires the live screen to show a menu footer,
 the question text, and every option as `n. label` in order, followed only by "Type something" and
 "Chat about this", and not to look like a permission question. It moves the `❯` highlight with arrow
 keys, and writes Enter only after newer output shows the highlight on the chosen row. A typed answer
@@ -973,9 +1153,37 @@ text is kept (the composer's notice says so) until the composer is empty and not
 whether the call resolves, the prompt closes or the step stops; it never replaces a draft. Only a
 question or permission card has a field: when none shows, the card's field gives the keyboard back. Every step has a two
 second deadline; a mismatch, timeout or a question still open eight seconds after Enter stops, says
-why, and opens the drawer. Several questions, several answers, or a call whose input cannot be read
-stay terminal-only. While the card can answer, sends are refused with "Answer Claude's question
+why, and opens the drawer. While the card can answer, sends are refused with "Answer Claude's question
 above" and the drawer does not open by itself; the working line reads "Waiting for your answer".
+
+**Forms.** Several questions, or a multi-select one, are a form (decided 2026-11-27: it was the main
+reason to open the terminal). The card shows one question at a time ("Size · 1 of 2", Back, Next);
+a click picks a choice (single choice) or ticks a box (multi-select), and the field holds that
+question's "Type something" text; Enter in it turns to the next question, and on the last one submits, as the Submit button does. Nothing reaches the terminal before Submit, and nothing is picked
+for the user. Submit first checks the card: every question answered, a single choice by one choice
+or one text, texts short, without control characters and not starting with a digit; otherwise it
+shows the question and says why. Then Chat drives the CLI's form one key at a time, each written only
+while the screen shows exactly what the key before should have led to, with a two second deadline
+per key. A form question is read only as its own screen: right under the rule, the tab row ("←  ☐
+Size  ☐ Speed  ✔ Submit  →") naming the form's headers in order, then that question's text and
+nothing else, then every option in order (as `n. [✔] label` or `n. [ ] label` for a multi-select),
+"Type something", for a multi-select an unnumbered Submit row ("Next" while another question
+follows), a rule, "Chat about this" and a menu footer. Two questions worded alike stay
+terminal-only. For each question in order: a multi-select ticks or clears each box that differs
+from the card (arrows to the row, Enter, and the next key only once that box alone changed), types
+the text on its "Type something" row (only while that row holds no text; Claude Code ticks it by
+itself) and checks that it shows `[✔] text`, then moves to Submit or Next and presses Enter; a single
+choice moves to its choice (or types on "Type something") and presses Enter. Each Enter must lead to
+the next question's own screen. After the last question the CLI shows a review with no footer:
+"Review your answers" under the tab row, a "● question" and "→ answer" pair per question (a
+multi-select's answer is its labels in option order, then the text, joined by ", "), then "1. Submit
+answers" and "2. Cancel" as the last rows drawn. Enter goes on "Submit answers" only once every pair
+reads the question and the answer the card holds; any difference, a box that did not change, text
+that did not appear, the wrong question, or text the user had already typed in the terminal stops
+the run before the next key, says why and leaves the rest to the terminal. "Chat about this" and
+Esc act on the form question the screen shows. Recorded from Claude Code 2.1.332 (the `ask_*`,
+`form_*` and `multi_*` fixtures): a lone single-choice question has no tab row and no review; a lone
+multi-select question has both. A call whose input cannot be read stays terminal-only.
 
 **Permission prompts.** These used to be answered only in the terminal. The owner gave that rule up
 (2026-11-27): "give that up, otherwise all I see is that chat has stopped. convenience trumps". The
@@ -1031,22 +1239,82 @@ forms, which are measured too. The layout reserves the widest short forms ("Effo
 Attach, Terminal, Details and Send. A test lays out every effort level, mode and Context form from
 the 760 px minimum window up at several display scales.
 
+**Settings › Chat.** Quick commands: the toolbar's left chips (Model, Effort, Context, Permission
+mode, Compact, Clear, "/ …") show in the order of seven slots, each a dropdown of the chips plus
+None; a chip picked in another slot swaps with it, None hides it. Saved as `chat.chips` (keys in
+order; a key from a newer version is kept and not shown). The one-line toolbar reserves only the
+shown chips, so fewer chips keep one line at narrower widths. Three own commands (`chat.commands`,
+by slot) are text rows, saved as typed whenever the text is a command line (a CLI-style name, a
+"/" added if left out, one printable line of arguments, at most 200 bytes). Each set one is a chip
+after the others, labelled with its line (or only "/name" when the line is wider than 150 px), drawn
+only when it fits whole before the right group; a click runs it as a direct slash command, with the
+same checks and the Compact/Clear confirmation. Typing "/" still opens the list with every chip
+hidden. Restore defaults resets chips and commands, not the switch below. "Answer menus from the
+chat" (`chat.answerMenus`, on by default) off: no card for the CLI's menus, pickers, plan approval
+or permission prompts; the gate leaves them to the terminal and opens the drawer as before those
+cards. Claude's questions (`AskUserQuestion`) and the Ctrl+B background offer keep their cards.
+A two-window save merges `chat` field by field and keeps keys it does not know.
+
 **Esc.** A card's Esc button writes one Escape only under the same checks as its choices: the screen
 still shows that question, the pending call's own prompt, or the same menu (a menu Chat cannot read
 is matched by its rows) whose footer offers Esc. It then waits as a choice does; a menu step ends as
 soon as the menu is gone. Stop keeps its own rule: Escape at most once per freshly verified turn.
 
 **Background controls.** While the only pending call is a shell command (Bash or PowerShell), no
-prompt or menu shows, and the CLI's "ctrl+b to run in background" hint is within six rows of the
-input, a card offers Run in background. A click re-checks all of that and writes one Ctrl+B; it is
-done once newer output no longer shows the hint or the call ended, and stops with a notice after two
-seconds otherwise. Stop agent is not offered: the key that opens the CLI's agent panel is unverified
-(once that panel is open, it shows as a menu card).
+prompt or menu shows, and the CLI's "(ctrl+b to run in background)" row closes that call's own block
+(its `Bash(command)` row above it, the input box a few rows below), a card offers Run in background.
+A click re-checks all of that and writes one Ctrl+B; it is done once the call ended or newer output
+shows the call's row followed by "Running in the background", and stops with a notice after two
+seconds otherwise. Stop agent goes through the CLI's agent list, the rows it draws under the input
+box while background agents exist (`● main`, then `◯ type  description  status`). The card offers
+it for an agent the transcript knows (its type and description, not known to have finished) that
+the list shows once, running (its status starts with how long it has run), while the input is
+clean and empty and its hint row offers "↓ to manage". The keys, each only once newer output shows
+what the one before led to: ↓ (the list takes the keys, "↑/↓ to select", highlight on main), ↓ one
+row at a time to the agent (the hint then reads "enter to view · x to stop"), `x` (the row reads
+"stopped", the hint "x to clear"), Esc (the input has the keys again). Esc there leaves a running
+turn alone. Left is never sent: at the input it opens "Background this session?". After a stop
+the hint row reads "↓ to resume subagent" and other agents are no longer offered until it offers
+"↓ to manage" again. Recorded from Claude Code 2.1.332 (`bg_*`, `agents_*`).
+
+**Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
+typed, in a tab with Chat. It goes through the CLI's own rewind list and never edits the transcript.
+The first Esc only at an idle, quiet, empty prompt with no turn, pending call or menu (the checks of
+a direct slash command); it shows nothing, so the second follows 150 ms later only while the screen
+still shows that same prompt. The list ("Rewind", "Restore the code and/or conversation to the point
+before…", each prompt over a row naming its code changes, "(current)", "Enter to continue · Esc to
+cancel") must open on "(current)"; then one Up at a time, each only once the highlight moved one
+entry up (or the list scrolled by one), until the highlighted row reads the chosen prompt: its first
+line, whole, or cut with "…" (a prompt of several lines always is). A later prompt the same row could
+read stops it before Enter. Enter must lead to the prompt's choices, under "Restore to the point
+before you sent this message:" with the prompt quoted; the card shows that screen's rows and its
+numbered choices (for example "Restore code and conversation", "Restore conversation", "Restore
+code", "Summarize from here", "Summarize up to here", "Never mind") and chooses nothing by itself. A
+click moves the highlight one row at a time and Enter goes on the choice only with the same choices
+on screen; it is done when neither rewind screen shows and the input is back (Claude Code then puts
+the prompt back on its input after a conversation restore). Cancel writes Esc (back to the list),
+then Esc (back to the prompt). Each step has a two second deadline (eight for the last Enter); any
+mismatch stops, says why in the card (Open terminal, Close) and opens the drawer. A rewind that
+stops with its list on screen closes it with one Esc, checked on the next screen, and says so (not
+after Cancel, whose own Esc may still be on its way); when
+its choices are on screen or no key can go, the card says the rewind screen is still open, keeps its
+place over the panel card while that screen shows, and goes once it is gone. The rewind writes
+nothing to the transcript, and the reader follows the file as written, so the Chat view still shows
+the turns after the chosen prompt. Recorded from Claude Code 2.1.332 (`rewind_*`).
 
 A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click
 says so instead of writing, and it ends (or fails) in a hidden tab too. A menu that stays open after
 Enter (a toggle) is done as soon as newer output shows the chosen row changed; one that shows no
 change at all by the deadline still stops with a notice.
+
+Terminal input stops a card's key sequence in flight (an answer, a form, Ctrl+B, Stop agent, a rewind)
+before its next key, as do Cancel and switching the tab to the terminal. Keys, pastes, mouse clicks
+(with their drags and releases) and wheel notches sent as arrow keys count; a mouse move without a
+button counts as no input at all, and a wheel report to a program that asked for the mouse leaves
+card sequences going (each still checks the screen before its key) while still counting as input
+for a send. Only an answer stopped before its Enter leaves its prompt to the terminal; an answer
+whose Enter went ends quietly, a Ctrl+B or Stop agent leaves a notice that goes with its card, and a
+rewind says so on its own card.
 
 Every screen pattern lives in `view/chat/question/screens.rs`.
 
@@ -1144,6 +1412,10 @@ Context now uses
 reported input and cache tokens; no limit or percentage is guessed. The toolkit’s TextField
 is single-line; the composer wraps the app’s multiline editor at words, displays hyphens only in
 overlong words, and uses the toolkit context menu for Cut, Copy, Paste and Select all.
+The composer toolbar separates session values, actions and panels by their surfaces. Fixed-width
+value controls keep their neighbours still as values change; effort is a five-dot scale and
+context remains a token count, not a filled bar, because the transcript supplies no verified limit.
+An unknown model name too long for the control is shown as Model rather than a cut-off name.
 **Composer conveniences**, all local (`view/chat/popups.rs`). `@` at the caret opens a list of
 the session folder's files and folders, read once per tab on a worker: breadth first, at most 8
 deep and 5000 entries, without hidden folders, `node_modules`, `target` and other build folders,
@@ -1222,6 +1494,41 @@ title and topic editable before acceptance. **Set topic…** edits or clears a l
 running a model. Topics have at most three words and 60 characters; blank means no topic. The demo contains synthetic
 projects, a worktree, a four-session thread, adjacent activity, Related prompts and topics.
 
+**Search by meaning** (Settings → Sessions, off by default) adds a model-written summary to
+literal search. **Model** is Claude Haiku through the CLI on the workers' account (the same
+isolated `-p` run as Suggest names: an empty private folder, no tools, MCP, settings, slash
+commands or session persistence) or an OpenCode model, run like the handover's summarizer (an
+empty temporary folder, no project or Claude Code config, its own one-step agent that may use no
+tool, `--standalone --archived`, title “Claude Switch search”). **List models** fills the OpenCode
+choices on a worker; the list is shared with the handover dialog. The palette's **Summarize
+sessions for search by meaning…** confirms first, naming the model, the count and what is sent:
+the payload of a name suggestion (numeric ids, the first and up to three recent prompts, 500
+characters each) for visible, not hidden sessions with no summary or activity since it, newest
+first, at most 100 a run in requests of 20, plus the subjects already in use among those
+visible, not hidden sessions, so groups stay stable. Each answer line gives a summary of at most 200 characters, up to eight keywords and a
+subject (a topic-shaped label); invalid, repeated and out-of-range ids are dropped. They are kept
+in `meaning.json` beside `config.json` with an FNV-1a fingerprint of the exact payload: a session
+whose prompts did not change is not sent again, and the file is written after every request, so a
+cancelled or failed run keeps what was answered. A request whose answer gives nothing readable
+(prose, a refusal, cut-off output) fails the run and marks none of its sessions. A session with no
+readable prompt, or one the model left out while answering others, is kept as a marker
+(fingerprint, activity and model, no summary): it is not sent or counted again until its prompts
+change or, for a left-out one, another model is chosen (an earlier real summary of it stays), and markers are
+never searched, asked over, counted as kept summaries or used for subjects. A missing or damaged file is an empty cache;
+**Forget** removes it. While the setting is on, the list's search also matches a session when
+every meaningful word of the search (one may miss from three or more; stop words and simple
+suffixes ignored) begins a word of its summary, keywords or subject, locally; Details shows the
+summary as **About**; Topics appears once any summary has a subject and its **By meaning** button
+groups by subject across projects (sessions without one under “Not summarized”). **Ask about past
+sessions…** takes a question and confirms before sending it with the kept summaries, keywords and
+subjects (no prompts, folders or dates) of up to 200 visible sessions; the model answers with at
+most 1,200 characters and up to ten ids, which open from the answer. The answer is kept by
+question (case and spacing ignored), model and the fingerprint of the summaries it went over, so
+the same question again is answered from the file without a request. All requests and transcript
+reads run on one worker job; the dialog's Cancel kills the child process. The demo answers
+locally with synthetic text and sends nothing. Each run is confirmed instead of recording a
+provider consent, so the handover's consents are neither used nor changed.
+
 ## Terminal cursor and backdrop
 
 Settings → Terminal saves `appearance.cursorShape`, `appearance.cursorBlink`, and
@@ -1232,10 +1539,20 @@ respects an explicitly steady cursor, the system caret interval, focus, visibili
 
 Opacity defaults to 100% and steps down to 60% by 5%. It affects normal backgrounds and padding,
 not text, explicit terminal backgrounds, or selected cells. The toolkit can raise opacity for text
-contrast. Without an active Mica or Acrylic backdrop (including high contrast or loss of window
+contrast. On a translucent frame the grid requests grayscale glyph masks even for cells the
+toolkit promotes to opaque. Edges use source-over on premultiplied BGRA, not a second blend
+against black. On an opaque frame the font returns to the system's antialiasing. The pinned
+toolkit still raises opacity per ink colour, so dim text can have darker cell backgrounds.
+Without an active Mica or Acrylic backdrop (including high contrast or loss of window
 focus), the setting is disabled and the surface draws opaque. The scrollback thumb has a solid
-gutter and the end notice is drawn on solid rows. The Chat drawer header is solid. Window-level
-popups and dialogs temporarily use an opaque terminal frame beneath their edges and scrims.
+gutter and the end notice is drawn on solid rows. The Chat drawer header is solid.
+
+The terminal uses the same opacity and glyph masks whether an overlay is open or not. Over a
+translucent terminal, menus and dialogs use solid, square-edged cards without exterior shadows.
+Widgets with built-in shadows (such as toasts and tips) draw on a solid backing clipped to the
+card; entrance animations fade the finished card over the grid. Only modal dialogs dim the
+window: fading a black fill over the saved pixels blends premultiplied colour **and** alpha,
+including where marked chrome meets the grid. No separate compositor surface is needed.
 
 `--demo --demo-terminal bar,80,mica` previews this with a synthetic Chat drawer; a debug build
 can add `--shell cmd.exe` to preview it with an isolated command prompt instead.

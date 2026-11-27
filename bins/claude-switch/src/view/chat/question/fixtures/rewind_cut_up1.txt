@@ -1,0 +1,41 @@
+cursor 30 13
+ ▐▛███▛█   Claude Code v2.1.332
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   ~\Desktop\cs-scratch\play
+
+
+❯ Reply with just the word delta. This sentence is only padding so that the prompt is long enough
+  to be cut by the rewind list, more padding words here.
+
+● delta
+
+✻ Crunched for 1s · done 2:37 PM
+
+❯ Reply with just the word echo.
+  Second line of the prompt.
+
+● echo
+
+✻ Sautéed for 1s · done 2:37 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Rewind
+
+  Restore the code and/or conversation to the point before…
+
+    Reply with just the word delta. This sentence is only padding so that the prompt is long …
+    No code changes
+
+  ❯ Reply with just the word echo.…
+    No code changes
+
+    (current)
+
+
+
+  Enter to continue · Esc to cancel
+
+
+
+
+

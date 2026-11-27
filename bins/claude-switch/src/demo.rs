@@ -80,7 +80,9 @@ pub fn config() -> Config {
         terminal_font_size: claude_switch_core::config::TERMINAL_FONT_DEFAULT,
         window_theme: "system".into(),
         appearance: Default::default(),
+        chat: Default::default(),
         compact: Default::default(),
+        meaning: Default::default(),
     }
 }
 

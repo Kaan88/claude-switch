@@ -10,19 +10,27 @@ use mdshared_ui::colour_picker::parse_hex;
 use mdshared_ui::settings::{Form, Outcome, Row, Value};
 
 mod appearance;
+mod chat_page;
+mod meaning;
 mod pages;
+mod theme_editor;
+mod tiles;
+pub(crate) use chat_page::CHAT;
 pub(crate) use pages::Settings;
 
 pub(crate) const TERMINAL: &str = "Terminal";
 pub(crate) const OPENCODE: &str = "OpenCode";
 pub(super) const HANDOVERS: &str = "Handovers";
+pub(super) const SESSIONS: &str = "Sessions";
+pub(crate) use meaning::refresh as refresh_sessions_page;
 
 type Page = (&'static str, fn(&AppState) -> Vec<Row>);
 // In display order. Adding a category only needs a label and a row builder here.
 const PAGES: &[Page] = &[
     ("Appearance", appearance::rows),
     (TERMINAL, terminal),
-    ("Sessions", sessions),
+    (SESSIONS, sessions),
+    (CHAT, chat_page::rows),
     ("Usage", usage),
     (HANDOVERS, handovers),
     (OPENCODE, opencode),
@@ -80,6 +88,7 @@ fn focus_kind_of(id: u32) -> Option<(FocusKind, bool)> {
     })
 }
 const SET_CLASSIC_VIEW: u32 = 99;
+const SET_CHAT_READING: u32 = 130;
 const AUTO_STEPS: [u8; 5] = [50, 60, 70, 80, 90];
 
 /// The threshold choice: Claude Code's own point first, then percentages (a saved one included).
@@ -181,10 +190,18 @@ fn colour(id: u32, label: &str, saved: &Option<String>, fallback: mdshared_ui::g
 
 fn terminal(st: &AppState) -> Vec<Row> {
     let a = &st.config.appearance;
-    let auto = termtheme::scheme("auto", st.pal());
-    let scheme_names: Vec<_> = PRESETS.iter().map(|preset| preset.name).collect();
-    vec![
-        Row::choice(SET_TERM_COLOURS, "Terminal colours", &scheme_names, preset_index(&st.config.terminal_scheme)),
+    let auto = termtheme::terminal("auto", st.pal(), a, st.high_contrast).0;
+    let selected = preset_index(&st.config.terminal_scheme);
+    let mut rows: Vec<_> = PRESETS
+        .chunks(tiles::ACROSS)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let (id, label) = if i == 0 { (SET_TERM_COLOURS, "Terminal colours") } else { (tiles::MORE_TERMINAL, "") };
+            let names: Vec<_> = chunk.iter().map(|s| s.name).collect();
+            Row::choice(id, label, &names, if selected / tiles::ACROSS == i { selected % tiles::ACROSS } else { 0 })
+        })
+        .collect();
+    rows.extend([
         Row::number(
             SET_TERM_FONT,
             "Terminal font size",
@@ -210,15 +227,26 @@ fn terminal(st: &AppState) -> Vec<Row> {
             .help("Adjusted to at least 7:1 contrast."),
         colour(SET_TERM_ACCENT, "Terminal accent", &a.terminal_accent, st.pal().accent)
             .help("Tints the selection, cursor and active tab mark."),
-    ]
+    ]);
+    rows
 }
 
 fn sessions(st: &AppState) -> Vec<Row> {
-    vec![
+    let mut rows = vec![
         Row::toggle(SET_EMBEDDED, "Open CLI sessions in a tab of this window", st.config.embedded_terminal)
             .help("Off: they open in a separate console window."),
         Row::toggle(SET_CLASSIC_VIEW, "Classic terminal view for Claude tabs", st.config.classic_terminal_view)
             .help("Chat cannot send while the CLI draws its full-screen view. Applies to new tabs."),
+        Row::choice(
+            SET_CHAT_READING,
+            "Chat reading width",
+            &["Narrow", "Medium", "Wide", "Full"],
+            crate::view::Reading::ALL
+                .iter()
+                .position(|r| *r == crate::view::Reading::from_key(&st.win_file.chat_reading))
+                .unwrap_or(1),
+        )
+        .help("The Markdown viewer has its own width control."),
         Row::toggle(SET_ARCHIVED, "Show sessions archived in the desktop app", st.config.show_archived)
             .help("Claude Desktop's own archive. Switch's Archive is separate."),
         Row::toggle(SET_WORKERS_SHOWN, "Show sessions started by tools", st.config.show_workers)
@@ -234,7 +262,9 @@ fn sessions(st: &AppState) -> Vec<Row> {
         .help("Toast mode needs the tray; otherwise flashes."),
         Row::toggle(SET_SUGGEST_TOPICS, "Include topics when suggesting names", st.config.suggest_topics)
             .help("Shares existing topic labels only when you confirm Suggest names. No extra request."),
-    ]
+    ];
+    rows.extend(meaning::rows(st));
+    rows
 }
 
 fn usage(st: &AppState) -> Vec<Row> {
@@ -390,8 +420,24 @@ fn notifications(st: &AppState) -> Vec<Row> {
 
 /// What a settings form's event gave.
 fn settings_outcome(st: &mut AppState, o: Outcome) {
+    if meaning::outcome(st, &o) {
+        return;
+    }
     match o {
         Outcome::Closed => st.dialog = None,
+        Outcome::Changed { id, value } if chat_page::owns(id) => {
+            chat_page::apply(st, id, Some(value));
+        }
+        Outcome::Action(id) if chat_page::owns(id) => {
+            chat_page::apply(st, id, None);
+        }
+        Outcome::Changed { id: SET_CHAT_READING, value: Value::Choice(i) } => {
+            if let Some(reading) = crate::view::Reading::ALL.get(i) {
+                st.win_file.chat_reading = reading.key().to_owned();
+                st.save_window();
+            }
+        }
+        Outcome::Action(id) if theme_editor::action(st, id) => {}
         Outcome::Changed { id: SET_RESTORE_TABS, value: Value::Choice(i) } => {
             if let Some(&mode) = crate::winfile::RestoreTabs::ALL.get(i) {
                 st.win_file.restore_tabs = mode;
@@ -512,9 +558,6 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
                 (SET_THEME, Value::Choice(i)) if i < WINDOW_THEMES.len() => {
                     st.config.window_theme = WINDOW_THEMES[i].0.into();
                 }
-                (SET_TERM_COLOURS, Value::Choice(i)) if i < PRESETS.len() => {
-                    st.config.terminal_scheme = PRESETS[i].id.into();
-                }
                 (SET_TERM_FONT, Value::Number(n)) => {
                     st.config.terminal_font_size =
                         n.clamp(i32::from(TERMINAL_FONT_MIN), i32::from(TERMINAL_FONT_MAX)) as u8;
@@ -574,6 +617,72 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_enters_an_unselected_palette_row_from_either_end() {
+        let mut st = AppState::new(Source::Demo, Some(true), Default::default());
+        for (id, name) in [("user-1", "Evening"), ("user-2", "Midnight")] {
+            let mut t = theme_editor::from_base(&termtheme::palettes::DARK_THEMES[0]);
+            t.name = name.into();
+            st.config.appearance.themes.insert(id.into(), t);
+        }
+        for (page, second, expected) in [
+            ("Appearance", tiles::row_id(true, 1), ["user-1", "user-2", "user-2"]),
+            (TERMINAL, tiles::MORE_TERMINAL, ["campbell", "vintage", "custom"]),
+        ] {
+            st.dialog = Some(settings(&mut st, Some(page)));
+            let selected = |st: &AppState| {
+                if page == TERMINAL {
+                    st.config.terminal_scheme.clone()
+                } else {
+                    st.config.appearance.dark_theme.clone()
+                }
+            };
+            let before = selected(&st);
+            for _ in 0..3 {
+                navigate(&mut st, KeyName::Tab);
+                if current(&st).form.focus_id() == Some(second) {
+                    break;
+                }
+            }
+            assert_eq!(current(&st).form.focus_id(), Some(second));
+            navigate(&mut st, KeyName::Enter);
+            navigate(&mut st, KeyName::Space);
+            assert_eq!(selected(&st), before);
+            navigate(&mut st, KeyName::Right);
+            assert_eq!(selected(&st), expected[0]);
+            navigate(&mut st, KeyName::Right);
+            assert_eq!(selected(&st), expected[1]);
+            // The first row is now unselected, even though its Form choice still has a value.
+            assert!(super::super::key(
+                &mut st,
+                Instant::now(),
+                &KeyName::Tab,
+                Mods { shift: true, ..Default::default() },
+                None
+            ));
+            navigate(&mut st, KeyName::Home);
+            navigate(&mut st, KeyName::Tab);
+            navigate(&mut st, KeyName::Left);
+            assert_eq!(selected(&st), expected[2]);
+        }
+    }
+
+    #[test]
+    fn default_accent_keeps_clay_on_builtins_and_uses_the_named_themes_accent() {
+        let mut st = AppState::new(Source::Demo, Some(true), Default::default());
+        let mut theme = theme_editor::from_base(&termtheme::palettes::DARK_THEMES[0]);
+        let saved = [90, 180, 220];
+        theme.accent.0 = saved;
+        st.config.appearance.themes.insert("user-1".into(), theme);
+        let change = |st: &mut AppState, id, i| settings_outcome(st, Outcome::Changed { id, value: Value::Choice(i) });
+        let default = ACCENT_SOURCES.iter().position(|(_, label)| *label == "Default").unwrap();
+        change(&mut st, SET_ACCENT, default);
+        assert_eq!(st.config.appearance.accent_source, "theme");
+        assert_eq!(st.pal().accent, mdshared_ui::gfx::rgb(0xd97757));
+        change(&mut st, tiles::row_id(true, 1), 0);
+        assert_eq!(st.pal().accent, saved);
+    }
+
+    #[test]
     fn the_two_archives_have_distinct_names() {
         let st = AppState::new(Source::Demo, None, WindowFile::default());
         let rows = sessions(&st);
@@ -582,6 +691,17 @@ mod tests {
             if label == "Show sessions archived in the desktop app"
                 && help == "Claude Desktop's own archive. Switch's Archive is separate."));
         assert_eq!(crate::list::model::Filter::Archived.label(), "Archived here");
+    }
+
+    #[test]
+    fn chat_width_setting_is_independent_of_markdown_and_round_trips() {
+        let mut st = AppState::new(Source::Demo, None, WindowFile::default());
+        st.session_view.markdown.reading = crate::view::Reading::Narrow;
+        settings_outcome(&mut st, Outcome::Changed { id: SET_CHAT_READING, value: Value::Choice(2) });
+        assert_eq!(st.win_file.chat_reading, "wide");
+        assert_eq!(st.win_file.markdown_reading, "narrow");
+        let restored = crate::winfile::parse(&crate::winfile::to_text(&st.win_file));
+        assert_eq!(restored.chat_reading, "wide");
     }
 
     #[test]
@@ -598,9 +718,13 @@ mod tests {
                 SET_REDUCE_MOTION,
                 SET_CORNERS,
                 SET_SHADOWS,
+                theme_editor::EDIT_DARK,
+                theme_editor::EDIT_LIGHT,
+                theme_editor::IMPORT,
             ],
             &[
                 SET_TERM_COLOURS,
+                tiles::MORE_TERMINAL,
                 SET_TERM_FONT,
                 terminal_appearance::CURSOR,
                 SET_CURSOR_BLINK,
@@ -613,11 +737,30 @@ mod tests {
             &[
                 SET_EMBEDDED,
                 SET_CLASSIC_VIEW,
+                SET_CHAT_READING,
                 SET_ARCHIVED,
                 SET_WORKERS_SHOWN,
                 SET_HIDDEN,
                 SET_ATTENTION,
                 SET_SUGGEST_TOPICS,
+                meaning::SET_MEANING,
+                meaning::SET_MEANING_MODEL,
+                meaning::LIST_MEANING_MODELS,
+                meaning::FORGET_MEANING,
+            ],
+            &[
+                chat_page::CHIP_SLOT,
+                chat_page::CHIP_SLOT + 1,
+                chat_page::CHIP_SLOT + 2,
+                chat_page::CHIP_SLOT + 3,
+                chat_page::CHIP_SLOT + 4,
+                chat_page::CHIP_SLOT + 5,
+                chat_page::CHIP_SLOT + 6,
+                chat_page::OWN_COMMAND,
+                chat_page::OWN_COMMAND + 1,
+                chat_page::OWN_COMMAND + 2,
+                chat_page::RESET_CHIPS,
+                chat_page::SET_ANSWER_MENUS,
             ],
             &[SET_USAGE, SET_USAGE_WARNINGS],
             &[
@@ -731,21 +874,24 @@ mod tests {
         navigate(&mut st, KeyName::Down);
         assert_eq!(current(&st).form.focus_id(), Some(SET_CLASSIC_VIEW));
         navigate(&mut st, KeyName::Down);
+        assert_eq!(current(&st).form.focus_id(), Some(SET_CHAT_READING));
+        navigate(&mut st, KeyName::Down);
         assert_eq!(current(&st).form.focus_id(), Some(SET_ARCHIVED));
         let archived = st.config.show_archived;
         navigate(&mut st, KeyName::Space);
         assert_ne!(st.config.show_archived, archived);
         navigate(&mut st, KeyName::Up);
         navigate(&mut st, KeyName::Up);
+        navigate(&mut st, KeyName::Up);
         assert_eq!(current(&st).category(), "Sessions");
         assert_eq!(current(&st).form.focus_id(), Some(SET_EMBEDDED));
         super::super::key(&mut st, Instant::now(), &KeyName::Tab, Mods { shift: true, ..Mods::default() }, None);
         navigate(&mut st, KeyName::Down);
-        assert_eq!(current(&st).category(), "Usage");
+        assert_eq!(current(&st).category(), CHAT);
         navigate(&mut st, KeyName::Escape);
         assert!(st.dialog.is_none());
         st.dialog = Some(settings(&mut st, None));
-        assert_eq!(current(&st).category(), "Usage");
+        assert_eq!(current(&st).category(), CHAT);
         st.opencode_settings(true);
         assert_eq!(current(&st).category(), OPENCODE);
         navigate(&mut st, KeyName::Escape);
@@ -782,6 +928,7 @@ mod tests {
         assert!(!config::load(&roots).embedded_terminal);
         st.dialog = Some(settings(&mut st, Some(TERMINAL)));
         assert_eq!(current(&st).form.value(SET_TERM_FONT), Some(Value::Number(21)));
+        navigate(&mut st, KeyName::Down);
         navigate(&mut st, KeyName::Down);
         navigate(&mut st, KeyName::Down);
         assert_eq!(current(&st).form.value(SET_USAGE), Some(Value::Bool(false)));

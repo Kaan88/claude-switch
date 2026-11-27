@@ -1,0 +1,31 @@
+cursor 18 8
+
+
+
+
+
+❯ Use the AskUserQuestion tool now (no other tools) with one question: header "Colour", question
+  "Which colour do you prefer?", options Red (warm), Green (calm), Blue (cool). multiSelect false.
+
+● Declined to answer Claude's questions:
+  ⎿  · Which colour do you prefer? (Red (warm) / Green (calm) / Blue (cool))
+
+❯ Now use AskUserQuestion again with one question: header "Fruits", question "Which fruits do you
+  like?", options Apple, Pear, Plum, multiSelect true.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruits  ✔ Submit  →
+
+Which fruits do you like?
+
+❯ 1. [✔] Apple
+         Crisp and sweet.
+  2. [ ] Pear
+         Soft and juicy.
+  3. [ ] Plum
+         Tart and sweet.
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

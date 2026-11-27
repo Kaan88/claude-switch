@@ -231,7 +231,12 @@ pub fn draw_popup(st: &mut AppState, p: &mut Painter, window: Rect, now: Instant
     let card = popup_card(window, field, 90.0 + view_h + extra);
     let x = card.x + 14.0;
     let w = card.w - 28.0;
-    p.frame(card, st.appearance.radius, pal.popup, pal.popup_line);
+    p.frame(
+        card,
+        crate::windowlook::Cards::for_frame(st, p).decoration(st.appearance.radius),
+        pal.popup,
+        pal.popup_line,
+    );
     p.text(Face::Semibold, 13.0, x, card.y + 20.0, plan, pal.text, w);
     let view = Rect::new(x, card.y + 34.0, w, view_h);
     let scroll = st.usage.popup.scroll.clamp(0.0, (content - view_h).max(0.0));

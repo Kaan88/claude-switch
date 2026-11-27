@@ -147,6 +147,9 @@ impl App for AppState {
                 self.retheme();
             }
             Event::Wake(now) => {
+                if self.scroll_wake_due(now) {
+                    cx.request_redraw_all();
+                }
                 if self.sync_usage_setting() {
                     cx.request_redraw_all();
                 }
@@ -191,6 +194,9 @@ impl App for AppState {
                         self.next_poll = None;
                     } else {
                         self.poll_running();
+                        if self.check_copy_deletes(now) {
+                            cx.request_redraw_all();
+                        }
                         self.next_poll = Some(now + POLL);
                     }
                 }
@@ -249,12 +255,28 @@ impl App for AppState {
                 }
             }
             Msg::SessionView => self.session_ready(cx),
-            Msg::Handover(request, reply) => {
+            Msg::ThemeFile(result) => {
+                self.theme_file(result);
+                cx.request_redraw_all();
+            }
+            // `take` claims the request; false when the pipe thread already told the caller it
+            // was not opened, so it is not acted on.
+            Msg::Handover(_, _, ticket) if !ticket.take() => {}
+            Msg::Handover(request, reply, _) => {
                 let result = self.handover_requested(*request);
                 if result.is_ok() {
                     crate::tray::show(cx.window());
                 }
                 let _ = reply.send(result);
+                cx.request_redraw_all();
+                self.timers(cx);
+            }
+            Msg::HandoverNotice(notice) => {
+                match notice {
+                    crate::compact_cli::Notice::Failed(text) => self.error("Could not open handover", text),
+                    crate::compact_cli::Notice::Note(text) => self.note("Handover opened", text),
+                }
+                crate::tray::show(cx.window());
                 cx.request_redraw_all();
                 self.timers(cx);
             }

@@ -1,0 +1,41 @@
+cursor 39 99
+
+
+❯ Use the Write tool to create the file note.txt containing the word one.
+
+● Write(note.txt)
+  ⎿  Wrote 1 line to note.txt
+      1 one
+
+● I created note.txt in C:\Users\user\Desktop\cs-scratch\play containing the word "one".
+
+✻ Churned for 2s · done 2:22 PM
+
+❯ Reply with just the word bravo.
+
+● bravo
+
+✻ Cooked for 0s · done 2:23 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Rewind
+
+  Restore to the point before you sent this message:
+
+  │ Use the Write tool to create the file note.txt containing the word one.
+  │ (27s ago)
+
+  The conversation goes back to before this message.
+  The code will be restored -1 in note.txt.
+
+  ❯ 1. Restore code and conversation
+    2. Restore conversation
+    3. Restore code
+    4. Summarize from here
+    5. Summarize up to here
+    6. Never mind
+
+  ⚠ Restored files go back whole, losing later changes by anyone. Bash changes to other files are
+  not undone.
+
+

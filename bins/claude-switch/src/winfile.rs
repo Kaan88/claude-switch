@@ -49,6 +49,7 @@ pub struct WindowFile {
     pub session_split: String,
     pub chat_default: bool,
     pub chat_pins: Vec<String>,
+    pub chat_reading: String,
     /// The Markdown panel's width ([`mdshared_ui::splitter::Splitter::to_setting`]) and reading
     /// width beside a conversation.
     pub markdown_split: String,
@@ -67,6 +68,7 @@ impl Default for WindowFile {
             session_split: String::new(),
             chat_default: false,
             chat_pins: Vec::new(),
+            chat_reading: "medium".into(),
             markdown_split: String::new(),
             markdown_reading: String::new(),
         }
@@ -97,6 +99,7 @@ pub fn parse(text: &str) -> WindowFile {
             "markdown_split" => out.markdown_split = settings::unescape(v),
             "markdown_reading" => out.markdown_reading = v.trim().to_owned(),
             "chat_default" => out.chat_default = v.trim().parse().unwrap_or(false),
+            "chat_reading" => out.chat_reading = v.trim().to_owned(),
             "chat_pins" => {
                 out.chat_pins = v
                     .split(',')
@@ -126,6 +129,7 @@ pub fn to_text(f: &WindowFile) -> String {
     w.line("session_split", &settings::escape(&f.session_split));
     w.line("chat_default", if f.chat_default { "true" } else { "false" });
     w.line("chat_pins", &f.chat_pins.join(","));
+    w.line("chat_reading", &f.chat_reading);
     if !f.markdown_split.is_empty() {
         w.line("markdown_split", &settings::escape(&f.markdown_split));
     }
@@ -242,6 +246,7 @@ mod tests {
             session_split: "b:450".into(),
             chat_default: true,
             chat_pins: vec!["model".into(), "example:skill".into()],
+            chat_reading: "wide".into(),
             place: Some(saved(240)),
             restore_tabs: RestoreTabs::Always,
             markdown_split: "b:720".into(),

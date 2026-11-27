@@ -3,10 +3,62 @@
 //! (`mdshared_term::input`). Pure functions of the event and the screen's modes, so every
 //! decision is tested here without a window or a program.
 
-use mdshared_term::{Key, Modes, MouseMode, input};
+use mdshared_term::{Key, Modes, MouseMode, Screen, input};
 use mdshared_ui::keys::{KeyName, Mods};
 
 use crate::actions;
+
+/// Key conventions of the launched program; not a negotiated terminal mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Keyboard {
+    Classic,
+    Claude,
+}
+
+/// A solid rule as Claude Code draws above and below its input box.
+fn input_rule(text: &str) -> bool {
+    let text = text.trim();
+    text.chars().count() >= 20 && text.chars().all(|c| c == '─')
+}
+
+/// Hints Claude Code shows in the row under its input box (its mode line), lower case.
+const FOOTER_HINTS: [&str; 3] = ["shift+tab to cycle", "? for shortcuts", "esc to interrupt"];
+
+/// The cursor is in Claude Code's input box. Its classic and its full-screen view draw the box
+/// alike, the full-screen view on the alternate screen (Claude Code 2.1.332): a solid rule, a row
+/// starting with `❯`, the draft's rows, another solid rule. A draft may hold rule lines of its own
+/// (box art, a table border) and the cursor may sit on one, so the box's top is the nearest rule
+/// with a `❯` row under it at or above the cursor, and any rule below the cursor may close it.
+/// When the draft is taller than the screen its top is gone; the box is then known by Claude
+/// Code's mode line under a rule below the cursor. In doubt inside such a box this says yes:
+/// Shift+Enter then starts a line, where a plain Return would submit the unfinished draft.
+pub fn claude_input_at_cursor(screen: &Screen) -> bool {
+    let cursor = screen.cursor().row;
+    let text = |row: usize| screen.row_text(row);
+    let rule = |row: usize| input_rule(&text(row));
+    let footer = |row: usize| {
+        let row = text(row).to_lowercase();
+        FOOTER_HINTS.iter().any(|hint| row.contains(hint))
+    };
+    let below = cursor + 1..screen.rows();
+    if !below.clone().any(rule) {
+        return false;
+    }
+    let top = (0..cursor).rev().any(|row| rule(row) && text(row + 1).trim_start().starts_with('❯'));
+    top || below.into_iter().any(|row| rule(row) && row + 1 < screen.rows() && footer(row + 1))
+}
+
+/// The conventions a key is encoded with now. A Claude tab keeps Claude Code's (Shift+Enter as
+/// CSI-u) on the main screen, where only Claude Code's classic view draws, and on the alternate
+/// screen only while it shows Claude Code's input box (its full-screen view). Any other program
+/// on the alternate screen, such as an editor Claude Code opened, gets the classic keys: one that
+/// does not read CSI-u would type it as stray characters.
+pub fn keyboard_now(keyboard: Keyboard, screen: &Screen) -> Keyboard {
+    match keyboard {
+        Keyboard::Claude if screen.modes().alt_screen && !claude_input_at_cursor(screen) => Keyboard::Classic,
+        keyboard => keyboard,
+    }
+}
 
 /// What a key press in a terminal tab comes to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,7 +129,14 @@ fn printable(text: Option<&str>) -> Option<&str> {
 
 /// What a key press does in a terminal tab. `name` and `text` are the host's
 /// ([`mdshared_ui::host::KeyPress`]); `selected` says whether there is a selection to copy.
-pub fn key(name: Option<&KeyName>, mods: Mods, text: Option<&str>, modes: &Modes, selected: bool) -> KeyAction {
+pub fn key(
+    name: Option<&KeyName>,
+    mods: Mods,
+    text: Option<&str>,
+    modes: &Modes,
+    selected: bool,
+    keyboard: Keyboard,
+) -> KeyAction {
     let Some(name) = name else {
         // A key the toolkit has no name for: whatever text it typed.
         return printable(text).map_or(KeyAction::None, |t| KeyAction::Send(t.as_bytes().to_vec()));
@@ -98,6 +157,11 @@ pub fn key(name: Option<&KeyName>, mods: Mods, text: Option<&str>, modes: &Modes
     }
     let tm = term_mods(mods);
     match name {
+        // The classic encoder drops Shift on Return. Use the distinct CSI-u key rather
+        // than sending a carriage return that would submit Claude Code's prompt.
+        KeyName::Enter if keyboard == Keyboard::Claude && tm.shift && !tm.ctrl && !tm.alt => {
+            KeyAction::Send(b"\x1b[13;2u".to_vec())
+        }
         KeyName::Char(c) => {
             // AltGr is Ctrl+Alt on Windows: a key that typed a character with both held typed
             // that character (`@`, `€`, `{` on many layouts).
@@ -203,6 +267,7 @@ pub fn unescape(s: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Keyboard::{Classic, Claude};
 
     const NONE: Mods = Mods { ctrl: false, shift: false, alt: false, control: false };
     const CTRL: Mods = Mods { ctrl: true, ..NONE };
@@ -220,7 +285,7 @@ mod tests {
     }
 
     fn k(name: KeyName, mods: Mods, text: Option<&str>) -> KeyAction {
-        key(Some(&name), mods, text, &Modes::default(), false)
+        key(Some(&name), mods, text, &Modes::default(), false, Classic)
     }
 
     fn send(b: &[u8]) -> KeyAction {
@@ -233,8 +298,8 @@ mod tests {
         assert_eq!(k(KeyName::Char('a'), SHIFT, Some("A")), send(b"A"));
         assert_eq!(k(KeyName::Char('\u{e9}'), NONE, Some("\u{e9}")), send("\u{e9}".as_bytes()));
         assert_eq!(k(KeyName::Space, NONE, Some(" ")), send(b" "));
-        assert_eq!(key(None, NONE, Some("\u{20ac}"), &Modes::default(), false), send("\u{20ac}".as_bytes()));
-        assert_eq!(key(None, NONE, None, &Modes::default(), false), KeyAction::None);
+        assert_eq!(key(None, NONE, Some("\u{20ac}"), &Modes::default(), false, Classic), send("\u{20ac}".as_bytes()));
+        assert_eq!(key(None, NONE, None, &Modes::default(), false, Classic), KeyAction::None);
     }
 
     #[test]
@@ -250,6 +315,7 @@ mod tests {
     #[test]
     fn named_keys_follow_the_modes() {
         assert_eq!(k(KeyName::Enter, NONE, Some("\r")), send(b"\r"));
+        assert_eq!(k(KeyName::Enter, ALT, None), send(b"\x1b\r"));
         assert_eq!(k(KeyName::Backspace, NONE, Some("\u{8}")), send(b"\x7f"));
         assert_eq!(k(KeyName::Tab, NONE, Some("\t")), send(b"\t"));
         assert_eq!(k(KeyName::Tab, SHIFT, None), send(b"\x1b[Z"));
@@ -259,8 +325,83 @@ mod tests {
         assert_eq!(k(KeyName::F(5), NONE, None), send(b"\x1b[15~"));
         assert_eq!(k(KeyName::Delete, NONE, None), send(b"\x1b[3~"));
         let app = Modes { app_cursor: true, ..Modes::default() };
-        assert_eq!(key(Some(&KeyName::Up), NONE, None, &app, false), send(b"\x1bOA"));
+        assert_eq!(key(Some(&KeyName::Up), NONE, None, &app, false, Classic), send(b"\x1bOA"));
+        let newline = Modes { newline: true, ..Modes::default() };
+        assert_eq!(key(Some(&KeyName::Enter), NONE, None, &newline, false, Classic), send(b"\r\n"));
         assert_eq!(k(KeyName::F(30), NONE, None), KeyAction::None);
+    }
+
+    /// A screen fed these rows, then the cursor put at `cursor` (row, column).
+    fn screen_of(alt: bool, rows: &[&str], cursor: (usize, usize)) -> Screen {
+        let mut screen = Screen::new(100, 12, 0);
+        if alt {
+            screen.feed(b"\x1b[?1049h");
+        }
+        for (i, row) in rows.iter().enumerate() {
+            screen.feed(format!("\x1b[{};1H{row}", i + 1).as_bytes());
+        }
+        screen.feed(format!("\x1b[{};{}H", cursor.0 + 1, cursor.1 + 1).as_bytes());
+        screen
+    }
+
+    #[test]
+    fn shift_enter_is_claudes_only_while_its_input_box_shows_on_the_alternate_screen() {
+        let rule = "─".repeat(100);
+        // Claude Code 2.1.332's full-screen view (`--settings {"tui":"fullscreen"}`), recorded:
+        // the input box on the alternate screen, the cursor on its second line.
+        let fullscreen = [" ▐▛███▛█   Claude Code v2.1.332", "", &rule, "❯ first line", "  second line", &rule];
+        let input = screen_of(true, &fullscreen, (4, 13));
+        assert!(input.modes().alt_screen && claude_input_at_cursor(&input));
+        assert!(keyboard_now(Claude, &input) == Claude);
+        // An editor Claude Code opened on the alternate screen: classic keys.
+        let editor =
+            screen_of(true, &["  GNU nano 8.0   note.txt", "", "first line", "", "^G Help  ^O Write Out"], (2, 10));
+        assert!(!claude_input_at_cursor(&editor));
+        assert!(keyboard_now(Claude, &editor) == Classic);
+        let enter = |screen: &Screen| {
+            key(Some(&KeyName::Enter), SHIFT, Some("\r"), &screen.modes(), false, keyboard_now(Claude, screen))
+        };
+        assert_eq!(enter(&input), send(b"\x1b[13;2u"));
+        assert_eq!(enter(&editor), send(b"\r"));
+        // The cursor outside the box (a menu below it) on the alternate screen: classic.
+        assert!(keyboard_now(Claude, &screen_of(true, &fullscreen, (8, 2))) == Classic);
+        // The main screen is Claude Code's classic view: its Shift+Enter, whatever it shows.
+        let classic = screen_of(false, &["some output"], (0, 3));
+        assert!(keyboard_now(Claude, &classic) == Claude);
+        assert_eq!(enter(&classic), send(b"\x1b[13;2u"));
+        assert!(keyboard_now(Classic, &input) == Classic);
+    }
+
+    #[test]
+    fn a_draft_with_rule_lines_or_taller_than_the_screen_keeps_claudes_shift_enter() {
+        let rule = "─".repeat(100);
+        let footer = "  ⏵⏵ auto mode on (shift+tab to cycle)";
+        // A pasted table border inside the draft, the cursor under it and on it.
+        let draft = [&rule, "❯ | a | b |", &rule, "  | 1 | 2 |", &rule, footer];
+        assert!(claude_input_at_cursor(&screen_of(true, &draft, (3, 5))));
+        assert!(claude_input_at_cursor(&screen_of(true, &draft, (2, 3))), "the cursor on the draft's own rule");
+        // A draft taller than the screen: its top scrolled away, the mode line under the box.
+        let tall = ["  line 50 of the draft", "  line 51", &rule, footer];
+        assert!(claude_input_at_cursor(&screen_of(true, &tall, (1, 9))));
+        // Not Claude Code: rule lines without its `❯` row or its mode line.
+        let other = ["  a report", &rule, "  total 3", &rule, "  press q to quit"];
+        assert!(!claude_input_at_cursor(&screen_of(true, &other, (2, 4))));
+        // Below the box (a menu under it): nothing closes a box under the cursor.
+        assert!(!claude_input_at_cursor(&screen_of(true, &[&rule, "❯ hi", &rule, "  1. Yes"], (3, 2))));
+    }
+
+    #[test]
+    fn only_claude_gets_distinct_shift_enter_in_both_return_modes() {
+        for newline in [false, true] {
+            let modes = Modes { newline, ..Modes::default() };
+            let enter = |mods, keyboard| key(Some(&KeyName::Enter), mods, Some("\r"), &modes, false, keyboard);
+            let plain = send(if newline { b"\r\n" } else { b"\r" });
+            assert_eq!(enter(SHIFT, Claude), send(b"\x1b[13;2u"));
+            assert_eq!(enter(NONE, Claude), plain);
+            assert_eq!(enter(SHIFT, Classic), plain);
+            assert_eq!(enter(CTRL_SHIFT, Claude), enter(CTRL, Classic));
+            assert_eq!(enter(Mods { shift: true, ..ALT }, Claude), enter(ALT, Classic));
+        }
     }
 
     #[test]
@@ -278,8 +419,8 @@ mod tests {
         assert_eq!(k(KeyName::Char('v'), CTRL_SHIFT, None), KeyAction::Paste);
         assert_eq!(k(KeyName::Char('v'), CTRL, None), KeyAction::Paste);
         // Ctrl+C copies a selection, and is the program's interrupt without one.
-        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), true), KeyAction::Copy);
-        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), false), send(b"\x03"));
+        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), true, Classic), KeyAction::Copy);
+        assert_eq!(key(Some(&KeyName::Char('c')), CTRL, None, &Modes::default(), false, Classic), send(b"\x03"));
     }
 
     #[test]
@@ -288,7 +429,7 @@ mod tests {
         assert_eq!(k(KeyName::PageDown, SHIFT, None), KeyAction::Page(-1));
         assert_eq!(k(KeyName::PageUp, NONE, None), send(b"\x1b[5~"));
         let alt = Modes { alt_screen: true, ..Modes::default() };
-        assert_eq!(key(Some(&KeyName::PageUp), SHIFT, None, &alt, false), send(b"\x1b[5;2~"));
+        assert_eq!(key(Some(&KeyName::PageUp), SHIFT, None, &alt, false, Classic), send(b"\x1b[5;2~"));
     }
 
     #[test]

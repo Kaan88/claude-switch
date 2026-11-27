@@ -1,0 +1,40 @@
+cursor 35 2
+
+
+
+
+❯ Run exactly this command with the Bash tool and nothing else: mkdir probe_dir_one
+
+● Bash(mkdir probe_dir_one)
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Create a file named probe_note.txt containing the word hello, with the Write tool.
+
+● Write(probe_note.txt)
+  ⎿  Rejected write to probe_note.txt
+      1 hello
+
+❯ Fetch https://example.com with the WebFetch tool and tell me its title.
+
+● WebFetch isn't available in this session, so I'll use the web-fetch agent, which is the stand-in
+  for it.
+
+● Fetch(https://example.com)
+  ⎿  Interrupted · What should Claude do instead?
+
+● The page fetch was interrupted before it returned, so I don't have a title for https://example.com
+  yet.
+
+  WebFetch isn't available in this session. ToolSearch found no such tool. I tried the web-fetch
+  agent as a stand-in, and you stopped that call before it reported back.
+
+  Do you want me to retry the fetch through the web-fetch agent, or would you rather I skip fetching
+  and use WebSearch on example.com instead?
+
+✻ Baked for 6s · done 11:34 AM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_C…
+  ⏸ manual mode on · ? for shortcuts

@@ -272,21 +272,22 @@ fn a_card_that_goes_away_gives_the_keyboard_back() {
 }
 
 #[test]
-fn several_questions_or_answers_stay_in_the_terminal_and_the_drawer_opens_as_before() {
-    for questions in [vec![question(true)], vec![question(false), question(false)]] {
-        let mut f = Fixture::new(questions);
-        let now = Instant::now();
-        f.screen(&menu(0, None), now);
-        press(f.tab(), now, Hit::Option(0));
-        assert!(f.writes().is_empty());
-        assert_eq!(f.chat().question.error, Some(TERMINAL_ONLY));
-    }
+fn questions_worded_alike_stay_in_the_terminal_and_the_drawer_opens_as_before() {
+    let mut f = Fixture::new(vec![question(false), question(false)]);
+    let now = Instant::now();
+    f.screen(&menu(0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, None, "the screen could not tell them apart");
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(TERMINAL_ONLY));
 }
 
 #[test]
 fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
     for answerable in [true, false] {
-        let mut f = Fixture::new(vec![question(!answerable)]);
+        let questions = if answerable { vec![question(true)] } else { vec![question(false), question(false)] };
+        let mut f = Fixture::new(questions);
         let now = Instant::now();
         f.screen(&menu(0, None), now - QUIET);
         let tab = f.tab();
@@ -819,21 +820,6 @@ fn a_toggle_that_keeps_its_menu_open_is_done_once_its_row_changed() {
 }
 
 #[test]
-fn a_ctrl_b_in_a_hidden_tab_still_ends() {
-    let mut f = Fixture::tool("cargo test --workspace");
-    let now = Instant::now();
-    f.screen(&running(true), now);
-    f.sync();
-    assert!(press(f.tab(), now, Hit::Background));
-    assert!(f.chat().waiting().is_some(), "chat work, so a hidden tab progresses too");
-    let id = f.tab;
-    assert!(f.app.tabs.activate(crate::tabs::SESSIONS));
-    f.app.progress_chat_tabs(now + STEP, true);
-    let chat = &f.app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
-    assert!(chat.question.background_step.is_none());
-}
-
-#[test]
 fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
     let mut f = Fixture::idle();
     let now = Instant::now();
@@ -851,54 +837,242 @@ fn a_menu_without_numbered_rows_is_shown_read_only_and_an_old_one_is_ignored() {
     assert!(f.chat().question.menu.is_none(), "a menu far above the input is old output");
 }
 
-fn running(hint: bool) -> String {
-    let hint = if hint { "  ctrl+b to run in background" } else { "  esc to interrupt" };
-    format!("\x1b[2J\x1b[H● Bash(npm test)\r\n  ⎿  Running…\r\n\r\n✻ Testing… (12s)\r\n{hint}")
+impl Fixture {
+    /// A screen recorded from Claude Code, as newer output.
+    fn show(&mut self, fixture: &str, now: Instant) {
+        self.tab().term.screen = screens::recorded::recorded(fixture);
+        self.chat().output(now, true, false);
+    }
+
+    /// A background agent the transcript knows, not known to have finished.
+    fn agent(&mut self, description: &str) {
+        let pane = self.tab().pane.as_mut().unwrap();
+        pane.model.agents.push(claude_switch_core::transcript::Subagent {
+            id: format!("a-{description}"),
+            agent_type: Some("general-purpose".into()),
+            description: Some(description.into()),
+            ..Default::default()
+        });
+    }
+}
+
+const PING: &str = "ping -n 40 127.0.0.1";
+
+#[test]
+fn recorded_background_screens_read_as_offered_and_moved() {
+    use screens::recorded::*;
+    let hint = recorded(BG_HINT);
+    assert!(screens::background_hint(&hint, "Bash", PING));
+    assert!(!screens::background_hint(&hint, "Bash", "ping -n 41 127.0.0.1"), "another command");
+    assert!(!screens::background_hint(&hint, "PowerShell", PING), "another tool");
+    assert!(!screens::backgrounded(&hint, "Bash", PING));
+    let moved = recorded(BG_MOVED);
+    assert!(screens::backgrounded(&moved, "Bash", PING));
+    assert!(!screens::background_hint(&moved, "Bash", PING));
+    // The hint row of the input box offers the agent list, but no shell command is offered there.
+    assert!(!screens::background_hint(&recorded(AGENTS_IDLE), "Bash", PING));
 }
 
 #[test]
-fn run_in_background_is_offered_only_with_the_clis_hint_and_waits_for_it_to_go() {
-    let mut f = Fixture::tool("npm test");
+fn run_in_background_is_offered_only_under_its_calls_hint_and_ends_once_it_moved() {
+    use screens::recorded::*;
     let now = Instant::now();
-    f.screen(&running(false), now);
+    let mut f = Fixture::tool(PING);
+    f.show(REWIND_IDLE, now);
     f.sync();
     assert!(f.chat().question.background.is_none(), "no hint, no button");
     assert!(press(f.tab(), now, Hit::Background));
     assert!(f.writes().is_empty());
-    assert_eq!(f.chat().question.error, Some(NO_HINT));
+    assert_eq!(f.chat().question.error, Some(background::NO_HINT));
 
-    let mut f = Fixture::tool("npm test");
-    f.screen(&running(true), now);
+    let mut f = Fixture::tool(PING);
+    f.show(BG_HINT, now);
     f.sync();
-    assert_eq!(f.chat().question.background.as_ref().map(|b| b.1.as_str()), Some("npm test"));
+    assert_eq!(f.chat().question.background.as_ref().map(|b| b.command.as_str()), Some(PING));
     assert!(press(f.tab(), now, Hit::Background));
-    assert_eq!(f.writes(), [CTRL_B.to_vec()]);
+    assert_eq!(f.writes(), [b"\x02".to_vec()]);
     press(f.tab(), now, Hit::Background);
     assert!(f.writes().is_empty(), "one at a time");
     assert_eq!(f.chat().question.error, Some(WAITING));
     advance(f.tab(), now, true);
     assert!(f.chat().question.background_step.is_some(), "the same screen proves nothing");
-    f.screen(&running(false), now);
+    f.show(BG_MOVED, now);
     advance(f.tab(), now, true);
     assert!(f.chat().question.background_step.is_none() && f.chat().question.error.is_none());
 
     // The hint stays: the CLI did not take it.
-    let mut f = Fixture::tool("npm test");
-    f.screen(&running(true), now);
+    let mut f = Fixture::tool(PING);
+    f.show(BG_HINT, now);
     press(f.tab(), now, Hit::Background);
-    f.screen(&running(true), now);
+    f.show(BG_HINT, now);
     advance(f.tab(), now + STEP, true);
-    assert_eq!(f.chat().question.error, Some(NOT_BACKGROUND));
+    assert_eq!(f.chat().question.error, Some(background::NOT_BACKGROUND));
+
+    // The call ended meanwhile: nothing to wait for.
+    let mut f = Fixture::tool(PING);
+    f.show(BG_HINT, now);
+    press(f.tab(), now, Hit::Background);
+    f.resolve();
+    advance(f.tab(), now, true);
+    assert!(f.chat().question.background_step.is_none() && f.chat().question.error.is_none());
 
     // Two calls pending: the hint may be for either.
-    let mut f = Fixture::tool("npm test");
+    let mut f = Fixture::tool(PING);
     let pane = f.tab().pane.as_mut().unwrap();
     pane.model
         .items
         .insert(ItemId { offset: AT - 1, block: 0 }, Item { kind: shell("toolu_0", "cargo build"), timestamp: None });
-    f.screen(&running(true), now);
+    f.show(BG_HINT, now);
     f.sync();
     assert!(f.chat().question.background.is_none());
+}
+
+#[test]
+fn a_ctrl_b_in_a_hidden_tab_still_ends() {
+    use screens::recorded::*;
+    let mut f = Fixture::tool(PING);
+    let now = Instant::now();
+    f.show(BG_HINT, now);
+    f.sync();
+    assert!(press(f.tab(), now, Hit::Background));
+    assert!(f.chat().waiting().is_some(), "chat work, so a hidden tab progresses too");
+    let id = f.tab;
+    assert!(f.app.tabs.activate(crate::tabs::SESSIONS));
+    f.app.progress_chat_tabs(now + STEP, true);
+    let chat = &f.app.tabs.get(id).unwrap().pane.as_ref().unwrap().chat;
+    assert!(chat.question.background_step.is_none());
+}
+
+#[test]
+fn recorded_agent_lists_read_with_their_keys_and_states() {
+    use screens::recorded::*;
+    use screens::{AgentState, ListKeys};
+    let list = |fixture: &str| screens::agent_list(&recorded(fixture));
+    let idle = list(AGENTS_IDLE).expect("the list under the idle input");
+    assert_eq!((idle.keys, idle.highlight), (ListKeys::Input, None));
+    assert_eq!(idle.names(), [("main", ""), ("general-purpose", "First pinger"), ("general-purpose", "Second pinger")]);
+    assert_eq!(idle.rows[1].state, AgentState::Running);
+    assert!(crate::view::chat::submission::screen::clean_prompt(&recorded(AGENTS_IDLE)));
+    let shown = |fixture: &str| list(fixture).map(|l| (l.keys, l.highlight));
+    assert_eq!(shown(AGENTS_OPEN), Some((ListKeys::Select, Some(0))));
+    assert_eq!(shown(AGENTS_FIRST), Some((ListKeys::Stop, Some(1))));
+    assert_eq!(shown(AGENTS_SECOND), Some((ListKeys::Stop, Some(2))));
+    assert_eq!(shown(AGENTS_STOPPED), Some((ListKeys::Clear, Some(2))));
+    assert_eq!(list(AGENTS_STOPPED).unwrap().rows[2].state, AgentState::Stopped);
+    assert!(!crate::view::chat::submission::screen::clean_prompt(&recorded(AGENTS_OPEN)), "the list has the keys");
+    // After a stop the hint row offers "↓ to resume subagent": not the list Chat drives.
+    assert_eq!(shown(AGENTS_CLOSED), None);
+    assert!(crate::view::chat::submission::screen::clean_prompt(&recorded(AGENTS_CLOSED)));
+    // Mid-turn, with a shell command running too.
+    let shell = list(AGENTS_SHELL).expect("the list while a turn runs");
+    assert_eq!((shell.keys, shell.rows.len()), (ListKeys::Input, 2));
+    assert!(list(BG_HINT).is_none() && list(REWIND_IDLE).is_none());
+}
+
+#[test]
+fn stop_agent_walks_the_list_one_checked_key_at_a_time() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.show(AGENTS_IDLE, now);
+    f.sync();
+    assert!(f.chat().question.agents.is_empty(), "the transcript does not know these agents");
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    f.sync();
+    let offered: Vec<_> = f.chat().question.agents.iter().map(|a| (a.description.clone(), a.row)).collect();
+    assert_eq!(offered, [("First pinger".to_owned(), 1), ("Second pinger".to_owned(), 2)]);
+    assert!(f.chat().question.menu.is_none());
+
+    assert!(press(f.tab(), now, Hit::StopAgent(1)));
+    assert_eq!(f.writes(), [down(1)]);
+    assert!(f.chat().waiting().is_some(), "the composer waits meanwhile");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the same screen proves nothing");
+    f.show(AGENTS_OPEN, now);
+    advance(f.tab(), now, false);
+    assert!(f.writes().is_empty(), "no write while the window does not allow one");
+    assert!(f.chat().question.menu.is_none(), "the list is driven, not shown as a menu card");
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(AGENTS_FIRST, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)], "one row at a time, past the first agent");
+    f.show(AGENTS_SECOND, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"x".to_vec()]);
+    f.show(AGENTS_STOPPED, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\x1b".to_vec()]);
+    f.show(AGENTS_CLOSED, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().question.agent_step.is_none() && f.chat().question.error.is_none());
+    assert!(f.chat().waiting().is_none());
+}
+
+#[test]
+fn stop_agent_stops_when_the_screen_shows_anything_else() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let start = |f: &mut Fixture| {
+        f.agent("First pinger");
+        f.agent("Second pinger");
+        f.show(AGENTS_IDLE, now);
+        f.sync();
+    };
+    // The list did not open: no more keys, a notice and the drawer.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    press(f.tab(), now, Hit::StopAgent(0));
+    f.writes();
+    f.show(REWIND_IDLE, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.chat().question.error, Some(background::NO_LIST));
+    assert_eq!(f.chat().drawer, Drawer::Manual);
+    assert!(f.chat().question.agent_step.is_none());
+
+    // The highlight landed elsewhere than the next row.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    press(f.tab(), now, Hit::StopAgent(0));
+    f.writes();
+    f.show(AGENTS_SECOND, now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty(), "never x on another agent");
+    assert_eq!(f.chat().question.error, Some(background::NO_LIST));
+
+    // x did not stop it.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    press(f.tab(), now, Hit::StopAgent(1));
+    for screen in [AGENTS_OPEN, AGENTS_FIRST, AGENTS_SECOND] {
+        f.show(screen, now);
+        advance(f.tab(), now, true);
+    }
+    assert_eq!(f.writes().last(), Some(&b"x".to_vec()));
+    f.show(AGENTS_SECOND, now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(background::NOT_STOPPED));
+
+    // The agent the card offers is gone from the list by the click: nothing is written.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.tab().term.screen = recorded(AGENTS_CLOSED);
+    assert!(press(f.tab(), now, Hit::StopAgent(1)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(background::NO_AGENT));
+
+    // An agent known to have finished, or one the transcript holds twice, is not offered.
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.tab().pane.as_mut().unwrap().model.agents[0].finished = Some(true);
+    f.agent("Second pinger");
+    f.sync();
+    assert!(f.chat().question.agents.is_empty());
 }
 
 #[test]
@@ -1009,7 +1183,8 @@ fn the_busy_notice_goes_once_the_other_keys_have_gone_even_with_a_draft_queued()
     f.chat().editor.set("next message".into());
     f.chat().queue_draft(0);
     f.sync();
-    f.chat().question.background_step = Some((ItemId { offset: AT, block: 0 }, now + STEP, 0));
+    let shell = background::Shell { item: ItemId { offset: AT, block: 0 }, tool: "Bash".into(), command: "x".into() };
+    f.chat().question.background_step = Some((shell, now + STEP, 0));
     assert!(press(f.tab(), now, Hit::Option(0)));
     assert!(f.writes().is_empty());
     assert_eq!(f.chat().question.error, Some(WAITING));
@@ -1036,4 +1211,1045 @@ fn a_question_worded_like_a_permission_prompt_never_opens_the_drawer_for_a_tick(
     assert_ne!(f.chat().reason, Some(Reason::Permission));
     assert!(press(f.tab(), now, Hit::Option(0)));
     assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+fn fruits() -> Question {
+    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    Question {
+        header: "Fruits".into(),
+        question: "Which fruits do you like?".into(),
+        options: vec![option("Apple"), option("Pear"), option("Plum")],
+        multi_select: true,
+    }
+}
+
+fn size() -> Question {
+    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    Question {
+        header: "Size".into(),
+        question: "Which size?".into(),
+        options: vec![option("Small"), option("Large")],
+        multi_select: false,
+    }
+}
+
+fn speed() -> Question {
+    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let options = vec![option("Slow"), option("Fast")];
+    Question { header: "Speed".into(), question: "Which speed?".into(), options, multi_select: false }
+}
+
+/// Question `at` of a form as Claude Code 2.1.332 draws it (see the recorded `form_*` screens):
+/// the tab row, the question, its entries with boxes for a multi-select, the unnumbered Next or
+/// Submit row, a rule, "Chat about this". `cursor` counts the rows the arrow keys walk.
+fn form_screen(questions: &[Question], at: usize, cursor: usize, marks: &[bool], typed: Option<&str>) -> String {
+    let q = &questions[at];
+    let rule = "─".repeat(40);
+    let tabs: Vec<String> = questions.iter().map(|q| format!("☐ {}", q.header)).collect();
+    let mut rows = vec![format!("\x1b[2J\x1b[H\x1b[?2004h{rule}"), format!("←  {}  ✔ Submit  →", tabs.join("  "))];
+    rows.extend([String::new(), q.question.clone(), String::new()]);
+    let mark = |i: usize| if i == cursor { "❯" } else { " " };
+    let n = q.options.len();
+    for (i, option) in q.options.iter().enumerate() {
+        let tick = if q.multi_select { if marks[i] { "[✔] " } else { "[ ] " } } else { "" };
+        rows.push(format!("{} {}. {tick}{}", mark(i), i + 1, option.label));
+    }
+    let other = match (q.multi_select, typed) {
+        (true, Some(text)) => format!("[✔] {text}"),
+        (true, None) => "[ ] Type something".to_owned(),
+        (false, Some(text)) => text.to_owned(),
+        (false, None) => "Type something.".to_owned(),
+    };
+    rows.push(format!("{} {}. {other}", mark(n), n + 1));
+    let mut chat = n + 1;
+    if q.multi_select {
+        let label = if at + 1 < questions.len() { "Next" } else { "Submit" };
+        rows.push(format!("{}    {label}", mark(n + 1)));
+        chat += 1;
+    }
+    rows.push(rule);
+    rows.push(format!("{} {}. Chat about this", mark(chat), n + 2));
+    rows.push(String::new());
+    rows.push("Enter to select · Tab/Arrow keys to navigate · Esc to cancel".to_owned());
+    rows.join("\r\n")
+}
+
+/// The review after a form's last question, as recorded: no footer.
+fn review_screen(questions: &[Question], answers: &[&str], highlight: usize) -> String {
+    let tabs: Vec<String> = questions.iter().map(|q| format!("☒ {}", q.header)).collect();
+    let mut rows = vec![
+        format!("\x1b[2J\x1b[H{}", "─".repeat(40)),
+        format!("←  {}  ✔ Submit  →", tabs.join("  ")),
+        String::new(),
+        "Review your answers".to_owned(),
+        String::new(),
+    ];
+    for (q, answer) in questions.iter().zip(answers) {
+        rows.push(format!(" ● {}", q.question));
+        rows.push(format!("   → {answer}"));
+    }
+    rows.push(String::new());
+    for (i, entry) in ["Submit answers", "Cancel"].iter().enumerate() {
+        rows.push(format!("{} {}. {entry}", if i == highlight { "❯" } else { " " }, i + 1));
+    }
+    rows.join("\r\n")
+}
+
+impl Fixture {
+    /// Feeds the screen, advances once, and returns what was written.
+    fn step(&mut self, screen: &str, now: Instant) -> Vec<Vec<u8>> {
+        self.screen(screen, now);
+        advance(self.tab(), now, true);
+        self.writes()
+    }
+}
+
+#[test]
+fn a_form_is_answered_question_by_question_and_submitted_only_once_the_review_matches() {
+    let qs = [fruits(), size()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    let (none, f_t_t) = ([false; 3], [false, true, true]);
+    f.screen(&form_screen(&qs, 0, 0, &none, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "a form is answered from the card");
+
+    // Picks stay in the card: nothing is written before Submit.
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert!(press(f.tab(), now, Hit::Option(2)));
+    f.chat().question.field.set_text("Kiwi");
+    assert!(press(f.tab(), now, Hit::Submit));
+    assert_eq!(f.chat().question.error, Some(UNANSWERED), "the size is not answered yet");
+    assert_eq!(f.chat().question.form.page, 1, "the card shows that question");
+    assert!(f.chat().question.field.text().is_empty());
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert!(press(f.tab(), now, Hit::Back));
+    assert_eq!(f.chat().question.field.text(), "Kiwi", "each question keeps its text");
+    assert!(press(f.tab(), now, Hit::Next));
+    assert!(f.writes().is_empty());
+
+    assert!(press(f.tab(), now, Hit::Submit));
+    assert_eq!(f.writes(), [down(1)], "to Pear; nothing is pre-selected");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the screen has not moved yet");
+    assert_eq!(f.step(&form_screen(&qs, 0, 1, &none, None), now), [b"\r".to_vec()], "tick Pear");
+    assert!(f.step(&form_screen(&qs, 0, 1, &none, None), now).is_empty(), "a repaint without the tick: no more keys");
+    assert_eq!(f.step(&form_screen(&qs, 0, 1, &[false, true, false], None), now), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 2, &[false, true, false], None), now), [b"\r".to_vec()]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 2, &f_t_t, None), now), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 3, &f_t_t, None), now), [b"Kiwi".to_vec()]);
+    assert!(f.step(&form_screen(&qs, 0, 3, &f_t_t, None), now).is_empty(), "not typed yet");
+    assert_eq!(f.step(&form_screen(&qs, 0, 3, &f_t_t, Some("Kiwi")), now), [down(1)], "to Next");
+    assert_eq!(f.step(&form_screen(&qs, 0, 4, &f_t_t, Some("Kiwi")), now), [b"\r".to_vec()]);
+    assert!(f.step(&form_screen(&qs, 0, 4, &f_t_t, Some("Kiwi")), now).is_empty(), "the next question first");
+    assert_eq!(f.step(&form_screen(&qs, 1, 0, &[], None), now), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 1, 1, &[], None), now), [b"\r".to_vec()]);
+    let review = review_screen(&qs, &["Pear, Plum, Kiwi", "Large"], 0);
+    assert_eq!(f.step(&review, now), [b"\r".to_vec()], "Submit answers");
+    assert!(f.chat().question.step.is_some(), "waits for the call to resolve");
+    f.resolve();
+    assert!(advance(f.tab(), now, true));
+    assert!(f.chat().question.step.is_none() && f.chat().question.error.is_none());
+}
+
+#[test]
+fn a_review_that_differs_from_the_cards_answers_is_never_submitted() {
+    let qs = [size(), speed()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    f.screen(&form_screen(&qs, 0, 0, &[], None), now);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Next);
+    press(f.tab(), now, Hit::Option(0));
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [down(1)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 1, &[], None), now), [b"\r".to_vec()]);
+    assert_eq!(f.step(&form_screen(&qs, 1, 0, &[], None), now), [b"\r".to_vec()], "Slow is highlighted already");
+    // The terminal recorded Small: no Enter on "Submit answers", ever.
+    assert!(f.step(&review_screen(&qs, &["Small", "Slow"], 0), now).is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(REVIEW_DIFFERS));
+    assert_eq!(f.chat().drawer, Drawer::Manual);
+
+    // The highlight on Cancel is moved up first, and Enter follows only once it shows there.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 1, &[], None), now);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Next);
+    press(f.tab(), now, Hit::Option(0));
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    assert_eq!(f.step(&form_screen(&qs, 1, 0, &[], None), now), [b"\r".to_vec()]);
+    let up = mdshared_term::input::encode_key(mdshared_term::Key::Up, mdshared_term::Mods::NONE, &Default::default());
+    assert_eq!(f.step(&review_screen(&qs, &["Large", "Slow"], 1), now), [up]);
+    assert_eq!(f.step(&review_screen(&qs, &["Large", "Slow"], 0), now), [b"\r".to_vec()]);
+}
+
+#[test]
+fn a_form_stops_when_the_terminal_does_not_follow() {
+    let qs = [fruits(), size()];
+    let now = Instant::now();
+    let answered = |f: &mut Fixture| {
+        press(f.tab(), now, Hit::Option(0));
+        press(f.tab(), now, Hit::Next);
+        press(f.tab(), now, Hit::Option(0));
+    };
+
+    // A box that does not tick: no second Enter, then a stop that says why.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[false; 3], None), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Apple is highlighted: tick it");
+    assert!(f.step(&form_screen(&qs, 0, 0, &[false; 3], None), now).is_empty());
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NOT_TICKED));
+
+    // The terminal shows the second question: nothing is sent.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 1, 0, &[], None), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(NOT_SHOWN));
+
+    // Text typed in the terminal is never cleared or sent on.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[true, false, false], Some("Fig")), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.error, Some(OTHER_TAKEN));
+
+    // Enter on Next, and the next question never comes.
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 4, &[true, false, false], None), now);
+    answered(&mut f);
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.chat().question.error, Some(NO_NEXT));
+}
+
+#[test]
+fn a_forms_answers_are_checked_in_the_card_before_any_key() {
+    let qs = [size(), fruits()];
+    let now = Instant::now();
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[], None), now);
+    press(f.tab(), now, Hit::Option(0));
+    f.chat().question.field.set_text("Medium");
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.chat().question.error, Some(BOTH), "a single choice takes one answer");
+    press(f.tab(), now, Hit::Option(0));
+    assert_eq!(f.chat().question.form.chosen[0], [false, false], "a second click clears the choice");
+    f.chat().question.field.set_text("3 sizes");
+    press(f.tab(), now, Hit::Next);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Option(2));
+    assert_eq!(f.chat().question.form.chosen[1], [false, true, true], "several boxes");
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.chat().question.error, Some(DIGIT_FIRST));
+    assert_eq!(f.chat().question.form.page, 0);
+    assert!(f.writes().is_empty());
+    assert!(!press(f.tab(), now, Hit::Back), "no question before the first");
+}
+
+#[test]
+fn one_multi_select_question_goes_through_its_submit_row_and_the_review() {
+    let qs = [fruits()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    let pear = [false, true, false];
+    f.screen(&form_screen(&qs, 0, 1, &pear, None), now);
+    press(f.tab(), now, Hit::Option(1));
+    press(f.tab(), now, Hit::Submit);
+    assert_eq!(f.writes(), [down(3)], "Pear is ticked already: to Submit");
+    assert_eq!(f.step(&form_screen(&qs, 0, 4, &pear, None), now), [b"\r".to_vec()]);
+    assert_eq!(f.step(&review_screen(&qs, &["Pear"], 0), now), [b"\r".to_vec()]);
+}
+
+#[test]
+fn esc_and_chat_about_this_act_on_the_forms_question_the_screen_shows() {
+    let qs = [fruits(), size()];
+    let now = Instant::now();
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 1, 0, &[], None), now);
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+
+    // The multi-select's Submit row sits between "Type something" and "Chat about this".
+    let mut f = Fixture::new(qs.to_vec());
+    f.screen(&form_screen(&qs, 0, 0, &[false; 3], None), now);
+    f.chat().question.field.set_text("Let me explain");
+    press(f.tab(), now, Hit::ChatAbout);
+    assert_eq!(f.writes(), [down(5)]);
+    assert_eq!(f.step(&form_screen(&qs, 0, 5, &[false; 3], None), now), [b"\r".to_vec()]);
+    f.resolve();
+    advance(f.tab(), now, true);
+    assert_eq!(f.chat().editor.text, "Let me explain");
+}
+
+#[test]
+fn recorded_form_screens_lead_to_the_expected_keys() {
+    use screens::recorded::*;
+    let screen = |fixture: &str| recorded(fixture);
+    let qs = vec![fruits(), size()];
+    let answers = vec![Answer { picks: vec![0, 2], text: Some("Kiwi".into()) }, Answer { picks: vec![1], text: None }];
+    let run = |expect: Expect| FormRun { questions: qs.clone(), answers: answers.clone(), expect, why: "" };
+    let next =
+        |expect: Expect, fixture: &str| form_next(&run(expect), &screen(fixture)).map(|(key, expect, _)| (key, expect));
+    let modes = Default::default();
+    let down = |n: usize| {
+        mdshared_term::input::encode_key(mdshared_term::Key::Down, mdshared_term::Mods::NONE, &modes).repeat(n)
+    };
+    let other = "[ ] Type something".to_owned();
+    let shows = |cursor: usize, marks: [bool; 3], other: &str| Expect::Shows {
+        at: 0,
+        cursor,
+        marks: marks.to_vec(),
+        other: other.into(),
+    };
+
+    let shown = form_question(&screen(FORM_MULTI), &qs, 0).expect("the first question");
+    assert_eq!((shown.other, shown.submit, shown.chat, shown.marks.as_slice()), (3, Some(4), 5, &[false; 3][..]));
+    assert!(form_question(&screen(FORM_MULTI), &qs, 1).is_none());
+    assert!(form_question(&screen(FORM_SECOND), &qs, 0).is_none(), "the second question shows");
+    assert!(form_question(&screen(FORM_SECOND), &qs, 1).is_some());
+    assert!(form_question(&screen(ASK_MULTI), &qs, 0).is_none(), "another form: its tabs differ");
+
+    assert_eq!(next(Expect::Opened(0), FORM_MULTI), Ok((b"\r".to_vec(), shows(0, [true, false, false], &other))));
+    assert_eq!(
+        next(shows(0, [true, false, false], &other), FORM_MULTI_APPLE),
+        Ok((down(2), shows(2, [true, false, false], &other)))
+    );
+    assert_eq!(next(shows(0, [true, false, false], &other), FORM_MULTI), Err(""), "Apple not ticked yet");
+    assert_eq!(
+        next(shows(2, [true, false, true], &other), FORM_MULTI_PLUM),
+        Ok((down(1), shows(3, [true, false, true], &other)))
+    );
+    let typed = Expect::Typed { at: 0, cursor: 3, marks: vec![true, false, true], text: "Kiwi".into() };
+    assert_eq!(next(shows(3, [true, false, true], &other), FORM_MULTI_TYPE), Ok((b"Kiwi".to_vec(), typed.clone())));
+    assert_eq!(next(typed.clone(), FORM_MULTI_TYPE), Err(""), "the text is not there yet");
+    assert_eq!(next(typed, FORM_MULTI_TYPED), Ok((down(1), shows(4, [true, false, true], "[✔] Kiwi"))));
+    assert_eq!(
+        next(shows(4, [true, false, true], "[✔] Kiwi"), FORM_MULTI_NEXT),
+        Ok((b"\r".to_vec(), Expect::Opened(1)))
+    );
+    let second = Expect::Shows { at: 1, cursor: 1, marks: vec![], other: "Type something.".into() };
+    assert_eq!(next(Expect::Opened(1), FORM_SECOND), Ok((down(1), second)));
+    assert_eq!(next(Expect::Review(None), FORM_REVIEW), Ok((b"\r".to_vec(), Expect::Submitted)));
+    assert_eq!(next(Expect::Review(None), FORM_SECOND), Err(""));
+
+    // Two single choices (Small, Slow), then their review.
+    let qs = vec![size(), speed()];
+    let answers = vec![Answer { picks: vec![0], text: None }, Answer { picks: vec![0], text: None }];
+    let run = |expect: Expect| FormRun { questions: qs.clone(), answers: answers.clone(), expect, why: "" };
+    assert_eq!(form_next(&run(Expect::Opened(0)), &screen(ASK_TWO)).map(|n| n.1), Ok(Expect::Opened(1)));
+    assert_eq!(form_next(&run(Expect::Review(None)), &screen(ASK_REVIEW)).map(|n| n.1), Ok(Expect::Submitted));
+    let wrong = vec![Answer { picks: vec![1], text: None }, Answer { picks: vec![0], text: None }];
+    let run = FormRun { questions: qs.clone(), answers: wrong, expect: Expect::Review(None), why: "" };
+    assert_eq!(form_next(&run, &screen(ASK_REVIEW)).map(|n| n.1), Err(REVIEW_DIFFERS));
+
+    // One multi-select question: its Submit row leads to the review.
+    let qs = vec![fruits()];
+    let answers = vec![Answer { picks: vec![1], text: None }];
+    let run = |expect: Expect| FormRun { questions: qs.clone(), answers: answers.clone(), expect, why: "" };
+    assert_eq!(form_next(&run(Expect::Opened(0)), &screen(MULTI_SUBMIT)).map(|n| n.1), Ok(Expect::Review(None)));
+    assert_eq!(form_next(&run(Expect::Review(None)), &screen(MULTI_REVIEW)).map(|n| n.1), Ok(Expect::Submitted));
+}
+
+#[test]
+fn enter_in_a_forms_field_turns_the_page_and_submits_on_the_last_question() {
+    let qs = [size(), speed()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    f.screen(&form_screen(&qs, 0, 1, &[], None), now);
+    press(f.tab(), now, Hit::Option(1));
+    f.chat().question.rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+    assert!(press(f.tab(), now, Hit::Field));
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.chat().question.form.page, 1, "Enter turns to the next question");
+    assert!(f.writes().is_empty());
+    // On the last question Enter is Submit, with the same checks.
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.chat().question.error, Some(UNANSWERED));
+    assert!(f.writes().is_empty());
+    press(f.tab(), now, Hit::Option(0));
+    assert!(press(f.tab(), now, Hit::Field));
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Large is highlighted: chosen");
+    assert!(f.chat().question.step.is_some());
+}
+
+#[test]
+fn a_panel_card_replaces_the_composers_prompt_notices() {
+    let mut f = Fixture::idle();
+    let now = Instant::now();
+    f.screen("\x1b[2J\x1b[H Usage\r\n  ✻ Scanning local sessions…\r\n  0% used\r\n\r\n Esc to close", now);
+    f.sync();
+    let menu = f.chat().question.menu.clone().expect("a panel card");
+    assert!(menu.panel() && menu.esc);
+    assert!(crate::view::working::spinner_row("✻ Scanning local sessions…"));
+    assert!(!crate::view::working::spinner_row("Resets Dec 2, 3am"));
+    f.chat().question.rect = Rect::new(0.0, 0.0, 400.0, 200.0);
+    f.chat().error = Some(crate::view::chat::submission::NO_QUIET_PROMPT);
+    let info = f.tab().pane.as_ref().unwrap().model.chat.clone();
+    assert_eq!(f.chat().notice(&info), Some(crate::view::chat::composer::PANEL_UP));
+    // Close is Esc, under the same checks as any menu.
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+}
+
+impl Fixture {
+    /// Prompts the user typed, in order, at offsets 10, 20, … and the turn after the last ended.
+    fn prompts(&mut self, texts: &[&str]) -> Vec<ItemId> {
+        let pane = self.tab().pane.as_mut().unwrap();
+        let mut ids = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            let id = ItemId { offset: 10 * (i as u64 + 1), block: 0 };
+            let kind = ItemKind::Prompt { text: (*text).into(), pictures: vec![], synthetic: false };
+            pane.model.items.insert(id, Item { kind, timestamp: None });
+            ids.push(id);
+        }
+        pane.model.chat.prompt = ids.last().map(|id| id.offset);
+        ids
+    }
+
+    fn rewind(&mut self) -> Option<rewind::Rewind> {
+        self.chat().question.rewind.clone()
+    }
+}
+
+fn up() -> Vec<u8> {
+    mdshared_term::input::encode_key(mdshared_term::Key::Up, mdshared_term::Mods::NONE, &Default::default())
+}
+
+const ALPHA: &str = "Reply with just the word alpha.";
+const BRAVO: &str = "Reply with just the word bravo.";
+const CHARLIE: &str = "Reply with just the word charlie.";
+
+#[test]
+fn recorded_rewind_screens_read_as_the_list_and_the_choices() {
+    use screens::recorded::*;
+    let list = |fixture: &str| screens::rewind_list(&recorded(fixture));
+    let open = list(REWIND_OPEN).expect("the list");
+    assert_eq!(open.entries, [ALPHA, BRAVO, CHARLIE, "(current)"]);
+    assert_eq!(open.highlight, 3);
+    assert_eq!(list(REWIND_UP2).map(|l| l.highlight), Some(1));
+    assert!(list(REWIND_IDLE).is_none() && list(REWIND_ACTIONS).is_none());
+
+    let actions = screens::rewind_actions(&recorded(REWIND_ACTIONS)).expect("the choices");
+    assert_eq!(actions.quoted, BRAVO);
+    assert_eq!(actions.choices, ["Restore conversation", "Summarize from here", "Summarize up to here", "Never mind"]);
+    assert_eq!(actions.highlight, Some(0));
+    assert_eq!(actions.body, ["The conversation goes back to before this message.", "The code will be unchanged."]);
+    let code = screens::rewind_actions(&recorded(REWIND_ACTIONS_CODE)).expect("the choices with code");
+    assert_eq!(code.choices.len(), 6);
+    assert_eq!(code.choices[0], "Restore code and conversation");
+    assert!(code.body.iter().any(|row| row.starts_with("⚠ Restored files go back whole")));
+    let down = screens::rewind_actions(&recorded(REWIND_ACTIONS_CODE_DOWN)).unwrap();
+    assert_eq!((down.highlight, down.choices), (Some(1), code.choices));
+    assert!(screens::rewind_actions(&recorded(REWIND_OPEN)).is_none());
+
+    // A prompt of several lines shows its first line and "…"; a long one is cut with " …".
+    let cut = list(REWIND_CUT_UP1).expect("the list");
+    let echo = "Reply with just the word echo.\nSecond line of the prompt.";
+    assert_eq!(cut.highlight, 1);
+    assert!(screens::rewind_row_is(&cut.entries[1], echo));
+    assert!(!screens::rewind_row_is(&cut.entries[1], "Reply with just the word delta."));
+    let long = "Reply with just the word delta. This sentence is only padding so that the prompt is long enough \
+                to be cut by the rewind list, more padding words here.";
+    assert!(screens::rewind_row_is(&list(REWIND_CUT_UP2).unwrap().entries[0], long));
+    assert!(!screens::rewind_row_is(&cut.entries[0], "Reply with just the word delta."));
+    assert!(screens::rewind_row_is(BRAVO, BRAVO) && !screens::rewind_row_is(BRAVO, echo));
+}
+
+#[test]
+fn rewind_walks_the_list_to_the_prompt_and_chooses_only_on_a_click() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, ids[1]);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    assert!(f.chat().waiting().is_some(), "the composer waits meanwhile");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the second Esc waits for its gap");
+    let now = now + STEP / 10;
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec()], "the same idle prompt: the second Esc");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the same screen proves nothing");
+    f.show(REWIND_OPEN, now);
+    assert!(f.chat().question.menu.is_none(), "the list is driven, not shown as a menu card");
+    advance(f.tab(), now, false);
+    assert!(f.writes().is_empty(), "no write while the window does not allow one");
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [up()]);
+    f.show(REWIND_UP1, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [up()], "charlie is not the prompt: up again");
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "nothing is chosen without a click");
+    let shown = f.rewind().and_then(|r| r.actions).expect("the choices in the card");
+    assert_eq!(shown.choices.len(), 4);
+    assert!(f.chat().waiting().is_none(), "the card waits for the user, not for keys");
+
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()], "the highlight is already there");
+    f.show(REWIND_CLOSED, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_none());
+    assert_eq!(f.chat().error, Some(rewind::REWOUND));
+}
+
+#[test]
+fn a_rewind_choice_moves_one_row_at_a_time_and_cancel_goes_back_by_esc() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let write = "Use the Write tool to create the file note.txt containing the word one.";
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(write));
+    f.show(REWIND_ACTIONS_CODE, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_some_and(|r| r.choosing()));
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)]);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    f.show(REWIND_ACTIONS_CODE_DOWN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    // Claude Code puts the prompt back on its input.
+    f.show(REWIND_DONE, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_none());
+
+    // Cancel: Esc back to the list, Esc back to the prompt.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    f.show(REWIND_CLOSED, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_none());
+    assert_eq!(f.chat().error, None, "a cancel is not a rewind");
+
+    // The choices changed under the card: nothing is written.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    f.tab().term.screen = recorded(REWIND_ACTIONS_CODE);
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::ACTIONS_CHANGED));
+
+    // The choices quote another prompt.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(ALPHA));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NO_ACTIONS));
+}
+
+#[test]
+fn a_rewind_stops_before_any_key_the_screen_does_not_prove() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    // Not at an idle prompt: a running command.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    f.show(BG_HINT, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    assert!(f.writes().is_empty());
+    let failed = f.rewind().expect("the card says why");
+    assert!(failed.failed() && failed.error == Some(rewind::NOT_IDLE));
+    assert!(press(f.tab(), now, Hit::Close));
+    assert!(f.rewind().is_none());
+
+    // The list never moves up to the prompt: no Enter.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, ids[0]);
+    advance(f.tab(), now + STEP / 10, true);
+    f.writes();
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [up()]);
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the highlight did not move");
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_LISTED));
+    assert_eq!(f.chat().drawer, Drawer::Manual);
+
+    // A later prompt reads the same: the row is ambiguous.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    for screen in [REWIND_OPEN, REWIND_UP1, REWIND_UP2] {
+        f.show(screen, now);
+        advance(f.tab(), now, true);
+    }
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec(), up(), up(), ESC.to_vec()], "no Enter; Esc closes the list");
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::AMBIGUOUS));
+
+    // The list does not open after Esc Esc.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    f.show(REWIND_IDLE, now);
+    advance(f.tab(), now + QUIET + STEP * 2, true);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec()]);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_OPENED));
+
+    // Only a prompt the user typed.
+    let mut f = Fixture::idle();
+    f.prompts(&[ALPHA]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ItemId { offset: 99, block: 0 });
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_PROMPT));
+}
+
+/// Settings › Chat › "Answer menus from the chat" off: no card for a CLI menu or a permission
+/// prompt, nothing written on a click, and the prompt goes to the terminal as before item 42.
+#[test]
+fn with_menus_off_menus_and_permission_prompts_stay_in_the_terminal() {
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.chat().menus_off = true;
+    f.screen(&toggles(0, false), now);
+    f.sync();
+    assert!(f.chat().question.menu.is_none());
+    assert!(!press(f.tab(), now, Hit::Option(0)) || f.writes().is_empty());
+    assert!(f.writes().is_empty());
+
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.chat().menus_off = true;
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    assert!(f.chat().question.shown.is_none() && f.chat().question.menu.is_none());
+    assert_eq!(f.chat().question.answerable, None);
+    assert!(!f.chat().question.approval);
+    assert_ne!(f.decide(now), Some(Reason::Approval));
+    f.chat().menus_off = false;
+    f.sync();
+    assert!(f.chat().question.approval, "on again: the card is back");
+}
+
+#[test]
+fn rewind_from_the_menu_starts_only_in_the_shown_tab_with_chat_on() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    let tab = f.tab;
+    f.chat().enabled = false;
+    assert!(!f.app.rewind_from_menu(tab, ids[1], now + QUIET), "Chat was switched off after the menu opened");
+    assert!(f.writes().is_empty() && f.rewind().is_none());
+    assert!(!f.app.rewind_from_menu(tab + 1, ids[1], now + QUIET), "another tab");
+    f.chat().enabled = true;
+    assert!(f.app.rewind_from_menu(tab, ids[1], now + QUIET));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+}
+
+/// A recorded screen with one text replaced, as the CLI would draw another prompt's choices.
+fn recorded_with(fixture: &str, from: &str, to: &str) -> Screen {
+    assert!(fixture.contains(from));
+    screens::recorded::recorded(&fixture.replace(from, to))
+}
+
+#[test]
+fn a_rewind_choice_needs_the_choices_for_the_chosen_prompt_on_every_key() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    // The terminal moved to alpha's choices, which read the same: no Enter.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    f.tab().term.screen = recorded_with(REWIND_ACTIONS, BRAVO, ALPHA);
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::ACTIONS_CHANGED));
+
+    // The same while the highlight moves: the arrow went, Enter does not.
+    let write = "Use the Write tool to create the file note.txt containing the word one.";
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(write));
+    f.show(REWIND_ACTIONS_CODE, now);
+    advance(f.tab(), now, true);
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)]);
+    f.tab().term.screen = recorded_with(REWIND_ACTIONS_CODE_DOWN, write, "Use the Write tool to create other.txt");
+    f.chat().output(now, true, false);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::ACTIONS_CHANGED));
+}
+
+#[test]
+fn the_rows_under_the_chosen_prompt_must_be_the_later_prompts() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let walk = |prompts: &[&str], chosen: usize| {
+        let mut f = Fixture::idle();
+        let ids = f.prompts(prompts);
+        f.show(REWIND_IDLE, now);
+        rewind::start(f.tab(), now + QUIET, ids[chosen]);
+        advance(f.tab(), now + QUIET + STEP / 10, true);
+        for screen in [REWIND_OPEN, REWIND_UP1, REWIND_UP2] {
+            f.show(screen, now);
+            advance(f.tab(), now, true);
+        }
+        f
+    };
+    // A later prompt the list leaves out: the bravo row may be another, earlier bravo.
+    let mut f = walk(&[ALPHA, BRAVO, "Reply with just the word delta.", CHARLIE], 1);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec(), up(), up(), ESC.to_vec()], "no Enter; Esc closes the list");
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::MISPLACED));
+    // A slash command between them is not in the list and does not count.
+    let mut f = walk(&[ALPHA, BRAVO, "/context", CHARLIE], 1);
+    assert_eq!(f.writes().last(), Some(&b"\r".to_vec()));
+    assert!(f.rewind().is_some_and(|r| r.error.is_none()));
+    assert!(!rewind::listed("/context") && !rewind::listed("<command-name>/x</command-name>"));
+    assert!(rewind::listed(BRAVO));
+}
+
+#[test]
+fn terminal_input_stops_every_card_key_sequence_before_its_next_key() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let typed = |f: &mut Fixture| f.tab().pane.as_mut().unwrap().note_terminal_input();
+
+    // An answer: the arrow went, Enter does not follow once the user typed in the terminal.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    press(f.tab(), now, Hit::Option(1));
+    assert_eq!(f.writes(), [down(1)]);
+    typed(&mut f);
+    f.screen(&menu(1, None), now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().question.step.is_none());
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+    assert!(f.chat().waiting().is_none(), "the composer is free again");
+
+    // Stop agent: no ↓ after the list opened.
+    let mut f = Fixture::idle();
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    f.show(AGENTS_IDLE, now);
+    f.sync();
+    press(f.tab(), now, Hit::StopAgent(1));
+    f.writes();
+    typed(&mut f);
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+    f.show(AGENTS_OPEN, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().question.agent_step.is_none());
+
+    // A rewind: no second Esc.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    f.writes();
+    typed(&mut f);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(INTERRUPTED));
+    assert!(f.rewind().is_some_and(|r| r.failed()));
+}
+
+#[test]
+fn leaving_chat_stops_a_rewind_and_a_held_key_still_times_out() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    assert!(f.app.set_shown_tab_chat(false));
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(INTERRUPTED));
+    f.chat().enabled = true;
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    assert_eq!(f.writes(), [ESC.to_vec()], "only the first Esc ever went");
+
+    // Writes held back (a dialog over the window): the Up waits, and the deadline still holds.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, ids[0]);
+    advance(f.tab(), now + STEP / 10, true);
+    f.writes();
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now + STEP / 2, false);
+    assert!(f.writes().is_empty() && f.rewind().is_some_and(|r| r.in_flight()));
+    advance(f.tab(), now + STEP * 2, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::HELD_BACK));
+    assert!(f.chat().waiting().is_none(), "the composer is free again");
+
+    // The second Esc held back past the CLI's double-press window: stopped, not sent late.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, ids[0]);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    advance(f.tab(), now + STEP, false);
+    advance(f.tab(), now + STEP * 3, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::HELD_BACK));
+}
+
+#[test]
+fn a_rewind_that_stops_on_its_list_closes_it_or_says_it_is_open() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let ambiguous = |f: &mut Fixture, may_write_last: bool| {
+        let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE, BRAVO]);
+        f.show(REWIND_IDLE, now);
+        rewind::start(f.tab(), now + QUIET, ids[1]);
+        advance(f.tab(), now + QUIET + STEP / 10, true);
+        for screen in [REWIND_OPEN, REWIND_UP1] {
+            f.show(screen, now);
+            advance(f.tab(), now, true);
+        }
+        f.show(REWIND_UP2, now);
+        advance(f.tab(), now, may_write_last);
+    };
+    // Stopped on the list: one Esc, and the card says so once the prompt is back.
+    let mut f = Fixture::idle();
+    ambiguous(&mut f, true);
+    assert_eq!(f.writes().last(), Some(&ESC.to_vec()));
+    assert_eq!(f.chat().drawer, Drawer::Manual);
+    f.show(REWIND_CLOSED, now);
+    advance(f.tab(), now, true);
+    let r = f.rewind().unwrap();
+    assert!(r.failed());
+    assert_eq!((r.error, r.note), (Some(rewind::AMBIGUOUS), Some(rewind::CLOSED)));
+
+    // The list stays: it says that it is still open, and sends nothing more.
+    let mut f = Fixture::idle();
+    ambiguous(&mut f, true);
+    f.writes();
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.note), Some(rewind::LEFT_OPEN));
+
+    // No key allowed when it stops: no Esc, and the card says the list is open.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now + QUIET + STEP * 3, false);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec()]);
+    let r = f.rewind().unwrap();
+    assert_eq!((r.error, r.note), (Some(rewind::HELD_BACK), Some(rewind::LEFT_OPEN)));
+
+    // A slash command is never rewound to: the list does not show them.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, "/context"]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_PROMPT));
+}
+
+#[test]
+fn a_question_comes_before_a_stopped_rewinds_card() {
+    let now = Instant::now();
+    let mut f = Fixture::new(vec![question(false)]);
+    let mut stopped = rewind::Rewind::entering(BRAVO);
+    stopped.interrupt(INTERRUPTED);
+    f.chat().question.rewind = Some(stopped);
+    f.screen(&menu(0, None), now);
+    f.sync();
+    let pane = f.tab().pane.as_mut().unwrap();
+    assert!(!rewind_shown(&pane.chat.question, &pane.model), "the question takes the card");
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)], "the click answers the question");
+    assert!(f.rewind().is_some(), "the stopped rewind waits for its turn");
+
+    // Once nothing else needs the card, it shows again and Close puts it away.
+    let mut f = Fixture::idle();
+    let mut stopped = rewind::Rewind::entering(BRAVO);
+    stopped.interrupt(INTERRUPTED);
+    f.chat().question.rewind = Some(stopped);
+    let pane = f.tab().pane.as_mut().unwrap();
+    assert!(rewind_shown(&pane.chat.question, &pane.model));
+    assert!(press(f.tab(), now, Hit::Close));
+    assert!(f.rewind().is_none());
+
+    // A rewind still running keeps the card even over a question.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    let pane = f.tab().pane.as_mut().unwrap();
+    assert!(rewind_shown(&pane.chat.question, &pane.model));
+}
+
+#[test]
+fn an_interrupted_side_step_leaves_a_notice_not_a_stuck_card() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let typed = |f: &mut Fixture| f.tab().pane.as_mut().unwrap().note_terminal_input();
+    // A Stop agent interrupted while a main-turn call is pending without a prompt yet: when the
+    // call's permission prompt shows, the card answers it.
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    f.show(AGENTS_IDLE, now);
+    f.sync();
+    assert!(!f.chat().question.agents.is_empty());
+    press(f.tab(), now, Hit::StopAgent(0));
+    assert_eq!(f.writes().len(), 1);
+    typed(&mut f);
+    assert!(f.chat().question.agent_step.is_none());
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+    assert!(!f.chat().question.failed, "only a notice");
+    // The agents end; the pending call then asks.
+    f.tab().pane.as_mut().unwrap().model.agents.iter_mut().for_each(|a| a.finished = Some(true));
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    assert_eq!(f.chat().question.answerable, Some(AT), "the prompt is answered from the card");
+    assert_eq!(f.chat().question.error, None, "the notice was about the agent list");
+
+    // An answer whose Enter went: sent, so no "stopped" notice, and the step stays so a second
+    // click on the still-painted prompt writes nothing.
+    let mut f = Fixture::new(vec![question(false)]);
+    f.screen(&menu(0, None), now);
+    press(f.tab(), now, Hit::Option(0));
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    typed(&mut f);
+    assert!(f.chat().question.step.as_ref().is_some_and(|s| s.stage == Stage::Sent));
+    assert_eq!(f.chat().question.error, None);
+    assert!(!f.chat().question.failed);
+    press(f.tab(), now, Hit::Option(0));
+    assert!(f.writes().is_empty(), "no second Enter while the first is on its way");
+
+    // An interrupted rewind keeps its notice on its own card, not as the next menu card's status.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    typed(&mut f);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(INTERRUPTED));
+    assert_eq!(f.chat().question.error, None);
+    f.chat().question.rewind = None;
+    f.show(MENU_MODEL, now);
+    f.sync();
+    assert!(f.chat().question.menu.is_some());
+    assert_eq!(f.chat().question.error, None);
+}
+
+#[test]
+fn hover_and_wheel_reports_leave_a_card_key_sequence_alone_but_a_click_stops_it() {
+    use mdshared_ui::host::Button;
+    use screens::recorded::*;
+    let now = Instant::now();
+    let start = |f: &mut Fixture| {
+        f.agent("First pinger");
+        f.agent("Second pinger");
+        f.show(AGENTS_IDLE, now);
+        f.sync();
+        press(f.tab(), now, Hit::StopAgent(1));
+        f.writes();
+        // The program asks for every mouse move, as Claude Code's full-screen view does.
+        f.tab().term.feed(b"\x1b[?1003h\x1b[?1006h");
+        let area = mdshared_ui::gfx::Rect::new(0.0, 0.0, 800.0, 400.0);
+        f.app.layout_terminals(area, area, 1.0);
+    };
+    let plain = Mods::default();
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.app.term_move(20.0, 20.0, plain);
+    f.app.term_move(60.0, 40.0, plain);
+    assert!(f.tab().term.last_cell.is_some(), "the moves were reported to the program");
+    f.app.mouse = (60.0, 40.0);
+    f.app.term_wheel(-120.0, plain);
+    assert!(f.chat().question.agent_step.is_some(), "hover and wheel reports go to the program only");
+    assert_eq!(f.chat().question.error, None);
+
+    let mut f = Fixture::idle();
+    start(&mut f);
+    f.app.term_press(20.0, 20.0, Button::Left, 1, plain);
+    assert!(f.chat().question.agent_step.is_none(), "a click may pick something in the CLI");
+    assert_eq!(f.chat().question.error, Some(INTERRUPTED));
+}
+
+#[test]
+fn a_rewind_left_open_keeps_its_card_over_the_list_until_the_list_is_gone() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    for screen in [REWIND_OPEN, REWIND_UP1, REWIND_UP2] {
+        f.show(screen, now);
+        advance(f.tab(), now, true);
+    }
+    // Ambiguous; the closing Esc did not close the list.
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now + STEP, true);
+    let r = f.rewind().unwrap();
+    assert_eq!((r.error, r.note), (Some(rewind::AMBIGUOUS), Some(rewind::LEFT_OPEN)));
+    f.sync();
+    assert!(f.chat().question.menu.is_none(), "the list is not offered as a panel card");
+    let pane = f.tab().pane.as_mut().unwrap();
+    assert!(rewind_shown(&pane.chat.question, &pane.model), "the rewind's card says why");
+    // The user closes it in the terminal: the card goes with it.
+    f.show(REWIND_CLOSED, now);
+    f.sync();
+    assert!(f.rewind().is_none());
+}
+
+#[test]
+fn a_cancel_that_stops_sends_no_esc_on_top_of_its_own() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert!(press(f.tab(), now, Hit::Escape));
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec()]);
+    // The CLI does not repaint: the list still shows when the cancel times out.
+    advance(f.tab(), now + STEP, true);
+    assert!(f.writes().is_empty(), "no third Esc");
+    let r = f.rewind().unwrap();
+    assert_eq!((r.error, r.note), (Some(rewind::NOT_CANCELLED), Some(rewind::LEFT_OPEN)));
 }

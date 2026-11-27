@@ -5,11 +5,14 @@
 
 use std::io;
 use std::ops::Range;
+use std::path::Path;
 
 use claude_switch_core::Launch;
 use mdshared_pty::{Command, Exit, Pty};
-use mdshared_term::{MouseButton, Point, Screen, Selection};
+use mdshared_term::{MouseButton, Point, Screen, Selection, SelectionKind};
 use mdshared_ui::termview::View;
+
+use crate::termkeys::Keyboard;
 
 /// Lines of scrollback a terminal keeps.
 pub const SCROLLBACK: usize = 10_000;
@@ -21,6 +24,11 @@ pub const FIRST_SIZE: (u16, u16) = (100, 30);
 /// removed and set ends up set.
 pub fn command(launch: &Launch) -> Command {
     command_with_removals(launch, claude_switch_core::launch::child_removals(launch))
+}
+
+/// Claude sessions and handovers may launch bare `claude` or an absolute native executable.
+pub fn is_claude_program(program: &Path) -> bool {
+    program.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("claude"))
 }
 
 fn command_with_removals(launch: &Launch, removals: impl IntoIterator<Item = std::ffi::OsString>) -> Command {
@@ -61,6 +69,8 @@ pub struct Pumped {
 pub struct Term {
     /// `None` for a terminal with no program (the tests').
     pub pty: Option<Pty>,
+    /// Set by the launch executable, not the title, transcript, or terminal output.
+    pub keyboard: Keyboard,
     pub screen: Screen,
     /// How many lines back into the scrollback the view looks.
     pub scroll: usize,
@@ -82,15 +92,25 @@ impl Term {
     /// on output and at the end.
     pub fn spawn(command: &Command, size: (u16, u16), wake: impl Fn() + Send + Sync + 'static) -> io::Result<Term> {
         let pty = Pty::spawn(command, size.0, size.1, wake)?;
-        let mut t = Term::empty(size);
+        let mut t = Term::for_command(command, size);
         t.pty = Some(pty);
         Ok(t)
+    }
+
+    /// A screen with the launched command's input conventions, before attaching the PTY.
+    pub fn for_command(command: &Command, size: (u16, u16)) -> Self {
+        let mut term = Self::empty(size);
+        if is_claude_program(Path::new(command.program())) {
+            term.keyboard = Keyboard::Claude;
+        }
+        term
     }
 
     /// A terminal with no program behind it.
     pub fn empty(size: (u16, u16)) -> Term {
         Term {
             pty: None,
+            keyboard: Keyboard::Classic,
             screen: Screen::new(size.0.into(), size.1.into(), SCROLLBACK),
             scroll: 0,
             selection: None,
@@ -145,6 +165,7 @@ impl Term {
 
     pub fn finish(&mut self, exit: Exit) {
         self.ended = Some(exit);
+        self.stop_pointer();
         let line = ended_line(exit);
         let line_count = line.len().div_ceil(self.screen.cols()) as u64;
         // Force normal wrapping for the app-owned notice, and hide the cursor after it.
@@ -236,6 +257,17 @@ impl Term {
     /// The selected text, when something is selected.
     pub fn selected_text(&self) -> Option<String> {
         self.selection.filter(|s| !s.is_empty()).map(|s| s.text(&self.screen)).filter(|t| !t.is_empty())
+    }
+
+    /// Consume the highlight and distinguish selected blank cells (`Some("")`) from no selection.
+    pub fn take_selected_text(&mut self, single_line: bool) -> Option<String> {
+        self.selecting = false;
+        let selection = self.selection.take().filter(|s| !s.is_empty())?;
+        let mut text = selection.text(&self.screen);
+        if single_line && selection.kind() == SelectionKind::Stream {
+            text.retain(|c| c != '\n');
+        }
+        Some(text)
     }
 }
 

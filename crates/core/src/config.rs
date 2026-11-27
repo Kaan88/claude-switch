@@ -16,15 +16,19 @@
 //!   "windowTheme": "system",
 //!   "showUsage": true,
 //!   "appearance": {"backdrop":"off", "accentSource":"theme", "reduceMotion":false,
-//!                  "cornerRadius":8, "softShadows":true, "cursorBlink":false}
+//!                  "cornerRadius":8, "softShadows":true, "cursorBlink":false},
+//!   "chat": {"chips": ["model", "effort"], "commands": ["/review", "", ""], "answerMenus": true}
 //! }
 //! ```
 //!
 //! Folders are not stored: they follow from the slug and [`Roots`].
 
+mod chat;
 mod coordination;
 mod notifications;
 mod terminal;
+pub mod theme;
+pub use chat::{ChatPrefs, OWN_COMMANDS, QUICK_CHIPS, command_line};
 pub use coordination::{sync_workers, usage_enabled, usage_permit, usage_permit_until};
 pub use notifications::{Attention, Notifications, WarningWindows, claim_warning, load_warning_windows};
 pub use terminal::*;
@@ -57,6 +61,7 @@ pub struct AppearancePrefs {
     /// keeping an unknown one (from a newer version) as it was.
     pub dark_theme: String,
     pub light_theme: String,
+    pub themes: std::collections::BTreeMap<String, theme::NamedTheme>,
 }
 
 impl Default for AppearancePrefs {
@@ -76,6 +81,7 @@ impl Default for AppearancePrefs {
             terminal_accent: None,
             dark_theme: "dark".into(),
             light_theme: "light".into(),
+            themes: Default::default(),
         }
     }
 }
@@ -111,6 +117,15 @@ impl AppearancePrefs {
             terminal_accent: colour("terminalAccent"),
             dark_theme: theme_id(v, "darkTheme").unwrap_or(d.dark_theme),
             light_theme: theme_id(v, "lightTheme").unwrap_or(d.light_theme),
+            themes: v["themes"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(id, value)| {
+                    let t: theme::NamedTheme = serde_json::from_value(value.clone()).ok()?;
+                    (id.starts_with("user-") && valid_theme_id(id) && t.validate().is_ok()).then(|| (id.clone(), t))
+                })
+                .collect(),
         }
     }
 
@@ -130,16 +145,18 @@ impl AppearancePrefs {
             "terminalAccent": self.terminal_accent,
             "darkTheme": self.dark_theme,
             "lightTheme": self.light_theme,
+            "themes": self.themes,
         })
     }
 }
 
 /// A palette id: a short word of lower-case letters, digits and hyphens.
 fn theme_id(v: &Value, key: &str) -> Option<String> {
-    str_field(v, key)
-        .filter(|s| !s.is_empty() && s.len() <= 32)
-        .filter(|s| s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
-        .map(str::to_owned)
+    str_field(v, key).filter(|s| valid_theme_id(s)).map(str::to_owned)
+}
+
+fn valid_theme_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// Whether a slug read from the file can name a folder.
@@ -285,7 +302,9 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
         terminal_font_size,
         window_theme,
         appearance: AppearancePrefs::read(&file["appearance"]),
+        chat: ChatPrefs::read(&file["chat"]),
         compact: crate::compact::Preferences::read(&file["compact"]),
+        meaning: crate::meaning::Prefs::read(&file["meaning"]),
     }
 }
 
@@ -317,10 +336,20 @@ pub fn save_changes(roots: &Roots, baseline: &Config, edited: &Config) -> Result
         if matches!(key.as_str(), "showUsage" | "compact") || before[key] == *value {
             continue;
         }
-        let m = crate::merge::three_way(before.get(key), Some(value), current.get(key), 1);
+        // Groups whose raw object may hold keys from a newer version: merge field by field.
+        let raw_group = matches!(key.as_str(), "appearance" | "chat");
+        let depth = if raw_group { 2 } else { 1 };
+        let m = crate::merge::three_way(before.get(key), Some(value), current.get(key), depth);
         conflicts.extend(m.conflicts.into_iter().map(|p| [key.clone()].into_iter().chain(p).collect::<Vec<_>>()));
         if let Some(v) = m.value {
-            merged.insert(key.clone(), v);
+            if raw_group {
+                // The typed view omits unrecognised palette versions and newer settings.
+                // Apply only the validated delta to the raw object, keeping those bytes' values.
+                let raw = merged.entry(key.clone()).or_insert(Value::Null);
+                apply_visual_delta(raw, &current[key], &v);
+            } else {
+                merged.insert(key.clone(), v);
+            }
         }
     }
     if let Some(first) = conflicts.first() {
@@ -332,6 +361,28 @@ pub fn save_changes(roots: &Roots, baseline: &Config, edited: &Config) -> Result
     let merged = Value::Object(merged);
     write_json(&path, &merged)?;
     Ok(parse(roots, merged, false))
+}
+
+fn apply_visual_delta(raw: &mut Value, old: &Value, new: &Value) {
+    if old == new {
+        return;
+    }
+    if let (Some(before), Some(after)) = (old.as_object(), new.as_object()) {
+        if !raw.is_object() {
+            *raw = json!({})
+        }
+        let fields = raw.as_object_mut().unwrap();
+        for k in before.keys().filter(|k| !after.contains_key(*k)) {
+            fields.remove(k);
+        }
+        for (k, v) in after {
+            if before.get(k) != Some(v) {
+                apply_visual_delta(fields.entry(k).or_insert(Value::Null), &old[k], v);
+            }
+        }
+    } else {
+        *raw = new.clone();
+    }
 }
 
 pub fn set_usage(roots: &Roots, enabled: bool) -> Result<(), Refusal> {
@@ -410,7 +461,9 @@ fn config_value(config: &Config) -> Value {
         "terminalFontSize": config.terminal_font_size,
         "windowTheme": config.window_theme,
         "appearance": config.appearance.json(),
+        "chat": config.chat.json(),
         "compact": config.compact.json(),
+        "meaning": config.meaning.json(),
     })
 }
 
@@ -609,9 +662,35 @@ mod tests {
             terminal_accent: Some(format!("#{:06x}", 22_222)),
             dark_theme: "warm-dark".into(),
             light_theme: "from-a-newer-version".into(),
+            themes: Default::default(),
         };
         save(&roots, &c).unwrap();
         assert_eq!(load(&roots), c);
+    }
+
+    #[test]
+    fn chat_settings_load_older_files_and_keep_newer_keys_through_a_merged_save() {
+        let t = TempDir::new("cfg-chat");
+        let roots = t.roots();
+        put(&roots.config_file(), r#"{"showHidden":true,"terminalFontSize":15}"#);
+        let old = load(&roots);
+        assert_eq!(old.chat, ChatPrefs::default(), "a file from before the Chat page");
+        assert!(old.show_hidden);
+        put(
+            &roots.config_file(),
+            r#"{"futureTop":1,"chat":{"chips":["clear","future-chip"],"answerMenus":false,"futureKey":"kept"}}"#,
+        );
+        let start = load(&roots);
+        assert_eq!(start.chat.chips, ["clear", "future-chip"]);
+        let mut edited = start.clone();
+        edited.chat.set_command(0, "/review --strict");
+        edited.chat.answer_menus = true;
+        let saved = save_changes(&roots, &start, &edited).unwrap();
+        assert_eq!(saved.chat, edited.chat);
+        let raw = read_json(&roots.config_file()).unwrap();
+        assert_eq!(raw["chat"]["futureKey"], "kept");
+        assert_eq!(raw["futureTop"], 1);
+        assert_eq!(raw["chat"]["chips"], json!(["clear", "future-chip"]));
     }
 
     #[test]

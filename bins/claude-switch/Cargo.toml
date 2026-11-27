@@ -7,11 +7,12 @@ license.workspace = true
 [dependencies]
 claude-switch-core = { path = "../../crates/core" }
 opencode-cli = { path = "../../crates/opencode" }
-mdshared-ui = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "e951766dd9468c9a0fbd1591dff276b51efdac09", features = ["host", "term"] }
-mdshared-app = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "e951766dd9468c9a0fbd1591dff276b51efdac09" }
-mdshared-term = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "e951766dd9468c9a0fbd1591dff276b51efdac09" }
-mdshared-pty = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "e951766dd9468c9a0fbd1591dff276b51efdac09" }
-mdshared-text = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "e951766dd9468c9a0fbd1591dff276b51efdac09" }
+mdshared-ui = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31", features = ["host", "term"] }
+mdshared-app = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31" }
+mdshared-term = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31" }
+mdshared-pty = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31" }
+mdshared-text = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31" }
+mdshared-highlight = { git = "https://github.com/Kaan88/markdown-shared-rs", rev = "48eedb886610709fa7b6732fdeb5c2197de55d31" }
 mdview-preview = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }
 mdview-render = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }
 mdview-core = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }

@@ -11,8 +11,7 @@ use mdshared_ui::gfx::{Face, Painter, Rect, Wrap};
 use mdshared_ui::host::Cx;
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::overlay::{
-    DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_backdrop_presence, draw_dialog_button,
-    draw_dialog_card_with,
+    DIALOG_FOOTER, DIALOG_PAD, dialog_button_w, dialog_card, draw_dialog_button, draw_dialog_card_with,
 };
 use mdshared_ui::textfield::{FieldColors, FieldHit, TextField};
 use mdshared_ui::theme::Palette;
@@ -27,7 +26,7 @@ mod opencode_rows;
 mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
-pub(crate) use settings::{OPENCODE, TERMINAL, settings, settings_event};
+pub(crate) use settings::{OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
@@ -54,6 +53,12 @@ pub enum Pending {
     Copy {
         id: String,
         account: String,
+        /// Delete the original once the copy is written (`delete`).
+        delete: bool,
+    },
+    /// Delete a session (to the Recycle Bin).
+    Delete {
+        id: String,
     },
     Remove {
         slug: String,
@@ -74,6 +79,12 @@ pub enum Pending {
         ids: Vec<String>,
         batch: bool,
     },
+    /// Summarize sessions for search by meaning.
+    MeaningIndex,
+    /// Ask a question over the kept summaries.
+    MeaningAsk {
+        question: String,
+    },
     UnarchiveAll,
     RestartOpenCode(crate::opencode_workers::Restart),
     ManageShell {
@@ -87,7 +98,7 @@ impl Pending {
     /// Whether the confirming button is the primary one, which Enter chooses: yes for opening
     /// something, no for what ends or removes something (there the safe choice, Cancel, is).
     pub fn ok_is_primary(&self) -> bool {
-        matches!(self, Pending::Open { .. } | Pending::Copy { .. } | Pending::RestoreTab)
+        matches!(self, Pending::Open { .. } | Pending::Copy { delete: false, .. } | Pending::RestoreTab)
     }
 }
 
@@ -117,6 +128,11 @@ pub fn accounts(st: &mut AppState, now: Instant) -> Dialog {
     let shares =
         st.config.accounts.iter().filter(|a| !a.primary).map(|a| (a.slug.clone(), st.source.share_status(a))).collect();
     Dialog::Accounts { scroll: 0.0, shares }
+}
+
+/// The New session picker for a folder only, starting an OpenCode tab.
+pub(crate) fn new_opencode_dialog(st: &AppState) -> Dialog {
+    Dialog::NewSession(Box::new(newsession::NewSession::for_opencode(st)))
 }
 
 pub(crate) fn name_dialog(title: &str, text: &str, then: NameFor) -> Dialog {
@@ -176,14 +192,15 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     let (w, h) = (window.w, window.h);
     let Some(mut dialog) = st.dialog.take() else { return };
     let look = st.appearance;
-    let shadow = if st.high_contrast { 0.0 } else { look.shadow };
+    let cards = crate::windowlook::Cards::for_frame(st, p);
+    let shadow = if st.high_contrast { 0.0 } else { cards.decoration(look.shadow) };
     if let Dialog::Settings(form) = &mut dialog {
         form.draw(p, st, window, t, cx.anim());
         st.dialog = Some(dialog);
         return;
     }
     let pal = *st.pal();
-    draw_backdrop_presence(p, &pal, w, h, t);
+    cards.dim(p, &pal, window, t);
     let usage = if matches!(dialog, Dialog::Accounts { .. }) && st.config.show_usage {
         let counts = st.config.accounts.iter().map(|a| st.running_for_usage(&a.slug)).collect::<Vec<_>>();
         let (usage, statuses, demo) = (&st.usage, &st.statuses, st.source.is_demo());
@@ -206,7 +223,14 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter, window: Re
     } else {
         Vec::new()
     };
-    let mut d = Draw { hits: &mut st.hits, hover: st.hover, pressed: st.pressed, pal, radius: look.radius, shadow };
+    let mut d = Draw {
+        hits: &mut st.hits,
+        hover: st.hover,
+        pressed: st.pressed,
+        pal,
+        radius: cards.decoration(look.radius),
+        shadow,
+    };
     match &mut dialog {
         Dialog::Confirm { title, text, ok, then } => {
             let tw = 460.0 - 2.0 * DIALOG_PAD;
@@ -420,7 +444,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
     match dialog {
         Dialog::Confirm { then, title, text, ok } => match (id, then) {
             (OK, Pending::Open { id, account, app }) => st.open_now(now, &id, &account, app),
-            (OK, Pending::Copy { id, account }) => st.copy_now(now, &id, &account),
+            (OK, Pending::Copy { id, account, delete }) => st.copy_now_then(now, &id, &account, delete),
+            (OK, Pending::Delete { id }) => st.delete_confirmed(now, &id),
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
             (OK, Pending::CloseOtherTabs(tab)) => st.close_other_tabs(tab),
             (OK | CANCEL, Pending::RestoreTab) => st.confirm_restore_tab(now, id == OK),
@@ -430,6 +455,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::ManageShell { tab, generation, tool }) => st.confirm_shell_manager(tab, generation, tool),
             (OK, Pending::Quit) => st.quit = true,
             (OK, Pending::Suggest { ids, batch }) => st.start_naming(ids, batch),
+            (OK, Pending::MeaningIndex) => st.start_meaning_index(),
+            (OK, Pending::MeaningAsk { question }) => st.start_meaning_question(question),
             (OK, Pending::UnarchiveAll) => st.unarchive(now, None),
             (OK | CANCEL, Pending::RestartOpenCode(request)) => st.confirm_restart_opencode(request, id == OK),
             (OK, Pending::Remove { slug }) => {
@@ -551,7 +578,7 @@ pub fn key(st: &mut AppState, now: Instant, k: &KeyName, mods: Mods, text: Optio
     let Some(mut dialog) = st.dialog.take() else { return false };
     match &mut dialog {
         Dialog::Settings(form) => {
-            let o = form.key(k, mods, text);
+            let o = form.key(&st.config, k, mods, text);
             st.dialog = Some(dialog);
             settings_event(st, o);
             return true;

@@ -18,11 +18,13 @@ pub mod archive;
 pub mod clock;
 pub mod compact;
 pub mod config;
+pub mod delete;
 pub mod folder_defaults;
 pub mod fulltext;
 pub mod grouping;
 pub mod launch;
 pub mod marks;
+pub mod meaning;
 mod merge;
 pub mod naming;
 mod prompt_clean;
@@ -299,8 +301,12 @@ pub struct Config {
     pub window_theme: String,
     /// Optional visual preferences beyond the theme and font size.
     pub appearance: config::AppearancePrefs,
+    /// Settings › Chat: quick-command chips and whether Chat answers the CLI's menus.
+    pub chat: config::ChatPrefs,
     /// Handover model and per-provider permission to send session data.
     pub compact: compact::Preferences,
+    /// Opt-in search, questions and grouping by meaning (off by default).
+    pub meaning: meaning::Prefs,
 }
 
 /// Convenience for callers: the account with this slug.

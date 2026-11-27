@@ -12,6 +12,7 @@ mod preview;
 mod shells;
 mod text;
 mod ui;
+pub(crate) use ui::Reading;
 mod working;
 
 use std::path::{Path, PathBuf};
@@ -107,6 +108,11 @@ impl Pane {
         self.chat.invalidate_input(&self.model.chat, self.transcript_end());
     }
 
+    /// A wheel report to the program: input, but not one that stops Chat's card key sequences.
+    pub(crate) fn note_terminal_wheel(&mut self) {
+        self.chat.invalidate_pointer_input(&self.model.chat, self.transcript_end());
+    }
+
     fn note_composer_input(&mut self) {
         self.chat.watermark_input(&self.model.chat, self.transcript_end());
     }
@@ -198,6 +204,13 @@ impl Pane {
 }
 
 impl AppState {
+    pub(crate) fn scroll_wake_due(&self, now: Instant) -> bool {
+        self.tabs
+            .shown()
+            .and_then(|tab| tab.pane.as_ref())
+            .and_then(|pane| pane.ui.scroll_deadline())
+            .is_some_and(|deadline| deadline <= now)
+    }
     pub fn session_visible(&self, width: f32) -> bool {
         self.tabs.shown().is_some_and(|tab| tab.pane.is_some())
             && (self.chat_active() || self.session_width_enabled(width))
@@ -436,6 +449,9 @@ impl AppState {
         let mut hits = Vec::new();
         if let Some(pane) = self.shown_pane(area.w) {
             pane.ui.draw(p, pal, rects.2, &mut pane.model, mouse, cx.now(), motion);
+            if let Some(deadline) = pane.ui.scroll_deadline() {
+                cx.wake_at(deadline);
+            }
             if let Some(side) = pane.ui.detail_side() {
                 let area =
                     mdshared_ui::gfx::Rect::new(rects.2.x, rects.2.y + 31.0, rects.2.w, (rects.2.h - 31.0).max(0.0));
@@ -467,8 +483,9 @@ impl AppState {
 
     pub fn draw_session_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect) {
         let mouse = self.picture_pointer();
+        let radius = crate::windowlook::Cards::for_frame(self, p).decoration(10.0);
         if let Some(pane) = self.shown_pane(window.w) {
-            pane.ui.draw_overlay(p, pal, window, &pane.model, mouse);
+            pane.ui.draw_overlay(p, pal, window, &pane.model, mouse, radius);
         }
     }
 

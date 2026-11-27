@@ -27,6 +27,7 @@ mod compact_runner;
 mod conversation_demo;
 mod conversation_draw;
 mod conversation_search;
+mod delete;
 mod demo;
 mod demo_terminal;
 mod details;
@@ -36,6 +37,8 @@ mod folder_defaults;
 mod handover_in_place;
 mod handover_pipe;
 mod list;
+mod meaning;
+mod opencode_tab;
 mod opencode_workers;
 mod resume_tabs;
 mod run;
@@ -126,6 +129,10 @@ fn main() {
             std::process::exit(0);
         }
         claim = handover_pipe::claim(); // The holder went away meanwhile.
+    }
+    if !demo {
+        // Background handover jobs a process never read (it died first); off the startup path.
+        std::thread::spawn(compact_cli::clean_old_jobs);
     }
     let mut win_file = winfile::load(source.window_file().as_deref());
     if demo && demo_offscreen {

@@ -188,6 +188,7 @@ mod tests {
             basis: u64::MAX,
             stage,
             since,
+            delete_original: false,
         }
     }
 

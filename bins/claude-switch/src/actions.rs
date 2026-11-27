@@ -47,6 +47,9 @@ const COPY_PATH: u32 = 28;
 const REVEAL: u32 = 29;
 const CHAT_LAYOUT: u32 = 30;
 const SET_TOPIC: u32 = 31;
+const MEANING_INDEX: u32 = 240;
+const MEANING_ASK: u32 = 241;
+pub const NEW_OPENCODE: u32 = 242;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -67,6 +70,7 @@ pub const COMMANDS: &[Command] = &[
     Command::new(OPEN_COPY, "session.open_copy", "Open a copy in CLI"),
     Command::new(crate::compact_dialog::COMMAND, "session.compact", crate::compact_dialog::LABEL),
     Command::new(NEW_SHELL, "tab.new_shell", "New shell tab").keys("Ctrl+Shift+T"),
+    Command::new(NEW_OPENCODE, "tab.new_opencode", "New OpenCode tab…"),
     Command::new(NEXT_TAB, "tab.next", "Next tab").keys("Ctrl+Tab"),
     Command::new(PREV_TAB, "tab.previous", "Previous tab").keys("Ctrl+Shift+Tab"),
     Command::new(CLOSE_TAB, "tab.close", "Close terminal tab").keys("Ctrl+Shift+W"),
@@ -78,6 +82,8 @@ pub const COMMANDS: &[Command] = &[
     Command::new(PIN, "session.pin", "Pin / unpin session").keys("Ctrl+D"),
     Command::new(SUGGEST, "session.suggest", "Suggest names for the selected session"),
     Command::new(SUGGEST_BATCH, "session.suggest_recent", "Suggest names for all unnamed recent sessions"),
+    Command::new(MEANING_INDEX, "session.meaning_index", "Summarize sessions for search by meaning…"),
+    Command::new(MEANING_ASK, "session.meaning_ask", "Ask about past sessions…"),
     Command::new(ACCOUNTS, "app.accounts", "Accounts…"),
     Command::new(SETTINGS, "app.settings", "Settings…"),
     Command::new(ABOUT, "app.about", "About"),
@@ -101,6 +107,7 @@ impl AppState {
                 let account = self.folder_open(&folder, App::Desktop).0.to_owned();
                 self.new_session_now(now, App::Desktop, &account, &folder);
             }
+            crate::delete::DELETE_ROW | crate::delete::COPY_DELETE => self.delete_action(id),
             ARCHIVE_OLD | ARCHIVE_ROW | ARCHIVE_FOLDER | UNARCHIVE_ROW | UNARCHIVE_SELECTED | UNARCHIVE_ALL
             | REPORT => {
                 self.archive_action(now, id);
@@ -114,6 +121,8 @@ impl AppState {
             RENAME => self.ask_rename_session(),
             SET_TOPIC => self.ask_set_topic(),
             SUGGEST | SUGGEST_BATCH => self.ask_naming(id == SUGGEST_BATCH),
+            MEANING_INDEX => self.ask_meaning_index(),
+            MEANING_ASK => self.ask_meaning_question(),
             HIDE_FOLDER if let Some(key) = self.context_folder.take() => self.toggle_group_hidden(now, key),
             HIDE | HIDE_FOLDER => self.toggle_hidden(now, id == HIDE_FOLDER),
             PIN => {
@@ -127,6 +136,7 @@ impl AppState {
             CHAT_LAYOUT => self.set_chat_layout(!self.chat_active()),
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
+            NEW_OPENCODE => self.ask_new_opencode_tab(),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
             CLOSE_TAB => {
                 if let Some(t) = self.tabs.active {
@@ -245,7 +255,7 @@ impl AppState {
         match self.source.carry_warning(&self.config, &session, &account) {
             Some(text) => {
                 let title = format!("Open a copy as {}?", self.account_name(&account));
-                let then = Pending::Copy { id: id.to_string(), account };
+                let then = Pending::Copy { id: id.to_string(), account, delete: false };
                 self.dialog = Some(Dialog::Confirm { title, text, ok: "Continue".into(), then });
             }
             None => self.copy_now(now, id, &account),
@@ -253,6 +263,11 @@ impl AppState {
     }
 
     pub fn copy_now(&mut self, now: Instant, id: &str, account: &str) {
+        self.copy_now_then(now, id, account, false);
+    }
+
+    /// Opens a copy; with `delete`, the original is deleted once the copy's transcript is written.
+    pub fn copy_now_then(&mut self, now: Instant, id: &str, account: &str, delete: bool) {
         let Some(&i) = self.by_id.get(id) else { return };
         let session = self.sessions[i].clone();
         let copy_id = match crate::compact_open::session_id() {
@@ -269,6 +284,12 @@ impl AppState {
                 let done = format!("Opened a copy of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
                 if self.start_with_result(now, &l, None, Some(account), done, Some((&session.cwd, App::Cli))) {
                     self.remember_folder_open(&session.cwd, account, App::Cli);
+                    if delete && self.source.is_demo() {
+                        self.toast("Demo: the original was not deleted".into(), now);
+                    } else if delete {
+                        let tab = self.config.embedded_terminal.then_some(self.tabs.active).flatten();
+                        self.delete_after_copy(&session, &copy_id, account, tab);
+                    }
                 } else if !self.source.is_demo() {
                     self.marks.clear_parent(&copy_id);
                     self.save_marks();
@@ -513,14 +534,13 @@ impl AppState {
     pub fn row_menu(&mut self, entry: usize, anchor: Rect) {
         if let Some(mdshared_ui::sections::Entry::Heading(g)) = self.sections.entry(entry) {
             if let Some(key) = self.groups[g].key.strip_prefix("folder:") {
-                let label = if self.marks.folder_hidden(key) { "Unhide folder" } else { "Hide folder" };
                 self.context_folder = Some(key.to_string());
                 let mut items = vec![
-                    Item::new(HIDE_FOLDER, label),
+                    Item::new(HIDE_FOLDER, "Folder hidden"),
                     Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!key.is_empty()),
                 ];
                 self.archive_view_items(&mut items);
-                self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor)));
+                self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(244.0)));
             }
             return;
         }
@@ -529,33 +549,39 @@ impl AppState {
         self.context_folder = None;
         self.select(&id);
         let s = &self.sessions[i];
-        let pin = if self.marks.pinned(&id) { "Unpin" } else { "Pin" };
-        let hide = if self.marks.hidden(&id) { "Unhide session" } else { "Hide session" };
-        let folder = if self.marks.folder_hidden(&claude_switch_core::sessions::folder_key(&s.cwd)) {
-            "Unhide folder"
-        } else {
-            "Hide folder"
-        };
         let mut items = vec![
             Item::new(OPEN_CLI, "Open in CLI"),
             Item::new(OPEN_DESKTOP, "Open in Desktop"),
             Item::new(OPEN_AS, "Open as…"),
             Item::new(OPEN_COPY, "Open a copy"),
+            crate::delete::copy_item(self.delete_block(&s.id)),
             Item::new(crate::compact_dialog::COMMAND, crate::compact_dialog::LABEL),
             Item::new(RENAME, "Rename").hint("F2").sep(),
             Item::new(SET_TOPIC, "Set topic…"),
             Item::new(SUGGEST, "Suggest name"),
-            Item::new(PIN, pin).hint("Ctrl+D").enabled(!self.is_archived(s)),
-            Item::new(HIDE, hide).hint("Delete"),
-            Item::new(HIDE_FOLDER, folder).enabled(!s.cwd.as_os_str().is_empty()),
+            Item::new(PIN, "Pinned").hint("Ctrl+D").enabled(!self.is_archived(s)),
+            Item::new(HIDE, "Session hidden").hint("Delete"),
+            Item::new(HIDE_FOLDER, "Folder hidden").enabled(!s.cwd.as_os_str().is_empty()),
             archive_row_item(self.is_archived(s), self.row_flags(s)),
+            crate::delete::row_item(self.delete_block(&s.id)),
             Item::new(ARCHIVE_FOLDER, "Archive folder…").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(COPY_ID, "Copy session id").sep(),
             Item::new(COPY_PATH, "Copy folder path").enabled(!s.cwd.as_os_str().is_empty()),
             Item::new(REVEAL, "Reveal transcript in Explorer"),
         ];
         self.archive_view_items(&mut items);
-        self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(228.0)));
+        self.menu = Some((MenuKind::Row, Menu::new(items, 0.0, 0.0, false).around(anchor).min_width(244.0)));
+    }
+
+    pub(crate) fn row_switches(&self) -> [(u32, bool); 3] {
+        let s = self.selected_session();
+        let folder =
+            self.context_folder.clone().or_else(|| s.map(|s| claude_switch_core::sessions::folder_key(&s.cwd)));
+        [
+            (PIN, s.is_some_and(|s| self.marks.pinned(&s.id))),
+            (HIDE, s.is_some_and(|s| self.marks.hidden(&s.id))),
+            (HIDE_FOLDER, folder.is_some_and(|f| self.marks.folder_hidden(&f))),
+        ]
     }
 
     fn session_file_action(&mut self, now: Instant, action: u32) {

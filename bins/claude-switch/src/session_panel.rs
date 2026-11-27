@@ -79,10 +79,33 @@ impl Picker {
 
 pub enum Mode {
     Switch(Picker),
-    Rename { id: String, original: String },
-    Topic { id: String },
+    Rename {
+        id: String,
+        original: String,
+    },
+    Topic {
+        id: String,
+    },
     Working,
-    Review { current: Suggestion, rest: VecDeque<Suggestion>, n: usize, total: usize, missing: usize },
+    /// A question for search by meaning.
+    Ask,
+    /// Waiting for the search-by-meaning model.
+    MeaningWorking {
+        model: String,
+    },
+    /// Its answer, with the sessions it names.
+    Answer {
+        question: String,
+        text: String,
+        picker: Picker,
+    },
+    Review {
+        current: Suggestion,
+        rest: VecDeque<Suggestion>,
+        n: usize,
+        total: usize,
+        missing: usize,
+    },
 }
 
 pub struct Panel {
@@ -124,6 +147,9 @@ impl Panel {
             Mode::Rename { .. } => ("Rename session".into(), 228.0),
             Mode::Topic { .. } => ("Set topic".into(), 210.0),
             Mode::Working => ("Suggesting names…".into(), 154.0),
+            Mode::Ask => ("Ask about past sessions".into(), 210.0),
+            Mode::MeaningWorking { .. } => ("Asking the model…".into(), 154.0),
+            Mode::Answer { .. } => ("Answer".into(), 462.0),
             Mode::Review { current, n, total, .. } => {
                 (format!("Review suggestion  {n} / {total}"), if current.topic.is_some() { 298.0 } else { 242.0 })
             }
@@ -137,7 +163,7 @@ impl Panel {
         let text = |y, label: &str, p: &mut Painter| {
             p.text(Face::Ui, 12.5, x, card.y + y, label, pal.muted, w);
         };
-        if !matches!(self.mode, Mode::Working) {
+        if !matches!(self.mode, Mode::Working | Mode::MeaningWorking { .. } | Mode::Answer { .. }) {
             let r = Rect::new(x, card.y + 54.0, w, 34.0);
             p.frame(r, 6.0, pal.field, if self.topic_focus { pal.line } else { pal.accent });
             let colors =
@@ -146,6 +172,8 @@ impl Panel {
                 "Search name, prompt or folder"
             } else if matches!(self.mode, Mode::Topic { .. }) {
                 "No topic"
+            } else if matches!(self.mode, Mode::Ask) {
+                "e.g. where did we fix push?"
             } else {
                 "Use transcript title"
             };
@@ -158,16 +186,7 @@ impl Panel {
                 if s.hits.is_empty() {
                     text(112.0, "No matching sessions.", p);
                 }
-                for (i, hit) in s.hits.iter().enumerate().skip(s.first).take(VISIBLE) {
-                    let r = Rect::new(x, card.y + 100.0 + (i - s.first) as f32 * 40.0, w, 39.0);
-                    let target = Target::Dialog(RESULT + i as u32);
-                    if s.selected == i || d.hover == Some(target) {
-                        p.rbox(r, 5.0, if s.selected == i { pal.on } else { pal.hover });
-                    }
-                    p.text(Face::Semibold, 13.0, r.x + 9.0, r.y + 11.0, &hit.title, pal.text, r.w - 18.0);
-                    p.text(Face::Ui, 11.5, r.x + 9.0, r.y + 28.0, &hit.hint, pal.muted, r.w - 18.0);
-                    d.hits.push((r, target));
-                }
+                draw_hits(d, p, s, x, card.y + 100.0, w);
                 p.text(
                     Face::Ui,
                     11.5,
@@ -198,6 +217,35 @@ impl Panel {
             Mode::Working => {
                 text(69.0, "Waiting for Claude. No session will be renamed automatically.", p);
                 d.footer(p, footer, &[("Cancel", true, CANCEL)]);
+            }
+            Mode::Ask => {
+                text(112.0, "Answered from the kept summaries. You confirm before anything is sent.", p);
+                d.footer(p, footer, &[("Ask", true, OK), ("Cancel", false, CANCEL)]);
+            }
+            Mode::MeaningWorking { model } => {
+                text(69.0, &format!("Waiting for {model}. The window stays usable; Cancel stops it."), p);
+                d.footer(p, footer, &[("Cancel", true, CANCEL)]);
+            }
+            Mode::Answer { question, text: answer, picker } => {
+                p.text(Face::Semibold, 12.5, x, card.y + 58.0, question, pal.muted, w);
+                let shown: String = answer.chars().take(600).collect();
+                let old = p.clip(Rect::new(x, card.y + 72.0, w, 116.0));
+                p.paragraph_wrapped(
+                    Face::Ui,
+                    13.0,
+                    x,
+                    card.y + 76.0,
+                    w,
+                    &shown,
+                    pal.text,
+                    mdshared_ui::gfx::Wrap::Words,
+                );
+                p.restore(old);
+                draw_hits(d, p, picker, x, card.y + 194.0, w);
+                if picker.hits.is_empty() {
+                    text(204.0, "It named no session that is listed now.", p);
+                }
+                d.footer(p, footer, &[("Open", true, OK), ("Close", false, CANCEL)]);
             }
             Mode::Review { current, missing, .. } => {
                 text(109.0, &format!("Current title: {}", current.original), p);
@@ -237,15 +285,22 @@ impl Panel {
     pub fn key(&mut self, st: &AppState, k: &KeyName, mods: Mods, text: Option<&str>) -> Option<u32> {
         match k {
             KeyName::Escape => return Some(CANCEL),
-            KeyName::Enter => return Some(if matches!(self.mode, Mode::Working) { CANCEL } else { OK }),
+            KeyName::Enter => {
+                return Some(if matches!(self.mode, Mode::Working | Mode::MeaningWorking { .. }) {
+                    CANCEL
+                } else {
+                    OK
+                });
+            }
             KeyName::Tab if matches!(&self.mode, Mode::Review { current, .. } if current.topic.is_some()) => {
                 self.topic_focus = !self.topic_focus;
                 return None;
             }
-            KeyName::Up | KeyName::Down if let Mode::Switch(s) = &mut self.mode => {
+            KeyName::Up | KeyName::Down if let Some(s) = self.picker() => {
                 s.step(*k == KeyName::Down);
                 return None;
             }
+            _ if !self.has_field() => return None,
             _ => {}
         }
         let field = if self.topic_focus { &mut self.topic } else { &mut self.field };
@@ -260,7 +315,7 @@ impl Panel {
     pub(crate) fn field_of(&self, id: u32) -> Option<crate::fieldmouse::FieldId> {
         use crate::fieldmouse::FieldId;
         match id {
-            FIELD if !matches!(self.mode, Mode::Working) => Some(FieldId::SessionName),
+            FIELD if self.has_field() => Some(FieldId::SessionName),
             TOPIC_FIELD if matches!(&self.mode, Mode::Review { current, .. } if current.topic.is_some()) => {
                 Some(FieldId::SessionTopic)
             }
@@ -297,7 +352,7 @@ impl Panel {
     }
 
     pub fn wheel(&mut self, dy: f32) {
-        if let Mode::Switch(s) = &mut self.mode {
+        if let Some(s) = self.picker() {
             let steps = ((dy.abs() / 40.0).round() as usize).clamp(1, 5);
             for _ in 0..steps {
                 s.step(dy < 0.0);
@@ -317,20 +372,24 @@ impl Panel {
             {
                 job.cancel();
             }
+            if matches!(self.mode, Mode::MeaningWorking { .. }) {
+                st.meaning.cancel();
+            }
             return;
         }
+        let searching = matches!(self.mode, Mode::Answer { .. }) || !self.field.text().trim().is_empty();
         match &mut self.mode {
-            Mode::Switch(picker) => {
+            Mode::Ask if id == OK => {
+                let question = self.field.text().to_owned();
+                st.submit_meaning_question(&question);
+            }
+            Mode::Switch(picker) | Mode::Answer { picker, .. } => {
                 let i = if id == OK { picker.selected } else { id.saturating_sub(RESULT) as usize };
                 let Some(hit) = picker.hits.get(i) else {
                     st.dialog = Some(Dialog::Session(self));
                     return;
                 };
-                if st
-                    .by_id
-                    .get(&hit.id)
-                    .is_some_and(|&i| st.searchable(&st.sessions[i], !self.field.text().trim().is_empty()))
-                {
+                if st.by_id.get(&hit.id).is_some_and(|&i| st.searchable(&st.sessions[i], searching)) {
                     let anchor = st.hits.iter().find(|(_, t)| *t == Target::Dialog(RESULT + i as u32)).map(|(r, _)| *r);
                     st.select(&hit.id);
                     st.show_sessions();
@@ -364,6 +423,65 @@ impl Panel {
             }
             _ => st.dialog = Some(Dialog::Session(self)),
         }
+    }
+}
+
+impl Panel {
+    pub fn meaning_ask(question: &str) -> Dialog {
+        Self::dialog(Mode::Ask, question)
+    }
+
+    pub fn meaning_working(model: String) -> Dialog {
+        Self::dialog(Mode::MeaningWorking { model }, "")
+    }
+
+    /// The answer, with the named sessions that are listed now as openable rows.
+    pub fn meaning_answer(st: &AppState, question: &str, text: String, ids: Vec<String>) -> Dialog {
+        let labels: std::collections::HashMap<_, _> = ids
+            .iter()
+            .filter_map(|id| st.by_id.get(id).map(|&i| (id.clone(), folder_label(&st.sessions[i]))))
+            .collect();
+        let hits = ids
+            .iter()
+            .filter_map(|id| {
+                let s = &st.sessions[*st.by_id.get(id)?];
+                st.searchable(s, true).then_some(())?;
+                let about = st.meaning.cache.digests.get(id).map_or("", |d| d.summary.as_str());
+                let hint = format!("{}  ·  {about}", labels[id]);
+                Some(Hit { id: id.clone(), title: st.title_of(s).to_string(), hint })
+            })
+            .collect();
+        let picker = Picker { hits, selected: 0, first: 0 };
+        Self::dialog(Mode::Answer { question: question.to_owned(), text, picker }, "")
+    }
+
+    pub fn meaning_working_now(&self) -> bool {
+        matches!(self.mode, Mode::MeaningWorking { .. })
+    }
+
+    fn has_field(&self) -> bool {
+        !matches!(self.mode, Mode::Working | Mode::MeaningWorking { .. } | Mode::Answer { .. })
+    }
+
+    fn picker(&mut self) -> Option<&mut Picker> {
+        match &mut self.mode {
+            Mode::Switch(picker) | Mode::Answer { picker, .. } => Some(picker),
+            _ => None,
+        }
+    }
+}
+
+fn draw_hits(d: &mut Draw<'_>, p: &mut Painter, s: &Picker, x: f32, top: f32, w: f32) {
+    let pal = d.pal;
+    for (i, hit) in s.hits.iter().enumerate().skip(s.first).take(VISIBLE) {
+        let r = Rect::new(x, top + (i - s.first) as f32 * 40.0, w, 39.0);
+        let target = Target::Dialog(RESULT + i as u32);
+        if s.selected == i || d.hover == Some(target) {
+            p.rbox(r, 5.0, if s.selected == i { pal.on } else { pal.hover });
+        }
+        p.text(Face::Semibold, 13.0, r.x + 9.0, r.y + 11.0, &hit.title, pal.text, r.w - 18.0);
+        p.text(Face::Ui, 11.5, r.x + 9.0, r.y + 28.0, &hit.hint, pal.muted, r.w - 18.0);
+        d.hits.push((r, target));
     }
 }
 

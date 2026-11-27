@@ -149,6 +149,9 @@ pub struct Chat {
     pub(super) first_sent: bool,
     /// The tab was started with Claude Code's classic renderer (Settings).
     pub(crate) classic_renderer: bool,
+    /// Settings › Chat › "Answer menus from the chat" is off: no card for the CLI's menus,
+    /// pickers or permission prompts; they stay in the terminal.
+    pub(crate) menus_off: bool,
     question: question::Card,
     mode_step: Option<submission::mode::ModeStep>,
     /// The permission mode as the screen last showed it.
@@ -226,6 +229,13 @@ impl Chat {
 
     pub(super) fn invalidate_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.interrupt_submission();
+        self.watermark_input(info, end);
+    }
+
+    /// As [`Chat::invalidate_input`], for a mouse report that cannot type or pick anything by
+    /// itself: card key sequences in flight go on, each re-checking the screen before its key.
+    pub(super) fn invalidate_pointer_input(&mut self, info: &ChatInfo, end: Option<u64>) {
+        self.interrupt_staging();
         self.watermark_input(info, end);
     }
 

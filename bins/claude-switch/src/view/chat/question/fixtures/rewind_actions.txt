@@ -1,0 +1,41 @@
+cursor 39 99
+ ▐▛███▛█   Claude Code v2.1.332
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   ~\Desktop\cs-scratch\play
+
+
+❯ Reply with just the word alpha.
+
+● alpha
+
+✻ Sautéed for 1s · done 2:22 PM
+
+❯ Reply with just the word bravo.
+
+● bravo
+
+✻ Churned for 1s · done 2:22 PM
+
+❯ Reply with just the word charlie.
+
+● charlie
+
+✻ Churned for 0s · done 2:22 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Rewind
+
+  Restore to the point before you sent this message:
+
+  │ Reply with just the word bravo.
+  │ (20s ago)
+
+  The conversation goes back to before this message.
+  The code will be unchanged.
+
+  ❯ 1. Restore conversation
+    2. Summarize from here
+    3. Summarize up to here
+    4. Never mind
+
+
