@@ -52,6 +52,17 @@ pub(in crate::view::chat) const AGENTS_STOPPED: &str = include_str!("../fixtures
 pub(in crate::view::chat) const AGENTS_CLOSED: &str = include_str!("../fixtures/agents_closed.txt");
 pub(in crate::view::chat) const AGENTS_SHELL: &str = include_str!("../fixtures/agents_shell.txt");
 pub(in crate::view::chat) const REWIND_IDLE: &str = include_str!("../fixtures/rewind_idle.txt");
+pub(in crate::view::chat) const REWIND_OPEN: &str = include_str!("../fixtures/rewind_open.txt");
+pub(in crate::view::chat) const REWIND_UP1: &str = include_str!("../fixtures/rewind_up1.txt");
+pub(in crate::view::chat) const REWIND_UP2: &str = include_str!("../fixtures/rewind_up2.txt");
+pub(in crate::view::chat) const REWIND_ACTIONS: &str = include_str!("../fixtures/rewind_actions.txt");
+pub(in crate::view::chat) const REWIND_CLOSED: &str = include_str!("../fixtures/rewind_closed.txt");
+pub(in crate::view::chat) const REWIND_ACTIONS_CODE: &str = include_str!("../fixtures/rewind_actions_code.txt");
+pub(in crate::view::chat) const REWIND_ACTIONS_CODE_DOWN: &str =
+    include_str!("../fixtures/rewind_actions_code_down.txt");
+pub(in crate::view::chat) const REWIND_DONE: &str = include_str!("../fixtures/rewind_done.txt");
+pub(in crate::view::chat) const REWIND_CUT_UP1: &str = include_str!("../fixtures/rewind_cut_up1.txt");
+pub(in crate::view::chat) const REWIND_CUT_UP2: &str = include_str!("../fixtures/rewind_cut_up2.txt");
 
 fn sends_blocked(screen: &Screen) -> bool {
     !crate::view::chat::submission::screen::clean_prompt(screen)

@@ -25,6 +25,12 @@ const BACKGROUNDED: &str = "Running in the background";
 const HINT_ROWS: usize = 8;
 const BLOCK_ROWS: usize = 12;
 const MOVED_ROWS: usize = 24;
+/// The rewind list and its choices for one prompt.
+const REWIND_TITLE: &str = "Rewind";
+const REWIND_LIST: &str = "Restore the code and/or conversation to the point before…";
+const REWIND_LIST_FOOTER: &str = "Enter to continue · Esc to cancel";
+const REWIND_CURRENT: &str = "(current)";
+const REWIND_ACTIONS: &str = "Restore to the point before you sent this message:";
 /// The hints under the input box about the agent list: its entry in the input's hint row, and
 /// the list's own hints while it has the keys.
 const LIST_MANAGE: &str = "↓ to manage";
@@ -538,6 +544,111 @@ pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
         ListKeys::Clear => highlight.is_some_and(|h| h > 0),
     };
     (fits && rows.len() > 1).then_some(AgentList { keys, rows, highlight })
+}
+
+/// The rewind list Esc Esc opens at an idle prompt (Claude Code 2.1.332, `rewind_*`): its prompts
+/// oldest first, each over a row naming its code changes, then "(current)".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct RewindList {
+    /// Each prompt as the list shows it (its first line, cut with "…"), then "(current)".
+    pub entries: Vec<String>,
+    pub highlight: usize,
+}
+
+/// The last row reading `title` with `next` under it (blank rows between): the row after `next`.
+fn titled(screen: &Screen, title: &str, next: &str) -> Option<usize> {
+    let text = |r: usize| clean(&screen.row_text(r)).1;
+    let under = |r: usize| (r + 1..screen.rows()).find(|&n| !text(n).is_empty());
+    let top = (0..screen.rows()).rev().find(|&r| text(r) == title && under(r).is_some_and(|n| text(n) == next))?;
+    under(top).map(|n| n + 1)
+}
+
+pub(super) fn rewind_list(screen: &Screen) -> Option<RewindList> {
+    let start = titled(screen, REWIND_TITLE, REWIND_LIST)?;
+    // Blank rows part the entries; they carry nothing.
+    let rows: Vec<(bool, String)> =
+        (start..screen.rows()).map(|r| clean(&screen.row_text(r))).filter(|(_, text)| !text.is_empty()).collect();
+    let footer = rows.iter().position(|(_, text)| text == REWIND_LIST_FOOTER)?;
+    // Nothing under the footer.
+    if footer + 1 != rows.len() {
+        return None;
+    }
+    let (current, rest) = rows[..footer].split_last()?;
+    if current.1 != REWIND_CURRENT || rest.len() % 2 != 0 {
+        return None;
+    }
+    let mut entries = Vec::new();
+    let mut marked = Vec::new();
+    for (i, pair) in rest.chunks(2).enumerate() {
+        let [(mark, prompt), (summary_marked, summary)] = pair else { return None };
+        if *summary_marked || prompt.is_empty() || summary.is_empty() {
+            return None;
+        }
+        if *mark {
+            marked.push(i);
+        }
+        entries.push(prompt.clone());
+    }
+    if current.0 {
+        marked.push(entries.len());
+    }
+    entries.push(REWIND_CURRENT.to_owned());
+    let [highlight] = marked[..] else { return None };
+    Some(RewindList { entries, highlight })
+}
+
+/// The rewind's choices for one prompt, after Enter on it in the list (`rewind_actions*`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct RewindActions {
+    /// The quoted prompt, its rows joined (without the "(… ago)" row).
+    pub quoted: String,
+    /// What each choice does to the conversation and the code, and any warning under the choices.
+    pub body: Vec<String>,
+    pub choices: Vec<String>,
+    pub highlight: Option<usize>,
+}
+
+pub(super) fn rewind_actions(screen: &Screen) -> Option<RewindActions> {
+    let start = titled(screen, REWIND_TITLE, REWIND_ACTIONS)?;
+    let raw: Vec<String> =
+        (start..screen.rows()).map(|r| screen.row_text(r).trim().to_owned()).filter(|row| !row.is_empty()).collect();
+    let quote: Vec<String> =
+        raw.iter().take_while(|row| row.starts_with('│')).map(|row| collapse(row.trim_start_matches('│'))).collect();
+    let (ago, quote) = quote.split_last()?;
+    if !(ago.starts_with('(') && ago.ends_with(" ago)")) || quote.is_empty() {
+        return None;
+    }
+    let mut actions = RewindActions { quoted: collapse(&quote.join(" ")), ..RewindActions::default() };
+    for row in &raw[quote.len() + 1..] {
+        let (marked, text) = clean(row);
+        match numbered(&text) {
+            Some((n, choice)) if n == actions.choices.len() + 1 => {
+                if marked {
+                    if actions.highlight.is_some() {
+                        return None;
+                    }
+                    actions.highlight = Some(actions.choices.len());
+                }
+                actions.choices.push(choice.to_owned());
+            }
+            Some(_) => return None,
+            None if marked => return None,
+            None if !text.is_empty() => actions.body.push(text),
+            None => {}
+        }
+    }
+    (!actions.choices.is_empty()).then_some(actions)
+}
+
+/// The rewind list shows `prompt` on this row: its first line, whole, or cut with "…" (a prompt of
+/// several lines always is).
+pub(super) fn rewind_row_is(row: &str, prompt: &str) -> bool {
+    let first = collapse(prompt.trim().lines().next().unwrap_or_default());
+    let several = prompt.trim().lines().nth(1).is_some();
+    match row.strip_suffix('…').map(str::trim_end) {
+        Some(cut) => !cut.is_empty() && first.starts_with(cut),
+        None => !several && row == first,
+    }
 }
 
 /// The plan approval menu: its question right above the choices, one of which keeps planning.

@@ -1602,3 +1602,233 @@ fn a_panel_card_replaces_the_composers_prompt_notices() {
     assert!(press(f.tab(), now, Hit::Escape));
     assert_eq!(f.writes(), [ESC.to_vec()]);
 }
+
+impl Fixture {
+    /// Prompts the user typed, in order, at offsets 10, 20, … and the turn after the last ended.
+    fn prompts(&mut self, texts: &[&str]) -> Vec<ItemId> {
+        let pane = self.tab().pane.as_mut().unwrap();
+        let mut ids = Vec::new();
+        for (i, text) in texts.iter().enumerate() {
+            let id = ItemId { offset: 10 * (i as u64 + 1), block: 0 };
+            let kind = ItemKind::Prompt { text: (*text).into(), pictures: vec![], synthetic: false };
+            pane.model.items.insert(id, Item { kind, timestamp: None });
+            ids.push(id);
+        }
+        pane.model.chat.prompt = ids.last().map(|id| id.offset);
+        ids
+    }
+
+    fn rewind(&mut self) -> Option<rewind::Rewind> {
+        self.chat().question.rewind.clone()
+    }
+}
+
+fn up() -> Vec<u8> {
+    mdshared_term::input::encode_key(mdshared_term::Key::Up, mdshared_term::Mods::NONE, &Default::default())
+}
+
+const ALPHA: &str = "Reply with just the word alpha.";
+const BRAVO: &str = "Reply with just the word bravo.";
+const CHARLIE: &str = "Reply with just the word charlie.";
+
+#[test]
+fn recorded_rewind_screens_read_as_the_list_and_the_choices() {
+    use screens::recorded::*;
+    let list = |fixture: &str| screens::rewind_list(&recorded(fixture));
+    let open = list(REWIND_OPEN).expect("the list");
+    assert_eq!(open.entries, [ALPHA, BRAVO, CHARLIE, "(current)"]);
+    assert_eq!(open.highlight, 3);
+    assert_eq!(list(REWIND_UP2).map(|l| l.highlight), Some(1));
+    assert!(list(REWIND_IDLE).is_none() && list(REWIND_ACTIONS).is_none());
+
+    let actions = screens::rewind_actions(&recorded(REWIND_ACTIONS)).expect("the choices");
+    assert_eq!(actions.quoted, BRAVO);
+    assert_eq!(actions.choices, ["Restore conversation", "Summarize from here", "Summarize up to here", "Never mind"]);
+    assert_eq!(actions.highlight, Some(0));
+    assert_eq!(actions.body, ["The conversation goes back to before this message.", "The code will be unchanged."]);
+    let code = screens::rewind_actions(&recorded(REWIND_ACTIONS_CODE)).expect("the choices with code");
+    assert_eq!(code.choices.len(), 6);
+    assert_eq!(code.choices[0], "Restore code and conversation");
+    assert!(code.body.iter().any(|row| row.starts_with("⚠ Restored files go back whole")));
+    let down = screens::rewind_actions(&recorded(REWIND_ACTIONS_CODE_DOWN)).unwrap();
+    assert_eq!((down.highlight, down.choices), (Some(1), code.choices));
+    assert!(screens::rewind_actions(&recorded(REWIND_OPEN)).is_none());
+
+    // A prompt of several lines shows its first line and "…"; a long one is cut with " …".
+    let cut = list(REWIND_CUT_UP1).expect("the list");
+    let echo = "Reply with just the word echo.\nSecond line of the prompt.";
+    assert_eq!(cut.highlight, 1);
+    assert!(screens::rewind_row_is(&cut.entries[1], echo));
+    assert!(!screens::rewind_row_is(&cut.entries[1], "Reply with just the word delta."));
+    let long = "Reply with just the word delta. This sentence is only padding so that the prompt is long enough \
+                to be cut by the rewind list, more padding words here.";
+    assert!(screens::rewind_row_is(&list(REWIND_CUT_UP2).unwrap().entries[0], long));
+    assert!(!screens::rewind_row_is(&cut.entries[0], "Reply with just the word delta."));
+    assert!(screens::rewind_row_is(BRAVO, BRAVO) && !screens::rewind_row_is(BRAVO, echo));
+}
+
+#[test]
+fn rewind_walks_the_list_to_the_prompt_and_chooses_only_on_a_click() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, ids[1]);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    assert!(f.chat().waiting().is_some(), "the composer waits meanwhile");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the second Esc waits for its gap");
+    let now = now + STEP / 10;
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec()], "the same idle prompt: the second Esc");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the same screen proves nothing");
+    f.show(REWIND_OPEN, now);
+    assert!(f.chat().question.menu.is_none(), "the list is driven, not shown as a menu card");
+    advance(f.tab(), now, false);
+    assert!(f.writes().is_empty(), "no write while the window does not allow one");
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [up()]);
+    f.show(REWIND_UP1, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [up()], "charlie is not the prompt: up again");
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "nothing is chosen without a click");
+    let shown = f.rewind().and_then(|r| r.actions).expect("the choices in the card");
+    assert_eq!(shown.choices.len(), 4);
+    assert!(f.chat().waiting().is_none(), "the card waits for the user, not for keys");
+
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert_eq!(f.writes(), [b"\r".to_vec()], "the highlight is already there");
+    f.show(REWIND_CLOSED, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_none());
+    assert_eq!(f.chat().error, Some(rewind::REWOUND));
+}
+
+#[test]
+fn a_rewind_choice_moves_one_row_at_a_time_and_cancel_goes_back_by_esc() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let write = "Use the Write tool to create the file note.txt containing the word one.";
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(write));
+    f.show(REWIND_ACTIONS_CODE, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_some_and(|r| r.choosing()));
+    assert!(press(f.tab(), now, Hit::Option(1)));
+    assert_eq!(f.writes(), [down(1)]);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    f.show(REWIND_ACTIONS_CODE_DOWN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    // Claude Code puts the prompt back on its input.
+    f.show(REWIND_DONE, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_none());
+
+    // Cancel: Esc back to the list, Esc back to the prompt.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    f.show(REWIND_UP2, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    f.show(REWIND_CLOSED, now);
+    advance(f.tab(), now, true);
+    assert!(f.rewind().is_none());
+    assert_eq!(f.chat().error, None, "a cancel is not a rewind");
+
+    // The choices changed under the card: nothing is written.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(BRAVO));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    f.tab().term.screen = recorded(REWIND_ACTIONS_CODE);
+    assert!(press(f.tab(), now, Hit::Option(0)));
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::ACTIONS_CHANGED));
+
+    // The choices quote another prompt.
+    let mut f = Fixture::idle();
+    f.chat().question.rewind = Some(rewind::Rewind::entering(ALPHA));
+    f.show(REWIND_ACTIONS, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NO_ACTIONS));
+}
+
+#[test]
+fn a_rewind_stops_before_any_key_the_screen_does_not_prove() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    // Not at an idle prompt: a running command.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    f.show(BG_HINT, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    assert!(f.writes().is_empty());
+    let failed = f.rewind().expect("the card says why");
+    assert!(failed.failed() && failed.error == Some(rewind::NOT_IDLE));
+    assert!(press(f.tab(), now, Hit::Close));
+    assert!(f.rewind().is_none());
+
+    // The list never moves up to the prompt: no Enter.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, ids[0]);
+    advance(f.tab(), now + STEP / 10, true);
+    f.writes();
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [up()]);
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the highlight did not move");
+    advance(f.tab(), now + STEP, true);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_LISTED));
+    assert_eq!(f.chat().drawer, Drawer::Manual);
+
+    // A later prompt reads the same: the row is ambiguous.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[1]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    for screen in [REWIND_OPEN, REWIND_UP1, REWIND_UP2] {
+        f.show(screen, now);
+        advance(f.tab(), now, true);
+    }
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec(), up(), up()], "no Enter");
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::AMBIGUOUS));
+
+    // The list does not open after Esc Esc.
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ids[0]);
+    advance(f.tab(), now + QUIET + STEP / 10, true);
+    f.show(REWIND_IDLE, now);
+    advance(f.tab(), now + QUIET + STEP * 2, true);
+    assert_eq!(f.writes(), [ESC.to_vec(), ESC.to_vec()]);
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_OPENED));
+
+    // Only a prompt the user typed.
+    let mut f = Fixture::idle();
+    f.prompts(&[ALPHA]);
+    f.show(REWIND_IDLE, now);
+    rewind::start(f.tab(), now + QUIET, ItemId { offset: 99, block: 0 });
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_PROMPT));
+}

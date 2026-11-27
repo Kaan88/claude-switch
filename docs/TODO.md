@@ -127,9 +127,9 @@ and in the README, not committed, and not copied to the installed clone
 
 Status of items 23 to 60 (2026-11-27, merged into `main` after two reviews by Claude Fable and the fixes
 of both): built and passing format, lint and the test suite: 23 to 31, 34 to 48, 50 to 55, 57, 58 and 60.
-Partly: 47 (no `!` toggle in the composer), 53 (no Stop agent; the key that opens the CLI's agent panel
-is not known). Not built: 22, 32 (later; fonts need toolkit work), 49 (rewind, waits for a live check of
-42 and 48), 56 (later), 59 (idea only). Item 14 for Settings text rows waits for the toolkit pin move
+Partly: 47 (no `!` toggle in the composer). 53 got Stop agent and 49 (rewind) was built on
+2026-11-27 against recorded screens, 49 before a live check of 42 and 48 (see the items). Not built: 22,
+32 (later; fonts need toolkit work), 56 (later), 59 (idea only). Item 14 for Settings text rows waits for the toolkit pin move
 (toolkit 7da7b22). Nothing was tried against a live Claude Code: the screen shapes the cards read (the
 comment field after Tab, permission prompt phrases, full paths in Edit prompts, the /model picker, menu
 footers, the Ctrl+B hint), the in-place handover's paste echo within 2 s, two real windows and the pipe
@@ -559,6 +559,18 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 49. **Rewind from a prompt bubble**: "Rewind to here…" on user bubbles; Esc Esc at a verified empty prompt, Up until
     the highlighted row equals the chosen prompt, the action chosen by its row text, every step re-verified; build
     after 42 and 48 have proven the gate.
+    Built (2026-11-27) before 42 and 48 were proven live: both are built and unit-tested, but neither card has been
+    driven against a live CLI by the app, so this one uses the same verified-gate rules without that proof. "Rewind
+    to here…" is in the conversation's right-click menu over a typed prompt (DESIGN.md, "Rewind"). Checked: unit
+    tests over screens recorded from Claude Code 2.1.332 in a scratch folder (Haiku, 100 x 40): the idle prompt, the
+    list opening on "(current)", each Up, the choices without and with code changes (and the highlight moved down),
+    the input holding the prompt after "Restore conversation", Esc from the choices back to the list and from the
+    list back to the prompt, a prompt of several lines and a long one as the list cuts them; Up at the top changes
+    nothing (recorded). Not checked: the menu item and the card have not been seen or clicked in the running app; a
+    list long enough to scroll (the one-row scroll rule is untested); what "Summarize from here", "Summarize up to
+    here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
+    text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
+    a rewind and the reader does not follow `parentUuid` branches.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).

@@ -125,7 +125,7 @@ pub(super) fn interrupted(screen: &Screen) -> bool {
         .any(|i| screen.row_text(i).trim_start_matches([' ', '⎿', '✻', '✽', '·']).starts_with("Interrupted ·"))
 }
 
-pub(super) fn idle_slash_prompt(screen: &Screen, quiet: bool) -> bool {
+pub(in crate::view::chat) fn idle_slash_prompt(screen: &Screen, quiet: bool) -> bool {
     quiet && clean_prompt(screen) && !working(screen)
 }
 

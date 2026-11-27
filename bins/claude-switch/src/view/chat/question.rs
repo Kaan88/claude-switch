@@ -12,6 +12,7 @@
 //! question or the review opened), and "Submit answers" only once the review reads every answer
 //! as picked.
 mod background;
+pub(in crate::view) mod rewind;
 pub(super) mod screens;
 
 use std::path::Path;
@@ -255,6 +256,8 @@ pub enum Hit {
     Background,
     /// Stop the background agent the card offers at this place.
     StopAgent(usize),
+    /// Put away a card that stopped (a rewind's); nothing is sent.
+    Close,
     /// Esc: leave the menu, or decline the question or prompt.
     Escape,
     /// A form's previous and next question in the card (nothing is sent).
@@ -383,6 +386,8 @@ pub(super) struct Card {
     agents: Vec<background::AgentOffer>,
     /// A Stop agent in flight. It outlives the pending call: the main turn may move on meanwhile.
     agent_step: Option<background::AgentStep>,
+    /// A rewind from a prompt bubble, from its first Esc until it is done or its card is closed.
+    rewind: Option<rewind::Rewind>,
     /// The pending call's offset while Chat may answer it: its drawer stays closed.
     pub(super) answerable: Option<u64>,
     /// The card answers a permission prompt, not a question.
@@ -461,7 +466,13 @@ impl Card {
 
     pub(super) fn deadline(&self) -> Option<Instant> {
         let background = self.background_step.as_ref().map(|(_, due, _)| *due);
-        self.step.as_ref().map(|step| step.due).or(background).or(self.agent_step.as_ref().map(|step| step.due))
+        let rewind = self.rewind.as_ref().and_then(|r| r.due);
+        self.step
+            .as_ref()
+            .map(|step| step.due)
+            .or(background)
+            .or(self.agent_step.as_ref().map(|step| step.due))
+            .or(rewind)
     }
 }
 
@@ -899,8 +910,9 @@ impl Chat {
             let field = std::mem::take(&mut self.question.field);
             let held = self.question.held.take();
             let agent_step = self.question.agent_step.take();
+            let rewind = self.question.rewind.take();
             let error = self.question.error.filter(|_| agent_step.is_some());
-            self.question = Card { item, field, held, agent_step, error, ..Card::default() };
+            self.question = Card { item, field, held, agent_step, rewind, error, ..Card::default() };
             if item.is_none() {
                 self.question.field.clear();
             }
@@ -918,9 +930,10 @@ impl Chat {
         });
         let answerable = answerable.map(|p| p.item.offset);
         // Any other menu the screen shows, unless a question or prompt card already covers it.
-        // A Stop agent in flight drives the CLI's agent list itself.
+        // A Stop agent or a rewind drives the CLI's list itself.
         let menu = (shown.is_none()
             && self.question.agent_step.is_none()
+            && self.question.rewind.is_none()
             && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))
         .then(|| menu_shown(screen))
         .flatten();
@@ -946,7 +959,9 @@ impl Chat {
 
     pub(super) fn question_notice(&self) -> Option<&'static str> {
         let card = &self.question;
-        (card.step.is_some() || card.background_step.is_some() || card.agent_step.is_some()).then_some(WAITING)
+        let rewind = card.rewind.as_ref().is_some_and(rewind::Rewind::in_flight);
+        (card.step.is_some() || card.background_step.is_some() || card.agent_step.is_some() || rewind)
+            .then_some(WAITING)
     }
 
     /// The composer's notice while a card's text waits for it.
@@ -976,6 +991,9 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         Hit::Open => {
             chat.open_drawer();
             return true;
+        }
+        Hit::Option(_) | Hit::Escape | Hit::Close if chat.question.rewind.is_some() => {
+            return rewind::press(tab, now, hit);
         }
         _ if chat.question.step.is_some() => return false,
         _ => {}
@@ -1328,7 +1346,8 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_mut().expect("Chat pane");
     let changed = pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen)
         | background::advance_background(tab, now)
-        | background::advance_agent(tab, now, may_write);
+        | background::advance_agent(tab, now, may_write)
+        | rewind::advance(tab, now, may_write);
     let pane = tab.pane.as_mut().expect("Chat pane");
     let changed = changed | pane.chat.clear_busy();
     let Some(mut step) = pane.chat.question.step.clone() else { return changed };
@@ -1546,6 +1565,7 @@ fn tool_title(kind: &ItemKind) -> String {
 /// prompt waits.
 pub(super) fn place(chat: &mut Chat, model: &Model) {
     let wanted = match pending(model).map(|p| p.kind) {
+        _ if chat.question.rewind.is_some() => chat.question.rewind.as_ref().map(rewind::height),
         Some(Kind::Question(questions)) => {
             // A form keeps one height for all its questions.
             let options = questions.into_iter().flatten().map(|q| q.options.len()).max().unwrap_or(0);
@@ -1599,6 +1619,7 @@ impl Draw<'_> {
         p.frame(r, 8.0, pal.popup, pal.popup_line);
         let inner = r.inset(PAD);
         match pending(model).map(|p| p.kind) {
+            _ if chat.question.rewind.is_some() => self.rewind(p, chat, inner, hits),
             Some(Kind::Question(questions)) => self.question(p, chat, inner, questions, hits),
             Some(Kind::Tool(kind)) if chat.question.shown.is_some() => self.permission(p, chat, inner, kind, hits),
             _ if chat.question.menu.is_some() => self.menu(p, chat, inner, hits),
@@ -1606,7 +1627,7 @@ impl Draw<'_> {
         }
         // Esc leaves a menu or declines what the card shows, under the same checks as a choice.
         let escape = match pending(model).map(|p| p.kind) {
-            _ if chat.question.step.is_some() => false,
+            _ if chat.question.step.is_some() || chat.question.rewind.is_some() => false,
             Some(Kind::Question(_)) => chat.question.answerable.is_some(),
             Some(Kind::Tool(_)) if chat.question.shown.is_some() => chat.question.answerable.is_some(),
             // A panel offers Close in its own footer instead.
