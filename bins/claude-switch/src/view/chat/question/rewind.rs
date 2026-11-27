@@ -18,12 +18,18 @@
 use super::screens::{RewindActions, RewindList};
 use super::*;
 
-/// How long after the first Esc the second one goes; the CLI takes two within about a second.
+/// How long after the first Esc the second one goes; the CLI takes two within about a second, so
+/// a second Esc that cannot go within `ESC_LATEST` of the first stops the rewind instead.
 const ESC_GAP: Duration = Duration::from_millis(150);
+const ESC_LATEST: Duration = Duration::from_millis(600);
 
 pub(super) const NOT_IDLE: &str =
     "Claude Code is not at an idle, empty prompt, so nothing was sent. Rewind once the turn has ended.";
-pub(super) const NOT_PROMPT: &str = "Only a prompt you typed can be rewound to.";
+pub(super) const NOT_PROMPT: &str =
+    "Only a prompt you typed can be rewound to: Claude Code's rewind list does not show slash commands.";
+/// After a stop with the rewind list on screen, one Esc (screen-checked) closes it again.
+pub(super) const CLOSED: &str = "Chat closed the terminal's rewind list again.";
+pub(super) const LEFT_OPEN: &str = "The terminal's rewind screen is still open: press Esc there to leave it.";
 pub(super) const NOT_OPENED: &str =
     "The terminal did not open its rewind list, so nothing more was sent. Check the terminal.";
 pub(super) const NOT_LISTED: &str =
@@ -32,7 +38,12 @@ pub(super) const AMBIGUOUS: &str =
     "The terminal's rewind list shows a later prompt the same way, so nothing was chosen. Rewind in the terminal.";
 pub(super) const NO_ACTIONS: &str =
     "The terminal did not show the rewind's choices for this prompt, so nothing more was sent. Check the terminal.";
-pub(super) const ACTIONS_CHANGED: &str = "The rewind's choices changed in the terminal. Check the terminal.";
+pub(super) const ACTIONS_CHANGED: &str =
+    "The rewind's choices or the prompt they are for changed in the terminal. Check the terminal.";
+pub(super) const MISPLACED: &str = "The terminal's rewind list does not show the prompts after this one as the \
+    transcript has them, so nothing was chosen. Rewind in the terminal.";
+pub(super) const HELD_BACK: &str = "Chat could not send the rewind's next key in time (something was open over the \
+    window), so it stopped. Check the terminal.";
 pub(super) const NOT_DONE: &str = "The terminal did not finish the rewind. Check the terminal.";
 pub(super) const NOT_CANCELLED: &str = "The terminal did not close its rewind list. Check the terminal.";
 pub(super) const REWOUND: &str = "Rewound in Claude Code. The conversation here still shows the later turns: Switch reads the transcript as written.";
@@ -55,6 +66,8 @@ enum Stage {
     Confirming,
     /// Esc went from the choices (`true`: the list must show) or from the list (the prompt).
     Cancelling(bool),
+    /// It stopped with the list on screen, and Esc went to close it: the input must be back.
+    Leaving,
     /// Stopped; the card says why until it is closed.
     Failed,
 }
@@ -71,6 +84,8 @@ pub(super) struct Rewind {
     /// The choices as last read, for the card.
     pub(super) actions: Option<RewindActions>,
     pub(super) error: Option<&'static str>,
+    /// Once stopped: whether the rewind screen was closed again or is still open.
+    pub(super) note: Option<&'static str>,
     pub(super) due: Option<Instant>,
     epoch: u64,
 }
@@ -88,6 +103,11 @@ impl Rewind {
     pub(super) fn choosing(&self) -> bool {
         self.stage == Stage::Choosing
     }
+
+    /// Stops it before its next key, saying why.
+    pub(super) fn interrupt(&mut self, why: &'static str) {
+        fail(self, why);
+    }
 }
 
 /// The CLI's input is idle and empty, nothing is pending and no menu shows: as for a slash command.
@@ -101,6 +121,13 @@ fn idle(tab: &Tab, now: Instant) -> bool {
         && ready(tab)
 }
 
+/// The rewind list shows this prompt: it lists what the user typed, never a slash command
+/// (`/context` recorded from Claude Code 2.1.332, which the reader shows as its `/` name).
+pub(in crate::view) fn listed(prompt: &str) -> bool {
+    let prompt = prompt.trim_start();
+    !prompt.is_empty() && !prompt.starts_with(['/', '<'])
+}
+
 /// "Rewind to here…" on the prompt at `item`: the first Esc, at a verified idle prompt.
 pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
     let pane = tab.pane.as_ref().expect("Chat pane");
@@ -109,10 +136,12 @@ pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
         return;
     }
     let items = &pane.model.items;
-    let prompt = items.get(&item).and_then(crate::view::chat::recall::prompt_text).map(str::to_owned);
+    let prompt =
+        items.get(&item).and_then(crate::view::chat::recall::prompt_text).filter(|p| listed(p)).map(str::to_owned);
     let later: Vec<String> = items
         .range(ItemId { offset: item.offset.saturating_add(1), block: 0 }..)
         .filter_map(|(_, item)| crate::view::chat::recall::prompt_text(item))
+        .filter(|text| listed(text))
         .map(str::to_owned)
         .collect();
     let epoch = pane.chat.output_epoch;
@@ -122,6 +151,7 @@ pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
         stage: Stage::Failed,
         actions: None,
         error: None,
+        note: None,
         due: None,
         epoch,
     };
@@ -150,6 +180,8 @@ enum Next {
     /// The choices show; the card offers them.
     Choose(RewindActions),
     Done,
+    /// The list it stopped on is closed again.
+    Closed,
     Fail(&'static str),
 }
 
@@ -176,15 +208,13 @@ fn look(tab: &Tab, now: Instant, rewind: &Rewind) -> Next {
             _ => Next::Wait,
         },
         Stage::Entering => match screens::rewind_actions(screen) {
-            Some(actions) if screens::rewind_row_is(&actions.quoted, &rewind.prompt) || quoted(&actions, rewind) => {
-                Next::Choose(actions)
-            }
+            Some(actions) if for_prompt(&actions, rewind) => Next::Choose(actions),
             Some(_) => Next::Fail(NO_ACTIONS),
             None => Next::Wait,
         },
         Stage::Moving { target, from } => {
             let Some(actions) = screens::rewind_actions(screen) else { return Next::Wait };
-            let same = rewind.actions.as_ref().is_some_and(|a| a.choices == actions.choices);
+            let same = same_actions(&actions, rewind);
             let step = if target > from { from + 1 } else { from.saturating_sub(1) };
             match actions.highlight {
                 _ if !same => Next::Fail(ACTIONS_CHANGED),
@@ -201,6 +231,7 @@ fn look(tab: &Tab, now: Instant, rewind: &Rewind) -> Next {
             None => Next::Wait,
         },
         Stage::Cancelling(false) if back() => Next::Done,
+        Stage::Leaving if back() => Next::Closed,
         _ => Next::Wait,
     }
 }
@@ -210,9 +241,15 @@ fn toward(from: usize, target: usize, screen: &Screen) -> Vec<u8> {
     moves(from, if target > from { from + 1 } else { from.saturating_sub(1) }, screen)
 }
 
-/// The quote is the whole prompt, wrapped onto several rows.
-fn quoted(actions: &RewindActions, rewind: &Rewind) -> bool {
-    squash(&actions.quoted) == squash(&rewind.prompt)
+/// The choices quote the chosen prompt: as the list cuts it, or whole, wrapped onto several rows.
+fn for_prompt(actions: &RewindActions, rewind: &Rewind) -> bool {
+    screens::rewind_row_is(&actions.quoted, &rewind.prompt) || squash(&actions.quoted) == squash(&rewind.prompt)
+}
+
+/// The screen still shows the choices the card offers, for the chosen prompt: the CLI may have
+/// been moved to another prompt whose choices read the same.
+fn same_actions(shown: &RewindActions, rewind: &Rewind) -> bool {
+    rewind.actions.as_ref().is_some_and(|a| a.choices == shown.choices) && for_prompt(shown, rewind)
 }
 
 /// One Up from `before` led to `after`: the highlight one entry higher in the same list, or the
@@ -229,13 +266,21 @@ fn moved_up(before: &RewindList, after: &RewindList) -> bool {
         && after.entries[1..] == before.entries[..n - 1]
 }
 
-/// On the chosen prompt's row: Enter (unless a later prompt could read the same). Else Up.
+/// On the chosen prompt's row: Enter, unless a later prompt could read the same or the rows under
+/// it are not the later prompts, one for one (an earlier prompt worded alike would be taken for it
+/// when the list leaves the chosen one out). Else Up.
 fn pick_or_up(screen: &Screen, rewind: &Rewind, list: RewindList) -> Next {
     let row = &list.entries[list.highlight];
     let current = list.highlight + 1 == list.entries.len();
     if !current && screens::rewind_row_is(row, &rewind.prompt) {
         if rewind.later.iter().any(|later| screens::rewind_row_is(row, later)) {
             return Next::Fail(AMBIGUOUS);
+        }
+        let below = &list.entries[list.highlight + 1..list.entries.len() - 1];
+        let fits = below.len() == rewind.later.len()
+            && below.iter().zip(&rewind.later).all(|(row, later)| screens::rewind_row_is(row, later));
+        if !fits {
+            return Next::Fail(MISPLACED);
         }
         return Next::Key(b"\r".to_vec(), Stage::Entering);
     }
@@ -248,9 +293,15 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let Some(mut rewind) = chat.question.rewind.clone().filter(Rewind::in_flight) else { return false };
     let epoch = chat.output_epoch;
     let next = if ready(tab) { look(tab, now, &rewind) } else { Next::Fail(BLOCKED) };
-    let deadline = rewind.due.is_some_and(|due| now >= due) && rewind.stage != Stage::FirstEsc;
+    // A key that may not be written now waits like any other, and its deadline still holds: a
+    // dialog over the window must not keep the composer locked and resume the keys much later.
+    let held = matches!(next, Next::Key(..)) && !may_write;
+    let next = if held { Next::Wait } else { next };
+    let deadline = match rewind.stage {
+        Stage::FirstEsc => rewind.due.is_some_and(|due| now >= due + ESC_LATEST),
+        _ => rewind.due.is_some_and(|due| now >= due),
+    };
     match next {
-        Next::Key(..) if !may_write => return false,
         Next::Key(key, stage) => match write(tab, &key) {
             Ok(()) => {
                 let wait = if stage == Stage::Confirming { RESULT } else { STEP };
@@ -274,10 +325,21 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             }
             return true;
         }
+        Next::Closed => {
+            rewind.stage = Stage::Failed;
+            rewind.note = Some(CLOSED);
+            rewind.due = None;
+        }
         Next::Fail(why) => fail(&mut rewind, why),
+        Next::Wait if deadline && rewind.stage == Stage::Leaving => {
+            rewind.stage = Stage::Failed;
+            rewind.note = Some(LEFT_OPEN);
+            rewind.due = None;
+        }
         Next::Wait if deadline => {
             let why = match rewind.stage {
-                Stage::Opening => NOT_OPENED,
+                _ if held => HELD_BACK,
+                Stage::FirstEsc | Stage::Opening => NOT_OPENED,
                 Stage::Up(_) => NOT_LISTED,
                 Stage::Entering => NO_ACTIONS,
                 Stage::Moving { .. } => NOT_MOVED,
@@ -288,12 +350,34 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         }
         Next::Wait => return false,
     }
+    if rewind.failed() && rewind.note.is_none() {
+        leave(tab, &mut rewind, may_write, now);
+    }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
-    if rewind.failed() && chat.drawer == Drawer::Closed {
+    if (rewind.failed() || rewind.stage == Stage::Leaving) && chat.drawer == Drawer::Closed {
         chat.drawer = Drawer::Manual;
     }
     chat.question.rewind = Some(rewind);
     true
+}
+
+/// A rewind that just stopped: with the list on screen, one Esc to close it (checked on the next
+/// screen, `Stage::Leaving`); with the choices on screen, or no key allowed now, the card says
+/// that the rewind screen is still open.
+fn leave(tab: &mut Tab, rewind: &mut Rewind, may_write: bool, now: Instant) {
+    let screen = &tab.term.screen;
+    let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
+    if screens::rewind_list(screen).is_some() {
+        if may_write && ready(tab) && write(tab, ESC).is_ok() {
+            rewind.stage = Stage::Leaving;
+            rewind.due = Some(now + STEP);
+            rewind.epoch = epoch;
+            return;
+        }
+        rewind.note = Some(LEFT_OPEN);
+    } else if screens::rewind_actions(screen).is_some() {
+        rewind.note = Some(LEFT_OPEN);
+    }
 }
 
 fn fail(rewind: &mut Rewind, why: &'static str) {
@@ -322,7 +406,7 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     }
     let screen = &tab.term.screen;
     let shown = screens::rewind_actions(screen);
-    let same = shown.as_ref().zip(rewind.actions.as_ref()).is_some_and(|(s, a)| s.choices == a.choices);
+    let same = shown.as_ref().is_some_and(|shown| same_actions(shown, &rewind));
     let epoch = tab.pane.as_ref().unwrap().chat.output_epoch;
     let key = match (hit, shown) {
         _ if !ready(tab) => Err(BLOCKED),
@@ -345,10 +429,13 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             rewind.epoch = epoch;
             rewind.error = None;
         }
-        Err(why) => fail(&mut rewind, why),
+        Err(why) => {
+            fail(&mut rewind, why);
+            leave(tab, &mut rewind, true, now);
+        }
     }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
-    if rewind.failed() && chat.drawer == Drawer::Closed {
+    if (rewind.failed() || rewind.stage == Stage::Leaving) && chat.drawer == Drawer::Closed {
         chat.drawer = Drawer::Manual;
     }
     chat.question.rewind = Some(rewind);
@@ -360,7 +447,8 @@ pub(super) fn height(rewind: &Rewind) -> f32 {
     let actions = rewind.actions.as_ref().filter(|_| rewind.choosing());
     let rows = actions.map_or(0, |a| a.body.len().min(BODY_LINES + 2));
     let choices = actions.map_or(0, |a| a.choices.len());
-    HEADER + LINE + 6.0 + rows as f32 * LINE + choices as f32 * (CHOICE + 4.0)
+    let note = if rewind.note.is_some() { LINE } else { 0.0 };
+    HEADER + LINE + 6.0 + rows as f32 * LINE + choices as f32 * (CHOICE + 4.0) + note
 }
 
 impl Draw<'_> {
@@ -388,6 +476,10 @@ impl Draw<'_> {
                 hits.push((row, target));
                 y += CHOICE + 4.0;
             }
+        }
+        if let Some(note) = rewind.note {
+            p.text(Face::Ui, 11.5, inner.x, y + LINE / 2.0, note, pal.muted, inner.w);
+            y += LINE;
         }
         let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
         let status = rewind.error.or_else(|| rewind.in_flight().then_some(WAITING)).unwrap_or("");
@@ -421,6 +513,7 @@ impl Rewind {
             stage: Stage::Entering,
             actions: None,
             error: None,
+            note: None,
             due: None,
             epoch: u64::MAX,
         }

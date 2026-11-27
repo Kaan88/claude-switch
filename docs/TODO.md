@@ -594,6 +594,16 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
     text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
     a rewind and the reader does not follow `parentUuid` branches.
+    Review fixes (2026-11-27): every key on the choices needs them to quote the chosen prompt (the CLI could have
+    been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
+    prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list
+    that leaves a prompt out stops instead of taking an earlier prompt worded alike.
+    A key held back (a dialog over the window) no longer waits forever: the step's deadline still holds, and a second
+    Esc that cannot go within about 0.75 s of the first stops the rewind rather than going late.
+    "Rewind to here…" is offered only on prompts the list shows (not on slash commands such as `/context`, which
+    Claude Code 2.1.332 leaves out of it). A rewind that stops with its list on screen closes it with one checked Esc
+    and says so, or says the rewind screen is still open (its choices are on screen, or no key could go). A question,
+    permission prompt or CLI menu takes the card from a stopped rewind, whose notice comes back afterwards.
 50. **Thinking, hook and memory notices**: thinking blocks collapsed as "Thought" where readable; hook errors,
     blocked prompts, stop-hook feedback, memory notices and session recaps as small notice rows from their system
     records (catalogue the subtypes the current CLI writes first).
@@ -613,6 +623,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     row reads (not offered); offering a second stop while the hint row reads "↓ to resume subagent" (not offered);
     the sidecar `.meta.json` of 2.1.332 has no `finished` field (it has `stoppedByUser`), so the transcript never
     knows an agent finished and the screen decides.
+    Review fix (2026-11-27): terminal input, Cancel, or switching the tab to the terminal stops any card key sequence
+    in flight (an answer, a form, Ctrl+B, Stop agent, a rewind) before its next key, with a notice, instead of letting
+    it resume later from a screen it no longer knows.
 54. **Esc for more than Stop**: Stop's once-per-turn Esc rule is kept for Stop; Esc for leaving a menu or declining a
     prompt goes through item 42/48's gate.
 55. **The working line jumps sideways as its spinner animates** (owner, 2026-11-27, screenshot "✢ Billowing… (13s ·
@@ -823,6 +836,13 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     sequence even without kitty negotiation. The same run showed line breaks from the Chat composer's bracketed
     paste encoding (item 46); the composer test checks that Enter waits for the echo. No prompt was submitted.
     The desktop key path, other CLI versions and other programs were not checked interactively.
+    Review fix (2026-11-27): the tab's launch name alone sent `CSI 13;2u` to any program in it, such as an editor
+    Claude Code opened. Now it goes on the main screen (the classic view) and on the alternate screen only while the
+    cursor is in Claude Code's input box. Checked by recording Claude Code 2.1.332 with its full-screen view turned on
+    for that session only (`--settings '{"tui":"fullscreen"}'`): it draws on the alternate screen, with the same
+    input box, and `CSI 13;2u` started a second input line there. Not checked: a terminal editor opened with Ctrl+G
+    (Claude Code offers Notepad on this computer, a window of its own, so none was opened); a program that draws such a box on the alternate screen would get
+    Claude Code's Shift+Enter.
 68. **The `/usage` card loses the terminal's bars, and its spinner line jumps** (owner, 2026-11-27, screenshot of the
     read-only menu card for /usage). The card copies the panel's rows as plain text, so the usage bars the terminal
     draws (coloured cells or block characters) are missing; copy each cell's colours and draw the rows as the
