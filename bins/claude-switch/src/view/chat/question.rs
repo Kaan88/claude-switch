@@ -919,7 +919,9 @@ impl Chat {
             changed = true;
         }
         let shown = match pending.as_ref().map(|p| p.kind) {
-            Some(Kind::Tool(kind)) => tool_prompt(kind, pending.as_ref().is_some_and(|p| p.alone), cwd, screen),
+            Some(Kind::Tool(kind)) if !self.menus_off => {
+                tool_prompt(kind, pending.as_ref().is_some_and(|p| p.alone), cwd, screen)
+            }
             _ => None,
         };
         changed |= self.question.shown != shown;
@@ -931,7 +933,8 @@ impl Chat {
         let answerable = answerable.map(|p| p.item.offset);
         // Any other menu the screen shows, unless a question or prompt card already covers it.
         // A Stop agent or a rewind drives the CLI's list itself.
-        let menu = (shown.is_none()
+        let menu = (!self.menus_off
+            && shown.is_none()
             && self.question.agent_step.is_none()
             && self.question.rewind.is_none()
             && !matches!(pending.as_ref().map(|p| p.kind), Some(Kind::Question(_))))

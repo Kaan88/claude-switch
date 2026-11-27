@@ -1832,3 +1832,29 @@ fn a_rewind_stops_before_any_key_the_screen_does_not_prove() {
     assert!(f.writes().is_empty());
     assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_PROMPT));
 }
+
+/// Settings › Chat › "Answer menus from the chat" off: no card for a CLI menu or a permission
+/// prompt, nothing written on a click, and the prompt goes to the terminal as before item 42.
+#[test]
+fn with_menus_off_menus_and_permission_prompts_stay_in_the_terminal() {
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.chat().menus_off = true;
+    f.screen(&toggles(0, false), now);
+    f.sync();
+    assert!(f.chat().question.menu.is_none());
+    assert!(!press(f.tab(), now, Hit::Option(0)) || f.writes().is_empty());
+    assert!(f.writes().is_empty());
+
+    let mut f = Fixture::tool("cargo test --workspace");
+    f.chat().menus_off = true;
+    f.screen(&prompt("cargo test --workspace", 0, None), now);
+    f.sync();
+    assert!(f.chat().question.shown.is_none() && f.chat().question.menu.is_none());
+    assert_eq!(f.chat().question.answerable, None);
+    assert!(!f.chat().question.approval);
+    assert_ne!(f.decide(now), Some(Reason::Approval));
+    f.chat().menus_off = false;
+    f.sync();
+    assert!(f.chat().question.approval, "on again: the card is back");
+}

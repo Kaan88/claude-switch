@@ -145,7 +145,7 @@ Nothing below was tried against a live Claude Code session, the real desktop app
 the owner's checks are what is left. To check live first: the empty-prompt and slash-echo detection
 (items 7, 10, 11), the picture send (11), the desktop launch through the package alias (2), Stop via
 the CLI's shell manager (17), the new chat's name via `--name` (21), and the installer's PATH task (19).
-Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked and are not built.
+Item 10 C and D (CLI menus as cards, Quick commands settings) were built later as items 48 and 22.
 
 
 1. **A newly added third account keeps saying "Not signed in" under usage** although its sign-in tab
@@ -299,7 +299,16 @@ Item 10 C and D (CLI menus as cards, Quick commands settings) were not picked an
 22. **Later: Settings › Chat › Quick commands** (owner, 2026-11-26: "note D"), artboard D of the
     mock-ups: which chips show under the message box and in what order, the user's own commands with
     arguments, back to the defaults, and the switch for answering the CLI's menus from the chat
-    (artboard C, not picked). Not started.
+    (artboard C, not picked). **Done (2026-11-27):** a Chat page in Settings (after Sessions) with
+    seven chip slots (dropdowns: a picked chip swaps, None hides), three own command lines as chips
+    after the others (shown when they fit whole; a click runs the line with the direct-slash checks),
+    Restore defaults, and "Answer menus from the chat" (off: no menu, picker, plan or permission card;
+    questions keep theirs). Stored under `chat`; older files load the defaults, unknown chip keys and
+    `chat` fields from newer versions are kept through merged saves. The mock-ups (artboards C and D)
+    are not in the repository, so the page follows the existing Settings conventions instead of the
+    drawing. Checked: unit tests for reading, merging, slot swaps, validation, the page, the toolbar
+    order and fit, and the switch's gate. Not checked: a running app, a live Claude Code session, the
+    owner's mock-up.
 23. **Fresh chats refuse every send: "The terminal is showing a full-screen view"** (owner,
     2026-11-26, after 0.1.1). Likely cause, not yet confirmed on the owner's machine: Claude Code now
     starts new sessions in its fullscreen renderer (the `tui` setting, research preview; default for

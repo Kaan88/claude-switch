@@ -38,6 +38,8 @@ pub enum Control {
     Compact,
     Clear,
     Commands,
+    /// Own command `n` from Settings › Chat.
+    Own(usize),
     Suggestion(usize),
     Argument(usize, usize),
     PinCommand(usize),
@@ -188,9 +190,13 @@ impl AppState {
 
     pub(super) fn progress_chat_tabs(&mut self, now: Instant, window_allows_writes: bool) -> bool {
         let active = self.tabs.active;
+        let menus_off = !self.config.chat.answer_menus;
         let mut redraw = false;
         for tab in &mut self.tabs.list {
             let shown = Some(tab.id) == active;
+            if let Some(pane) = &mut tab.pane {
+                pane.chat.menus_off = menus_off;
+            }
             if !shown && !Self::has_chat_work(tab) {
                 continue;
             }
@@ -464,6 +470,10 @@ impl AppState {
             }
             Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
             Control::Clear => return self.chat_run_slash(cx, "/clear".into(), false),
+            Control::Own(n) => {
+                let Some(line) = self.config.chat.commands.get(n).filter(|c| !c.is_empty()).cloned() else { return };
+                return self.chat_run_slash(cx, line, false);
+            }
             Control::Commands | Control::Suggestion(_) | Control::Argument(_, _) | Control::PinCommand(_) => {
                 return self.chat_picker_action(cx, control);
             }

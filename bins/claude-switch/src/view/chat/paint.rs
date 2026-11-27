@@ -39,8 +39,9 @@ impl AppState {
         );
         // The draft's wrapped rows as last flowed; `draw_chat` flows again first and re-lays.
         let lines = chat.editor.rows.len().max(1);
+        let left = composer::left_group(&composer::chips_of(&self.config.chat));
         chat.layout =
-            Layout::with_shells(area, panel, drawer, chat.drawer_height, chips, notice, running, reveal, lines);
+            Layout::with_shells(area, panel, drawer, chat.drawer_height, chips, notice, running, reveal, lines, left);
         super::question::place(chat, &pane.model);
         self.session_view.pane_area = chat.layout.conversation;
         chat.layout.drawer
@@ -167,6 +168,8 @@ impl AppState {
             hover,
             hits: &mut self.hits,
             pins: &self.win_file.chat_pins,
+            chips: &composer::chips_of(&self.config.chat),
+            own: &self.config.chat.commands,
         }
         .composer(p, chat, &pane.model.chat, suggestions, popup);
     }

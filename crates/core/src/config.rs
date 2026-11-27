@@ -16,16 +16,19 @@
 //!   "windowTheme": "system",
 //!   "showUsage": true,
 //!   "appearance": {"backdrop":"off", "accentSource":"theme", "reduceMotion":false,
-//!                  "cornerRadius":8, "softShadows":true, "cursorBlink":false}
+//!                  "cornerRadius":8, "softShadows":true, "cursorBlink":false},
+//!   "chat": {"chips": ["model", "effort"], "commands": ["/review", "", ""], "answerMenus": true}
 //! }
 //! ```
 //!
 //! Folders are not stored: they follow from the slug and [`Roots`].
 
+mod chat;
 mod coordination;
 mod notifications;
 mod terminal;
 pub mod theme;
+pub use chat::{ChatPrefs, OWN_COMMANDS, QUICK_CHIPS, command_line};
 pub use coordination::{sync_workers, usage_enabled, usage_permit, usage_permit_until};
 pub use notifications::{Attention, Notifications, WarningWindows, claim_warning, load_warning_windows};
 pub use terminal::*;
@@ -299,6 +302,7 @@ fn parse(roots: &Roots, file: Value, damaged: bool) -> Config {
         terminal_font_size,
         window_theme,
         appearance: AppearancePrefs::read(&file["appearance"]),
+        chat: ChatPrefs::read(&file["chat"]),
         compact: crate::compact::Preferences::read(&file["compact"]),
     }
 }
@@ -331,11 +335,13 @@ pub fn save_changes(roots: &Roots, baseline: &Config, edited: &Config) -> Result
         if matches!(key.as_str(), "showUsage" | "compact") || before[key] == *value {
             continue;
         }
-        let depth = if key == "appearance" { 2 } else { 1 };
+        // Groups whose raw object may hold keys from a newer version: merge field by field.
+        let raw_group = matches!(key.as_str(), "appearance" | "chat");
+        let depth = if raw_group { 2 } else { 1 };
         let m = crate::merge::three_way(before.get(key), Some(value), current.get(key), depth);
         conflicts.extend(m.conflicts.into_iter().map(|p| [key.clone()].into_iter().chain(p).collect::<Vec<_>>()));
         if let Some(v) = m.value {
-            if key == "appearance" {
+            if raw_group {
                 // The typed view omits unrecognised palette versions and newer settings.
                 // Apply only the validated delta to the raw object, keeping those bytes' values.
                 let raw = merged.entry(key.clone()).or_insert(Value::Null);
@@ -454,6 +460,7 @@ fn config_value(config: &Config) -> Value {
         "terminalFontSize": config.terminal_font_size,
         "windowTheme": config.window_theme,
         "appearance": config.appearance.json(),
+        "chat": config.chat.json(),
         "compact": config.compact.json(),
     })
 }
@@ -657,6 +664,31 @@ mod tests {
         };
         save(&roots, &c).unwrap();
         assert_eq!(load(&roots), c);
+    }
+
+    #[test]
+    fn chat_settings_load_older_files_and_keep_newer_keys_through_a_merged_save() {
+        let t = TempDir::new("cfg-chat");
+        let roots = t.roots();
+        put(&roots.config_file(), r#"{"showHidden":true,"terminalFontSize":15}"#);
+        let old = load(&roots);
+        assert_eq!(old.chat, ChatPrefs::default(), "a file from before the Chat page");
+        assert!(old.show_hidden);
+        put(
+            &roots.config_file(),
+            r#"{"futureTop":1,"chat":{"chips":["clear","future-chip"],"answerMenus":false,"futureKey":"kept"}}"#,
+        );
+        let start = load(&roots);
+        assert_eq!(start.chat.chips, ["clear", "future-chip"]);
+        let mut edited = start.clone();
+        edited.chat.set_command(0, "/review --strict");
+        edited.chat.answer_menus = true;
+        let saved = save_changes(&roots, &start, &edited).unwrap();
+        assert_eq!(saved.chat, edited.chat);
+        let raw = read_json(&roots.config_file()).unwrap();
+        assert_eq!(raw["chat"]["futureKey"], "kept");
+        assert_eq!(raw["futureTop"], 1);
+        assert_eq!(raw["chat"]["chips"], json!(["clear", "future-chip"]));
     }
 
     #[test]
