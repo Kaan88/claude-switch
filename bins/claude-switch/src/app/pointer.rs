@@ -78,7 +78,11 @@ impl AppState {
         self.hover = self.hover.filter(|&t| layer.accepts(t));
         // A tooltip stays only while the layer of its control is in front.
         let tip = self.tip.shown().or(self.tip.waiting());
-        let home = |t: Target| if matches!(t, Target::Dialog(_)) { Layer::Dialog } else { Layer::Base };
+        // Settings' Peek button is drawn by the dialog, as its rows are.
+        let home = |t: Target| match t {
+            Target::Dialog(_) | Target::SettingsPeek => Layer::Dialog,
+            _ => Layer::Base,
+        };
         let own = tip.is_some_and(|o| home(o.key) == layer);
         if !own && (layer != Layer::Base || tip.is_some()) {
             self.tip.hover(now, None);
@@ -198,6 +202,21 @@ mod tests {
         app.tip.hover(now, Some(Over { key, text: "path".into(), anchor }));
         app.mask_covered_hover(now);
         assert!(app.tip.waiting().is_some());
+        app.dialog = None;
+        app.mask_covered_hover(now);
+        assert!(app.tip.waiting().is_none() && app.tip.shown().is_none());
+    }
+
+    #[test]
+    fn the_peek_tooltip_stays_while_settings_is_open() {
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        app.dialog = Some(Dialog::About);
+        let now = std::time::Instant::now();
+        let over =
+            Over { key: Target::SettingsPeek, text: dialogs::PEEK_TIP.into(), anchor: Rect::new(0.0, 0.0, 10.0, 10.0) };
+        app.tip.hover(now, Some(over));
+        app.mask_covered_hover(now);
+        assert!(app.tip.waiting().is_some(), "the dialog is in front: its Peek tip stays");
         app.dialog = None;
         app.mask_covered_hover(now);
         assert!(app.tip.waiting().is_none() && app.tip.shown().is_none());
