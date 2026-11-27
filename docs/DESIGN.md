@@ -1558,6 +1558,15 @@ rewind list and the panels of `/model`, `/effort`, `/config` (which takes two Es
 `/status`, `/help`, `/mcp`, `/permissions`, `/resume` and `/theme`. Not recorded: a pasted
 picture's marker (the recorder does not touch the clipboard).
 
+The fixtures prove the readers against the version they were recorded from. For each new Claude
+Code version `recorder compat` records these states again from the installed CLI and the readers
+are asked what each screen is (`screens/compat.rs`, the expectations in
+`tools/screen-recorder/expect`): by hand with `tools/cli-compat.ps1`, and daily in
+`.github/workflows/cli-compat.yml`, which opens an issue naming the states that no longer read as
+expected. `tools/screen-recorder/README.md` ("After a Claude Code update") says how to read a
+failure and what to do. Its first run found that the second of two prompts was not recognised,
+which the fixtures had not shown.
+
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat
 cannot show whole (its top is above the terminal's screen, or a row does not fit the card), and a
