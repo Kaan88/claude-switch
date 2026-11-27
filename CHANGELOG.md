@@ -9,6 +9,16 @@
 - Chat: a new session in a folder Claude Code has not seen asks whether you trust it. Chat
   showed that dialog without its choices (they carry no numbers), so Yes needed the terminal;
   its card now offers both.
+- Accounts: Claude Code's settings are the same in every account again. They were shared by a
+  hard link to the first account's `settings.json`, which Claude Code breaks whenever it saves the
+  file (`/model` does), so every further account had drifted to its own copy (one had lost the
+  handover plugin). Now they are copied: before every launch and when the app starts, a change
+  made in one account goes to the others; when several changed, the master account's wins.
+  Accounts shows the master and lets an account keep its own settings. A few preferences of
+  `/config` kept in `.claude.json` (such as Chrome) are shared the same way. Replaced files are
+  backed up in `%APPDATA%\claude-switch\settings-backups`.
+- Sessions and tabs: "Open working folder" in their menus.
+- New session: a folder that does not exist is offered to be created (Start again creates it).
 
 ## 0.1.4 (2026-11-27)
 

@@ -123,6 +123,7 @@ pub fn resume(
         return Err(Refusal::NotLoggedIn(account.name.clone()));
     }
     crate::share::prepare_cli(roots, account, Some(session))?;
+    sync_settings(roots, config);
     let cwd = if session.cwd.is_dir() { session.cwd.clone() } else { roots.home.clone() };
     let folder = folder_name(&session.cwd);
     Ok(match app {
@@ -159,6 +160,7 @@ pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str, ne
         return Err(Refusal::NotLoggedIn(account.name.clone()));
     }
     crate::share::prepare_cli(roots, account, Some(session))?;
+    sync_settings(roots, config);
     let cwd = if session.cwd.is_dir() { session.cwd.clone() } else { roots.home.clone() };
     let label = format!("{} · {} · Copy", account.name, folder_name(&session.cwd));
     Ok(cli_launch(
@@ -168,6 +170,13 @@ pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str, ne
         Place::Terminal,
         label,
     ))
+}
+
+/// Settings shared between accounts are brought in line before Claude Code starts, as it reads
+/// them at start ([`crate::settings_sync`]). A failure never stops the launch: the account then
+/// starts with the settings it has.
+fn sync_settings(roots: &Roots, config: &Config) {
+    let _ = crate::settings_sync::sync(roots, config, &config.settings_share);
 }
 
 pub fn validate_session_id(id: &str) -> Result<(), Refusal> {
@@ -201,6 +210,7 @@ pub fn new_session(roots: &Roots, config: &Config, account: &str, app: App, cwd:
     }
     let account = find_account(config, account)?;
     crate::share::prepare_cli(roots, account, None)?;
+    sync_settings(roots, config);
     let label = format!("{} · {} · New", account.name, folder_name(cwd));
     Ok(cli_launch(account, &[], cwd.to_path_buf(), Place::Terminal, label))
 }
@@ -209,6 +219,7 @@ pub fn new_session(roots: &Roots, config: &Config, account: &str, app: App, cwd:
 pub fn login(roots: &Roots, config: &Config, account: &str) -> Result<Launch, Refusal> {
     let account = find_account(config, account)?;
     crate::share::prepare_cli(roots, account, None)?;
+    sync_settings(roots, config);
     let label = format!("{} · Sign in", account.name);
     Ok(cli_launch(account, &["auth", "login"], roots.home.clone(), Place::Terminal, label))
 }

@@ -116,6 +116,7 @@ pub fn config() -> Config {
         group_by_folder: false,
         show_sittings: false,
         suggest_topics: false,
+        settings_share: Default::default(),
         terminal_scheme: "auto".into(),
         terminal_font_size: claude_switch_core::config::TERMINAL_FONT_DEFAULT,
         window_theme: "system".into(),

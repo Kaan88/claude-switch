@@ -30,6 +30,7 @@ pub mod naming;
 mod prompt_clean;
 pub mod running;
 pub mod sessions;
+pub mod settings_sync;
 pub mod share;
 pub mod stats;
 pub mod transcript;
@@ -293,6 +294,8 @@ pub struct Config {
     pub group_by_folder: bool,
     pub show_sittings: bool,
     pub suggest_topics: bool,
+    /// Which accounts share Claude Code's settings, and the master ([`settings_sync`]).
+    pub settings_share: settings_sync::Share,
     /// Terminal colour scheme id; unknown ids are treated as automatic by the window.
     pub terminal_scheme: String,
     /// Terminal font size in logical pixels.

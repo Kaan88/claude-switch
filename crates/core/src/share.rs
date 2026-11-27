@@ -9,9 +9,11 @@ use serde_json::Value;
 use std::path::Path;
 
 /// The names shared by link, in order: `projects`, `skills`, `agents`, `plugins`, `mcp-servers`
-/// (folders), `settings.json`, `CLAUDE.md`, `keybindings.json` (files).
-pub const SHARED: [&str; 8] =
-    ["projects", "skills", "agents", "plugins", "mcp-servers", "settings.json", "CLAUDE.md", "keybindings.json"];
+/// (folders), `CLAUDE.md`, `keybindings.json` (files). `settings.json` is not among them: Claude
+/// Code saves it as a new file, which breaks a hard link, so it is copied instead
+/// ([`crate::settings_sync`]).
+pub const SHARED: [&str; 7] =
+    ["projects", "skills", "agents", "plugins", "mcp-servers", "CLAUDE.md", "keybindings.json"];
 
 /// How one shared name stands in an account's CLI folder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +275,7 @@ mod tests {
         std::fs::create_dir_all(p.join("skills")).unwrap();
         put(&p.join("agents").join("a.md"), "primary agent");
         put(&p.join("settings.json"), r#"{"theme":"dark"}"#);
+        put(&p.join("keybindings.json"), r#"{"bindings":[]}"#);
         put(&p.join("CLAUDE.md"), "primary notes");
         let work = further(&roots, "work", "Work");
         // The account's own things: a folder with content and a different file; an empty folder.
@@ -288,9 +291,8 @@ mod tests {
                 ("agents", LinkState::Conflict),
                 ("plugins", LinkState::NoSource),
                 ("mcp-servers", LinkState::NoSource),
-                ("settings.json", LinkState::Missing),
                 ("CLAUDE.md", LinkState::Conflict),
-                ("keybindings.json", LinkState::NoSource),
+                ("keybindings.json", LinkState::Missing),
             ]
         );
         let after = apply(&roots, &work).unwrap();
@@ -305,8 +307,10 @@ mod tests {
         assert!(!work.cli_dir.join("agents").join("a.md").exists());
         assert_eq!(std::fs::read_to_string(work.cli_dir.join("CLAUDE.md")).unwrap(), "my notes");
         // The hard link is the same file: a change through it shows in the first account's.
-        std::fs::write(work.cli_dir.join("settings.json"), r#"{"theme":"light"}"#).unwrap();
-        assert_eq!(std::fs::read_to_string(p.join("settings.json")).unwrap(), r#"{"theme":"light"}"#);
+        std::fs::write(work.cli_dir.join("keybindings.json"), r#"{"bindings":[1]}"#).unwrap();
+        assert_eq!(std::fs::read_to_string(p.join("keybindings.json")).unwrap(), r#"{"bindings":[1]}"#);
+        // settings.json is copied by the settings sync, never linked.
+        assert!(!work.cli_dir.join("settings.json").exists());
         // Doing it again changes nothing.
         assert_eq!(states(&apply(&roots, &work).unwrap()), expected);
     }
@@ -328,9 +332,8 @@ mod tests {
         put(&work.cli_dir.join("keybindings.json"), &big);
         put(&work.cli_dir.join("skills").join("s.md"), "skill");
         let state = |rows: &[ShareState], name: &str| rows.iter().find(|r| r.name == name).unwrap().state;
-        assert_eq!(state(&status(&roots, &work), "settings.json"), LinkState::Conflict);
         let after = apply(&roots, &work).unwrap();
-        assert_eq!(state(&after, "settings.json"), LinkState::Conflict);
+        assert!(after.iter().all(|r| r.name != "settings.json"), "not a link any more");
         assert_eq!(state(&after, "CLAUDE.md"), LinkState::Conflict);
         assert_eq!(state(&after, "keybindings.json"), LinkState::Conflict);
         assert_eq!(state(&after, "skills"), LinkState::Conflict);

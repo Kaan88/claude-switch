@@ -200,6 +200,14 @@ impl Source {
         }
     }
 
+    /// Brings the sharing accounts' Claude Code settings in line (`settings_sync`).
+    pub fn settings_sync(&self, c: &Config) -> Result<claude_switch_core::settings_sync::Report, Refusal> {
+        match self {
+            Source::Real(roots) => claude_switch_core::settings_sync::sync(roots, c, &c.settings_share),
+            Source::Demo => Ok(Default::default()),
+        }
+    }
+
     pub fn share_apply(&self, a: &Account) -> Result<Vec<ShareState>, Refusal> {
         match self {
             Source::Real(roots) => share::apply(roots, a),

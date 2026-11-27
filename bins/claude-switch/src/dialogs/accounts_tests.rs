@@ -58,3 +58,23 @@ fn both_accounts_get_a_complete_refresh_target_when_scrolled_into_view_at_minimu
         }
     }
 }
+
+#[test]
+fn an_account_is_made_master_or_keeps_its_own_claude_code_settings() {
+    let mut st = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+    let now = std::time::Instant::now();
+    assert_eq!(settings_master(&st.config), "main");
+    account_action(&mut st, now, 1, ACT_SHARE);
+    assert_eq!(st.config.settings_share.off, ["work"]);
+    assert!(!st.config.settings_share.shares("work"));
+    account_action(&mut st, now, 1, ACT_SHARE);
+    assert!(st.config.settings_share.off.is_empty());
+    account_action(&mut st, now, 1, ACT_SHARE);
+    // Made master, it shares again.
+    account_action(&mut st, now, 1, ACT_MASTER);
+    assert_eq!(settings_master(&st.config), "work");
+    assert!(st.config.settings_share.off.is_empty() && st.config.settings_share.shares("main"));
+    // A master that is no longer an account falls back to the first.
+    st.config.settings_share.master = "gone".into();
+    assert_eq!(settings_master(&st.config), "main");
+}

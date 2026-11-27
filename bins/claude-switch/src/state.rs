@@ -262,6 +262,8 @@ pub struct AppState {
 impl AppState {
     pub fn new(source: Source, forced_dark: Option<bool>, win_file: WindowFile) -> AppState {
         let (config, config_damaged) = source.load_config();
+        // Changes made in one account since the app last ran (a /model there) reach the others.
+        let _ = source.settings_sync(&config);
         let usage = crate::usage::Usage::new(&source);
         let usage_warnings = crate::usage_warnings::Warnings::new(&source);
         let marks = match &source {

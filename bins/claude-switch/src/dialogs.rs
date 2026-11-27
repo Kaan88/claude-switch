@@ -41,6 +41,8 @@ const ACT_RENAME: u32 = 2;
 const ACT_REMOVE: u32 = 3;
 const ACT_LINK: u32 = 4;
 const ACT_REFRESH_USAGE: u32 = 5;
+const ACT_MASTER: u32 = 6;
+const ACT_SHARE: u32 = 7;
 
 /// What a confirmation leads to.
 #[derive(Clone, Debug)]
@@ -431,6 +433,8 @@ type StView<'a> = (
 
 const BLOCK: f32 = 96.0;
 const SHARE_BLOCK: f32 = 58.0;
+/// The row about Claude Code's settings, under each account when there are several.
+const SETTINGS_BLOCK: f32 = 40.0;
 
 fn account_usage_layout(body: Rect, y: f32, h: f32) -> (Rect, Rect) {
     let left = body.x + DIALOG_PAD - 1.0 + 18.0;
@@ -451,9 +455,11 @@ fn draw_accounts(
     shares: &[(String, Vec<ShareState>)],
 ) {
     let pal = d.pal;
-    let content: f32 = config.accounts.iter().map(|a| if a.primary { BLOCK } else { BLOCK + SHARE_BLOCK }).sum::<f32>()
-        + usage.iter().map(AccountUsage::height).sum::<f32>()
-        + 8.0;
+    let settings_row = if config.accounts.len() > 1 { SETTINGS_BLOCK } else { 0.0 };
+    let content: f32 =
+        config.accounts.iter().map(|a| if a.primary { BLOCK } else { BLOCK + SHARE_BLOCK } + settings_row).sum::<f32>()
+            + usage.iter().map(AccountUsage::height).sum::<f32>()
+            + 8.0;
     let now = claude_switch_core::usage::now_ms();
     let card = dialog_card(640.0, 60.0 + content + DIALOG_FOOTER, w, h);
     let footer = d.card(p, card);
@@ -547,6 +553,34 @@ fn draw_accounts(
                 }
             }
             y += SHARE_BLOCK;
+        }
+        if config.accounts.len() > 1 {
+            let share = &config.settings_share;
+            let master = settings_master(config);
+            let text = if a.slug == master {
+                "Claude Code settings: the master. A change in any sharing account goes to the others."
+            } else if share.shares(&a.slug) {
+                "Claude Code settings: shared with the other accounts."
+            } else {
+                "Claude Code settings: this account's own."
+            };
+            let colour = if share.shares(&a.slug) || a.slug == master { pal.text } else { pal.muted };
+            let mut bx = x + tw;
+            if a.slug != master {
+                for (label, act) in
+                    [(if share.shares(&a.slug) { "Keep own" } else { "Share" }, ACT_SHARE), ("Make master", ACT_MASTER)]
+                {
+                    let bw = (p.measure(Face::Ui, 13.0, label) + 24.0).round();
+                    bx -= bw;
+                    let r = Rect::new(bx, y - 8.0, bw, 28.0);
+                    if r.y >= body.y && r.bottom() <= body.bottom() {
+                        d.button(p, r, label, false, base + act);
+                    }
+                    bx -= 8.0;
+                }
+            }
+            p.text(Face::Ui, 12.0, x + 18.0, y + 6.0, text, colour, bx - x - 26.0);
+            y += SETTINGS_BLOCK;
         }
         if k + 1 < config.accounts.len() {
             p.fill(Rect::new(x, y - 10.0, tw, p.px()), pal.line);
@@ -661,6 +695,26 @@ fn account_action(st: &mut AppState, now: Instant, k: usize, act: u32) {
             }
             st.dialog = Some(accounts(st, now));
         }
+        ACT_MASTER | ACT_SHARE => {
+            let share = &mut st.config.settings_share;
+            if act == ACT_MASTER {
+                share.master = a.slug.clone();
+                share.off.retain(|s| *s != a.slug);
+            } else if share.shares(&a.slug) {
+                share.off.push(a.slug.clone());
+            } else {
+                share.off.retain(|s| *s != a.slug);
+            }
+            st.save_config();
+            match st.source.settings_sync(&st.config) {
+                Ok(report) if report.settings.is_some() || !report.prefs.is_empty() => {
+                    st.toast("Claude Code settings brought in line; the replaced files were backed up".into(), now)
+                }
+                Ok(_) => {}
+                Err(e) => st.error("Not every account's settings were brought in line", e.to_string()),
+            }
+            st.dialog = Some(accounts(st, now));
+        }
         ACT_REFRESH_USAGE => {
             st.refresh(now);
             st.request_usage(now, Demand::Refresh, Some(&a.slug));
@@ -686,6 +740,12 @@ fn submit_name(st: &mut AppState, now: Instant, field: TextField, hit: Option<Fi
         }
         Err(e) => st.dialog = Some(Dialog::Name { title, field, hit, then, error: Some(e.to_string()) }),
     }
+}
+
+/// The account whose Claude Code settings win a tie: the chosen one, or the first account.
+fn settings_master(config: &claude_switch_core::Config) -> &str {
+    let chosen = &config.settings_share.master;
+    if config.accounts.iter().any(|a| &a.slug == chosen) { chosen } else { "main" }
 }
 
 /// After an account was added, renamed or removed: save, tell the bridge, read again.
