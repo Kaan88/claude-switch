@@ -430,6 +430,9 @@ impl AppState {
             return;
         }
         if self.dialog.is_some() {
+            if self.folder_scroll_press(x, y) {
+                return;
+            }
             self.pressed = if self.field_press(x, y, cx.mods(), cx.now()) { None } else { hover };
             return;
         }
@@ -495,7 +498,7 @@ impl AppState {
     }
 
     fn release(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32) {
-        if self.field_release(x, y, cx.now()) {
+        if self.field_release(x, y, cx.now()) || self.folder_scroll_release() {
             return;
         }
         if self.chat_end_drag(Some((x, y))) {

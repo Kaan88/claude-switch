@@ -174,6 +174,8 @@ pub struct AppState {
     pub recent_local_day: Option<(i64, i32)>,
     pub marks: claude_switch_core::marks::Marks,
     pub marks_read_only: bool,
+    /// Which session folders were not on disk at the last look (the New session list).
+    pub folders: crate::recent_folders::Existence,
     pub marks_flush_at: Option<Instant>,
     /// Saves left to retry for marks no one will set again (a handover's links); see `save_marks`.
     pub marks_retries: u8,
@@ -295,6 +297,7 @@ impl AppState {
             recent_local_day: None,
             marks: marks.unwrap_or_default(),
             marks_read_only: marks_error.is_some(),
+            folders: Default::default(),
             marks_flush_at: None,
             marks_retries: 0,
             undo_hide: None,
@@ -483,6 +486,7 @@ impl AppState {
         }
         changed |= self.take_conversation_search();
         changed |= self.take_related();
+        changed |= self.take_folder_check();
         let selected = self.selected_session().map(|s| s.file.clone());
         self.take_naming_job() | self.take_meaning_job() | self.session_size.take(selected.as_deref()) | changed
     }
@@ -517,6 +521,8 @@ impl AppState {
             self.restart_conversation_search(Instant::now());
         }
         self.rebuild_view();
+        self.check_folders();
+        self.reload_new_session();
         let keep = self.selected.clone();
         self.last_account = None;
         match keep {

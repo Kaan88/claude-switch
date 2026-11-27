@@ -40,6 +40,7 @@ mod list;
 mod meaning;
 mod opencode_tab;
 mod opencode_workers;
+mod recent_folders;
 mod resume_tabs;
 mod run;
 mod session_marks;

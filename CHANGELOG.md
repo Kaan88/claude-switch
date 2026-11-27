@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- New session: **Recent folders** is now a scrolling list of up to 200 folders instead of four, newest
+  activity first, with the last-active time. It leaves out archived and hidden sessions and folders
+  that no longer exist, and counts different spellings of a folder once. Type in the folder field to
+  filter it; the arrows, Page Up/Down, Home, End and Enter work in it.
+
 ## 0.1.2 (2026-11-27)
 
 - Sessions: **Delete session…** in a session's menu, after Archive session…, moves its transcript and

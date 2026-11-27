@@ -76,7 +76,11 @@ impl AppState {
     pub(crate) fn mask_covered_hover(&mut self, now: std::time::Instant) {
         let layer = self.pointer_layer();
         self.hover = self.hover.filter(|&t| layer.accepts(t));
-        if layer != Layer::Base {
+        // A tooltip stays only while the layer of its control is in front.
+        let tip = self.tip.shown().or(self.tip.waiting());
+        let home = |t: Target| if matches!(t, Target::Dialog(_)) { Layer::Dialog } else { Layer::Base };
+        let own = tip.is_some_and(|o| home(o.key) == layer);
+        if !own && (layer != Layer::Base || tip.is_some()) {
             self.tip.hover(now, None);
         }
     }
@@ -100,7 +104,7 @@ impl AppState {
                 return if let Some(Dialog::Settings(form)) = &mut self.dialog {
                     form.pointer_move(x, y)
                 } else {
-                    false
+                    self.folder_scroll_drag(y)
                 };
             }
             Layer::Usage => return false,
@@ -130,9 +134,14 @@ impl AppState {
         let layer = self.pointer_layer();
         let hover = self.hover_target(layer);
         let mut changed = std::mem::replace(&mut self.hover, hover) != hover;
-        let over = hover
-            .filter(|_| layer == Layer::Base)
-            .and_then(|key| Some(Over { key, text: topbar::tip_of(key)?.into(), anchor: self.rect_of(key)? }));
+        let over = hover.and_then(|key| {
+            let text = match layer {
+                Layer::Base => topbar::tip_of(key)?.into(),
+                Layer::Dialog => self.dialog_tip(key)?,
+                _ => return None,
+            };
+            Some(Over { key, text, anchor: self.rect_of(key)? })
+        });
         changed |= self.tip.hover_at(cx.now(), over, self.mouse);
         cx.set_cursor(self.pointer_cursor(layer, hover, cx.size()));
         changed
@@ -174,6 +183,20 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::source::Source;
+
+    #[test]
+    fn a_dialog_row_tooltip_stays_under_its_dialog_and_goes_with_it() {
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        app.dialog = Some(Dialog::About);
+        let (key, now) = (Target::Dialog(1000), std::time::Instant::now());
+        let anchor = Rect::new(0.0, 0.0, 10.0, 10.0);
+        app.tip.hover(now, Some(Over { key, text: "path".into(), anchor }));
+        app.mask_covered_hover(now);
+        assert!(app.tip.waiting().is_some());
+        app.dialog = None;
+        app.mask_covered_hover(now);
+        assert!(app.tip.waiting().is_none() && app.tip.shown().is_none());
+    }
 
     #[test]
     fn newly_opened_overlays_mask_existing_row_hover_even_before_the_pointer_moves() {

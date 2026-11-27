@@ -120,6 +120,7 @@ impl App for AppState {
             }
             Event::Focus(false) => {
                 self.field_mouse.cancel();
+                self.folder_scroll_release();
                 self.tabs.drag = None;
                 self.chat_end_drag(None);
                 self.usage.popup = Default::default();
