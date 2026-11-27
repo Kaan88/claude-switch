@@ -970,8 +970,12 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     if let Some((item, questions)) = form.clone()
         && matches!(hit, Hit::Option(_) | Hit::Back | Hit::Next | Hit::Answer | Hit::Submit)
     {
-        if hit != Hit::Submit {
-            return press_form(&mut pane.chat.question, hit, &questions);
+        // Enter in the field (`Answer`) turns the page, and on the last question submits.
+        let card = &mut pane.chat.question;
+        card.form.fit(&questions, &card.field);
+        let last = card.form.page + 1 >= questions.len();
+        if hit != Hit::Submit && !(hit == Hit::Answer && last) {
+            return press_form(card, hit, &questions);
         }
         if busy(&mut pane.chat) {
             return true;
@@ -1130,7 +1134,7 @@ fn press_form(card: &mut Card, hit: Hit, questions: &[Question]) -> bool {
             Some(to) => card.turn(to),
             None => return false,
         },
-        // Enter in the field turns the page too; on the last one only Submit sends.
+        // Enter in the field turns the page too (on the last one it submits, see `press`).
         Hit::Next | Hit::Answer if page + 1 < questions.len() => card.turn(page + 1),
         _ => return false,
     }

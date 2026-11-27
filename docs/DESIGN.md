@@ -979,7 +979,7 @@ above" and the drawer does not open by itself; the working line reads "Waiting f
 **Forms.** Several questions, or a multi-select one, are a form (decided 2026-11-27: it was the main
 reason to open the terminal). The card shows one question at a time ("Size · 1 of 2", Back, Next);
 a click picks a choice (single choice) or ticks a box (multi-select), and the field holds that
-question's "Type something" text. Nothing reaches the terminal before Submit, and nothing is picked
+question's "Type something" text; Enter in it turns to the next question, and on the last one submits, as the Submit button does. Nothing reaches the terminal before Submit, and nothing is picked
 for the user. Submit first checks the card: every question answered, a single choice by one choice
 or one text, texts short, without control characters and not starting with a digit; otherwise it
 shows the question and says why. Then Chat drives the CLI's form one key at a time, each written only

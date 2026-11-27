@@ -1386,3 +1386,26 @@ fn recorded_form_screens_lead_to_the_expected_keys() {
     assert_eq!(form_next(&run(Expect::Opened(0)), &screen(MULTI_SUBMIT)).map(|n| n.1), Ok(Expect::Review(None)));
     assert_eq!(form_next(&run(Expect::Review(None)), &screen(MULTI_REVIEW)).map(|n| n.1), Ok(Expect::Submitted));
 }
+
+#[test]
+fn enter_in_a_forms_field_turns_the_page_and_submits_on_the_last_question() {
+    let qs = [size(), speed()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    f.screen(&form_screen(&qs, 0, 1, &[], None), now);
+    press(f.tab(), now, Hit::Option(1));
+    f.chat().question.rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+    assert!(press(f.tab(), now, Hit::Field));
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.chat().question.form.page, 1, "Enter turns to the next question");
+    assert!(f.writes().is_empty());
+    // On the last question Enter is Submit, with the same checks.
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.chat().question.error, Some(UNANSWERED));
+    assert!(f.writes().is_empty());
+    press(f.tab(), now, Hit::Option(0));
+    assert!(press(f.tab(), now, Hit::Field));
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Large is highlighted: chosen");
+    assert!(f.chat().question.step.is_some());
+}
