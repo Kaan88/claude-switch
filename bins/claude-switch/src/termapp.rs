@@ -59,6 +59,12 @@ fn button_of(b: Button) -> Option<MouseButton> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum MouseClipboard {
+    Copy(String),
+    Paste,
+}
+
 impl AppState {
     pub fn terminal_shown(&self) -> bool {
         self.tabs.shown().is_some()
@@ -342,21 +348,26 @@ impl AppState {
         }
     }
 
-    pub fn copy_selection(&mut self) {
+    fn copy_selection(&mut self) {
         let Some(tab) = self.tabs.shown_mut() else { return };
-        if let Some(text) = tab.term.selected_text() {
+        if let Some(text) = tab.term.take_selected_text(false).filter(|t| !t.is_empty()) {
             platform::set_clipboard_text(&text);
         }
-        tab.term.selection = None;
     }
 
     pub fn paste(&mut self) {
-        if self.chat_paste() {
+        if !self.chat_paste() {
+            self.paste_terminal(platform::clipboard_text);
+        }
+    }
+
+    fn paste_terminal(&mut self, clipboard_text: impl FnOnce() -> Option<String>) {
+        if self.tabs.shown().is_none_or(|tab| tab.term.ended.is_some()) {
             return;
         }
         self.flush_drop_before_input();
         self.note_chat_terminal_input();
-        let text = platform::clipboard_text();
+        let text = clipboard_text();
         if let Some(tab) = self.tabs.shown_mut() {
             if !tab.term.screen.modes().bracketed_paste && text.as_ref().is_some_and(|s| s.contains(['\r', '\n'])) {
                 self.warn(
@@ -371,14 +382,33 @@ impl AppState {
         }
     }
 
-    /// A press on the terminal shown: a report to the program, or the start of a selection.
+    /// A press on the terminal shown, including clipboard actions targeted at the drawer itself.
     pub fn term_press(&mut self, x: f32, y: f32, button: Button, clicks: u32, mods: Mods) {
-        let (area, Some(m)) = (self.term_area, self.metrics) else { return };
-        let Some(tab) = self.tabs.shown_mut() else { return };
+        match self.term_pointer_press(x, y, button, clicks, mods) {
+            Some(MouseClipboard::Copy(text)) => {
+                platform::set_clipboard_text(&text);
+            }
+            Some(MouseClipboard::Paste) => self.paste_terminal(platform::clipboard_text),
+            None => {}
+        }
+    }
+
+    fn term_pointer_press(
+        &mut self,
+        x: f32,
+        y: f32,
+        button: Button,
+        clicks: u32,
+        mods: Mods,
+    ) -> Option<MouseClipboard> {
+        let (area, m) = (self.term_area, self.metrics?);
+        let tab = self.tabs.shown_mut()?;
         let t = &mut tab.term;
         let modes = t.screen.modes();
-        let Some(b) = button_of(button) else { return };
-        if termkeys::mouse_to_program(&modes, mods.shift) {
+        let b = button_of(button)?;
+        // Windows Terminal passes mouse input to a tracking program before trying local
+        // selection or clipboard actions. Shift suppresses those reports.
+        if t.ended.is_none() && termkeys::mouse_to_program(&modes, mods.shift) {
             if let Some((row, col)) = m.cell_at(area, x, y) {
                 let ev =
                     MouseEvent { kind: MouseKind::Press, button: Some(b), col, row, mods: termkeys::term_mods(mods) };
@@ -391,13 +421,21 @@ impl AppState {
                 t.reported = Some(b);
                 t.last_cell = Some((row, col));
             }
-            return;
+            return None;
         }
-        if b == MouseButton::Left {
-            let at = t.view(true).point_at(&t.screen, &m, area, x, y);
-            let kind = if mods.alt { SelectionKind::Block } else { SelectionKind::Stream };
-            t.selection = Some(Selection::start(&t.screen, at, kind, clicks.clamp(1, 3) as u8));
-            t.selecting = true;
+        match b {
+            MouseButton::Left => {
+                let at = t.view(true).point_at(&t.screen, &m, area, x, y);
+                let kind = if mods.alt { SelectionKind::Block } else { SelectionKind::Stream };
+                t.selection = Some(Selection::start(&t.screen, at, kind, clicks.clamp(1, 3) as u8));
+                t.selecting = true;
+                None
+            }
+            MouseButton::Right => t
+                .take_selected_text(mods.shift)
+                .map(MouseClipboard::Copy)
+                .or_else(|| t.ended.is_none().then_some(MouseClipboard::Paste)),
+            _ => None,
         }
     }
 
@@ -411,7 +449,7 @@ impl AppState {
             return t.extend_selection(at);
         }
         let modes = t.screen.modes();
-        if !termkeys::mouse_to_program(&modes, mods.shift) {
+        if t.ended.is_some() || !termkeys::mouse_to_program(&modes, mods.shift) {
             return false;
         }
         let cell = match t.reported {
@@ -471,6 +509,10 @@ impl AppState {
         let t = &mut tab.term;
         let lines = termkeys::wheel_lines(dy, &mut t.wheel_rest);
         if lines == 0 {
+            return;
+        }
+        if t.ended.is_some() {
+            t.scroll_by(lines);
             return;
         }
         let modes = t.screen.modes();

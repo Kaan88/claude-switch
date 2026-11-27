@@ -247,14 +247,20 @@ strip under the top bar shows the tabs; with no terminal tab it is hidden and th
   selected) and Shift+Page Up/Down (scroll back). Shift+Enter alone sends `CSI 13;2u` so Claude
   Code can distinguish it from Enter. Other keys keep the classic encoding; this is not full kitty
   keyboard negotiation. A middle click on a tab closes it.
-- **Mouse**: the wheel scrolls the scrollback 3 lines a notch, is reported to a program that asked for
-  the mouse, and is arrow keys on the alternate screen of one that did not. Drag selects (double click a
-  word, triple click a line, Alt a block); with mouse reporting on, Shift+drag selects. The drag requests
-  a redraw only when the selected cells change. Copying is by key only, not on release.
-  The window chooses the mouse pointer from the current frame's hit map, including when a tab or
-  overlay changes under a stationary pointer. Leaving the client resets the app pointer to the
-  arrow; the host still supplies native resize cursors at window edges. Only the front layer
-  receives hover while a menu, dialog or command palette is open.
+- **Mouse**: the terminal uses the arrow pointer. Drag selects (double click a word, triple click a
+  line, Alt a block); the drag requests a redraw only when the selected cells change. Releasing the
+  mouse does not copy. Right-click copies and clears the selection, or pastes when there is none.
+  A program tracking the mouse gets the clicks and drags instead, unless Shift is held at the
+  press. Use Shift+drag and Shift+right-click to select and copy or paste in that case. As in
+  Windows Terminal, Shift+right-click copies stream selections as one line; keyboard copy keeps
+  the line breaks. A right-click paste in the Chat drawer goes to the terminal, not the composer,
+  and uses the same safety checks as keyboard paste.
+  The wheel scrolls the scrollback 3 lines a notch, is reported to a program that asked for the
+  mouse, and is arrow keys on the alternate screen of one that did not. Shift keeps the wheel
+  local. The window chooses the pointer from the current frame's hit map, including when a tab or
+  overlay changes under a stationary pointer. Leaving the client resets it to an arrow; the host
+  still supplies native resize cursors at window edges. Only the front layer receives hover while
+  a menu, dialog or command palette is open.
 
 **The safeguard, for tabs.** A session open in a tab counts as running at once, before any
 `sessions/<pid>.json` says so: opening it again shows its running tab ("Already open in a tab"), and the list
