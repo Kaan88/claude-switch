@@ -641,6 +641,14 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     and then laid over the backdrop. Glyph edges must blend with the real background colour (premultiplied alpha,
     grayscale rather than ClearType antialiasing over transparency), and a cell with the default background must not
     paint an opaque box behind its text.
+    **App-side fix done; toolkit change outstanding.** Translucent frames now request grayscale font
+    masks, including on cells promoted to opaque. Bitmap tests composite grey glyphs over black
+    and white. Not checked against the owner's desktop. At e951766, `mdshared-text` already uses
+    premultiplied source-over. `mdshared-ui::termview::draw::Background::alpha` calls `for_ink`
+    for each distinct foreground, sometimes returning 255 beside translucent spaces. Expose a
+    uniform-default-background option on `BackgroundOpacity`: use `normal` on every default cell,
+    retaining 255 for selection, block cursor, inverse and explicit backgrounds. Use that option
+    here when available. No toolkit or pin change.
 63. **Settings › Appearance: flexible, customizable colours and theming, and one kind of control per choice**
     (owner, 2026-11-27, screenshot of Appearance; "more flexible, customizable color and theming"). Today the dark
     palette is chosen with swatches and a dropdown ("Neutral") side by side, the light palette with swatches and a
@@ -651,9 +659,18 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     (window background, surfaces, text, dim text, accent, selection, and the terminal's 16 ANSI colours and its
     background and foreground), starting from any built-in palette or generated from a base colour and an accent;
     contrast checked as the user edits; import and export of a theme as a file.
+    **Done.** Named palette swatches on Appearance and Terminal, a draft editor for both colour
+    modes, generation from background and accent, contrast feedback, save/rename/copy, and
+    versioned theme files. Short plain choices use segments; boolean menu marks for pinned/hidden
+    use the Settings switch. Tests cover draft isolation, window and ANSI colours, bitmap rendering,
+    pointer and keyboard selection, file round trips and migration with stale writers and unknown
+    settings. Native file picker interaction and the owner's live desktop were not checked.
 64. **A scrollbar that fades, and page width options** (owner, 2026-11-27). Scrollbars show while scrolling or
     under the pointer and fade out after a moment (Windows 11 style). A page width setting for the Chat view and
-    the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide).
+    the Markdown panel: full width, or a readable column (e.g. narrow, medium, wide). **Done:** the Chat
+    conversation has its own width in Settings → Sessions; the Markdown viewer keeps its existing width
+    control. Both scrollbars show on movement or hover and fade, or snap away with reduced motion.
+    Rendering and timing tests cover the layouts; visual inspection in a running app has not been checked.
 65. **Done: Windows Terminal mouse gestures for terminal tabs and the Chat drawer.** Arrow pointer, drag to
     select, and right-click to copy and clear the selection or paste safely. Unmodified clicks and drags go to
     a program that asks for mouse reports; Shift keeps the gestures local. Checked against Windows Terminal 1.25
@@ -666,7 +683,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     mediu…"). Group them by kind (state the session is in: model, effort, context; actions: compact, clear;
     panels: terminal, details), show a value as a value (an effort level as a small meter or dots, context as a
     filling bar), never cut a label, and keep the row from jumping when a value changes. Item 43 covers the values
-    being stale; this is the look.
+    being stale; this is the look. **Done:** distinct state, action and panel surfaces, fixed-width values,
+    effort dots and two-row layout at narrow widths. Context remains a token count: no verified limit is
+    reported, so a filling bar would mislead. Owner question: should a trustworthy limit become available
+    from Claude Code, should it be used for a context bar? Unknown model names that do not fit show
+    "Model" rather than a cut label. Composer rendering and layout tests, workspace Clippy and tests
+    passed; visual inspection in a running app has not been checked.
 67. **Done: Shift+Enter starts a line in the terminal without sending.** Switch sends `CSI 13;2u` for Shift+Enter
     alone, not a bare Enter. A scratch ConPTY run with Claude Code 2.1.332 showed two prompt rows with this
     sequence even without kitty negotiation. The same run showed line breaks from the Chat composer's bracketed
@@ -681,19 +703,16 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     the terminal" for a panel that only shows information; say "Claude Code panel" and offer Close (Esc) only. With
     the card up, the composer's notice "No quiet, empty Claude Code prompt is visible" is noise: the card already
     says what is on screen.
-69. **Code files in the side panel have no syntax highlighting, and their lines wrap mid-token** (owner, 2026-11-27,
-    screenshot: `mk_ctx.py` in the docked viewer, plain text, `g[-1]` split across rows). The toolkit already has
-    `mdshared-highlight` (`tokens(source, language, dark)`: syntect's bundled set plus small scanners for TOML,
-    Kotlin, Swift, PowerShell, Dockerfile; plain above 256 KiB); add it as a dependency at the same pin and colour
-    the literal view in `view/ui/markdown.rs` (`text_lines`) by the file's extension, with colours that keep
-    contrast on every palette. Wrap long code lines at a word or operator boundary with a hanging indent under the
-    line's own indentation (or offer "Wrap: off" with horizontal scrolling), and show line numbers in a gutter.
-    Markdown files keep their rendered view; their fenced code blocks should get the same highlighting if they do
-    not already.
-70. **Any popup turns the terminal's transparency off** (owner, 2026-11-27, screenshot: the ⋯ menu open over a
-    transparent terminal, which went opaque). Deliberate today: `termapp/paint.rs` paints the terminal at 100 %
-    whenever anything is over it (menu, dialog, tooltip, toast, picture, undo bar), because those overlays'
-    shadows, rounded edges and scrims use the opaque painter. Keep the terminal at its set opacity under a popup:
-    draw overlay shadows and edges so they blend over the frosted backdrop (or give the overlay its own opaque
-    card while the terminal behind stays translucent), and dim with a translucent scrim only for modal dialogs.
-    Same area as item 62 (glyph blending over transparency); check both together.
+69. **Syntax highlighting, wrapping and line numbers in the code viewer** (owner, 2026-11-27).
+    **Done:** literal code files use extension-based `mdshared-highlight` colours adjusted for palette
+    contrast, source line numbers, and boundary-aware wrapping with hanging indentation. Unknown
+    languages and files above 256 KiB stay plain; a token wider than the panel splits at a character.
+    Markdown stays rendered, with the existing fenced-code highlighting. Rendering, wrapping,
+    contrast and language tests cover the viewer; visual inspection in a running app was not checked.
+70. **Any popup turns the terminal's transparency off** (owner, 2026-11-27; screenshot: the ⋯ menu
+    over a transparent terminal). **Done.** The grid and margins keep their set opacity under
+    menus, dialogs, tooltips, toasts, pictures and the undo bar. The overlay has its own solid
+    card; only modal dialogs dim the rest of the window with a translucent scrim. A bitmap test
+    opens the ⋯ menu over normal and dim glyphs, checks the entrance and settled card, and checks
+    tooltip bounds and modal dimming over black and white. The separate per-cell contrast issue
+    in item 62 still needs its toolkit change. Not checked on the owner's live desktop.
