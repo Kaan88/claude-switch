@@ -33,7 +33,7 @@ pub struct Tab {
     pub rename: Option<String>,
     /// A `/rename` for Claude Code's own session name: (session, name), sent through the Chat
     /// view's slash gate when its prompt is idle; dropped if the tab's session changes.
-    pub cli_rename: Option<(String, String)>,
+    pub cli_rename: Option<CliRename>,
     /// Automatic handover instead of Claude Code's compaction (`auto_handover`).
     pub auto: crate::auto_handover::TabAuto,
     /// A handover continuing in this tab (`handover_in_place`).
@@ -84,6 +84,23 @@ impl Tab {
         }
         let t = self.program_title.trim();
         if t.is_empty() { self.label.as_str().into() } else { t.into() }
+    }
+}
+
+/// A `/rename` Claude Code is to get for the session `session` (`view::chat::rename`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CliRename {
+    pub session: String,
+    pub name: String,
+    /// Attempts that were not taken.
+    pub tries: u8,
+    /// Its keys went; what became of them is still to be seen.
+    pub sent: bool,
+}
+
+impl CliRename {
+    pub fn new(session: impl Into<String>, name: impl Into<String>) -> Self {
+        Self { session: session.into(), name: name.into(), tries: 0, sent: false }
     }
 }
 

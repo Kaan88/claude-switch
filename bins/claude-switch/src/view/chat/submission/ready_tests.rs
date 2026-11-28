@@ -849,3 +849,123 @@ fn a_forms_typed_answer_ticks_its_box_and_is_left_for_next_or_submit() {
     assert!(question::press(f.tab(), now, Hit::Option(4)));
     assert_eq!(f.writes(), [downs(1)]);
 }
+
+/// The CLI's input at rest holding `text` (or nothing), as the screen shows it.
+fn input_holds(f: &mut Live, text: &str) {
+    let now = f.now;
+    let tab = f.tab();
+    tab.term = Term::empty((100, 40));
+    tab.term.feed(format!("\x1b[?2004h\u{276f} {text}").as_bytes());
+    f.chat().output(now, true, false);
+}
+
+#[test]
+fn a_command_typed_just_before_a_permission_prompt_is_answered_around_and_then_taken_off() {
+    use crate::view::chat::question::screens::recorded::PERM_READ_OUTSIDE;
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    // Chat types a command of its own (a handover's /rename): its keys go, its echo is awaited.
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    assert_eq!(f.writes(), [b"/rename Notes".to_vec()]);
+    // Claude Code draws a permission prompt over the input before the echo is read.
+    f.show(PERM_READ_OUTSIDE);
+    f.pass(SECOND);
+    assert!(f.writes().is_empty(), "no Enter into the prompt");
+    let chat = f.chat();
+    assert!(chat.staging.owned.is_some(), "followed until the input can be read again");
+    assert!(chat.waiting().is_none(), "no keys of Chat's in flight: the prompt's card may answer it");
+    assert!(chat.question.prompt_answers(), "the card shows the prompt whole, with its choices");
+    // Answered; the turn goes on and ends with the command still typed on the input.
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [b"\x15".to_vec()], "exactly Chat's line comes off, one Ctrl+U");
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    let chat = f.chat();
+    assert_eq!(chat.staging.result, Some(CommandResult::Withdrawn));
+    assert_eq!(chat.error, Some(COMMAND_WITHDRAWN), "the box says what happened");
+    assert!(chat.staging.owned.is_none() && !chat.slash, "nothing holds the next message");
+    f.chat().error = None;
+    f.send("next");
+    assert_eq!(f.writes(), message("next"));
+}
+
+#[test]
+fn an_enter_the_cli_did_not_take_is_found_and_the_line_taken_off() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    f.writes();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "entered once the input shows it");
+    // Nothing changes: Claude Code did not take the Enter. Sends wait meanwhile, with a word.
+    f.pass(SECOND);
+    let now = f.now;
+    assert!(blocked(f.tab(), now, Intent::Draft).is_some());
+    f.pass(SECOND * 3);
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [b"\x15".to_vec()]);
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    assert_eq!(f.chat().staging.result, Some(CommandResult::Withdrawn));
+}
+
+#[test]
+fn a_command_taken_by_the_cli_lets_the_next_message_go() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    f.writes();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    input_holds(&mut f, "");
+    f.pass(SECOND / 10);
+    let chat = f.chat();
+    assert_eq!(chat.staging.result, Some(CommandResult::Taken));
+    assert!(chat.staging.owned.is_none() && chat.error.is_none());
+}
+
+#[test]
+fn text_of_anyone_elses_is_never_taken_off() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    f.writes();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND / 10);
+    f.writes();
+    f.pass(SECOND * 4);
+    // Before the Ctrl+U the input shows something else (typed in the terminal meanwhile).
+    input_holds(&mut f, "/rename Notes and more of mine");
+    f.pass(SECOND);
+    assert!(f.writes().is_empty(), "nothing is cleared");
+    let chat = f.chat();
+    assert_eq!(chat.staging.result, Some(CommandResult::Left));
+    assert_eq!(chat.error, Some(COMMAND_LEFT));
+    assert!(chat.staging.owned.is_none() && !chat.slash);
+}
+
+#[test]
+fn a_command_from_the_box_is_never_taken_off() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    // The user's own command from the box: its text stays where the user can see it.
+    AppState::submit_slash(f.tab(), now, "/rename Notes", true);
+    f.writes();
+    f.pass(SECOND * 6);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().staging.owned.is_none() && f.chat().staging.recovery.is_some());
+}

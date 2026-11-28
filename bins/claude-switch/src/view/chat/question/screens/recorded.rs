@@ -62,6 +62,9 @@ pub(in crate::view::chat) const FORM_REVIEW: &str = include_str!("../fixtures/fo
 pub(in crate::view::chat) const MULTI_SUBMIT: &str = include_str!("../fixtures/multi_submit.txt");
 pub(in crate::view::chat) const MULTI_REVIEW: &str = include_str!("../fixtures/multi_review.txt");
 pub(in crate::view::chat) const PERM_BASH: &str = include_str!("../fixtures/perm_bash.txt");
+/// Read of a file outside the project folder (Claude Code 2.1.332, a handover's file in manual
+/// mode): Yes, Yes for that folder this session, No.
+pub(in crate::view::chat) const PERM_READ_OUTSIDE: &str = include_str!("../fixtures/perm_read_outside.ansi");
 pub(in crate::view::chat) const PERM_WRITE: &str = include_str!("../fixtures/perm_write.txt");
 pub(in crate::view::chat) const PERM_FETCH_CLIPPED: &str = include_str!("../fixtures/perm_fetch_clipped.txt");
 pub(in crate::view::chat) const IDLE_NBSP: &str = include_str!("../fixtures/idle_nbsp.txt");

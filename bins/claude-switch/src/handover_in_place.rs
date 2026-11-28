@@ -161,7 +161,7 @@ impl AppState {
         // Claude Code's own name follows (item 39): `/rename` at the next idle prompt, through the
         // Chat view's slash gate, once the first message has gone.
         if let Some(t) = self.tabs.get_mut(tab) {
-            t.cli_rename = Some((new.to_owned(), job.name.clone()));
+            t.cli_rename = Some(crate::tabs::CliRename::new(new, job.name.clone()));
         }
         self.rebuild_view();
         self.toast("Handed over: this tab continues from the summary.".into(), Instant::now());

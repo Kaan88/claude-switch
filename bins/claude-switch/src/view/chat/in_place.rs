@@ -333,7 +333,7 @@ mod tests {
         assert!(r.st.in_place_tick(now));
         let tab = r.tab();
         assert!(tab.in_place.is_none(), "done");
-        assert_eq!(tab.cli_rename, Some((NEW.into(), "Old · continued".into())));
+        assert_eq!(tab.cli_rename, Some(crate::tabs::CliRename::new(NEW, "Old · continued")));
 
         // 4. `/rename` waits while the new transcript does not exist yet, then goes through the gate.
         r.chat().writes.clear();
@@ -344,11 +344,21 @@ mod tests {
         r.tab().apply_live_identity(Some(NEW));
         assert_eq!(r.tab().session.as_deref(), Some(NEW));
         r.chat().last_output = Some(now - super::super::QUIET);
+        // Not before Chat has read the new session's own first prompt: until then its first
+        // turn reads as an idle input to the gate.
+        assert!(!r.st.send_cli_rename(now));
+        assert!(r.chat().writes.is_empty());
+        let model = &mut r.tab().pane.as_mut().unwrap().model;
+        (model.loaded, model.chat.prompt) = (true, Some(1));
         let sent = r.st.send_cli_rename(now);
         let error = r.chat().error;
         assert!(sent, "{error:?}");
         assert_eq!(r.chat().writes.first().map(Vec::as_slice), Some(b"/rename Old \xc2\xb7 continued".as_slice()));
-        assert!(r.tab().cli_rename.is_none());
+        assert!(r.tab().cli_rename.as_ref().is_some_and(|c| c.sent), "followed until Claude Code took it");
+        r.settle(now);
+        assert!(r.chat().writes.iter().any(|w| w == b"\r"));
+        assert!(!r.st.send_cli_rename(now));
+        assert!(r.tab().cli_rename.is_none(), "taken");
     }
 
     #[test]

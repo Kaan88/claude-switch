@@ -250,9 +250,10 @@ impl AppState {
     }
 
     fn has_chat_work(tab: &Tab) -> bool {
-        tab.pane
-            .as_ref()
-            .is_some_and(|pane| pane.chat.enabled && (pane.chat.queue.is_some() || pane.chat.waiting().is_some()))
+        tab.pane.as_ref().is_some_and(|pane| {
+            pane.chat.enabled
+                && (pane.chat.queue.is_some() || pane.chat.waiting().is_some() || pane.chat.command_in_flight())
+        })
     }
 
     pub(in crate::view) fn arm_chat_tick(&self, cx: &mut Cx<'_, Msg>) {

@@ -13,10 +13,11 @@ use crate::{state::AppState, tabs::Tab};
 pub(super) use report::CliReport;
 use report::local_reports;
 use screen::{clean_prompt, idle_slash_prompt, is_image_marker, prompt};
+pub(super) use stages::CommandResult;
 pub(super) use stages::Staging;
 use stages::{
-    CommandWait, Completion, EchoWait, EnterOnly, LinesWait, Recovery, Sent, Stamp, Takeback, can_confirm,
-    recovery_ready, shown_exactly, shows_sent,
+    CommandWait, Completion, EchoWait, EnterOnly, LinesWait, Owned, OwnedStep, Recovery, Sent, Stamp, Takeback,
+    can_confirm, recovery_ready, shown_exactly, shows_sent,
 };
 
 /// Claude Code reads the clipboard's picture through a helper process on Windows, which can take
@@ -51,8 +52,20 @@ pub(super) const BAD_TEXT: &str = "The draft has unsupported control characters.
 pub(super) const CHANGED_CLIPBOARD: &str = "The clipboard changed. Paste the picture into Chat again.";
 const IMAGE_TIMEOUT_NOTICE: &str = "No image marker yet. The CLI may hold a picture; check the terminal. Draft kept.";
 const IMAGE_INTERRUPTED: &str = "Image send interrupted. The CLI may hold a picture; check the terminal.";
-const COMMAND_TIMEOUT: &str = "The command did not appear on the CLI input line. Check the terminal before retrying.";
-const COMMAND_INTERRUPTED: &str = "Command not submitted. Check the terminal for text left on its input line.";
+/// After Enter, how long a command Chat typed on its own may stay on the input before Chat takes
+/// Enter for lost; and how long Chat follows it in all (the input may be under a prompt).
+const ENTER_CONFIRM: Duration = Duration::from_secs(3);
+const OWNED_LIMIT: Duration = Duration::from_secs(60);
+const OWNED_PRESSES: u8 = 3;
+pub(super) const OWNED_PENDING: &str = "Waiting for Claude Code to take the command Chat typed…";
+pub(super) const COMMAND_WITHDRAWN: &str =
+    "Claude Code did not take the command Chat typed, so Chat took it off its input again.";
+pub(super) const COMMAND_LEFT: &str = "Claude Code did not take the command Chat typed, and Chat could not take it off \
+    its input: clear it in the terminal.";
+pub(super) const COMMAND_TIMEOUT: &str =
+    "The command did not appear on the CLI input line. Check the terminal before retrying.";
+pub(super) const COMMAND_INTERRUPTED: &str =
+    "Command not submitted. Check the terminal for text left on its input line.";
 const LINES_TIMEOUT: &str =
     "The message did not appear on the CLI input line, so Enter was not pressed. Check the terminal.";
 const LINES_INTERRUPTED: &str = "Message not submitted. Check the terminal for text left on its input line.";
@@ -223,6 +236,9 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
     if let Some(recovery) = chat.staging.recovery.filter(|recovery| !recovery_ready(tab, now, *recovery)) {
         return Some(recovery.notice());
     }
+    if chat.staging.owned.is_some() {
+        return Some(OWNED_PENDING);
+    }
     if chat.awaiting_transcript && chat.first_sent {
         return Some(NO_TRANSCRIPT);
     }
@@ -324,7 +340,7 @@ impl AppState {
         // goes out once the CLI's input is ready. So does one the CLI's input still holds text
         // for: never cleared by Chat, it goes once that text was sent or cleared in the terminal.
         let waits = matches!(error, Some(e) if e == CHECK || e == NO_TRANSCRIPT || e == INPUT_HAS_TEXT
-            || e == Reason::Slash.label());
+            || e == Reason::Slash.label() || e == OWNED_PENDING);
         // A picture needs the visibly empty input for its marker, whoever asked for the send.
         let picture_waits =
             chat.clipboard_sequence().is_some() && error.is_none() && !chat.demo && !clean_prompt(&tab.term.screen);
@@ -488,24 +504,58 @@ impl AppState {
                 None
             };
             if let Some(result) = result {
+                let screen = &tab.term.screen;
+                let (shows, clean, hidden) =
+                    (shown_exactly(tab, &wait.line), clean_prompt(screen), prompt(screen).is_none());
                 let chat = &mut tab.pane.as_mut().unwrap().chat;
                 let wait = chat.staging.echo.take().unwrap();
                 match result {
+                    // A command Chat typed on its own and did not enter: exactly its text comes off
+                    // the input again, once the input can be read (a permission prompt drawn over
+                    // it hides it; its card answers it meanwhile).
+                    // (The demo has no CLI to take a command, nor anything to take off.)
+                    Err(_) if !wait.from_editor && (shows || hidden) && !chat.demo => {
+                        let epoch = chat.output_epoch.wrapping_sub(1);
+                        let step = OwnedStep::Withdraw { presses: 0 };
+                        let (due, last) = (now, now + OWNED_LIMIT);
+                        chat.staging.owned = Some(Owned { line: wait.line, step, epoch, due, last });
+                        chat.error = None;
+                        chat.retry = None;
+                    }
+                    Err(error) if !wait.from_editor && clean => {
+                        chat.staging.result = Some(CommandResult::Withdrawn);
+                        chat.refused(error, None);
+                    }
                     Err(error) => {
+                        if !wait.from_editor {
+                            chat.staging.result = Some(CommandResult::Left);
+                        }
                         chat.staging.recovery =
                             Some(Recovery::Command(Stamp { epoch: chat.output_epoch, ..wait.stamp }));
                         chat.refused(error, None);
                     }
-                    Ok(()) => submit_enter(
-                        tab,
-                        EnterOnly {
-                            stamp: wait.stamp,
-                            expected: wait.line.clone(),
-                            completion: Completion::Command { line: wait.line, from_editor: wait.from_editor },
-                            picture: false,
-                            into_turn: false,
-                        },
-                    ),
+                    Ok(()) => {
+                        let (line, from_editor) = (wait.line.clone(), wait.from_editor);
+                        submit_enter(
+                            tab,
+                            EnterOnly {
+                                stamp: wait.stamp,
+                                expected: wait.line.clone(),
+                                completion: Completion::Command { line: wait.line, from_editor },
+                                picture: false,
+                                into_turn: false,
+                            },
+                        );
+                        let chat = &mut tab.pane.as_mut().unwrap().chat;
+                        if !from_editor && chat.staging.retry.is_none() && chat.demo {
+                            // No CLI behind the demo to let go of it.
+                            chat.staging.result = Some(CommandResult::Taken);
+                        } else if !from_editor && chat.staging.retry.is_none() {
+                            // Enter went: the input must let go of the line.
+                            let (epoch, due, last) = (chat.output_epoch, now + ENTER_CONFIRM, now + OWNED_LIMIT);
+                            chat.staging.owned = Some(Owned { line, step: OwnedStep::Entered, epoch, due, last });
+                        }
+                    }
                 }
                 return true;
             }
@@ -535,6 +585,9 @@ impl AppState {
                 chat.refused(error.unwrap_or(NO_QUIET_PROMPT), Some(Intent::Slash));
                 return true;
             }
+        }
+        if follow_owned(tab, now, may_write) {
+            return true;
         }
         if take_back(tab, now, may_write) {
             return true;
@@ -762,6 +815,84 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         }
     }
     true
+}
+
+/// A command Chat typed on its own, after its keys. Entered: taken once the input lets go of it;
+/// still exactly on the input after `ENTER_CONFIRM`, Enter was lost and the line is withdrawn.
+/// Withdrawn: Ctrl+U, one press at a time and only while the input shows exactly the line, until
+/// it reads empty. Text of anyone else's on the input is never cleared, and an input Chat cannot
+/// read (under a prompt, which a card answers meanwhile) is waited for until `OWNED_LIMIT`.
+/// However it ends, Claude Code's command tracking ends with it and the box says what happened.
+fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
+    let pane = tab.pane.as_ref().unwrap();
+    let chat = &pane.chat;
+    let Some(owned) = &chat.staging.owned else { return false };
+    let screen = &tab.term.screen;
+    let fresh = chat.output_epoch != owned.epoch;
+    let readable = prompt(screen).is_some();
+    let exactly = shown_exactly(tab, &owned.line);
+    let resting = chat.screen_resting(&tab.term, now);
+    let end = |tab: &mut Tab, result: CommandResult, notice: Option<&'static str>| {
+        let chat = &mut tab.pane.as_mut().unwrap().chat;
+        chat.staging.owned = None;
+        chat.staging.result = Some(result);
+        if result != CommandResult::Taken {
+            // Nothing of it runs: the command's tracking would wait for an input that never
+            // empties by itself.
+            chat.slash = false;
+            chat.cli_report.tracking = false;
+        }
+        if let Some(notice) = notice {
+            chat.refused(notice, None);
+        }
+        true
+    };
+    match owned.step {
+        OwnedStep::Entered => {
+            if fresh && readable && !exactly {
+                return end(tab, CommandResult::Taken, None);
+            }
+            if now >= owned.last {
+                return end(tab, CommandResult::Left, Some(COMMAND_LEFT));
+            }
+            if now < owned.due || !(exactly && resting) {
+                return false;
+            }
+            // Enter did not take: the line comes off again.
+            let chat = &mut tab.pane.as_mut().unwrap().chat;
+            let owned = chat.staging.owned.as_mut().unwrap();
+            owned.step = OwnedStep::Withdraw { presses: 0 };
+            owned.epoch = chat.output_epoch.wrapping_sub(1);
+            true
+        }
+        OwnedStep::Withdraw { presses } => {
+            if clean_prompt(screen) && (presses == 0 || fresh) {
+                return end(tab, CommandResult::Withdrawn, Some(COMMAND_WITHDRAWN));
+            }
+            if now >= owned.last || presses >= OWNED_PRESSES {
+                return end(tab, CommandResult::Left, Some(COMMAND_LEFT));
+            }
+            if readable && !exactly && !clean_prompt(screen) && fresh {
+                // Someone else's text: never cleared.
+                return end(tab, CommandResult::Left, Some(COMMAND_LEFT));
+            }
+            if !may_write || !fresh || !exactly || !resting {
+                return false;
+            }
+            tab.pane.as_mut().unwrap().note_composer_input();
+            let written = write(tab, CLEAR_LINE, "");
+            let chat = &mut tab.pane.as_mut().unwrap().chat;
+            match written {
+                Ok(()) => {
+                    let owned = chat.staging.owned.as_mut().unwrap();
+                    owned.step = OwnedStep::Withdraw { presses: presses + 1 };
+                    owned.epoch = chat.output_epoch;
+                    true
+                }
+                Err(_) => end(tab, CommandResult::Left, Some(COMMAND_LEFT)),
+            }
+        }
+    }
 }
 
 /// The take-back is over: the message goes back to the box (in front of anything there, which
@@ -1012,6 +1143,7 @@ pub(super) fn stage_deadline(chat: &Chat, now: Instant) -> Option<Instant> {
         chat.staging.lines.as_ref().map(|wait| wait.due),
         chat.staging.command.as_ref().map(|wait| wait.due),
         chat.staging.takeback.as_ref().map(|step| step.due),
+        chat.staging.owned.as_ref().map(|owned| owned.due.max(now + Duration::from_millis(250)).min(owned.last)),
         chat.question.deadline(),
         chat.mode_deadline(),
     ]

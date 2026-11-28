@@ -1027,7 +1027,18 @@ Claude Code's own name through `/rename <name>`. That command is never typed dir
 on the tab until the tab is shown in the Chat view and is handed to the Chat view's slash gate,
 which refuses a running turn, a pending tool, a menu, a full-screen view or a prompt that is not
 idle and empty, and shows why; its own retry clears the refusal once the prompt is idle, and
-the next tick sends. A tab that starts running another session drops the waiting rename. A blank
+the next tick sends. It goes only once Chat has read the session's own first prompt: after a
+handover's `/clear` the gate cannot tell the new session's first turn from an idle input before
+that, and a `/rename` typed then was left on the input when a permission prompt took the screen
+before its Enter. It is followed until Claude Code took it, like every command Chat types on its
+own (a button's, a handover's `/clear`): after Enter the input must let go of the line within
+three seconds; a line that was not entered (its echo never came, a prompt was drawn over it, or
+Enter did not take) comes off again with Ctrl+U, one press at a time and only while the input
+shows exactly that line (once the input can be read again: a prompt over it is answered from its
+card meanwhile); text of anyone else's is never cleared. The `/rename` is then typed again, at
+most three times, after which the box says to rename in the terminal. However it ends, the
+command's tracking ends with it, so no line left on the input holds every later message without a
+word. The demo has no CLI to follow. A tab that starts running another session drops the waiting rename. A blank
 name clears the mark and sends nothing (a bare `/rename` would make Claude Code generate a name).
 Claude Code's docs say a session answers to the name set with `/rename` or `--name` in
 cross-session messaging; its per-process record (`~/.claude/sessions/<pid>.json`, `name`,

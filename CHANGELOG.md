@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
+  just before a permission prompt took the screen) and every later message waited behind it
+  without a word. The rename now goes only once Chat has read the new session's first prompt, and
+  every command Chat types on its own (a rename, a handover's `/clear`, the Compact, Clear and
+  model buttons) is followed until Claude Code took it: one that was not entered is taken off the
+  input again (only when the input shows exactly that line, never your own text), a rename is
+  typed again up to three times, and the box says what happened.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.
