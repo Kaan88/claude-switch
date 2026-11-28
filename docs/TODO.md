@@ -106,6 +106,12 @@ as the second account, Windows Terminal, the desktop hand-over.
   keyboard, as 0.1.6 does for questions). Chat still never types into a screen it cannot read. Not on
   Tab: Tab completes in the message box. The screen reports (`%APPDATA%\claude-switch\screen-reports`)
   show which prompts come up; frequent ones can become real cards, as the trust question did.
+- **Wrap long lines in Chat's edit diffs** (owner, 2026-11-28, screenshot of a Markdown table row cut
+  at the right edge). The patch view of an edit (line numbers, +/- and the changed text) cuts lines
+  that are wider than the column. Wrap them instead: continuation rows keep the +/- background, are
+  indented under the text (not under the number), and carry no line number; a long word or URL breaks
+  anywhere. Selecting and Copy still give the original lines. Optionally a toggle to scroll sideways
+  instead, for code where wrapping hurts.
 - **Running and finished subagents are not told apart** (owner, 2026-11-28, screenshot: Details ›
   Background lists agents with `?`, among them one that has finished). `?` is drawn when
   `agent.finished` is `None` (`view/chat/side/paint.rs`, Side::Agents): Chat found the agent's call but
