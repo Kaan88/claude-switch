@@ -100,10 +100,12 @@ The scripts cover every state Chat reads: the idle input at the start, after a t
 turn and right after a send; a question, a typed answer, a form and its review; permission
 prompts (Bash, Write, a subagent's, two calls of one message), a prompt answered No, a call a
 deny rule refuses, a call auto mode blocks and the list of blocked calls with a call marked and
-unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`.
+unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`;
+where the terminal card's rows start (Claude Code's `●`/`⏺` bullet at column 0, on a running call
+in `working` and an answer in `context`).
 
-Some of what Chat relies on is in Claude Code's files, not on its screen, and two scripts check
-those too:
+Some of what Chat relies on is in Claude Code's files, not on its screen, and these scripts
+check those too:
 
 - `queued`: a message sent while a turn runs, as Chat's Send does it then (a picture from the
   clipboard with Alt+V, the text pasted after its marker, Enter). The input holds it, then reads
@@ -123,6 +125,10 @@ those too:
   does not put them back on its input: it sends them as the next turn (ordinary prompts), and the
   input reads empty, so Chat's take-back has nothing to do. Its
   `[Request interrupted by user for tool use]` user text is read as a notice, not a prompt.
+- `context`: `/context` after one turn. The transcript still records its output inside
+  `<local-command-stdout>` with the colour codes (SGR) of its grid, which Chat draws as the
+  terminal does (command output in the grid renderer); output without them would show as plain
+  text.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),
@@ -201,7 +207,7 @@ from what cargo and the check's test program see, so no build script or proc mac
 
 ### What a run costs
 
-The scripts make about 31 model requests (14 of the 16 scripts talk to the model; a failed script
+The scripts make about 32 model requests (15 of the 17 scripts talk to the model; a failed script
 is recorded once more before it counts). A full run with Haiku 5.5 on Claude Code 2.1.332 takes
 four to six minutes and comes to about $0.13 at API prices (measured: 31 requests in 4:15, no
 script recorded twice; the four scripts about messages sent mid-turn and Branch are about $0.04 of
@@ -257,13 +263,14 @@ runs of blanks count as one and `\n` is a line break.
 | `answer`, `lines`, `wrapped` | This text reads back exactly on the highlighted row; the input shows this text of several lines; this long line |
 | `sent` | The input shows this message as Chat's echo check before Enter takes it (as typed, wrapped, or as the paste marker) |
 | `shows`, `hides` | Every text of the value (` \| ` between them) is somewhere on the screen, or none is |
+| `card` | The first row the terminal card shows: `bullet: TEXT` when it starts with `●` or `⏺` at column 0, `top: TEXT` when the card falls back to the bottom rows, `-` for none |
 
 A section can also name a file the script wrote instead of a snapshot (the check looks for
 `<state>.ansi`, then these):
 
 | File | Keys |
 | --- | --- |
-| `<state>.jsonl` (`tscopy`), read by the app's transcript reader | `prompts` (each prompt joined with ` \| `, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`), `pictures` (`yes` when every picture of such a message loads, `none` for none), `turn` (the prompt that started the newest turn), `answers`, `thinking` (the `thinkingDisplay` values of records with thinking) |
+| `<state>.jsonl` (`tscopy`), read by the app's transcript reader | `prompts` (each prompt joined with ` \| `, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`), `pictures` (`yes` when every picture of such a message loads, `none` for none), `turn` (the prompt that started the newest turn), `answers`, `thinking` (the `thinkingDisplay` values of records with thinking), `outputs` (each command output row as `NAME: colours` or `NAME: plain`: whether the reader kept colour codes beside its text) |
 | `<state>.json` and `.id` (`branch`) | `resumed` (`yes`: answered under the copy's id), `words` (which of alpha, bravo, charlie the answer names) |
 | `<state>.help.txt` (`help`) | `flags` (the value itself when `claude --help` lists every flag of it) |
 

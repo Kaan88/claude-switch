@@ -31,6 +31,10 @@
 //!   running turn (as typed, wrapped, or as Claude Code's paste marker).
 //! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
 //!   or none is (a resumed branch shows the turns before its cut and none after).
+//! - `card`: the first row the terminal card would show (`view/chat/terminal_card.rs`):
+//!   `bullet: ` and the row's text after it when that row starts with Claude Code's `●` or `⏺`
+//!   at column 0 (the call that waits), `top: ` and its text when the card falls back to the
+//!   bottom rows, `-` for an empty screen.
 //!
 //! A state can also be a file the script wrote instead of a snapshot, and its keys are about that:
 //!
@@ -39,7 +43,9 @@
 //!   `pictures` (`yes` when every picture of such a message loads, `none` when it has none),
 //!   `turn` (the prompt that started the newest turn: a message sent during a turn starts none),
 //!   `answers` (Claude's answers), `thinking` (the `thinkingDisplay` values of records with
-//!   thinking, `-` for none).
+//!   thinking, `-` for none), `outputs` (each command output row as `name: colours` when the
+//!   reader kept colour codes (SGR) beside its text, which Chat draws as the terminal does, or
+//!   `name: plain`; `-` for none).
 //! - A branch (`branch`, `<state>.json` and `<state>.id`): `resumed` (`yes` when Claude Code
 //!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
@@ -184,6 +190,7 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
             }
         }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
+        "card" => card_first(s),
         "sent" => {
             let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
             shown(typed || screen::shows_lines(s, want), "the input's rows do not read it")
@@ -221,9 +228,35 @@ fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
     out
 }
 
+/// The first row the terminal card shows, and whether it starts at a bullet (see the module).
+fn card_first(s: &Screen) -> String {
+    use crate::view::chat::terminal_card;
+    let rows = terminal_card::rows(s);
+    if rows.is_empty() {
+        return NONE.to_owned();
+    }
+    let text = s.row_text(rows.start);
+    match text.strip_prefix(|c| terminal_card::BULLETS.contains(&c)) {
+        Some(rest) => format!("bullet: {}", rest.trim()),
+        None => format!("top: {}", text.trim()),
+    }
+}
+
+/// The output has a colour code: an SGR sequence that sets a foreground or background colour.
+fn coloured(ansi: &str) -> bool {
+    ansi.split('\u{1b}').skip(1).filter_map(|rest| rest.strip_prefix('[')).any(|rest| {
+        let end = rest.find(|c: char| !(c.is_ascii_digit() || c == ';' || c == ':')).unwrap_or(rest.len());
+        rest[end..].starts_with('m')
+            && rest[..end]
+                .split([';', ':'])
+                .filter_map(|p| p.parse::<u16>().ok())
+                .any(|p| matches!(p, 30..=38 | 40..=48 | 90..=97 | 100..=107))
+    })
+}
+
 /// What the app's transcript reader makes of a transcript copy.
 fn transcript_fact(path: &Path, key: &str) -> String {
-    use claude_switch_core::transcript::{ItemKind, Reader};
+    use claude_switch_core::transcript::{ItemKind, Reader, ToolCard};
     let Ok(mut reader) = Reader::open(path, 64 << 20) else { return "the transcript does not read".to_owned() };
     let items: Vec<_> = reader.items().map(|(id, item)| (id, item.clone())).collect();
     let joined = |parts: Vec<String>| if parts.is_empty() { NONE.to_owned() } else { parts.join(" | ") };
@@ -275,6 +308,18 @@ fn transcript_fact(path: &Path, key: &str) -> String {
                 .iter()
                 .filter_map(|(_, item)| match &item.kind {
                     ItemKind::Assistant { markdown } => Some(markdown.trim().replace('\n', " ")),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        "outputs" => joined(
+            items
+                .iter()
+                .filter_map(|(_, item)| match &item.kind {
+                    ItemKind::Tool { name, card: Some(ToolCard::Output { ansi, .. }), .. } => {
+                        let colours = ansi.as_deref().is_some_and(coloured);
+                        Some(format!("{name}: {}", if colours { "colours" } else { "plain" }))
+                    }
                     _ => None,
                 })
                 .collect(),
@@ -548,6 +593,20 @@ fn the_fixtures_read_as_the_states_the_check_names() {
     assert_eq!(fact(&idle, "hides", "no such words here"), "no such words here");
     assert_eq!(fact(&idle, "hides", &some), format!("shown: {some}"));
     assert_eq!(fact(&idle, "shows", "no such words here"), "not shown: no such words here");
+    // The terminal card starts at the call's bullet, at column 0.
+    assert_eq!(
+        fact(&recorded(WORKING_TOOL), "card", ""),
+        "bullet: Bash(python -c \"import time; time.sleep(25); print('done25')\")"
+    );
+    let first = |bytes: &str| {
+        let mut t = crate::term::Term::empty((40, 6));
+        t.feed(bytes.as_bytes());
+        card_first(&t.screen)
+    };
+    assert_eq!(first("one\r\n  two"), "top: one");
+    assert_eq!(first("one\r\n\u{23fa} call\r\n  two"), "bullet: call");
+    assert_eq!(first("one\r\n x \u{25cf} not at column 0"), "top: one");
+    assert_eq!(first(""), NONE);
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
 }
@@ -575,6 +634,22 @@ fn transcripts_branches_and_help_read_as_the_check_names_them() {
     assert_eq!(read("turn"), "ping it");
     assert_eq!(read("answers"), "delta");
     assert_eq!(read("thinking"), "updates");
+    assert_eq!(read("outputs"), NONE);
+    // Command output: kept with its colour codes, or plain (bold alone is no colour).
+    let local = |text: &str| json!({"type":"user","message":{"role":"user","content":text}});
+    let lines = [
+        local("<command-name>/context</command-name>\n<command-args></command-args>"),
+        local(
+            "<local-command-stdout>\u{1b}[1mContext Usage\u{1b}[22m\n\u{1b}[38;2;153;153;153m⛁ ⛀\u{1b}[39m 12k</local-command-stdout>",
+        ),
+        local("<command-name>/cost</command-name>"),
+        local("<local-command-stdout>\u{1b}[1mTotal cost\u{1b}[22m: $0.01</local-command-stdout>"),
+        local("<command-name>/mcp</command-name>"),
+        local("<local-command-stdout>No MCP servers configured</local-command-stdout>"),
+    ];
+    let commands = dir.join("commands.jsonl");
+    std::fs::write(&commands, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    assert_eq!(transcript_fact(&commands, "outputs"), "/context: colours | /cost: plain | /mcp: plain");
     let branch = dir.join("branched.json");
     std::fs::write(dir.join("branched.id"), "0a1b2c3d-1111-4222-8333-444455556666\n").unwrap();
     let answer = json!({"is_error":false,"session_id":"0a1b2c3d-1111-4222-8333-444455556666","result":"Alpha"});
