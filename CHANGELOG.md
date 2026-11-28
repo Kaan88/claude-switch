@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Resume in the desktop app as a further account opens that account's desktop app (its own data
+  folder) with the session; it used to go through Claude Code's `--desktop`, whose link Windows
+  hands to the first account's desktop app.
 - Chat and the Session view: after a rewind, the Tasks, Agents, Shells and Files pages leave out
   what the replaced turns did once the next message is written, as the conversation does; an agent
   or background shell started there that is still running stays listed.

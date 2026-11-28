@@ -140,11 +140,54 @@ fn the_first_account_removes_the_config_variable_and_a_further_one_sets_it() {
     assert_eq!(main.env_remove[1..], SESSION_VARS);
     assert_eq!(main.place, Place::Terminal);
     assert_eq!(main.label, "Main · kweb-mail · Resume");
-    let work = resume(&roots, &config, &s, "work", App::Desktop, &[]).unwrap();
-    assert_eq!(work.args, ["--desktop", "--resume", ID]);
-    assert_eq!(work.place, Place::Detached);
+    let work = resume(&roots, &config, &s, "work", App::Cli, &[]).unwrap();
+    assert_eq!(work.args, ["--resume", ID]);
     assert_eq!(work.env.get("CLAUDE_CONFIG_DIR"), Some(&config.accounts[1].cli_dir.to_string_lossy().into_owned()));
     assert_eq!(work.env_remove, SESSION_VARS);
+}
+
+/// The first account's desktop app is the default profile, which Windows' handler for `claude:`
+/// links starts: the CLI's `--desktop --resume` reaches it.
+#[test]
+fn the_first_account_resumes_in_the_desktop_app_through_the_cli() {
+    let t = TempDir::new("lau-desk-main");
+    let (roots, config) = setup(&t);
+    let main = resume(&roots, &config, &session(&t.0), "main", App::Desktop, &[]).unwrap();
+    assert_eq!(main.program, PathBuf::from("claude"));
+    assert_eq!(main.args, ["--desktop", "--resume", ID]);
+    assert_eq!(main.place, Place::Detached);
+    assert!(main.env.is_empty());
+}
+
+/// A further account's `claude --desktop --resume` would open the link in the default profile (the
+/// first account's window): its own desktop app is started with its data folder and the link.
+#[cfg(windows)]
+#[test]
+fn a_further_account_resumes_in_its_own_desktop_app() {
+    let t = TempDir::new("lau-desk-work");
+    let (roots, config) = setup(&t);
+    let work = resume(&roots, &config, &session(&t.0), "work", App::Desktop, &[]).unwrap();
+    assert!(is_desktop_request(&work), "the verified installed executable, never `claude`");
+    assert_eq!(
+        work.args,
+        [
+            format!("--user-data-dir={}", config.accounts[1].desktop_dir.display()),
+            "--".to_owned(),
+            format!("claude://resume?session={ID}"),
+        ]
+    );
+    assert_eq!(work.place, Place::Detached);
+    assert!(work.cwd.is_none());
+    // The app's Code tab works in the standard CLI folder, as "Open Desktop as this account".
+    assert!(work.env.is_empty());
+    assert!(work.env_remove.iter().any(|name| name == "CLAUDE_CONFIG_DIR"));
+    assert!(!work.args.iter().any(|a| a == "--desktop"), "no CLI handoff, so no terminal-only worker");
+    // Still refused as before: a running session, an invalid id.
+    let running = [Running { session_id: ID.into(), pid: 1, app: App::Cli, account: "main".into(), cwd: t.0.clone() }];
+    assert!(matches!(
+        resume(&roots, &config, &session(&t.0), "work", App::Desktop, &running),
+        Err(Refusal::AlreadyRunning(_))
+    ));
 }
 
 #[test]
