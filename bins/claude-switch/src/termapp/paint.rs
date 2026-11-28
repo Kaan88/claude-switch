@@ -77,11 +77,9 @@ impl AppState {
         let scheme = self.terminal_scheme();
         if let Some(tab) = self.tabs.shown_mut() {
             let extra = tab.panes.extra.iter_mut().map(|(_, t)| t);
+            // Already done at the wake that brought the output; this catches anything else.
             for t in std::iter::once(&mut tab.term).chain(extra) {
-                let changes = t.changes;
-                if let Some(find) = &mut t.find {
-                    find.update(&t.screen, changes, t.screen.end_line());
-                }
+                t.refresh_find();
             }
         }
         let keyboard = self.terminal_focused();

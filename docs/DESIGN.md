@@ -339,9 +339,11 @@ bar at the top right of the terminal shown; in Chat it opens the terminal drawer
 Each terminal keeps its own bar (`Term::find`, `termfind.rs`). The search reads every line the screen
 keeps, from the oldest scrollback line to the bottom row (`Screen::first_line`..`end_line`,
 `line_at`), joins rows a wrap continued into one line, and matches characters case-insensitively
-unless Aa is on; matches do not overlap and trailing blanks never match. It runs again only when the
-query, the case setting or the terminal's change count (`Term::changes`: output and resizes) moved,
-at the next frame. A new query picks the last match that starts above the bottom of the view (a
+unless Aa is on; matches do not overlap and trailing blanks never match. A new query, the case
+setting or a resize (which rewraps) searches everything again. Output only searches from the logical
+line that held the screen's old top row down: lines already in the scrollback are never rewritten,
+so their matches are kept (less any lines dropped or cleared). That happens at the wake that brought
+the output, not while painting (`Term::changes` counts output and resizes). A new query picks the last match that starts above the bottom of the view (a
 search upwards, as Windows Terminal's default) and scrolls it into the middle when it is not
 shown; new output keeps the current match without scrolling. Enter, ↑ and F3 go up (older),
 Shift+Enter, ↓ and Shift+F3 down, both round from the ends; the count reads "N of M" with matches
@@ -349,7 +351,8 @@ numbered top to bottom. The marks are blended over the drawn grid in the palette
 `find_current` at the Markdown viewer's alphas, so termview's own colours, selection and cursor are
 untouched. While the bar has the keyboard, keys go to its box (the window's shortcuts still work)
 and the cursor is drawn unfocused; a press on the grid gives the keyboard back to the program and
-leaves the bar open; Escape or its × closes it.
+leaves the bar open; Escape or its × closes it. A pane that loses the keyboard also takes it from
+its bar (still open), so coming back to the pane types into the program.
 
 **Panes.** A tab can be split into up to four panes (`panes.rs`), as a small tree: each split is
 side by side ("Split right", a vertical divider) or stacked ("Split down"), half and half at first,
@@ -367,7 +370,10 @@ focus change), the wheel over an unfocused pane scrolls its scrollback without f
 focused pane has a 1 px edge between the theme's line and accent colours; unfocused panes draw the
 hollow cursor. The 6 px gap between panes holds a 1 px line, accent while hovered or dragged; it
 is dragged with a resize cursor and keeps 60 px for either side. An ended pane shows its end line
-and closes on Enter. "Close pane" asks first while the pane's program runs; the tab's own pane
+and closes on Enter; Enter on the ended tab's own pane is "Close" of the tab, which asks while
+another pane's program runs. Only keys for pane 0 count as input to Claude's terminal for Chat (its
+send gate and card keys); a shell pane's do not. Switching to Chat's layout while a shell pane has
+the keyboard moves it to pane 0, and back again, telling the programs that asked. "Close pane" asks first while the pane's program runs; the tab's own pane
 closes only last (closing it under shells would leave Chat without its terminal), and with no
 other pane it is "Close" of the tab, asking as before. Closing the tab or the window counts the
 panes' programs as running. In Chat's layout only pane 0 is shown (in the drawer) and has the

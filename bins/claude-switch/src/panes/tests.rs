@@ -201,3 +201,28 @@ fn split_panes_are_drawn_with_dividers_and_an_edge_round_the_focused_one() {
         assert!(st.hits.iter().any(|(_, t)| matches!(t, crate::state::Target::PaneDivider(1))));
     }
 }
+
+#[test]
+fn a_pane_that_loses_the_keyboard_takes_its_find_bar_out_of_it() {
+    let (mut st, id, _) = app();
+    st.split_pane(Instant::now(), id, Axis::Right);
+    st.open_find();
+    assert!(st.find_focused());
+    st.focus_next_pane();
+    assert!(!st.find_focused());
+    st.focus_next_pane();
+    assert!(!st.find_focused(), "coming back, keys go to the program");
+    assert!(st.tabs.get(id).unwrap().panes.get(1).unwrap().find.is_some(), "the bar stays open");
+}
+
+#[test]
+fn enter_on_the_ended_tabs_own_pane_closes_the_tab_through_close() {
+    let (mut st, id, _) = app();
+    st.split_pane(Instant::now(), id, Axis::Right);
+    st.focus_pane(MAIN);
+    st.tabs.get_mut(id).unwrap().term.ended = Some(mdshared_pty::Exit { code: Some(0), signal: None });
+    let enter = KeyPress { name: Some(KeyName::Enter), mods: Mods::default(), text: Some("\r".into()), repeat: false };
+    st.term_key(Instant::now(), &enter);
+    // Nothing runs in the demo's panes, so Close closes at once; with a running pane it asks.
+    assert!(st.tabs.get(id).is_none());
+}

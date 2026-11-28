@@ -971,3 +971,49 @@ fn a_branch_is_cut_only_where_a_turn_ended_and_never_in_a_subagents_transcript()
     app.branch_at(Instant::now(), tab, at(10));
     assert!(app.info.is_some(), "refused, with the reason");
 }
+
+/// A Claude tab split with a shell pane beside its own.
+fn split_claude_tab() -> (crate::state::AppState, u64) {
+    use crate::tabs::NewTab;
+    let mut app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
+    app.apply_scan(crate::demo::scan(&app.config));
+    app.window_focused = true;
+    let session = app.sessions.iter().find(|s| s.desktop_id.is_none()).unwrap().clone();
+    let tab = app.tabs.open(
+        NewTab { label: "tab".into(), color: [0; 3], session: Some(session.id.clone()), account: None },
+        crate::term::Term::empty((40, 8)),
+    );
+    let pane = app.new_session_pane(model::Source::Demo(session.file.clone()), session.cwd.clone());
+    app.tabs.get_mut(tab).unwrap().pane = Some(pane);
+    let window = Rect::new(0.0, 0.0, 800.0, 300.0);
+    app.layout_terminals(window, window, 1.0);
+    app.split_pane(std::time::Instant::now(), tab, crate::panes::Axis::Right);
+    (app, tab)
+}
+
+#[test]
+fn keys_for_a_shell_pane_are_not_input_to_claudes_terminal() {
+    let (mut app, tab) = split_claude_tab();
+    assert_eq!(app.tabs.get(tab).unwrap().focused_pane(), 1);
+    let chat = |app: &crate::state::AppState| app.tabs.get(tab).unwrap().pane.as_ref().unwrap().chat.last_input;
+    let before = chat(&app);
+    app.note_chat_terminal_input();
+    app.term_text("ls");
+    assert_eq!(chat(&app), before, "typed into the shell pane");
+    app.focus_pane(crate::panes::MAIN);
+    app.note_chat_terminal_input();
+    assert_ne!(chat(&app), before, "typed into Claude's own pane");
+}
+
+#[test]
+fn the_chat_layout_takes_the_keyboard_to_claudes_pane_and_back() {
+    let (mut app, tab) = split_claude_tab();
+    app.tabs.get_mut(tab).unwrap().panes.get_mut(1).unwrap().selecting = true;
+    assert!(app.set_shown_tab_chat(true));
+    let t = app.tabs.get(tab).unwrap();
+    assert_eq!(t.focused_pane(), crate::panes::MAIN);
+    assert!(!t.panes.get(1).unwrap().selecting, "the shell pane's drag ended");
+    assert!(!app.set_shown_tab_chat(true), "no change");
+    assert!(app.set_shown_tab_chat(false));
+    assert_eq!(app.tabs.get(tab).unwrap().focused_pane(), 1, "the shell pane has it again");
+}

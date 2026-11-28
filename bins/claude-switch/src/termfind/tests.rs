@@ -209,3 +209,34 @@ fn the_bar_and_the_marks_are_drawn_over_the_grid_in_both_themes() {
         assert_eq!(px(&open, free), px(&plain, free));
     }
 }
+
+/// After any output the kept matches equal a full search: scrolling into the scrollback, a
+/// line wrapping across the old screen top, rewriting the screen, dropping the oldest lines and
+/// clearing the scrollback.
+#[test]
+fn output_searches_again_only_below_the_old_screen_top_and_agrees_with_a_full_search() {
+    let mut s = Screen::new(12, 3, 20);
+    let mut f = Find::new();
+    f.field.set_text("ab");
+    let mut changes = 0;
+    let mut check = |s: &Screen, f: &mut Find, what: &str| {
+        changes += 1;
+        f.update(s, changes, s.end_line());
+        assert_eq!(f.matches, search(s, "ab", false), "{what}");
+    };
+    check(&s, &mut f, "empty");
+    s.feed(b"ab 1\r\nab 2\r\nxx");
+    check(&s, &mut f, "first lines");
+    s.feed(b"xxxxxxxxxxab\r\nab 3\r\nab 4\r\n");
+    check(&s, &mut f, "scrolled, a wrap across the old top");
+    s.feed(b"\x1b[2J\x1b[Hab ab ab");
+    check(&s, &mut f, "screen rewritten");
+    for i in 0..40 {
+        s.feed(format!("ab {i}\r\n").as_bytes());
+    }
+    check(&s, &mut f, "oldest lines dropped");
+    s.feed(b"\x1b[3J");
+    check(&s, &mut f, "scrollback cleared");
+    s.resize(7, 3);
+    check(&s, &mut f, "resized");
+}

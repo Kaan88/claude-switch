@@ -49,6 +49,9 @@ pub struct Find {
     current: Option<usize>,
     /// What `matches` were found for: the query, the case setting and the terminal's change count.
     found: Option<(String, bool, u64)>,
+    /// The screen's size and its top line when they were found: lines above that top were
+    /// scrollback then, which output never rewrites, so only what lies below is searched again.
+    scanned: Option<((usize, usize), u64)>,
 }
 
 impl Find {
@@ -81,7 +84,19 @@ impl Find {
             return None;
         }
         let before = self.current();
-        self.matches = search(screen, query, self.match_case);
+        let size = (screen.cols(), screen.rows());
+        match self.scanned.filter(|(s, _)| same_query && *s == size) {
+            // Output only: keep what was found in the scrollback as it was, search the rest.
+            Some((_, top)) => {
+                let from = logical_start(screen, top.min(screen.screen_start()));
+                let first = screen.first_line();
+                self.matches.retain(|h| h.start.line >= first && h.start.line < from);
+                self.matches.extend(search_from(screen, from, query, self.match_case));
+            }
+            // A new query, or a resize (which rewraps): everything.
+            None => self.matches = search(screen, query, self.match_case),
+        }
+        self.scanned = Some((size, screen.screen_start()));
         self.found = Some((query.to_string(), self.match_case, changes));
         if same_query {
             self.current = before.and_then(|b| {
@@ -116,13 +131,27 @@ impl Find {
 /// Every match of `query` in the screen and its scrollback, top to bottom, not overlapping.
 /// Without `match_case` letters match whatever their case. Rows joined by a wrap are one line.
 pub fn search(screen: &Screen, query: &str, match_case: bool) -> Vec<Hit> {
+    search_from(screen, screen.first_line(), query, match_case)
+}
+
+/// The first line of the logical line `line` belongs to: back over the rows a wrap continued.
+fn logical_start(screen: &Screen, mut line: u64) -> u64 {
+    line = line.max(screen.first_line());
+    while line > screen.first_line() && screen.line_at(line - 1).is_some_and(|l| l.wrapped()) {
+        line -= 1;
+    }
+    line
+}
+
+/// [`search`] from line `from` on, which starts a logical line.
+fn search_from(screen: &Screen, from: u64, query: &str, match_case: bool) -> Vec<Hit> {
     let fold = |c: char| if match_case { c } else { c.to_lowercase().next().unwrap_or(c) };
     let needle: Vec<char> = query.chars().map(fold).collect();
     let mut out = Vec::new();
     if needle.is_empty() {
         return out;
     }
-    let (mut line, end) = (screen.first_line(), screen.end_line());
+    let (mut line, end) = (from.max(screen.first_line()), screen.end_line());
     // One logical line: its characters and, for each, its first cell and the column of its last.
     let mut text: Vec<char> = Vec::new();
     let mut cells: Vec<(Point, usize)> = Vec::new();
@@ -411,6 +440,14 @@ pub fn tip_of(control: FindControl) -> Option<&'static str> {
 }
 
 impl Term {
+    /// Brings an open find bar's matches up to date with the screen (nothing when unchanged).
+    pub fn refresh_find(&mut self) {
+        let changes = self.changes;
+        if let Some(find) = &mut self.find {
+            find.update(&self.screen, changes, self.screen.end_line());
+        }
+    }
+
     /// Scrolls the view so that `line` shows, about in the middle, unless it already does.
     pub fn reveal(&mut self, line: u64) {
         let rows = self.screen.rows() as u64;

@@ -293,6 +293,9 @@ impl AppState {
             for (_, t) in &mut tab.panes.extra {
                 let r = t.pump();
                 t.screen.take_dirty();
+                if r.output && shown == Some(tab.id) {
+                    t.refresh_find();
+                }
                 panes_output |= r.output;
             }
             if shown == Some(tab.id) && panes_output && tab.shows_panes() {
@@ -307,6 +310,8 @@ impl AppState {
             if shown != Some(tab.id) || !r.output {
                 continue;
             }
+            // Find marks follow the output here, at the wake, not while painting.
+            tab.term.refresh_find();
             w.output = true;
             w.cursor |= r.cursor_moved;
             if tab.term.scroll > 0 || tab.term.find.is_some() || tab.shows_panes() {
@@ -348,7 +353,8 @@ impl AppState {
         let ended = term.ended.is_some();
         if ended && k.name == Some(KeyName::Enter) {
             if pane == crate::panes::MAIN {
-                self.close_tab_now(id);
+                // Running split panes end with the tab: ask about them as Close does.
+                self.ask_close_tab(id);
             } else {
                 self.close_pane_now(id, pane);
             }

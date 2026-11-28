@@ -438,6 +438,11 @@ impl AppState {
         let now = tab.focused_pane();
         if let Some(t) = before.and_then(|b| tab.term_of_mut(b)) {
             t.stop_pointer();
+            // Its find bar stays open but leaves the keyboard with the pane, so coming back
+            // (Next pane, a closed neighbour) types into the program again.
+            if let Some(find) = &mut t.find {
+                find.focused = false;
+            }
             if focused && let Some(b) = mdshared_term::input::encode_focus(false, &t.screen.modes()) {
                 t.write(&b);
             }
