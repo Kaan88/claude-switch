@@ -155,7 +155,9 @@ pub(super) fn send_now_blocked(tab: &Tab, now: Instant) -> Option<&'static str> 
     if chat.queued.is_empty() || chat.send_now.is_some() {
         return Some(NOT_NOW);
     }
-    if chat.waiting().is_some() || chat.enter_only() || chat.image_wait.is_some() {
+    // Something of Chat's is on its way: keys of a message, or a command it typed (its own, as a
+    // handover's `/rename`) that is followed until Claude Code takes it.
+    if chat.waiting().is_some() || chat.enter_only() || chat.image_wait.is_some() || chat.command_in_flight() {
         return Some(NOT_NOW);
     }
     let (gate, reason) = chat.decision(&pane.model.chat, term, &tab.program_title, now);

@@ -32,8 +32,8 @@ pub use input::layout_shortcut;
 pub use layout::Layout;
 pub use paint::STRIP_RESERVE;
 pub use paint::strip_button;
-pub(crate) use rename::PROMPT_WAIT as RENAME_PROMPT_WAIT;
 pub(in crate::view) use queued::Shown as QueuedShown;
+pub(crate) use rename::PROMPT_WAIT as RENAME_PROMPT_WAIT;
 pub use shortcuts::MenuMode;
 
 use std::path::PathBuf;

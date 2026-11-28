@@ -1309,6 +1309,16 @@ pub(super) fn stage_deadline(chat: &Chat, now: Instant) -> Option<Instant> {
     .min()
 }
 
+/// Tests: a command Chat typed on its own whose Enter just went, followed until Claude Code takes it.
+#[cfg(test)]
+pub(in crate::view::chat) fn owned_entered(tab: &mut Tab, now: Instant, line: &str) {
+    let stamp = Stamp::at(tab);
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    let (epoch, due, last) = (chat.output_epoch, now + ENTER_CONFIRM, now + OWNED_LIMIT);
+    let (line, step, seen) = (line.to_owned(), OwnedStep::Entered, now);
+    chat.staging.owned = Some(Owned { line, stamp, step, epoch, due, last, seen });
+}
+
 #[cfg(test)]
 mod identity_tests;
 #[cfg(test)]

@@ -193,6 +193,27 @@ fn send_now_is_claude_codes_own_key_written_once_and_only_while_it_is_offered() 
 }
 
 #[test]
+fn send_now_waits_while_a_command_of_chats_own_is_followed() {
+    let mut f = running_call();
+    queue(&mut f, TYPED_WHILE_BUSY, PLAIN_WORKING_TYPED);
+    f.show(QUEUED_TWO);
+    f.pass(SECOND);
+    // A command Chat typed on its own (a handover's `/rename`) is still followed: Send now's keys
+    // would go into whatever that command left on the input.
+    let now = f.now;
+    submission::owned_entered(f.tab(), now, "/rename Notes");
+    assert!(f.chat().command_in_flight());
+    AppState::chat_send_queued(f.tab(), now);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(NOT_NOW));
+    // Once the following is over, Send now goes.
+    f.chat().interrupt_staging();
+    f.chat().error = None;
+    AppState::chat_send_queued(f.tab(), now);
+    assert_eq!(f.writes(), [SEND_NOW.to_vec()]);
+}
+
+#[test]
 fn send_now_never_sends_text_on_claude_codes_input() {
     // With text on its input Claude Code's Send now would send that text too.
     let mut f = running_call();
