@@ -245,7 +245,7 @@ fn text_on_the_cli_input_is_never_an_idle_prompt_and_a_draft_waits_until_it_is_g
 }
 
 /// What `PLAIN_WORKING_TYPED` shows on the input while a turn runs.
-const TYPED_WHILE_BUSY: &str = "hello while busy";
+pub(in crate::view::chat) const TYPED_WHILE_BUSY: &str = "hello while busy";
 
 fn paste(text: &str) -> Vec<Vec<u8>> {
     vec![format!("\x1b[200~{text}\x1b[201~").into_bytes()]

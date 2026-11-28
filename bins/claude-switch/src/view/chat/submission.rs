@@ -252,7 +252,14 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
         Intent::Interrupted if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
         Intent::Interrupted if !idle_slash_prompt(&tab.term.screen, chat.quiet(now)) => Some(CHECK),
         Intent::Draft if gate != Gate::Ready => Some(CHECK),
-        Intent::Override | Intent::Now if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
+        // A call the turn runs, which the screen shows running (its working line) and has for a
+        // moment, waits for no answer: a message goes into Claude Code's queue as at any other
+        // time of the turn. One just written may still ask for permission, and Override is for
+        // an input no turn holds.
+        Intent::Now if pane.model.chat.pending.is_some() && !chat.call_running(&tab.term, now) => {
+            Some(Reason::Tool.label())
+        }
+        Intent::Override if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
         Intent::Override if gate == Gate::Running => Some("A turn is running. Use Queue to send after it ends."),
         Intent::Now if !chat.demo && !clean_prompt(&tab.term.screen) => Some(NOT_EMPTY),
         Intent::Slash if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
@@ -925,12 +932,22 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
         return;
     }
     let pane = tab.pane.as_mut().unwrap();
+    // Where the transcript ends now: Claude Code records the message only after this Enter.
+    let floor = pane
+        .transcript_end()
+        .unwrap_or_else(|| pane.model.items.keys().next_back().map_or(0, |id| id.offset.saturating_add(1)));
+    let generation = pane.model.chat.generation;
     let chat = &mut pane.chat;
     chat.note_sent();
     match input.completion {
         Completion::Message(_) => {
             chat.first_sent |= chat.awaiting_transcript;
             let (expected, text, picture) = (input.expected, chat.editor.text.clone(), input.picture);
+            if input.into_turn {
+                // Into a running turn Claude Code queues it: Chat shows it waiting until the
+                // transcript has it.
+                chat.note_queued(text.clone(), picture, generation, floor);
+            }
             // One sent at an idle input starts a turn: those before it are done with.
             if !input.into_turn {
                 chat.staging.sent.clear();

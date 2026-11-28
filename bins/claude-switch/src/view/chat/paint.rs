@@ -146,6 +146,7 @@ impl AppState {
             None
         };
         pane.ui.set_offer(chat.question.background_inline());
+        pane.ui.set_queued(chat.queued_shown());
         // An empty conversation: the greeting of a new session (drawn below), or a quiet line
         // while there is nothing to read yet.
         let welcome = l.greeting.h > 0.0 && !docked;
@@ -175,6 +176,10 @@ impl AppState {
         if let Some(r) = pane.ui.progress_rect() {
             // "2 of 3" on the working line opens the panel, as its own button does.
             self.hits.push((r, Target::Chat(Control::Panel)));
+        }
+        if let Some(r) = pane.ui.queued_rect() {
+            // Send now under the messages waiting in Claude Code's queue.
+            self.hits.push((r, Target::Chat(Control::SendQueued)));
         }
         if let Some(r) = pane.ui.offer_rect() {
             // "Run in background" on the command's line: the same click as the card's button.

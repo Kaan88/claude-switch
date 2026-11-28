@@ -13,7 +13,9 @@
 //!   (the empty input), `input` (the input holds text), `unknown`.
 //! - `input`: the one-row input's text (`-` when it is not read), `send`: `yes` when a message may
 //!   be sent now, `working`, `attention` (the tab asks for a permission), `esc`: `yes` or `no`;
-//!   `mode`: the permission mode under the input (`-` for none).
+//!   `mode`: the permission mode under the input (`-` for none); `queue`: `yes` when messages
+//!   wait in Claude Code's queue under its "Queued · ctrl+x ctrl+s to send now" row (Chat's
+//!   Send now writes that key only then).
 //! - `title`: the question asked (a question, a permission prompt, the plan approval), a panel's
 //!   title, the prompt a rewind quotes. `choices`: the rows joined with ` | `, `count`: how many,
 //!   `highlight`: the highlighted row's text, `body`: a permission prompt's rows above its
@@ -142,6 +144,7 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
         "input" => screen::prompt(s).unwrap_or_else(|| NONE.to_owned()),
         "send" => yes(screen::idle_slash_prompt(s, true)),
         "working" => yes(screen::working(s)),
+        "queue" => yes(screen::send_now_offered(s)),
         "attention" => yes(crate::attention::screen_permission_prompt(s)),
         "mode" => mode(s).unwrap_or(NONE).to_owned(),
         "title" => title(s),

@@ -1211,8 +1211,34 @@ stop it. Such a send leaves the turn as the transcript shows it (Claude Code rec
 that turn, never as a new prompt), so Stop stays available. Whether a send goes into a running turn
 is read from the gate when its first key is written, not from the button: Send now into an idle
 input (no turn, or one that ended while the draft waited) is an ordinary send.
+A call the turn runs does not hold the message back once the screen shows the CLI's working line
+and the call has been pending for 750 ms (a permission prompt is drawn as soon as its call is
+written): Claude Code queues a message typed during a running command as at any other moment of
+the turn (decided 2026-11-28 with queued messages, below). Within that moment the draft is held as
+before.
 While messages wait in Claude Code's queue its input reads empty ("Press up to edit queued
-messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332). A draft that only has to wait is held, not
+messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332).
+**Queued messages.** A message whose Enter went into a running turn waits in Claude Code's queue
+(the screen shows it with "⎿ Queued · ctrl+x ctrl+s to send now" under the queue) until Claude
+Code hands it to the turn at its next step, recorded as a `queued_command` (a prompt "during a
+turn"), or sends it as the next prompt when the turn ends or is stopped. Until the transcript
+shows it, Chat shows each such message as a quiet bubble at the end of the conversation, in the
+order it was sent, with "Queued — waiting for its turn" under it (`chat/queued.rs`). A bubble goes
+with the first prompt after its Enter (the transcript's length then) that reads the same,
+spacing aside, each prompt taken by one bubble in order; at an idle input Claude Code's queue is
+empty and what is left goes; another session's transcript forgets them. Under the bubbles,
+**Send now** (Send all now for several: Claude Code hands its whole queue in at once) writes
+Claude Code's own `chat:sendNow` key, Ctrl+X Ctrl+S, the key the screen names. With its input
+empty it hands every queued message to the running turn at once, moving a running command to the
+background (its call's result says so) and stopping nothing (recorded 2026-11-28 from 2.1.332,
+`recorder compat` script `queued-now`; Ctrl+Enter is bound to the same action but a terminal
+cannot always tell it from Enter, and Ctrl+X Enter is `chat:queueSubmit`). Chat writes those two
+keys only while the screen names them under the queue, the gate reads the turn running with no
+card, prompt or menu up, the input reads empty (with text on it the same key sends that text too)
+and no other keys of Chat's are on their way; it never types a queued message again or takes one
+off the queue. While the keys' result is not in the transcript the button reads "Sending now…"
+and takes no click, for five seconds at most. A draft held in the box (above) is not in Claude
+Code's queue and has no bubble. A draft that only has to wait is held, not
 refused: a running turn whose input does not read empty, a prompt the CLI is still
 drawing, a command's output, a new chat's transcript, a picture while the input is not empty. It is
 locked (text and attachments) until it sends or is cancelled, and goes out by itself, also in a
@@ -1631,9 +1657,9 @@ expected. `tools/screen-recorder/README.md` ("After a Claude Code update") says 
 failure and what to do. Its first run found that the second of two prompts was not recognised,
 which the fixtures had not shown. It also checks what Chat reads from Claude Code's files and
 flags: messages sent while a turn runs as the transcript records them, what Esc does with messages
-waiting in Claude Code's queue, thinking shown as updates, and branches cut at a turn's end resumed
-under their new ids in print mode and in the terminal (scripts `queued`, `queued-text`,
-`queued-esc` and `branch`).
+waiting in Claude Code's queue and its own Send now for them, thinking shown as updates, and
+branches cut at a turn's end resumed under their new ids in print mode and in the terminal
+(scripts `queued`, `queued-text`, `queued-esc`, `queued-now` and `branch`).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Chat: messages sent while Claude works wait in Claude Code's queue, and Chat now shows each as a
+  quiet bubble at the end of the conversation ("Queued — waiting for its turn"), in the order sent,
+  until Claude Code hands it in. **Send now** under them uses Claude Code's own key for its queue
+  (Ctrl+X Ctrl+S): every queued message goes to the running turn at once, without stopping it. A
+  message sent while a command runs now goes into that queue too, instead of waiting in the box
+  for the turn to end.
 - Chat: a card taller than its room (a long command in a short window, or with the terminal
   drawer open) no longer cuts off its choices and foot: it lowers its choices, shortens the
   command (saying how many lines are left out) and the question, and scrolls what still does not

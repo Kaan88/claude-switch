@@ -170,6 +170,56 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             let later = shots::show(&mut st, id, shots::PERMISSION, now);
             (demo, st, later)
         }
+        "tall-permission" => {
+            let demo = Transcript::new_showcase(Some((BENCH.0, BENCH.1, LONG_COMMAND))).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            shots::running(&mut st, id, "Waiting for your approval");
+            let later = shots::show(&mut st, id, &long_permission(), now);
+            (demo, st, later)
+        }
+        "queued" => {
+            let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            shots::running(&mut st, id, WORKING_LINE);
+            let later = shots::show(&mut st, id, WORKING, now);
+            shots::running(&mut st, id, WORKING_LINE);
+            // Two messages sent while the benchmark runs, waiting in Claude Code's queue.
+            let pane = pane(&mut st, id);
+            let generation = pane.model.chat.generation;
+            let chat = &mut pane.chat;
+            chat.note_queued("Also compare the memory use.".into(), false, generation, u64::MAX);
+            chat.note_queued(
+                "And keep the old numbers in the notes, with the date and the commit they were measured at, \
+                 so the next run can be compared with them."
+                    .into(),
+                false,
+                generation,
+                u64::MAX,
+            );
+            (demo, st, later)
+        }
+        "new-session-card" => {
+            // A new session whose first answer is a question: the card stands at the window's
+            // foot, not in the greeting's place.
+            let demo = Transcript::new_empty().unwrap();
+            let mut st = shots::window(dark);
+            let id = shots::claude_tab(&mut st, "Move the map tiles to a worker thread");
+            let source = crate::view::model::Source::File(demo.path().into());
+            let mut pane = st.new_session_pane(source, demo.cwd().into());
+            pane.chat.scripted = true;
+            pane.chat.enabled = true;
+            pane.chat.identity_unverified = false;
+            pane.chat.awaiting_transcript = true;
+            pane.ui.set_chat(true);
+            pane.model.poll();
+            std::thread::sleep(Duration::from_millis(300));
+            pane.model.collect();
+            let tab = shots::tab(&mut st, id);
+            tab.label = "New session".into();
+            tab.pane = Some(pane);
+            let later = shots::show(&mut st, id, shots::QUESTION, now);
+            (demo, st, later)
+        }
         "running" => {
             let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
             let (mut st, id) = shots::chat_window(dark, &demo);
@@ -219,7 +269,19 @@ fn chat_shots() {
     std::fs::create_dir_all(dir).unwrap();
     let only = std::env::var("CS_CHAT_ONLY").ok();
     let want = |name: &str| only.as_deref().is_none_or(|only| only.split(',').any(|n| n.trim() == name));
-    let states = ["conversation", "steps", "question", "permission", "running", "scrolled", "empty", "pointing"];
+    let states = [
+        "conversation",
+        "steps",
+        "question",
+        "permission",
+        "running",
+        "scrolled",
+        "empty",
+        "pointing",
+        "tall-permission",
+        "new-session-card",
+        "queued",
+    ];
     for (n, state) in states.into_iter().enumerate().filter(|(_, state)| want(state)) {
         let short = state == "tall-permission";
         let sizes =

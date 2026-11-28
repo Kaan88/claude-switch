@@ -1,0 +1,25 @@
+# What Chat reads from scripts/queued-now.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+# Two messages wait in Claude Code's queue: its input reads empty, the turn runs, and the row
+# under them names Ctrl+X Ctrl+S as the key that sends them now (Chat's Send now writes it only
+# then).
+[waiting]
+kind = working
+input =
+working = yes
+queue = yes
+
+# Ctrl+X Ctrl+S: the queue is handed in at once; nothing is left waiting.
+[sent]
+queue = no
+
+[after]
+kind = idle
+send = yes
+queue = no
+
+# Both are recorded as messages during the turn, in the order they were sent; the turn is still
+# the first prompt's (Send now stops nothing).
+[transcript]
+prompts = Run exactly this with the Bash tool and nothing else: ping -n 30 127.0.0.1 | Also reply with the word echo. (during a turn) | Then reply with the word foxtrot. (during a turn)
+turn = Run exactly this with the Bash tool and nothing else: ping -n 30 127.0.0.1

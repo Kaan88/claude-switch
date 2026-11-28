@@ -145,6 +145,10 @@ pub struct Ui {
     /// What Chat says in place of an empty conversation: a quiet line, or nothing (a new
     /// session's greeting is the host's).
     empty_line: Option<&'static str>,
+    /// Chat's messages waiting in Claude Code's queue, drawn after the last message.
+    queued: super::chat::QueuedShown,
+    /// Where the last frame drew their Send now.
+    queued_rect: Option<Rect>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -174,6 +178,10 @@ pub(super) fn chat_pad(width: f32) -> f32 {
 }
 /// The round "jump to latest" button.
 const JUMP: f32 = 34.0;
+/// A queued message: its bubble, the word under it and the gap after; then the row of Send now.
+const QUEUED_BUBBLE: f32 = 34.0;
+const QUEUED_ROW: f32 = QUEUED_BUBBLE + 26.0;
+const QUEUED_FOOT: f32 = 34.0;
 
 impl Ui {
     fn pad(&self) -> f32 {
@@ -268,6 +276,25 @@ impl Ui {
     /// Where the last frame drew "Run in background", for the host to take its click.
     pub(super) fn offer_rect(&self) -> Option<Rect> {
         self.offer_rect.filter(|_| self.offer.is_some_and(|(_, busy)| !busy))
+    }
+
+    /// Chat's messages waiting in Claude Code's queue: each a quiet bubble after the last
+    /// message, with Send now under them.
+    pub(super) fn set_queued(&mut self, queued: super::chat::QueuedShown) {
+        self.queued = queued;
+    }
+
+    /// Where the last frame drew Send now under the queued messages, for the host to take its
+    /// click (none while its keys are on their way).
+    pub(super) fn queued_rect(&self) -> Option<Rect> {
+        self.queued_rect.filter(|_| !self.queued.sending)
+    }
+
+    /// The room the queued messages take after the last message.
+    fn queued_room(&self, m: &Model) -> f32 {
+        let shown = self.chat && self.page == Page::Conversation && m.agent.is_none();
+        let n = self.queued.messages.len();
+        if shown && n > 0 { n as f32 * QUEUED_ROW + QUEUED_FOOT } else { 0.0 }
     }
 
     /// The last frame drew "Run in background" on the command's line (dimmed or not): it is in
@@ -449,6 +476,7 @@ impl Ui {
             self.covered = if self.jump_shown() { JUMP + 20.0 } else { 0.0 };
             self.offer_rect = None;
             self.progress_rect = None;
+            self.queued_rect = None;
             if self.chat
                 && self.rows.is_empty()
                 && let Some(line) = self.empty_line
@@ -456,6 +484,7 @@ impl Ui {
                 p.text(Face::Ui, 13.0, self.body.x, self.body.y + 14.0, line, pal.muted, self.body.w);
             }
             self.paint_rows(p, pal, m);
+            self.paint_queued(p, pal, m);
             self.paint_working(p, pal, m);
             self.scrollbar =
                 Scrollbar::new(Rect::new(self.body.right() + 1.0, top, GUTTER - 1.0, self.body.h), self.max);
@@ -574,7 +603,7 @@ impl Ui {
                 self.offset = row.top + delta;
             }
         }
-        self.max = (self.rows_end() + self.working_room(m) - self.body.h).max(0.0);
+        self.max = (self.rows_end() + self.queued_room(m) + self.working_room(m) - self.body.h).max(0.0);
         if let Some((id, pending)) = &mut self.tool_jump
             && *pending
             && self.body.h > 0.0
@@ -602,7 +631,7 @@ impl Ui {
         }
         let Some(work) = &self.working else { return };
         let body = self.shown_body();
-        let y = body.y + self.rows_end() - self.offset;
+        let y = body.y + self.rows_end() + self.queued_room(m) - self.offset;
         let clip = p.clip(body);
         let cy = y + super::working::CHAT_LINE / 2.0 + 2.0;
         let mut room = body.w;
@@ -620,6 +649,51 @@ impl Ui {
             room -= w + 12.0;
         }
         super::working::draw_chat_line(p, pal, body.x, cy, &work.label, room);
+        p.restore(clip);
+    }
+
+    /// Chat's messages waiting in Claude Code's queue, after the last message and before the
+    /// working line: each a quiet bubble at the right, as your messages stand, with "Queued —
+    /// waiting for its turn" under it, then Send now (Claude Code's own key for its queue).
+    fn paint_queued(&mut self, p: &mut Painter, pal: &Palette, m: &Model) {
+        if self.queued_room(m) == 0.0 {
+            return;
+        }
+        let body = self.shown_body();
+        let clip = p.clip(body);
+        let edge = super::look::edge(pal);
+        let mut y = body.y + self.rows_end() - self.offset + 4.0;
+        let max_w = (body.w * 0.78).floor();
+        for (text, picture) in &self.queued.messages {
+            let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let line = match (*picture, line.is_empty()) {
+                (true, true) => "[Picture]".to_owned(),
+                (true, false) => format!("[Picture] {line}"),
+                _ => line,
+            };
+            let w = (p.measure(Face::Ui, 13.5, &line) + 32.0).clamp(80.0, max_w);
+            let r = Rect::new(body.right() - w, y, w, QUEUED_BUBBLE);
+            p.frame(r, (QUEUED_BUBBLE / 2.0).min(16.0), pal.page, edge);
+            p.text(Face::Ui, 13.5, r.x + 16.0, r.cy(), &line, pal.muted, (r.w - 32.0).max(0.0));
+            let note = "Queued — waiting for its turn";
+            let nw = p.measure(Face::Ui, 11.5, note);
+            p.icon(mdshared_ui::glyph::RECENT, 11.0, body.right() - nw - 14.0, r.bottom() + 11.0, pal.faint);
+            p.text(Face::Ui, 11.5, body.right() - nw - 4.0, r.bottom() + 11.0, note, pal.faint, nw + 2.0);
+            y += QUEUED_ROW;
+        }
+        // Claude Code hands every queued message in at once: one Send now for them all.
+        let label = match (self.queued.sending, self.queued.messages.len()) {
+            (true, _) => "Sending now…",
+            (false, 1) => "Send now",
+            _ => "Send all now",
+        };
+        let w = p.measure(Face::Semibold, 12.0, label) + 24.0;
+        let r = Rect::new(body.right() - w, y - 4.0, w, 26.0);
+        let hot = !self.queued.sending && r.contains(self.mouse.0, self.mouse.1);
+        p.frame(r, 13.0, if hot { pal.hover } else { pal.page }, edge);
+        let ink = if self.queued.sending { pal.muted } else { pal.text };
+        p.text_center(Face::Semibold, 12.0, r, label, ink);
+        self.queued_rect = intersection(r, body);
         p.restore(clip);
     }
 

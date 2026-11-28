@@ -102,7 +102,7 @@ prompts (Bash, Write, a subagent's, two calls of one message), a prompt answered
 deny rule refuses, a call auto mode blocks and the list of blocked calls with a call marked and
 unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`.
 
-Some of what Chat relies on is in Claude Code's files, not on its screen, and two scripts check
+Some of what Chat relies on is in Claude Code's files, not on its screen, and these scripts check
 those too:
 
 - `queued`: a message sent while a turn runs, as Chat's Send does it then (a picture from the
@@ -123,6 +123,11 @@ those too:
   does not put them back on its input: it sends them as the next turn (ordinary prompts), and the
   input reads empty, so Chat's take-back has nothing to do. Its
   `[Request interrupted by user for tool use]` user text is read as a notice, not a prompt.
+- `queued-now`: two messages waiting in Claude Code's queue, then Ctrl+X Ctrl+S (Chat's Send now
+  on a queued message). The screen names that key under the queue ("Queued · ctrl+x ctrl+s to
+  send now"); the key hands both to the running turn at once (moving the running command to the
+  background) and stops nothing: the transcript records both as messages during the turn, in
+  order, and the turn stays the first prompt's.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),

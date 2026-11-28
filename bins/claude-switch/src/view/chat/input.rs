@@ -49,6 +49,8 @@ pub enum Control {
     /// The CLI's suggested next prompt.
     NextPrompt,
     Stop,
+    /// Send now on the messages waiting in Claude Code's queue.
+    SendQueued,
     Remove(usize),
     MoreChips,
     Question(super::question::Hit),
@@ -251,7 +253,9 @@ impl AppState {
             let suggested = shown && chat.popups.read_next_prompt(&tab.term.screen);
             // The card first: the gate asks it whether it answers the pending call's menu.
             let card = chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
-            chat.settle(chat.screen_idle(&tab.term, now));
+            let idle = chat.screen_idle(&tab.term, now);
+            chat.settle(idle);
+            let queued = chat.reconcile_queued(&pane.model, idle, now);
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
             chat.set_selection(pane.ui.has_selection());
@@ -265,15 +269,17 @@ impl AppState {
                 // Chat says Claude Code may be waiting and cannot show why: keep what it read.
                 super::screen_report::save(tab, now, super::Reason::Tool.label());
             }
-            redraw |= shown && (changed || catalog || suggested || reported || advanced || collected || recalled);
+            redraw |=
+                shown && (changed || catalog || suggested || reported || advanced || collected || recalled || queued);
         }
         redraw
     }
 
     fn has_chat_work(tab: &Tab) -> bool {
-        tab.pane
-            .as_ref()
-            .is_some_and(|pane| pane.chat.enabled && (pane.chat.queue.is_some() || pane.chat.waiting().is_some()))
+        tab.pane.as_ref().is_some_and(|pane| {
+            pane.chat.enabled
+                && (pane.chat.queue.is_some() || pane.chat.waiting().is_some() || !pane.chat.queued.is_empty())
+        })
     }
 
     pub(in crate::view) fn arm_chat_tick(&self, cx: &mut Cx<'_, Msg>) {
@@ -512,6 +518,15 @@ impl AppState {
                 if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.as_ref().is_some_and(|p| p.chat.enabled))
                 {
                     super::question::press(tab, cx.now(), hit);
+                }
+                return self.arm_chat_tick(cx);
+            }
+            Control::SendQueued => {
+                // As Send: read the newest screen before the checks.
+                self.term_woke(cx);
+                if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.as_ref().is_some_and(|p| p.chat.enabled))
+                {
+                    AppState::chat_send_queued(tab, cx.now());
                 }
                 return self.arm_chat_tick(cx);
             }
