@@ -106,6 +106,15 @@ as the second account, Windows Terminal, the desktop hand-over.
   keyboard, as 0.1.6 does for questions). Chat still never types into a screen it cannot read. Not on
   Tab: Tab completes in the message box. The screen reports (`%APPDATA%\claude-switch\screen-reports`)
   show which prompts come up; frequent ones can become real cards, as the trust question did.
+- **Running and finished subagents are not told apart** (owner, 2026-11-28, screenshot: Details ›
+  Background lists agents with `?`, among them one that has finished). `?` is drawn when
+  `agent.finished` is `None` (`view/chat/side/paint.rs`, Side::Agents): Chat found the agent's call but
+  no result. Find which shapes leave it unknown (the result outside the loaded slice, a background
+  agent that reports through a `<task-notification>` instead of a tool result, an interrupted or
+  stopped agent, the agent's own transcript ended) and settle each from what is there: the
+  notification, the agent's transcript end, the agent list under Claude Code's input (running or
+  stopped). Show three plain states (running, finished, stopped or interrupted) with a word, not only a
+  mark, and keep `?` only when nothing can tell, with a tooltip saying why.
 - **The message box talks to the subagent Chat shows** (owner, 2026-11-28). With a subagent's
   conversation open in Chat ("‹ Back · <agent's task>"), the box still sends to the main session.
   It should send to that agent, the way Claude Code does when an agent is picked in the list under its
