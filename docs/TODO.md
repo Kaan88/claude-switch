@@ -30,6 +30,26 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
   picture (its marker was not recorded). A new Claude Code version is checked with
   `tools/cli-compat.ps1` (by hand) or the `cli-compat` workflow (needs an `ANTHROPIC_API_KEY` secret).
 
+## Review later: the Chat redesign (released in 0.1.5 unreviewed)
+
+The ten changes of the redesign study (branch `design/chat-redesign`, `docs/chat-redesign.md`) were
+built by one agent (merge `d2deea0`) and released at the owner's word before a review (owner,
+2026-11-28). Still to do:
+
+- A correctness review of the branch (`main` b71f1a4 to `ee3500a`) for behaviour that changed beyond
+  the look: sending, queueing, Send now, card answering, Stop, undo, prompt recall.
+- The round "jump to latest" button covers the last line of text while scrolled up.
+- Never tried in the running app or in a real session: the banner read on the empty state, the
+  patch on real edits (diff line numbers), "Run in background" on the working line.
+- Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind and
+  blocked-calls cards, a card in a very short window; scales other than 100 % and 150 %; the new
+  cards and panel in custom themes.
+- Decided by the builder, to confirm: typing while a card is docked goes nowhere until the card's
+  field is clicked; with a draft, Stop is an icon-only square beside Send; Chat's side padding grew
+  12 to 28 px; code blocks sit about 40 px lower (header drawn in a spacer, the renderer is an
+  external crate); the Session view keeps its strip and its tabs.
+- Not updated: the README's screenshots, `docs/DESIGN.md`, this file's Chat items.
+
 ## Completed follow-ups
 
 - Open a copy is in the palette and under "Open elsewhere"; the Desktop and cold-cache warnings

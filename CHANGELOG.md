@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.5 (2026-11-28)
+
 - Chat: a new session before its first message shows a greeting in place of the grey "Waiting
   for messages" card: the mark, "What should Claude do in <folder>?", the folder and, when
   Claude Code's banner is on the terminal's screen, the model and plan it names. The message box
