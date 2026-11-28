@@ -99,6 +99,9 @@ as the second account, Windows Terminal, the desktop hand-over.
   time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
   Cancel. Read-only on the bridge's files.
 - A real hand-over out of Desktop (make it let go of a session). No supported way is known.
+- When the terminal opens for a question (a card's "Open terminal", or Chat handing a question it
+  cannot answer to the terminal), give the terminal keyboard focus so the answer can be typed at
+  once (owner, 2026-11-28).
 - Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
 - Reuse Conversation in Sessions details later. That view is currently a short read-only preview
   and has no independently scrollable transcript region.
