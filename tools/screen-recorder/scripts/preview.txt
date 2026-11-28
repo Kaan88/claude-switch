@@ -19,6 +19,13 @@ snap second
 send \e[B
 sleep 800
 snap third
+# One Down past the last option: Chat walks to "Chat about this" (no number, under the rule)
+# this way. Only looked at, never chosen: Up again before Enter.
+send \e[B
+sleep 800
+snap chat_about
+send \e[A
+sleep 800
 send \e[A
 sleep 800
 snap back

@@ -1662,15 +1662,15 @@ fn enter_in_a_forms_field_turns_the_page_and_submits_on_the_last_question() {
     assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
     assert_eq!(f.chat().question.form.page, 2);
     assert!(!f.chat().question.focus && f.writes().is_empty());
-    // Submit there checks first: the second question has no answer, and is shown.
-    assert!(press(f.tab(), now, Hit::Submit));
+    // Enter there is Submit, which checks first: the second question has no answer, and is shown.
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
     assert_eq!(f.chat().question.error, Some(UNANSWERED));
     assert_eq!(f.chat().question.form.page, 1);
     assert!(f.writes().is_empty());
     press(f.tab(), now, Hit::Option(0));
     assert!(press(f.tab(), now, Hit::Page(2)));
     assert_eq!(f.chat().question.form.page, 2);
-    assert!(press(f.tab(), now, Hit::Submit));
+    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
     assert_eq!(f.writes(), [b"\r".to_vec()], "Large is highlighted: chosen");
     assert!(f.chat().question.step.is_some());
 }
@@ -2882,4 +2882,32 @@ fn a_question_with_previews_shows_the_one_under_the_pointer_or_the_keys_and_copi
     let mut parts = cards::parts(&pane.chat, &pane.model, 700.0).unwrap();
     preview::lay(&mut pane.chat.question, &mut parts, 700.0, 1.0, &question(false).options);
     assert!(parts.iter().all(|p| !matches!(p, cards::Part::Preview(_) | cards::Part::Choices { side: Some(_), .. })));
+}
+
+#[test]
+fn a_preview_question_on_the_screens_menu_card_is_answered_from_the_same_reading() {
+    use screens::recorded::{PREVIEW_ASKED, PREVIEW_NONE, recorded};
+    // The transcript does not hold the call (yet): the card is the screen's, without the box.
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.tab().term.screen = recorded(PREVIEW_ASKED);
+    f.chat().output(now, true, false);
+    f.sync();
+    let menu = f.chat().question.menu.clone().expect("the screen's card");
+    assert_eq!(menu.choices, ["Boxed", "Tree", "Plain", "Chat about this"]);
+    // A click on Plain: the arrows go, then Enter once the screen shows Plain highlighted.
+    assert!(press(f.tab(), now, Hit::Option(2)));
+    assert_eq!(f.writes(), [down(2)], "the keys are checked against the card's own reading");
+    assert_eq!(f.chat().question.error, None);
+    f.tab().term.screen = recorded(PREVIEW_NONE);
+    f.chat().output(now, true, false);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    // Esc there too.
+    let mut f = Fixture::idle();
+    f.tab().term.screen = recorded(PREVIEW_ASKED);
+    f.chat().output(now, true, false);
+    f.sync();
+    assert!(press(f.tab(), now, Hit::Escape));
+    assert_eq!(f.writes(), [ESC.to_vec()]);
 }

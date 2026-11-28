@@ -132,6 +132,13 @@ impl State {
         self.dragging = false;
     }
 
+    /// A press anywhere but in the preview: its selection goes, so Ctrl+C copies what was
+    /// selected since (the conversation, the message box), not this.
+    pub(in crate::view::chat) fn unselect(&mut self) {
+        self.selection = None;
+        self.dragging = false;
+    }
+
     /// The shown preview's plain text, or the selected part of it.
     pub(in crate::view::chat) fn copy_text(&self, selected: bool) -> Option<String> {
         let text = self.grid()?.text();
@@ -167,7 +174,7 @@ impl State {
         } else if y > self.view.bottom() && self.scroll + shown < rows {
             self.scroll += 1;
         }
-        let y = y.clamp(self.view.y, self.view.bottom() - 1.0);
+        let y = y.clamp(self.view.y, (self.view.bottom() - 1.0).max(self.view.y));
         if let (Some(at), Some(sel)) = (self.place_at(x, y), self.selection.as_mut()) {
             sel.1 = at;
         }
@@ -327,5 +334,49 @@ impl Draw<'_> {
             let thumb_y = track.y + (track.h - thumb_h) * (*scroll as f32 / over as f32);
             p.rbox(Rect::new(track.x, thumb_y, track.w, thumb_h), 1.25, pal.thumb);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use claude_switch_core::transcript::QuestionOption;
+
+    #[test]
+    fn a_selection_in_the_preview_goes_with_a_press_elsewhere_or_another_option() {
+        let option = |label: &str, preview: &str| QuestionOption {
+            label: label.into(),
+            preview: preview.into(),
+            ..Default::default()
+        };
+        let options = [option("Boxed", "+-----+\n| Map |\n+-----+"), option("Tree", "cache/\n  12/")];
+        let mut card = Card::default();
+        let mut parts = vec![
+            Part::Choices { rows: Vec::new(), enabled: true, side: None },
+            Part::Preview(Size { w: 400.0, rows: 0, cell: 0.0 }),
+        ];
+        lay(&mut card, &mut parts, 400.0, 1.0, &options);
+        let state = &mut card.previews;
+        // As the last frame drew it.
+        state.view = Rect::new(0.0, 0.0, 380.0, 200.0);
+        state.top = 0.0;
+        let select = |state: &mut State| {
+            state.press(0.0, 1.0);
+            assert!(state.drag_to(300.0, 40.0));
+            assert!(state.release(None));
+        };
+        select(state);
+        assert!(state.copy_text(true).is_some_and(|t| t.starts_with("+-----+")));
+        // A press elsewhere (the conversation, the message box): Ctrl+C is no longer the preview's.
+        state.unselect();
+        assert_eq!(state.copy_text(true), None);
+        // Another option's preview starts with no selection.
+        select(state);
+        assert!(state.step(true));
+        assert_eq!(state.copy_text(true), None);
+        // A pane not drawn yet never panics on a drag.
+        state.view = Rect::default();
+        state.dragging = true;
+        state.drag_to(5.0, 5.0);
     }
 }

@@ -472,6 +472,10 @@ impl AppState {
         let Some(tab) = self.tabs.shown_mut() else { return false };
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         chat.recall.cancel_load();
+        use super::question::Hit as Q;
+        if !matches!(target, Some(Target::Chat(Control::Question(Q::Preview | Q::CopyPreview)))) {
+            chat.question.previews.unselect();
+        }
         if !matches!(
             target,
             Some(Target::Chat(

@@ -28,6 +28,12 @@ kind = question
 highlight = Plain
 side = yes
 
+[chat_about]
+# Not recorded yet (added 2026-11-28): one Down below the last option should highlight
+# "Chat about this". Chat writes Enter there only once the screen shows that highlight.
+kind = question
+highlight = Chat about this
+
 [back]
 kind = question
 highlight = Tree

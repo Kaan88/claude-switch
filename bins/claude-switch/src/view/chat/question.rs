@@ -410,14 +410,20 @@ impl MenuShown {
     }
 }
 
-fn menu_shown(screen: &Screen) -> Option<MenuShown> {
-    // A question's preview box beside its choices is not part of the menu: read without it.
-    let panel = match screens::question_view(screen) {
+/// The menu, panel or question the screen shows, as the menu card reads it: a question's preview
+/// box beside its choices is not part of it. The card is built from this reading, and every key
+/// a click on it writes is checked against the same reading.
+fn menu_panel(screen: &Screen) -> Option<screens::Panel> {
+    match screens::question_view(screen) {
         std::borrow::Cow::Owned(view) => {
             screens::panel(&view).filter(|p| p.question).or_else(|| screens::panel(screen))
         }
         std::borrow::Cow::Borrowed(_) => screens::panel(screen),
-    }?;
+    }
+}
+
+fn menu_shown(screen: &Screen) -> Option<MenuShown> {
+    let panel = menu_panel(screen)?;
     let choices = panel.menu.as_ref().map(screens::Menu::texts).unwrap_or_default();
     let (notes, question) = (panel.notes, panel.question);
     // Only the row as the CLI first draws it: once it holds text it is an answer, not the field.
@@ -671,7 +677,7 @@ fn read(
             same.then_some((menu, None, None))
         }
         Subject::Menu { title, choices } => {
-            let panel = screens::panel(screen)?;
+            let panel = menu_panel(screen)?;
             let menu = panel.menu?;
             let texts = menu.texts();
             let same = texts.len() == choices.len()
@@ -679,7 +685,7 @@ fn read(
             (panel.title == *title && same).then_some((menu, None, None))
         }
         Subject::Panel { rows } => {
-            let panel = screens::panel(screen)?;
+            let panel = menu_panel(screen)?;
             let empty = screens::Menu { entries: Vec::new(), lines: Vec::new(), footer: 0 };
             (panel.menu.is_none() && panel.rows == *rows).then_some((empty, None, None))
         }
@@ -1930,6 +1936,17 @@ pub(super) fn key(tab: &mut Tab, now: Instant, name: &KeyName, mods: Mods, text:
         && chat.question.visible()
         && chat.question.previews.step(*name == KeyName::Down)
     {
+        return true;
+    }
+    // On a form's Submit step (no field) Enter is Submit answers, with the button's checks.
+    let form = &chat.question.form;
+    if mods.none()
+        && *name == KeyName::Enter
+        && chat.question.visible()
+        && !form.texts.is_empty()
+        && form.page >= form.texts.len()
+    {
+        press(tab, now, Hit::Submit);
         return true;
     }
     if !chat.question.focus {
