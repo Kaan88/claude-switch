@@ -31,6 +31,8 @@
 //!   running turn (as typed, wrapped, or as Claude Code's paste marker).
 //! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
 //!   or none is (a resumed branch shows the turns before its cut and none after).
+//! - `dialog`: the readers of menus, questions and dialogs that find one on the screen (`menu`,
+//!   `panel`, `permission`, `review`, `attention`, …, commas between), `none` when none does.
 //! - `activity`: the name of another snapshot of the script whose rows down to the input box's
 //!   bottom rule are the same ([`screen::activity_digest`]): what redraws under it (the list of
 //!   background agents and their timers) is no activity, and keeps no screen from going quiet.
@@ -187,6 +189,10 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
                 (false, "shows") => format!("not shown: {}", wrong.join(" | ")),
                 _ => format!("shown: {}", wrong.join(" | ")),
             }
+        }
+        "dialog" => {
+            let read = dialogs_read(s);
+            if read.is_empty() { "none".to_owned() } else { read.join(", ") }
         }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
         "sent" => {
@@ -545,15 +551,18 @@ fn a_pattern_matches_whole_texts_with_stars_for_any_text() {
 #[test]
 fn the_fixtures_read_as_the_states_the_check_names() {
     for (fixture, wanted) in [
-        (PROMPT_IDLE, "kind = idle\ninput =\nsend = yes\nworking = no"),
+        (PROMPT_IDLE, "kind = idle\ninput =\nsend = yes\nworking = no\ndialog = none"),
         (PLAIN_TYPED, "kind = input\ninput = Reply with just the word: pong\nsend = no"),
         (WORKING_TOOL, "kind = working\nsend = no"),
-        (PLAIN_PASTED_LINES, "kind = input\ninput = -\nlines = line one\\nline two\\nline three"),
+        (PLAIN_PASTED_LINES, "kind = input\ninput = -\nlines = line one\\nline two\\nline three\ndialog = none"),
         (ASK_SINGLE, "kind = question\ntitle = Which colour do you prefer?\nhighlight = Red (warm)\ncount = 5"),
         (ASK_OTHER_TYPED, "kind = question\nanswer = my own answer"),
         (FORM_MULTI, "kind = question\nchoices = [ ] Apple | [ ] Pear | [ ] Plum | [ ] Type something | Next | *"),
         (ASK_REVIEW, "kind = review\nanswers = Which size? = Small | Which speed? = Slow\nhighlight = Submit answers"),
-        (PERM_BASH, "kind = permission\ntitle = Do you want to proceed?\ncount = 4\ntell = -\nattention = yes"),
+        (
+            PERM_BASH,
+            "kind = permission\ntitle = Do you want to proceed?\ncount = 4\ntell = -\nattention = yes\ndialog = *permission*",
+        ),
         (PERM_AGENT_BASH, "kind = permission\nrequest = Bash command * from the general-purpose agent | *"),
         (PERM_TWO_AFTER, "kind = permission\nattention = yes\nbody = Bash command*| mkdir par_b"),
         (BLOCKED_ONE, "kind = blocked\nmarks = none\npending = -\nesc-does = close\nbody = mkdir probe_blocked_two"),

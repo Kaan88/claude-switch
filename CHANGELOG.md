@@ -12,6 +12,9 @@
 - Chat: the "Review your answers" step of a question shows as a card when blank rows and the
   input's rule are drawn under it, instead of sending you to the terminal. A menu's highlighted
   choice (`❯ 1. Yes`) is no longer taken for the input's mark.
+- Chat: a message that is a numbered list ("1. …", "2. …") no longer shows as a question card
+  that blocks sending. What is in Claude Code's input box, under it or in the conversation above
+  it is never read as a menu, question or dialog.
 
 ## 0.1.6 (2026-11-28)
 

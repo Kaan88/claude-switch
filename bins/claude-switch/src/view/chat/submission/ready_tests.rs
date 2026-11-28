@@ -1040,3 +1040,29 @@ fn a_review_step_over_blank_rows_and_a_named_rule_shows_as_a_card() {
     f.send("later");
     assert!(f.writes().is_empty() && f.chat().queue.is_none());
 }
+
+#[test]
+fn a_numbered_message_makes_no_card_in_the_input_or_once_sent() {
+    // The owner's message, a numbered list of three lines: Chat read a menu from its own lines,
+    // showed a card for it and refused every send.
+    let footer_like = "  Enter to select · ↑/↓ to navigate · Esc to cancel";
+    let draft =
+        format!("cursor 3 12\n❯ earlier\n{RULE}\n❯ 1. say pong\n  2. nothing else\n  3. done\n{RULE}\n{footer_like}");
+    let mut f = Live::new();
+    f.draw(&draft);
+    let (_, reason) = f.pass(QUIET);
+    assert_ne!(reason, Some(Reason::Menu));
+    assert!(f.chat().question.menu.is_none(), "no card");
+    let now = f.now;
+    assert_ne!(blocked(f.tab(), now, Intent::Slash), Some(MENU_OPEN));
+    // Sent: the message in the conversation, the turn running, the empty input.
+    let sent = format!(
+        "cursor 6 2\n❯ 1. say pong\n  2. nothing else\n  3. done\n\n✻ Working… (1s)\n{RULE}\n❯ \n{RULE}\n{footer_like}"
+    );
+    let mut f = Live::new();
+    f.turn();
+    f.draw(&sent);
+    let (_, reason) = f.pass(QUIET);
+    assert_ne!(reason, Some(Reason::Menu));
+    assert!(f.chat().question.menu.is_none(), "no card");
+}

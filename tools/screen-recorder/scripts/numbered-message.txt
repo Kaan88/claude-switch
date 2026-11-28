@@ -1,0 +1,15 @@
+# A message of numbered lines, pasted into the input as Chat sends it, then sent: neither the
+# draft in the input box nor the message as sent (over the turn starting, and after it) is a
+# menu, question or dialog to Chat's readers. One model request.
+#: args --permission-mode default
+#: seconds 20
+start
+send \e[200~1. say pong\r2. nothing else\r3. then stop\e[201~
+sleep 1500
+snap draft
+send \r
+sleep 400
+snap sent
+gone esc to interrupt 60000
+quiet 1500 30000
+snap answered

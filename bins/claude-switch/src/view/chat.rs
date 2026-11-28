@@ -109,6 +109,11 @@ struct Signals<'a> {
     resting: bool,
 }
 
+/// The CLI's live input box is on the screen: no prompt or menu has its place.
+pub(crate) fn input_box_shown(screen: &mdshared_term::Screen) -> bool {
+    question::screens::input_box(screen).is_some()
+}
+
 fn assess(s: Signals<'_>) -> (Gate, Option<Reason>) {
     if s.ended {
         return (Gate::Ended, Some(Reason::Ended));

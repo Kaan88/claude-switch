@@ -136,8 +136,13 @@ const UNDER_FOOTER: usize = 6;
 /// cleaned rows; the last row is found on the screen itself, where an empty input (`❯`) counts.
 /// A menu takes the input box's place, so while no input row is under it a footer a few rows up
 /// still counts, whatever the CLI or a redraw left under it (a rule, a notice): the
-/// conversation's own words are above the input row, never under it.
+/// conversation's own words are above the input row, never under it. While the live input box
+/// shows there is no menu at all: above it is the conversation (the user's message as sent, a
+/// numbered list of Claude's), in it the user's own text, under it the input's status lines.
 fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
+    if input_box(screen).is_some() {
+        return None;
+    }
     let last = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty())?;
     let footer = if menu_footer(&rows[last]) {
         last
@@ -155,7 +160,7 @@ fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
             footer
         }
     };
-    (!input_box_above(screen, footer)).then_some(footer)
+    Some(footer)
 }
 
 /// The row of the footer of a menu, picker or dialog that has the screen, if one shows.
@@ -164,20 +169,30 @@ pub(in crate::view) fn live_footer(screen: &Screen) -> Option<usize> {
     footer_row(screen, &rows)
 }
 
-/// The CLI's input box (a `❯` row right under a solid rule, closed by another rule) sits just above
-/// `row`: `row` is then a status line under the idle input (a custom status line or a tip that
-/// happens to read like a menu hint), not a menu's footer.
-pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> bool {
+/// How many rows the input box's text may take between its rules.
+const INPUT_BOX_ROWS: usize = 40;
+
+/// The CLI's live input box, the lowest on the screen: its top rule (plain or with the session's
+/// name), a row starting with the input mark right under it, the rows of a longer input, and the
+/// solid rule closing it (rows of the top and the bottom rule). Whatever the input holds (a draft
+/// of numbered lines, `❯ 1. fix a`) is the user's text: a menu takes the input box's place and
+/// is never drawn inside it, and a menu's choice under a rule (`❯ 5. Chat about this`) is not
+/// closed by another rule.
+pub(in crate::view::chat) fn input_box(screen: &Screen) -> Option<(usize, usize)> {
     let text = |r: usize| screen.row_text(r).trim().to_owned();
-    let Some(bottom) = (row.saturating_sub(8)..row).rev().find(|&r| solid_rule(&text(r))) else {
-        return false;
-    };
     let top_rule = |r: usize| solid_rule(&text(r)) || crate::view::chat::submission::screen::named_rule(&text(r));
-    let Some(top) = (bottom.saturating_sub(12)..bottom).rev().find(|&r| top_rule(r)) else {
-        return false;
-    };
-    let first = text(top + 1);
-    first.starts_with(prompt_mark) && numbered(first.trim_start_matches(prompt_mark).trim()).is_none()
+    (1..screen.rows()).rev().filter(|&r| text(r).starts_with(prompt_mark) && top_rule(r - 1)).find_map(|r| {
+        let end = (r + 1 + INPUT_BOX_ROWS).min(screen.rows());
+        let bottom = (r + 1..end).find(|&b| rule(&text(b)))?;
+        solid_rule(&text(bottom)).then_some((r - 1, bottom))
+    })
+}
+
+/// `row` is inside the CLI's input box or under it: there it is the user's own text or a status
+/// line under the input (a custom status line or a tip that happens to read like a menu hint,
+/// the agent list's hints), never a menu's row or footer.
+pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> bool {
+    input_box(screen).is_some_and(|(top, _)| row > top)
 }
 
 pub(super) fn numbered(text: &str) -> Option<(usize, &str)> {
@@ -265,7 +280,17 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
     let texts: Vec<String> = rows.iter().map(|(_, text)| text.clone()).collect();
     let footer = footer_row(screen, &texts)?;
     let mut entries: Vec<Entry> = Vec::new();
-    for (row, (highlighted, text)) in rows.iter().enumerate().take(footer).skip(footer.saturating_sub(MENU_ROWS)) {
+    // The CLI draws a menu under a full-width rule (a question may draw another between its
+    // choices): what is above the topmost one is the conversation, where the user's own message
+    // (`❯ 1. fix a` / `2. fix b`, echoed as sent) and Claude's numbered lists are no choices.
+    let first = footer.saturating_sub(MENU_ROWS);
+    let full = |row: &usize| {
+        let text = screen.row_text(*row);
+        let text = text.trim_end();
+        text.chars().count() >= screen.cols() && solid_rule(text.trim_start())
+    };
+    let first = (first..footer).find(full).map_or(first, |top| top + 1);
+    for (row, (highlighted, text)) in rows.iter().enumerate().take(footer).skip(first) {
         let Some((n, rest)) = numbered(text) else { continue };
         if n == 1 {
             entries.clear();
@@ -859,6 +884,8 @@ pub(super) struct RewindList {
 
 /// The last row reading `title` with `next` under it (blank rows between): the row after `next`.
 fn titled(screen: &Screen, title: &str, next: &str) -> Option<usize> {
+    // The rewind's screens take the input box's place: with it on screen, a title is text.
+    input_box(screen).is_none().then_some(())?;
     let text = |r: usize| clean(&screen.row_text(r)).1;
     let under = |r: usize| (r + 1..screen.rows()).find(|&n| !text(n).is_empty());
     let top = (0..screen.rows()).rev().find(|&r| text(r) == title && under(r).is_some_and(|n| text(n) == next))?;
@@ -1044,6 +1071,8 @@ pub(super) fn review(screen: &Screen) -> Option<Review> {
     let first = last.checked_sub(1)?;
     let entry = |at: usize, n: usize| numbered(&rows[at].1) == Some((n + 1, REVIEW_ENTRIES[n]));
     (entry(first, 0) && entry(last, 1)).then_some(())?;
+    // With the input box on screen these rows are the user's text or the conversation.
+    input_box(screen).is_none().then_some(())?;
     let anchor = rows[..first].iter().rposition(|(_, text)| text == REVIEW)?;
     let above = rows[..anchor].iter().rev().find(|(_, text)| !text.is_empty())?;
     (tab_bar(&above.1) && !rows[anchor].0).then_some(())?;

@@ -258,6 +258,7 @@ runs of blanks count as one and `\n` is a line break.
 | `sent` | The input shows this message as Chat's echo check before Enter takes it (as typed, wrapped, or as the paste marker) |
 | `shows`, `hides` | Every text of the value (` \| ` between them) is somewhere on the screen, or none is |
 | `activity` | The name of another snapshot of the script with the same rows down to the input box's bottom rule (Chat's activity digest: what redraws under the rule, such as the list of background agents, is no activity) |
+| `dialog` | The readers of menus, questions and dialogs that find one on the screen, commas between; `none` when none does |
 
 A section can also name a file the script wrote instead of a snapshot (the check looks for
 `<state>.ansi`, then these):
