@@ -83,11 +83,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Defects noticed
 
-- **Chat: a double-click selects a word, but dragging on does not extend it** (owner, 2026-11-28; cause
-  read from the code). `press` in `view/ui/input.rs` sets `dragging = clicks == 1`, so a drag after a
-  double- (or triple-) click is ignored. Expected, as in other apps: the drag extends word by word (line
-  by line after a triple-click). The message box has the same gap: `chat_press` sets `editor_drag` only
-  for a single click.
 - Try in a real session (built 2026-11-28 from recorded screens only): Send while a turn runs goes
   into Claude Code's empty input and is handed in mid-turn; a message sent so is shown where the
   transcript has it; Claude Code's rewind list leaves it out (Chat assumes so and offers no Rewind

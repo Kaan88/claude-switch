@@ -205,6 +205,8 @@ pub struct Chat {
     shell_count: usize,
     editor: ComposerEditor,
     editor_drag: bool,
+    /// The word a double click took: a drag from it goes by whole words.
+    editor_words: Option<std::ops::Range<usize>>,
     chips: Vec<Chip>,
     chip_page: usize,
     recall: recall::Recall,

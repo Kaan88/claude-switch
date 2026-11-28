@@ -94,6 +94,9 @@ pub struct Ui {
     /// The message a right-click menu was opened on.
     menu_row: Option<Id>,
     dragging: bool,
+    /// What a double click (a word) or a triple click (a whole row) took: a drag from it goes
+    /// by whole words (`false`) or whole rows (`true`).
+    snap: Option<(select::Selection, bool)>,
     start: Option<(f32, f32, String)>,
     focused: bool,
     agent_origin: Option<Page>,

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Chat and the Session view: a drag after a double click selects on by whole words, and after
+  a triple click by whole paragraphs, in the conversation; in the message box a drag after a
+  double click goes by whole words. A drag after a double or triple click used to do nothing.
 - Chat: Ctrl+C copies the text selected in the conversation when the message box has no
   selection of its own; it used to do nothing there.
 - Chat: a message typed while Claude works (in Chat or in the terminal) is shown as your message

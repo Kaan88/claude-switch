@@ -378,10 +378,14 @@ impl AppState {
             }
             Some(Target::Chat(Control::Editor)) => {
                 let (x, y) = chat.editor_point(x, y);
+                chat.editor_words = None;
                 if clicks >= 3 {
+                    // The whole draft: a drag after it has nothing more to take.
                     chat.editor.select_all();
                 } else if clicks == 2 {
                     chat.editor.word_at(x, y);
+                    chat.editor_words = Some(chat.editor.selection());
+                    chat.editor_drag = true;
                 } else {
                     chat.editor.point(x, y, cx.mods().shift);
                     chat.editor_drag = true;
@@ -406,9 +410,7 @@ impl AppState {
             return Some(true);
         }
         if chat.editor_drag {
-            let (x, y) = chat.editor_point(x, y);
-            let changed = chat.editor.point(x, y, true);
-            return Some(changed);
+            return Some(chat.editor_drag_to(x, y));
         }
         if chat.commands.open && chat.layout.suggestions.contains(x, y) {
             return Some(false);
@@ -696,11 +698,20 @@ impl Chat {
         if let Some((x, y)) = point {
             self.resize_drawer(y);
             if self.editor_drag {
-                let (x, y) = self.editor_point(x, y);
-                self.editor.point(x, y, true);
+                self.editor_drag_to(x, y);
             }
         }
+        self.editor_words = None;
         self.resizing.take().is_some() | std::mem::take(&mut self.editor_drag)
+    }
+
+    /// A drag in the message box: by characters, or by whole words after a double click.
+    fn editor_drag_to(&mut self, x: f32, y: f32) -> bool {
+        let (x, y) = self.editor_point(x, y);
+        match self.editor_words.clone() {
+            Some(first) => self.editor.extend_words(&first, x, y),
+            None => self.editor.point(x, y, true),
+        }
     }
 
     pub(super) fn paste_clipboard(&mut self, picture_only: bool) {
