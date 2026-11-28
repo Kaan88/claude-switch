@@ -11,6 +11,7 @@ pub(crate) mod handover;
 const MAX_PICTURE: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_LINE: usize = 48 * 1024 * 1024;
 const MAX_SIDECAR: u64 = 1024 * 1024;
+mod active;
 mod background;
 mod chat;
 pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellStatus};
@@ -156,6 +157,8 @@ pub struct Changes {
     pub tasks_changed: bool,
     pub subagents_changed: bool,
     pub background_changed: bool,
+    /// Items left or joined the active branch (a prompt after a rewind): show `items()` afresh.
+    pub branch_changed: bool,
 }
 
 pub struct Reader {
@@ -183,8 +186,9 @@ impl Reader {
         Ok(reader)
     }
 
-    pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> + ExactSizeIterator {
-        self.view.items.iter().map(|(&id, item)| (id, item))
+    /// The items on the conversation's active branch, in transcript order.
+    pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> {
+        self.view.items.iter().filter(|(id, _)| !self.view.active.hides(id.offset)).map(|(&id, item)| (id, item))
     }
 
     pub fn background_shells(&self) -> Vec<BackgroundShell> {
@@ -217,7 +221,7 @@ impl Reader {
     }
 
     pub fn item(&self, id: ItemId) -> Option<&Item> {
-        self.view.items.get(&id)
+        self.view.items.get(&id).filter(|_| !self.view.active.hides(id.offset))
     }
 
     pub fn tasks(&self) -> &[Task] {
@@ -410,6 +414,8 @@ struct View {
     native_calls: BTreeMap<ItemId, (String, native_tasks::Call)>,
     native_results: HashMap<String, (ItemId, native_tasks::Outcome)>,
     chat: ChatInfo,
+    /// The active branch, so a rewind's replaced turns are not shown.
+    active: active::Active,
     background: background::Background,
     /// The newest slash command, for the output record that follows it.
     last_command: Option<String>,
@@ -430,6 +436,9 @@ struct ToolResult {
 
 impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
+        if !self.is_agent {
+            self.active.line(offset, line);
+        }
         // Most attachments are large context records; parse only the kinds that are shown.
         if decode::line_kind(line) == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
             return;
@@ -812,6 +821,11 @@ impl View {
     }
 
     fn finish(&mut self, changes: &mut Changes) {
+        if self.active.finish() {
+            changes.branch_changed = true;
+            changes.added.retain(|id| !self.active.hides(id.offset));
+            changes.updated.retain(|id| !self.active.hides(id.offset));
+        }
         if !std::mem::take(&mut self.plans_dirty) {
             return;
         }
@@ -992,5 +1006,7 @@ fn one_line(text: &str) -> String {
         .join(" ")
 }
 
+#[cfg(test)]
+mod active_tests;
 #[cfg(test)]
 mod tests;

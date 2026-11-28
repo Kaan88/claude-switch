@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Chat and the Session view: after a rewind, the turns it replaced are no longer shown once the
+  next message is written; the conversation follows the active branch of the transcript.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

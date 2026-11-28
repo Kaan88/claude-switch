@@ -224,7 +224,7 @@ fn bounded_tail_and_history_keep_ids_and_apply_results_that_were_read_first() {
     fs::write(&path, first.clone() + &call + &result + &last).unwrap();
     let mut reader = Reader::open(&path, result.len() + last.len() + 5).unwrap();
     assert!(reader.has_earlier());
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
     let recent = reader.items().next().unwrap().0;
     let change = reader.earlier().unwrap();
     assert_eq!(change.added, BTreeSet::from([ItemId { offset: first.len() as u64, block: 0 }]));
@@ -246,7 +246,7 @@ fn clipped_partial_line_survives_poll_or_interleaved_history_load() {
         let line = prompt(&text);
         fs::write(&path, prompt("previous") + &line[..line.len() - 4]).unwrap();
         let mut reader = Reader::open(&path, 64).unwrap();
-        assert_eq!(reader.items().len(), 0);
+        assert_eq!(reader.items().count(), 0);
         assert!(reader.has_earlier());
         if load_history_first {
             assert_eq!(reader.earlier().unwrap().added.len(), 1);
@@ -271,7 +271,7 @@ fn initial_partial_first_line_is_kept_until_its_newline() {
     let line = prompt("a  b");
     fs::write(&path, &line[..line.len() - 1]).unwrap();
     let mut reader = Reader::open(&path, 4096).unwrap();
-    assert_eq!(reader.items().len(), 0);
+    assert_eq!(reader.items().count(), 0);
     assert!(!reader.has_earlier());
     assert_eq!(reader.poll().unwrap(), Changes::default());
     let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
@@ -360,7 +360,7 @@ fn subagent_without_meta_follows_activity_and_links_when_meta_appears() {
     assert_eq!(info.started_at.as_deref(), Some("2026-11-26T01:00:00Z"));
     assert_eq!(info.tool_calls, 0);
     let mut child = reader.open_subagent("abc", 4096).unwrap();
-    assert_eq!(child.items().len(), 1);
+    assert_eq!(child.items().count(), 1);
     append(
         &agent_path,
         record(json!({"type":"assistant","isSidechain":true,"timestamp":"2026-11-26T01:02:00Z",
@@ -409,7 +409,7 @@ fn shrink_and_larger_replacement_reset_history() {
     let change = reader.poll().unwrap();
     assert!(change.reset);
     assert_eq!(change.added.len(), 1);
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
     assert!(reader.load_picture(&stale_picture).is_err());
     fs::rename(&path, folder.0.join("old.jsonl")).unwrap();
     assert_eq!(reader.poll().unwrap(), Changes::default());
@@ -417,7 +417,7 @@ fn shrink_and_larger_replacement_reset_history() {
     let change = reader.poll().unwrap();
     assert!(change.reset);
     assert_eq!(change.added.len(), 1);
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
     assert!(
         matches!(&reader.items().next().unwrap().1.kind, ItemKind::Prompt { text, .. } if text == "a larger replacement")
     );
@@ -434,7 +434,7 @@ fn ignores_large_blobs_with_type_before_or_after_the_payload() {
     let path = folder.session();
     fs::write(&path, first + "\n" + &last + "\n" + &prompt("visible")).unwrap();
     let reader = Reader::open(&path, 8 * 1024 * 1024).unwrap();
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
 }
 
 #[test]
@@ -465,7 +465,7 @@ fn timing_generated_20_mb() {
     let mut reader = Reader::open(&path, 2 * 1024 * 1024).unwrap();
     let open = start.elapsed();
     assert!(reader.has_earlier());
-    let items = reader.items().len();
+    let items = reader.items().count();
     assert!(items > 0);
     let start = Instant::now();
     let added = reader.earlier().unwrap().added.len();

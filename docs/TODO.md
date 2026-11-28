@@ -652,8 +652,13 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     nothing (recorded). Not checked: the menu item and the card have not been seen or clicked in the running app; a
     list long enough to scroll (the one-row scroll rule is untested); what "Summarize from here", "Summarize up to
     here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
-    text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
-    a rewind and the reader does not follow `parentUuid` branches.
+    text markers in the list. Done (2026-11-28): the reader shows the active branch only, the chain from
+    the newest record back through `parentUuid` (DESIGN.md, "Rewind"), so the rewound turns go once the next
+    prompt is written (the CLI appends nothing on the rewind itself, so they show until then). Checked by unit
+    tests over made-up transcripts: a rewind, a rewind to the first prompt, a fork's copy, tool results recorded
+    against their own call, progress and hook records off the chain, sidechains and a subagent's transcript, a
+    compaction boundary, the bounded slice and history paged in, records without links. Not checked: against a
+    live rewind in the app; the Tasks, Agents, Shells and Files pages still count the rewound turns.
     Review fixes (2026-11-27): every key on the choices needs them to quote the chosen prompt (the CLI could have
     been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
     prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list

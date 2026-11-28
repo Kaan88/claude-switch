@@ -642,7 +642,8 @@ impl Worker {
         }
         let reader = self.child.as_ref().map(|(_, r)| r).unwrap_or(root);
         let change = if self.child.is_some() { &visible } else { &lists };
-        reset |= change.reset;
+        // A prompt after a rewind leaves the replaced turns off the branch: show the items afresh.
+        reset |= change.reset || change.branch_changed;
         if reset {
             self.generation += 1;
         }
