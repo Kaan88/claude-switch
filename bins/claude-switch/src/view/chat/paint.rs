@@ -98,6 +98,7 @@ impl AppState {
         let hover = self.hover;
         let mouse = self.background_pointer();
         let diff = crate::view::look::Diff::from_ansi(&self.term_colours.0.ansi);
+        let scheme = self.term_colours.0;
         let focused = window_focused && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
@@ -146,6 +147,7 @@ impl AppState {
         let own = asking && chat.question.answerable.is_some() && chat.question.answerable == info.pending;
         pane.ui.set_awaiting(super::question::pending(&pane.model).filter(|_| own).map(|p| p.item));
         pane.ui.set_diff_colours(diff);
+        pane.ui.set_terminal_colours(scheme);
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
         if welcome {
             super::welcome::Welcome::read(chat, &pane.cwd, banner.as_ref(), &self.win_file.chat_pins).draw(

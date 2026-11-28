@@ -167,11 +167,12 @@ impl Ui {
                     // What a call printed: in a box of its own under the call's line.
                     let (px, py_) = super::rows::BOX_PAD;
                     let r = Rect::new(tx - px, py - py_, geo.tw + 2.0 * px, text.height() + 2.0 * py_);
-                    p.frame(r, 8.0, pal.field, pal.line);
+                    // Command output drawn as the terminal draws it stands on the terminal.s background.
+                    p.frame(r, 8.0, text.grid_background(&self.grid, pal).unwrap_or(pal.field), pal.line);
                 }
                 // A diff's lines are never wrapped: its row cuts them.
                 let cut = (row.style == Style::Edit).then(|| p.clip(Rect::new(tx, py, geo.tw, text.height())));
-                text.draw(p, Rect::new(tx, py, geo.tw, text.height()), body, range, pal);
+                text.draw(p, Rect::new(tx, py, geo.tw, text.height()), body, range, pal, &mut self.grid);
                 if let Some(cut) = cut {
                     p.restore(cut);
                 }

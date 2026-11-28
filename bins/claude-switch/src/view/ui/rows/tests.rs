@@ -1,5 +1,7 @@
 use super::*;
 
+use super::super::grid::tests::cells;
+
 fn id(offset: u64) -> ItemId {
     ItemId { offset, block: 0 }
 }
@@ -121,6 +123,7 @@ fn both_views_say_runs_in_words_show_edits_as_rows_and_put_only_successful_named
             offer: None,
             awaiting: None,
             actions: Default::default(),
+            cells: cells(),
         };
         rows.conversation(
             &model,
@@ -269,6 +272,7 @@ fn a_run_reads_in_words_by_kind_and_a_call_a_card_asks_about_waits() {
             offer: None,
             awaiting,
             actions: Default::default(),
+            cells: cells(),
         };
         rows.conversation(&model, &BTreeSet::new(), &if open { [id(1)].into() } else { BTreeSet::new() });
         rows.list
@@ -327,6 +331,7 @@ fn notices_are_compact_rows_that_expand_and_thoughts_are_steps_that_do_not_split
             offer: None,
             awaiting: None,
             actions: Default::default(),
+            cells: cells(),
         };
         rows.conversation(&model, &open, &tools);
         rows.list
@@ -367,7 +372,7 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
             pictures: Vec::new(),
             subagent: None,
             denial: None,
-            card: Some(ToolCard::Output(text.into())),
+            card: Some(ToolCard::Output { text: text.into(), ansi: None }),
         })
     };
     model.items = [
@@ -398,6 +403,7 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
             offer: None,
             awaiting: None,
             actions: Default::default(),
+            cells: cells(),
         };
         rows.conversation(&model, &BTreeSet::new(), &tools);
         rows.list
@@ -425,6 +431,101 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
         open.iter().find(|r| r.id == Id::Tool(id(1))).unwrap().body.as_ref().unwrap().text(),
         "Set model to Opus 5.5"
     );
+}
+
+#[test]
+fn coloured_command_output_is_a_terminal_grid_that_reads_and_copies_as_plain_text() {
+    let fixture = super::super::grid::tests::context_fixture();
+    let plain: String = {
+        let mut out = String::new();
+        let mut rest = fixture.as_str();
+        while let Some(c) = rest.chars().next() {
+            let len = if c == '\u{1b}' { claude_switch_core::transcript::escape_len(rest) } else { c.len_utf8() };
+            if c != '\u{1b}' {
+                out.push(c);
+            }
+            rest = &rest[len..];
+        }
+        out
+    };
+    let demo = crate::demo::Transcript::new().unwrap();
+    let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let output = |ansi: Option<&str>| {
+        let mut call = tool(
+            "/context",
+            ToolState::Ok,
+            Some(ToolCard::Output { text: plain.clone(), ansi: ansi.map(str::to_owned) }),
+        );
+        if let ItemKind::Tool { summary, .. } = &mut call.kind {
+            summary.clear();
+        }
+        call
+    };
+    model.items = [
+        item(ItemKind::Prompt { text: "/context".into(), pictures: vec![], synthetic: false, queued: false }),
+        output(Some(&fixture)),
+        output(None),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, item)| (id(i as u64), item))
+    .collect();
+    model.groups = super::super::super::model::group(&model.items);
+    let pal = &mdshared_ui::theme::DARK;
+    let mut rows = Rows {
+        list: vec![],
+        previous: BTreeMap::new(),
+        end: 0.0,
+        width: 900.0,
+        scale: 1.0,
+        pal,
+        chat: true,
+        offer: None,
+        awaiting: None,
+        actions: Default::default(),
+        cells: cells(),
+    };
+    rows.conversation(&model, &BTreeSet::new(), &BTreeSet::new());
+    let body = |i| rows.list.iter().find(|r| r.id == Id::Tool(id(i))).unwrap().body.as_ref().unwrap();
+    let (coloured, uncoloured) = (body(1), body(2));
+    assert!(matches!(coloured.layout, Layout::Grid(_)) && matches!(uncoloured.layout, Layout::Grid(_)));
+    assert_eq!(coloured.text(), plain, "what is selected and copied has no escape codes");
+    assert_eq!(coloured.raw(), fixture, "drawn from the codes the CLI recorded");
+    assert_eq!(uncoloured.text(), plain, "output recorded without codes is the same grid");
+    assert_eq!(coloured.height(), uncoloured.height());
+    assert!(rows.list.iter().filter(|r| r.id != Id::Message(id(0))).all(|r| r.boxed && r.open));
+}
+
+#[test]
+fn a_grid_is_laid_out_again_only_when_its_columns_change() {
+    let pal = &mdshared_ui::theme::DARK;
+    let mut rows = Rows {
+        list: vec![],
+        previous: BTreeMap::new(),
+        end: 0.0,
+        width: 900.0,
+        scale: 1.0,
+        pal,
+        chat: true,
+        offer: None,
+        awaiting: None,
+        actions: Default::default(),
+        cells: cells(),
+    };
+    let source = "\u{1b}[31mred\u{1b}[0m and plain";
+    let grid = |body: &Body| match &body.layout {
+        Layout::Grid(g) => &**g as *const super::super::grid::Grid,
+        _ => panic!("a grid"),
+    };
+    let key = Id::Tool(id(1));
+    let first = rows.shape(&key, source, 7.0 * 40.0, BodyKind::Grid, None);
+    let before = grid(&first);
+    rows.previous.insert(key.clone(), first);
+    let same = rows.shape(&key, source, 7.0 * 40.0 + 5.0, BodyKind::Grid, None);
+    assert_eq!(grid(&same), before, "a width with as many columns keeps the grid");
+    rows.previous.insert(key.clone(), same);
+    let other = rows.shape(&key, source, 7.0 * 20.0, BodyKind::Grid, None);
+    assert!(matches!(&other.layout, Layout::Grid(g) if g.cols() == 20));
 }
 
 #[test]
@@ -464,6 +565,7 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         offer: None,
         awaiting: None,
         actions: Default::default(),
+        cells: cells(),
     };
     rows.conversation(&model, &[id(1)].into(), &[id(1)].into());
     let row = |i| rows.list.iter().find(|r| r.id == Id::Tool(id(i))).unwrap();
@@ -518,6 +620,7 @@ fn chat_keeps_room_for_buttons_under_each_prompt_and_each_turns_last_answer() {
             offer: None,
             awaiting: None,
             actions: MessageActions::of(&model, chat),
+            cells: cells(),
         };
         rows.conversation(&model, &BTreeSet::new(), &BTreeSet::new());
         let actions = |i| rows.list.iter().find(|r| r.id == Id::Message(id(i))).unwrap().actions;

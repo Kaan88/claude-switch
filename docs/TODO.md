@@ -99,15 +99,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Later (the owner's list)
 
-- **Command output in Chat drawn like the terminal** (owner, 2026-11-28; doable). Output of commands such
-  as `/context`, `/mcp` or `/cost` shows in Chat as plain grey text: no colours, and the cell glyphs
-  (⛁ ⛀ ⛶) come from a fallback font with other widths, so the grid and the columns beside it go out of
-  line. The terminal drawer shows the same output correctly. The transcript keeps the colour codes
-  (the `<local-command-stdout>` record of `/context` has its SGR sequences), so Chat can draw it: feed
-  the text into an off-screen terminal of the block's width (the app's own emulator, `mdshared_term`)
-  and paint its cells with the terminal's font, cell grid and the theme's ANSI colours, as the drawer
-  does; keep selection and Copy working as plain text. Check wide lines (wrap or scroll sideways) and
-  output recorded with no colour codes.
 - **Workers tab**, after a usable first version: the bridge's jobs live (worker, model, folder, running
   time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
   Cancel. Read-only on the bridge's files.

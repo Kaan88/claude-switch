@@ -1,4 +1,5 @@
 //! The read-only session pane. Worker updates change its content; they never give it keyboard focus.
+pub(in crate::view) mod grid;
 mod input;
 mod markdown;
 mod paint;
@@ -137,6 +138,8 @@ pub struct Ui {
     awaiting: Option<ItemId>,
     /// The colours of added and removed lines, from the terminal's theme.
     diff: Option<super::look::Diff>,
+    /// The terminal.s font and colours, which command output is drawn in.
+    grid: grid::Look,
     /// Chat's Details panel is closed: the working line shows the task list's progress, and a
     /// click on it opens the panel.
     progress: bool,
@@ -237,6 +240,11 @@ impl Ui {
     /// The colours of added and removed lines, from the window's terminal theme.
     pub fn set_diff_colours(&mut self, diff: super::look::Diff) {
         self.diff = Some(diff);
+    }
+
+    /// The terminal theme.s colours, which command output is drawn in.
+    pub fn set_terminal_colours(&mut self, scheme: mdshared_ui::termview::Scheme) {
+        self.grid.scheme = Some(scheme);
     }
 
     /// What Chat shows for a conversation with nothing in it: one quiet line (a transcript still
@@ -525,6 +533,7 @@ impl Ui {
                 } else {
                     Default::default()
                 };
+            let cells = self.grid.font.metrics(grid::FONT_SIZE, scale);
             let mut r = Rows {
                 previous,
                 list: Vec::new(),
@@ -536,6 +545,7 @@ impl Ui {
                 offer: self.offer.map(|(id, _)| id),
                 awaiting: self.awaiting,
                 actions: rows::MessageActions::of(m, self.chat),
+                cells,
             };
             match self.page {
                 Page::Conversation => {

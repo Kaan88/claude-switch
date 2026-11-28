@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Chat and the Session view: what a command printed (`/context`, `/mcp`, `/cost`, shell mode) is
+  drawn as the terminal draws it, from the colour codes Claude Code recorded: the terminal's font,
+  cell grid and theme colours, so `/context`'s grid and the columns beside it line up and keep
+  their colours. Lines wider than the box wrap; selection and Copy give plain text. Other escape
+  sequences in the output are dropped, so it cannot move or clear what is shown.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

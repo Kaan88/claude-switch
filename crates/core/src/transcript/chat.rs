@@ -186,8 +186,12 @@ pub enum ToolCard {
     Questions(Vec<Question>),
     /// The Markdown plan of an `ExitPlanMode` call.
     Plan(String),
-    /// What a slash command or a shell-mode command printed, as mono text.
-    Output(String),
+    /// What a slash command or a shell-mode command printed: the plain text, and the same with
+    /// the escape sequences the CLI recorded (its colours) when there were any, bounded alike.
+    Output {
+        text: String,
+        ansi: Option<String>,
+    },
 }
 
 /// An edit's recorded patch (`toolUseResult.structuredPatch`), bounded.
@@ -710,7 +714,7 @@ mod tests {
             .items()
             .map(|(_, item)| match &item.kind {
                 ItemKind::Prompt { text, .. } => format!("prompt {text}"),
-                ItemKind::Tool { name, summary, state, card: Some(ToolCard::Output(text)), .. } => {
+                ItemKind::Tool { name, summary, state, card: Some(ToolCard::Output { text, .. }), .. } => {
                     format!("{name}|{summary}|{state:?}|{text}")
                 }
                 other => format!("{other:?}"),
