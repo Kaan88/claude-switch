@@ -99,10 +99,16 @@ pub(crate) fn cli_launch(account: &Account, args: &[&str], cwd: PathBuf, place: 
 /// (read just before by the caller) holds the session, [`Refusal::Invalid`] when it was launched less
 /// than 20 seconds ago ([`note_starting`]), [`Refusal::NotLoggedIn`] when the account's CLI has no
 /// login. CLI: `claude --resume <id>` in the session's folder (the home folder when that is
-/// gone), [`crate::Place::Terminal`]. Desktop: `claude --desktop --resume <id>`,
-/// [`crate::Place::Detached`]. Either way `CLAUDE_CONFIG_DIR` is set for a further account and
-/// removed for the first; missing shared links and initial MCP settings are provisioned first
-/// without replacing existing directories.
+/// gone), [`crate::Place::Terminal`]; `CLAUDE_CONFIG_DIR` is set for a further account and removed
+/// for the first. Desktop, [`crate::Place::Detached`]: for the first account
+/// `claude --desktop --resume <id>`, which opens `claude://resume?session=<id>` through Windows'
+/// handler for `claude:` links, and that handler starts the desktop app's default profile, the
+/// first account's. For a further account that would open the session in the first account's
+/// window, so the verified desktop executable is started as "Open Desktop as this account" starts
+/// it (`--user-data-dir=<desktop_dir>`) with the link as the handler passes it (`-- <link>`); the
+/// app opens a `claude:` link from its command line at start and in the profile's running window.
+/// Missing shared links and initial MCP settings are provisioned first without replacing existing
+/// directories (the desktop app reads the transcript through the shared `projects` folder).
 pub fn resume(
     roots: &Roots,
     config: &Config,
@@ -134,14 +140,31 @@ pub fn resume(
             Place::Terminal,
             format!("{} · {folder} · Resume", account.name),
         ),
-        App::Desktop => cli_launch(
+        App::Desktop if account.primary => cli_launch(
             account,
             &["--desktop", "--resume", &session.id],
             cwd,
             Place::Detached,
             format!("{} · {folder} · Resume in the desktop app", account.name),
         ),
+        App::Desktop => desktop_resume(account, &session.id, &folder)?,
     })
+}
+
+/// A further account's desktop app opening session `id` (validated): see [`resume`].
+fn desktop_resume(account: &Account, id: &str, folder: &str) -> Result<Launch, Refusal> {
+    #[cfg(windows)]
+    {
+        let mut launch = desktop_launch(PathBuf::from(desktop::REQUEST), account);
+        launch.args.extend(["--".to_owned(), format!("claude://resume?session={id}")]);
+        launch.label = format!("{} · {folder} · Resume in the desktop app", account.name);
+        Ok(launch)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (account, id, folder);
+        Err(Refusal::NoDesktopApp)
+    }
 }
 
 /// A copy of `session` as `account`: `claude --resume <id> --fork-session` in the session's folder

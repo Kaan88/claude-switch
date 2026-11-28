@@ -78,7 +78,14 @@ that pid is alive.
   `--user-data-dir=<dir>` argument, not a different `CLAUDE_CONFIG_DIR`.
   The Code tab of every copy writes transcripts to `%USERPROFILE%\.claude\projects`.
 - `claude --resume <id>` continues a session (it finds it from any folder, but run it in the session's
-  folder). `claude --desktop --resume <id>` hands a CLI session to the desktop app and exits.
+  folder). `claude --desktop --resume <id>` hands a CLI session to the desktop app and exits: it
+  opens `claude://resume?session=<id>` (2.1.332: `rundll32 url.dll,FileProtocolHandler`), and
+  Windows' handler for `claude:` links (the package's `windows.protocol`, `Claude.exe -- "%1"`)
+  starts the default profile, the first account's. So only the first account resumes in the
+  desktop app that way; a further account's desktop app is started as for "Open Desktop as this
+  account" (`--user-data-dir=<dir>`) with the link after `--`, which the app opens from its command
+  line at start (as it does for its own `ccd` alias) and in that profile's running window
+  (`second-instance`). Read from desktop app 7.37095.0 (`app.asar`, `AppxManifest.xml`), not run.
 - The same session open in two places at once loses messages. Never start a session that is running.
 - Resuming under another account works on the same transcript, but the prompt cache belongs to the
   account: the first request re-reads the whole conversation at full price.
@@ -2016,7 +2023,10 @@ start): a recap or notice parented to the previous turn and written after a new 
 newest record without hiding that prompt. Records whose parents lead out of the loaded slice stay until history pages in,
 and records without a `uuid`, sidechains, a subagent's transcript, and records hanging off the chain
 that do not start with a prompt (tool results recorded against their call, progress, notices) are
-never left out. The Tasks, Agents, Shells and Files pages still read every record. Recorded from
+never left out. The Details pages follow the same branch: the plan is made from the branch's plan
+updates and task calls only, the changed files from the shown items, and an agent, background
+shell or MCP task started in a replaced turn is left out once it is known to have ended (a rewind
+stops no process, so a running one stays, with Stop). Recorded from
 Claude Code 2.1.332 (`rewind_*`).
 
 A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click

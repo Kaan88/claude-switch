@@ -192,13 +192,20 @@ impl Reader {
         self.view.items.iter().filter(|(id, _)| !self.view.active.hides(id.offset)).map(|(&id, item)| (id, item))
     }
 
+    /// The session's background shells. One started in a turn a rewind replaced is left out once it
+    /// is known to have ended; a rewind stops no process, so a running one stays (with Stop).
     pub fn background_shells(&self) -> Vec<BackgroundShell> {
-        self.view.background.shells()
+        let mut shells = self.view.background.shells();
+        shells.retain(|s| s.status == ShellStatus::Running || !self.view.active.hides(s.tool.offset));
+        shells
     }
 
-    /// The session's background MCP tasks, as far as the transcript records them.
+    /// The session's background MCP tasks, as far as the transcript records them; as for shells,
+    /// one from a replaced turn only while it runs.
     pub fn mcp_tasks(&self) -> Vec<McpTask> {
-        self.view.background.mcp_tasks()
+        let mut tasks = self.view.background.mcp_tasks();
+        tasks.retain(|t| t.status == McpStatus::Running || !self.view.active.hides(t.tool.offset));
+        tasks
     }
 
     pub fn result_details(&self, id: ItemId) -> Option<&ResultDetails> {
@@ -232,8 +239,19 @@ impl Reader {
         &self.view.tasks
     }
 
-    pub fn subagents(&self) -> impl ExactSizeIterator<Item = &Subagent> {
-        self.agents.values().map(|agent| &agent.info)
+    /// The session's subagents. One whose call is in a turn a rewind replaced is left out unless it
+    /// is known to be still running (a rewind does not stop it).
+    pub fn subagents(&self) -> impl Iterator<Item = &Subagent> {
+        let replaced = |info: &Subagent| {
+            info.tool_use_id
+                .as_ref()
+                .and_then(|tool| self.view.tools.get(tool))
+                .is_some_and(|at| self.view.active.hides(at.offset))
+        };
+        self.agents
+            .values()
+            .map(|agent| &agent.info)
+            .filter(move |info| info.finished == Some(false) || !replaced(info))
     }
 
     pub fn open_subagent(&self, id: &str, chunk_bytes: usize) -> io::Result<Self> {
@@ -857,12 +875,18 @@ impl View {
             changes.branch_changed = true;
             changes.added.retain(|id| !self.active.hides(id.offset));
             changes.updated.retain(|id| !self.active.hides(id.offset));
+            // The pages read the branch too: the plan again, the agents and shells afresh.
+            self.plans_dirty = true;
+            changes.subagents_changed = true;
+            changes.background_changed = true;
         }
         if !std::mem::take(&mut self.plans_dirty) {
             return;
         }
         // A later snapshot supersedes all earlier snapshots and actions, including paged-in history.
-        let mut plans = self.plans.values().rev();
+        // Only the active branch's plan updates and task calls count (a rewind's replaced turns do not).
+        let active = &self.active;
+        let mut plans = self.plans.iter().filter(|(id, _)| !active.hides(id.offset)).map(|(_, plan)| plan).rev();
         let mut actions = Vec::new();
         let mut tasks = loop {
             match plans.next() {
@@ -877,7 +901,7 @@ impl View {
         // Native tasks replace the plan's list when they changed after its last update, as in a
         // handover.
         if let Some((native, at)) = self.native_tasks()
-            && self.plans.keys().next_back().is_none_or(|plan| *plan < at)
+            && self.plans.keys().rfind(|id| !self.active.hides(id.offset)).is_none_or(|plan| *plan < at)
         {
             tasks = native;
         }
@@ -896,9 +920,11 @@ impl View {
             Outcome(&'a native_tasks::Outcome),
         }
         let mut events = Vec::new();
-        for (at, (tool, call)) in &self.native_calls {
+        for (at, (tool, call)) in self.native_calls.iter().filter(|(at, _)| !self.active.hides(at.offset)) {
             events.push((*at, Event::Call(tool, call)));
-            if let Some((when, outcome)) = self.native_results.get(tool) {
+            if let Some((when, outcome)) =
+                self.native_results.get(tool).filter(|(when, _)| !self.active.hides(when.offset))
+            {
                 events.push((*when, Event::Outcome(outcome)));
             }
         }
@@ -1038,6 +1064,8 @@ fn one_line(text: &str) -> String {
         .join(" ")
 }
 
+#[cfg(test)]
+mod active_pages_tests;
 #[cfg(test)]
 mod active_tests;
 #[cfg(test)]

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Resume in the desktop app as a further account opens that account's desktop app (its own data
+  folder) with the session; it used to go through Claude Code's `--desktop`, whose link Windows
+  hands to the first account's desktop app.
+- Chat and the Session view: after a rewind, the Tasks, Agents, Shells and Files pages leave out
+  what the replaced turns did once the next message is written, as the conversation does; an agent
+  or background shell started there that is still running stays listed.
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog

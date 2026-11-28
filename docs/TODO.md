@@ -95,6 +95,11 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Defects noticed
 
+- Try Resume in the desktop app as a further account (fixed 2026-11-28, review finding 5: it was real,
+  `claude --desktop --resume` opens a `claude:` link that Windows hands to the first account's
+  desktop app; a further account now starts its own desktop app with `--user-data-dir` and the link,
+  DESIGN.md "Facts"). Read from the desktop app's files, not run: check that the session opens in the
+  further account's window, both when that window is closed and when it is open.
 - Try Branch from the running app (2026-11-28: `recorder compat` resumes the app's cut copies in
   print mode and in the terminal, but the app's own button, tab and mark were not used for real).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
@@ -107,8 +112,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 - Insert and Shift+Insert cannot be typed (`keys::key_name` has no Insert); input-method composition
   does not work (the toolkit's host turns it off on Windows); F13 and above; Ctrl+Alt+letter on
   AltGr layouts.
-- `claude --desktop --resume` as a further account probably opens the first account's copy of the
-  desktop app (review finding 5, not verified).
 
 ## Later (the owner's list)
 
@@ -695,7 +698,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     tests over made-up transcripts: a rewind, a rewind to the first prompt, a fork's copy, tool results recorded
     against their own call, progress and hook records off the chain, sidechains and a subagent's transcript, a
     compaction boundary, the bounded slice and history paged in, records without links. Not checked: against a
-    live rewind in the app; the Tasks, Agents, Shells and Files pages still count the rewound turns.
+    live rewind in the app.
+    Done (2026-11-28): the Tasks, Agents, Shells and Files pages follow the active branch too (DESIGN.md,
+    "Rewind"); an agent, shell or MCP task from a replaced turn stays while it is known to run. Checked by
+    unit tests: a rewind (plan, ended and running shells, finished and running agents, a new plan after
+    it), a fork's copy, a compaction (and a rewind after it), the bounded slice with history paged in, and
+    the panel's sections through the worker (the written file, the plan and the ended shell go).
     Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
     its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
     the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown

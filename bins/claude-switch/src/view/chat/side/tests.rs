@@ -368,3 +368,91 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
     assert!(!hits.iter().any(|h| h.0 == Side::Tasks && h.2 == Part::Expand));
     assert!(hits.iter().any(|h| h.0 == Side::Agents));
 }
+
+/// Item 49: after a rewind's next prompt, the panel's sections drop what the replaced turn did
+/// (its written file, its plan, an ended shell), through the worker as Chat reads it.
+#[test]
+fn the_panel_drops_what_a_rewound_turn_did_once_the_next_prompt_is_written() {
+    use serde_json::json;
+    let dir = crate::testing::unique("cs-side-rewind");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("s.jsonl");
+    let rec = |mut v: serde_json::Value, uuid: &str, parent: Option<&str>| {
+        v["uuid"] = json!(uuid);
+        v["parentUuid"] = json!(parent);
+        format!("{v}\n")
+    };
+    let call = |uuid: &str, parent: &str, id: &str, name: &str, input: serde_json::Value| {
+        rec(
+            json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":id,"name":name,"input":input}]}}),
+            uuid,
+            Some(parent),
+        )
+    };
+    let result = |uuid: &str, parent: &str, id: &str, text: &str| {
+        rec(
+            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":id,"content":text}]}}),
+            uuid,
+            Some(parent),
+        )
+    };
+    let prompt = |uuid: &str, parent: Option<&str>, text: &str| {
+        rec(json!({"type":"user","message":{"content":text}}), uuid, parent)
+    };
+    let answer = |uuid: &str, parent: &str| {
+        rec(
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}),
+            uuid,
+            Some(parent),
+        )
+    };
+    let todos = |content: &str| json!({"todos":[{"content":content,"status":"pending","activeForm":content}]});
+    let text = prompt("u1", None, "one")
+        + &call("t1", "u1", "todo1", "TodoWrite", todos("first plan"))
+        + &result("t1r", "t1", "todo1", "ok")
+        + &call("w1", "t1r", "write1", "Write", json!({"file_path":"kept.md","content":"x"}))
+        + &result("w1r", "w1", "write1", "ok")
+        + &answer("a1", "w1r")
+        + &prompt("u2", Some("a1"), "two")
+        + &call("t2", "u2", "todo2", "TodoWrite", todos("replaced plan"))
+        + &result("t2r", "t2", "todo2", "ok")
+        + &call("w2", "t2r", "write2", "Write", json!({"file_path":"replaced.md","content":"x"}))
+        + &result("w2r", "w2", "write2", "ok")
+        + &call("b2", "w2r", "bash2", "Bash", json!({"command":"watch","run_in_background":true}))
+        + &result(
+            "b2r",
+            "b2",
+            "bash2",
+            "Command running in background with ID: done2. Output is being written to: /tmp/done2.output",
+        )
+        + &rec(
+            json!({"type":"user","isMeta":true,"message":{"content":
+            "<task-notification><task-id>done2</task-id><status>completed</status><summary>Command ended (exit code 0)</summary></task-notification>"}}),
+            "n2",
+            Some("b2r"),
+        )
+        + &answer("a2", "n2");
+    std::fs::write(&path, text).unwrap();
+    let mut model = Model::new(Source::File(path.clone()), dir.clone(), || {});
+    let settle = |model: &mut Model, done: &dyn Fn(&Model) -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(model) && std::time::Instant::now() < deadline {
+            model.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            model.collect();
+        }
+    };
+    let names = |model: &Model| -> Vec<String> { changed_files(model, &dir).into_iter().map(|f| f.path).collect() };
+    settle(&mut model, &|m| m.tasks.iter().any(|t| t.content == "replaced plan") && !m.shells.is_empty());
+    assert_eq!(names(&model), ["replaced.md", "kept.md"]);
+    assert_eq!(model.shells.len(), 1);
+
+    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    std::io::Write::write_all(&mut file, prompt("u3", Some("a1"), "two again").as_bytes()).unwrap();
+    settle(&mut model, &|m| m.tasks.iter().any(|t| t.content == "first plan"));
+    assert_eq!(model.tasks.iter().map(|t| t.content.as_str()).collect::<Vec<_>>(), ["first plan"]);
+    assert_eq!(names(&model), ["kept.md"], "the replaced turn's file is not a changed file");
+    assert!(model.shells.is_empty(), "its ended shell is gone");
+    drop(model);
+    let _ = std::fs::remove_dir_all(&dir);
+}
