@@ -958,6 +958,9 @@ mod tests {
                 let (peeking, moving) = peeking.unwrap();
                 assert!(!moving);
                 let pill = pill_at(scale);
+                // The window as it is now: the list's times ("2 min ago") follow the clock, and a
+                // slow run can cross a minute since the first frame.
+                let base = base_frame(&mut st, scale);
                 assert_eq!(
                     differing(&peeking, &base, peek::pill_bounds(pill), scale),
                     0,
