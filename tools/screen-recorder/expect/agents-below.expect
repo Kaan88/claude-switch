@@ -10,3 +10,6 @@ kind = idle
 input =
 send = yes
 working = no
+# Only the list under the rule redrew between the two: the rows down to it are the same, so the
+# screen goes quiet (Chat's activity digest).
+activity = agents
