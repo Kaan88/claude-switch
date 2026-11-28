@@ -416,7 +416,10 @@ digit or underscore just before or after it, and regular expression (".*", Alt+R
 case-insensitive unless Aa); with both on the pattern is wrapped in `\b(?:…)\b`. A pattern is
 compiled once per query and options; matches of nothing are skipped. One that does not compile
 finds nothing, says "Invalid pattern" in the danger colour and edges the bar in it, until the text
-or the toggle changes. The Alt keys work only while the box has the keyboard. The box is a text
+or the toggle changes. It is compiled on the window thread, so the builder has explicit limits well
+under the crate's defaults (NFA 1 MiB, one-pass 256 KiB, full DFA 40 KiB and 30 states, lazy DFA
+cache 1 MiB, nesting 64); a pattern past a size limit (such as `\w{1000}`, megabytes of Unicode
+automaton) is refused at once and shows the same state, worded "Pattern too large". The Alt keys work only while the box has the keyboard. The box is a text
 field of `fieldmouse` like the others (`FieldId::TermFind`, its own hit target inside the card):
 press places the caret, drag, double and triple click select, the I-beam shows over it, and a
 right click opens Cut, Copy, Paste, Select all; an edit through that menu finds again.

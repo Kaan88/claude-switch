@@ -59,7 +59,8 @@ pub struct Find {
     current: Option<usize>,
     /// What `matches` were found for: the query and options, and the terminal's change count.
     found: Option<(String, Options, u64)>,
-    /// The query compiled for those: `Err` holds why a regular expression is invalid.
+    /// The query compiled for those: `Err` holds why a regular expression is invalid
+    /// ([`TOO_LARGE`] when it passed a size limit).
     matcher: Option<Result<Matcher, String>>,
     /// The screen's size and its top line when they were found: lines above that top were
     /// scrollback then, which output never rewrites, so only what lies below is searched again.
@@ -86,6 +87,9 @@ pub enum Matcher {
     Regex(Regex),
 }
 
+/// The reason kept for a pattern refused by a size limit; shown as "Pattern too large".
+const TOO_LARGE: &str = "too large";
+
 fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
@@ -106,11 +110,22 @@ impl Matcher {
             return Ok(Some(Matcher::Text { needle, match_case: o.match_case, whole_word: o.whole_word }));
         }
         let pattern = if o.whole_word { format!(r"\b(?:{query})\b") } else { query.to_string() };
+        // Built on the window thread at each keystroke: explicit limits, well under the crate's
+        // defaults, so a pattern such as `\w{1000}` (megabytes of Unicode automaton) is refused
+        // quickly instead of being built.
         Regex::builder()
-            .syntax(syntax::Config::new().case_insensitive(!o.match_case))
+            .configure(
+                Regex::config()
+                    .nfa_size_limit(Some(1 << 20))
+                    .onepass_size_limit(Some(256 << 10))
+                    .dfa_size_limit(Some(40 << 10))
+                    .dfa_state_limit(Some(30))
+                    .hybrid_cache_capacity(1 << 20),
+            )
+            .syntax(syntax::Config::new().case_insensitive(!o.match_case).nest_limit(64))
             .build(&pattern)
             .map(|re| Some(Matcher::Regex(re)))
-            .map_err(|e| e.to_string())
+            .map_err(|e| if e.size_limit().is_some() { TOO_LARGE.to_string() } else { e.to_string() })
     }
 
     /// The matches in one logical line, as (first, last) character indices.
@@ -167,8 +182,10 @@ impl Find {
 
     /// "3 of 12", "No results", or nothing while the box is empty.
     pub fn count(&self) -> String {
-        if self.invalid().is_some() {
-            return "Invalid pattern".into();
+        match self.invalid() {
+            Some(TOO_LARGE) => return "Pattern too large".into(),
+            Some(_) => return "Invalid pattern".into(),
+            None => {}
         }
         match (self.field.is_empty(), self.matches.len(), self.current) {
             (true, _, _) => String::new(),
