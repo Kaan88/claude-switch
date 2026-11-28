@@ -27,6 +27,8 @@
 //!   row saying what Esc will do (`-` for none) and `esc-does` the footer's words for it.
 //! - `answer`: this text reads back exactly on the highlighted row ("Type something");
 //!   `lines` and `wrapped`: the input shows this text of several lines, or this long line.
+//! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
+//!   or none is (a resumed branch shows the turns before its cut and none after).
 //!
 //! A state can also be a file the script wrote instead of a snapshot, and its keys are about that:
 //!
@@ -169,6 +171,16 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
             shown(shows, &row)
         }
         "lines" => shown(screen::shows_lines(s, want), "the input's rows do not read it"),
+        "shows" | "hides" => {
+            let all: String = (0..s.rows()).map(|r| s.row_text(r) + "\n").collect();
+            let wrong: Vec<&str> =
+                want.split(" | ").filter(|part| all.contains(part.trim()) != (key == "shows")).collect();
+            match (wrong.is_empty(), key) {
+                (true, _) => want.to_owned(),
+                (false, "shows") => format!("not shown: {}", wrong.join(" | ")),
+                _ => format!("shown: {}", wrong.join(" | ")),
+            }
+        }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
         _ => format!("unknown key {key}"),
     }
@@ -523,6 +535,13 @@ fn the_fixtures_read_as_the_states_the_check_names() {
             assert!(matches(&want, &got), "{key}: expected {want:?}, got {got:?}");
         }
     }
+    let idle = recorded(PROMPT_IDLE);
+    let row = (0..idle.rows()).map(|r| idle.row_text(r)).find(|t| t.trim().len() > 3).unwrap();
+    let some = row.trim().to_owned();
+    assert_eq!(fact(&idle, "shows", &some), some);
+    assert_eq!(fact(&idle, "hides", "no such words here"), "no such words here");
+    assert_eq!(fact(&idle, "hides", &some), format!("shown: {some}"));
+    assert_eq!(fact(&idle, "shows", "no such words here"), "not shown: no such words here");
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
 }

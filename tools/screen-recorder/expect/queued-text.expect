@@ -1,0 +1,30 @@
+# What Chat reads from scripts/queued-text.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+# The text on the input while the turn runs: Chat writes Enter only once it reads it back.
+[typed]
+kind = working
+input = Also reply with the word echo.
+
+# After Enter the input reads empty again and the turn still runs: the next one goes in at once.
+[one_sent]
+kind = working
+input =
+working = yes
+
+[lines_typed]
+kind = working
+lines = Then reply with the word foxtrot.\nOn one line.
+
+[two_sent]
+kind = working
+input =
+working = yes
+
+[after]
+kind = idle
+send = yes
+
+# Both are recorded as messages during the turn, which starts no other.
+[transcript]
+prompts = Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1 | Also reply with the word echo. (during a turn) | Then reply with the word foxtrot. On one line. (during a turn)
+turn = Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1

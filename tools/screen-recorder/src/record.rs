@@ -122,6 +122,8 @@ pub enum Abort {
     Script(String),
     /// A file or the terminal could not be written.
     Io(String),
+    /// A step would have changed something it cannot put back (the clipboard).
+    Refused(String),
 }
 
 impl std::fmt::Display for Abort {
@@ -132,6 +134,7 @@ impl std::fmt::Display for Abort {
             Abort::Timeout(what) => write!(f, "the screen never showed what the script waited for: {what}"),
             Abort::Script(why) => write!(f, "the script does not read: {why}"),
             Abort::Io(why) => write!(f, "the recording could not be written: {why}"),
+            Abort::Refused(why) => f.write_str(why),
         }
     }
 }
@@ -156,22 +159,27 @@ pub struct Recorder {
     last_live: Instant,
     /// The work folder, the variables and arguments `claude` was started with: `clipimage` writes
     /// into the folder, `help` and `branch` start `claude` again with the same account.
+    program: String,
+    size: (u16, u16),
+    plain: bool,
     cwd: PathBuf,
     env: Vec<(String, String)>,
     args: Vec<String>,
     /// The work folder's transcripts (`REC_PROJECT` when not set).
     pub project: Option<PathBuf>,
     pub helper: Option<Helper>,
-    /// What the clipboard held before `clipimage` (its text, `None` for none): put back when the
-    /// script ends.
-    clipboard: Option<Option<String>>,
+    /// What the clipboard held before `clipimage`, put back when the script ends.
+    clipboard: Option<Saved>,
+    /// The sessions `branch` wrote: never taken for the recorded session's own transcript.
+    branches: Vec<String>,
 }
 
 impl Recorder {
-    pub fn spawn(launch: &Launch, out: PathBuf) -> std::io::Result<Recorder> {
-        // As Claude Switch starts a Claude tab (`core::launch::child_removals`, `termapp`): no
-        // CLAUDE_* or ANTHROPIC_* variable reaches the child except the account's config folder;
-        // the classic renderer; TERM=xterm-256color unless a Start-menu environment is asked for.
+    /// The program as Claude Switch starts a Claude tab (`core::launch::child_removals`,
+    /// `termapp`): no CLAUDE_* or ANTHROPIC_* variable reaches the child except the account's
+    /// config folder; the classic renderer; TERM=xterm-256color unless a Start-menu environment is
+    /// asked for.
+    fn command(launch: &Launch, args: &[String]) -> Command {
         let mut cmd = Command::new(launch.program).cwd(launch.cwd);
         for name in removed_vars() {
             cmd = cmd.env_remove(name);
@@ -187,10 +195,14 @@ impl Recorder {
         for (name, value) in launch.env {
             cmd = cmd.env(name, value);
         }
-        for arg in launch.args {
+        for arg in args {
             cmd = cmd.arg(arg);
         }
-        let pty = Pty::spawn(&cmd, launch.cols, launch.rows, || {})?;
+        cmd
+    }
+
+    pub fn spawn(launch: &Launch, out: PathBuf) -> std::io::Result<Recorder> {
+        let pty = Pty::spawn(&Self::command(launch, launch.args), launch.cols, launch.rows, || {})?;
         let now = Instant::now();
         Ok(Recorder {
             pty,
@@ -205,12 +217,16 @@ impl Recorder {
             stop: None,
             live: None,
             last_live: now,
+            program: launch.program.to_owned(),
+            size: (launch.cols, launch.rows),
+            plain: launch.plain,
             cwd: launch.cwd.to_owned(),
             env: launch.env.to_vec(),
             args: launch.args.to_vec(),
             project: None,
             helper: None,
             clipboard: None,
+            branches: Vec::new(),
         })
     }
 
@@ -242,9 +258,10 @@ impl Recorder {
             }
         }
         let _ = self.pty.kill();
-        if let Some(before) = self.clipboard.take() {
-            match clipboard_put_back(before) {
-                Ok(()) => self.note("the clipboard is as it was (its text)"),
+        if let Some(saved) = self.clipboard.take() {
+            match clipboard_put_back(saved) {
+                Ok(true) => self.note("the clipboard is as it was (its text)"),
+                Ok(false) => self.note("the clipboard changed since clipimage: it was left as it is"),
                 Err(why) => self.note(&format!("the clipboard could not be put back: {why}")),
             }
         }
@@ -470,7 +487,8 @@ impl Recorder {
         self.run_for(Duration::from_millis(1500))
     }
 
-    /// The newest transcript in the work folder's transcript folder.
+    /// The newest transcript in the work folder's transcript folder, other than the copies
+    /// `branch` wrote (resuming one makes it the newest).
     fn newest_transcript(&self) -> Result<Option<PathBuf>, Abort> {
         let dir = match &self.project {
             Some(dir) => dir.clone(),
@@ -482,6 +500,10 @@ impl Recorder {
             .map_err(|e| Abort::Io(format!("{}: {e}", dir.display())))?
             .filter_map(Result::ok)
             .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+            .filter(|e| {
+                let stem = e.path().file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+                !self.branches.iter().any(|id| id.eq_ignore_ascii_case(&stem))
+            })
             .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
             .map(|e| e.path()))
     }
@@ -528,6 +550,7 @@ impl Recorder {
             return Ok(());
         }
         self.note(&format!("branch {name}: copy {id}"));
+        self.branches.push(id.clone());
         let output = self.claude(&["-p", "--resume", &id, "--output-format", "json", BRANCH_QUESTION])?;
         let to = self.out.join(format!("{name}.json"));
         std::fs::write(&to, &output.stdout).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
@@ -599,16 +622,22 @@ impl Recorder {
             Step::ClipImage(file) => {
                 let path = self.cwd.join(&file);
                 std::fs::write(&path, DOT_PNG).map_err(|e| Abort::Io(format!("{}: {e}", path.display())))?;
-                if self.clipboard.is_none() {
-                    self.clipboard = Some(clipboard_text()?);
-                }
-                powershell(
-                    "Add-Type -AssemblyName System.Windows.Forms, System.Drawing; \
-                    $image = [System.Drawing.Image]::FromFile($env:CS_CLIP_FILE); \
-                    [System.Windows.Forms.Clipboard]::SetImage($image); $image.Dispose()",
+                let text = match self.clipboard.take() {
+                    Some(saved) => saved.text,
+                    None => clipboard_text()?,
+                };
+                let sequence = powershell(
+                    &format!(
+                        "Add-Type -AssemblyName System.Windows.Forms, System.Drawing; {SEQUENCE} \
+                        $image = [System.Drawing.Image]::FromFile($env:CS_CLIP_FILE); \
+                        [System.Windows.Forms.Clipboard]::SetImage($image); $image.Dispose(); \
+                        [Console]::Out.Write([CsRecorder.Clip]::GetClipboardSequenceNumber())"
+                    ),
                     &[("CS_CLIP_FILE", &path)],
                     None,
                 )?;
+                let sequence = sequence.trim().parse().map_err(|_| Abort::Io(format!("clipboard: {sequence:?}")))?;
+                self.clipboard = Some(Saved { text, sequence });
                 self.note(&format!("clipimage {file}"));
             }
             Step::Help(name) => {
@@ -618,6 +647,33 @@ impl Recorder {
                 self.note(&format!("help {name}: {} bytes", output.stdout.len()));
             }
             Step::Branch { name, at } => self.branch(&name, &at)?,
+            // Claude Code again, resuming the session `branch` wrote, as the app's Branch opens it.
+            Step::Reopen(name) => {
+                let id = std::fs::read_to_string(self.out.join(format!("{name}.id"))).unwrap_or_default();
+                let id = id.trim().to_owned();
+                if id.len() != 36 {
+                    return Err(Abort::Start(format!("reopen: no branch {name} was written")));
+                }
+                self.pump();
+                let _ = self.pty.kill();
+                let mut args = self.args.clone();
+                args.extend(["--resume".to_owned(), id.clone()]);
+                let launch = Launch {
+                    program: &self.program,
+                    cwd: &self.cwd,
+                    cols: self.size.0,
+                    rows: self.size.1,
+                    args: &args,
+                    env: &self.env,
+                    plain: self.plain,
+                };
+                let pty = Pty::spawn(&Self::command(&launch, &args), self.size.0, self.size.1, || {})
+                    .map_err(|e| Abort::Start(format!("reopen: {e}")))?;
+                self.pty = pty;
+                self.screen = Screen::new(self.size.0.into(), self.size.1.into(), 2000);
+                self.note(&format!("reopen {name}: claude --resume {id}"));
+                self.start()?;
+            }
             Step::Start => self.start()?,
         }
         Ok(())
@@ -665,6 +721,8 @@ enum Step {
     ClipImage(String),
     /// `claude --help` into `NAME.help.txt`.
     Help(String),
+    /// Claude Code started again with `--resume` and the id of the branch `NAME`.
+    Reopen(String),
     /// A branch at a message: `prompt TEXT` or `answer TEXT`.
     Branch {
         name: String,
@@ -707,28 +765,67 @@ fn powershell(script: &str, env: &[(&str, &Path)], input: Option<&str>) -> Resul
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// The clipboard's text, `None` when it holds none.
+/// What `clipimage` found on the clipboard, and the clipboard's sequence number once the picture
+/// was put there: a different number at the end means someone copied something meanwhile.
+struct Saved {
+    text: Option<String>,
+    sequence: u32,
+}
+
+/// Win32's clipboard sequence number, for PowerShell.
+const SEQUENCE: &str = "Add-Type -Namespace CsRecorder -Name Clip -MemberDefinition \
+    '[DllImport(\"user32.dll\")] public static extern uint GetClipboardSequenceNumber();';";
+
+/// The formats plain text comes in: anything else on the clipboard is not put back.
+const TEXT_FORMATS: &str = "'Text','UnicodeText','OEMText','Locale','System.String'";
+
+/// The clipboard's text, `None` when it is empty. Anything else on it (a picture, files,
+/// formatted text) could not be put back, so `clipimage` refuses.
 fn clipboard_text() -> Result<Option<String>, Abort> {
-    let text = powershell(
-        "Add-Type -AssemblyName System.Windows.Forms; \
-         if ([System.Windows.Forms.Clipboard]::ContainsText()) { \
-         [Console]::Out.Write('T' + [System.Windows.Forms.Clipboard]::GetText()) }",
+    let found = powershell(
+        &format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $data = [System.Windows.Forms.Clipboard]::GetDataObject(); \
+             $formats = @(); if ($data) {{ $formats = @($data.GetFormats()) }}; \
+             $other = @($formats | Where-Object {{ $_ -notin @({TEXT_FORMATS}) }}); \
+             if ($other.Count -gt 0) {{ [Console]::Out.Write('O' + ($other -join ', ')) }} \
+             elseif ([System.Windows.Forms.Clipboard]::ContainsText()) {{ \
+             [Console]::Out.Write('T' + [System.Windows.Forms.Clipboard]::GetText()) }} \
+             else {{ [Console]::Out.Write('N') }}"
+        ),
         &[],
         None,
     )?;
-    Ok(text.strip_prefix('T').map(str::to_owned))
+    match found.split_at_checked(1) {
+        Some(("T", text)) => Ok(Some(text.to_owned())),
+        Some(("N", _)) => Ok(None),
+        Some(("O", formats)) => Err(Abort::Refused(format!(
+            "clipimage: the clipboard holds more than plain text ({formats}), which could not be put \
+             back afterwards; copy some text or nothing and run it again"
+        ))),
+        _ => Err(Abort::Io(format!("clipboard: {found:?}"))),
+    }
 }
 
-/// Puts the clipboard's text back, or empties it when it held none.
-fn clipboard_put_back(before: Option<String>) -> Result<(), Abort> {
-    let script = match before {
+/// Puts the clipboard's text back (or empties it when it held none), unless it changed since
+/// `clipimage`: then what is there now is someone's and stays. True when it was put back.
+fn clipboard_put_back(saved: Saved) -> Result<bool, Abort> {
+    let now = powershell(
+        &format!("{SEQUENCE} [Console]::Out.Write([CsRecorder.Clip]::GetClipboardSequenceNumber())"),
+        &[],
+        None,
+    )?;
+    if now.trim().parse::<u32>().ok() != Some(saved.sequence) {
+        return Ok(false);
+    }
+    let script = match saved.text {
         Some(_) => {
             "Add-Type -AssemblyName System.Windows.Forms; \
             [System.Windows.Forms.Clipboard]::SetText([Console]::In.ReadToEnd())"
         }
         None => "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::Clear()",
     };
-    powershell(script, &[], Some(before.as_deref().unwrap_or(""))).map(|_| ())
+    powershell(script, &[], Some(saved.text.as_deref().unwrap_or(""))).map(|_| true)
 }
 
 /// Runs a program to its end, at most `max`, and gives its output; stops it when asked.
@@ -803,6 +900,8 @@ impl Step {
             "clipimage" if !rest.is_empty() => Step::ClipImage(rest.to_owned()),
             "clipimage" => return Err("clipimage needs FILE".to_owned()),
             "help" => Step::Help(rest.to_owned()),
+            "reopen" if !rest.is_empty() => Step::Reopen(rest.to_owned()),
+            "reopen" => return Err("reopen needs NAME".to_owned()),
             "branch" => {
                 let (name, at) = two("NAME prompt|answer TEXT")?;
                 let (kind, text) = at.split_once(' ').unwrap_or((at, ""));
@@ -867,6 +966,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    fn the_clipboard_is_left_alone_when_it_changed_since_clipimage() {
+        // No sequence number is u32::MAX this soon after start-up: the clipboard counts as changed,
+        // and nothing is written to it.
+        let saved = Saved { text: Some("not put back".into()), sequence: u32::MAX };
+        assert!(!clipboard_put_back(saved).unwrap());
+    }
+
+    #[test]
     fn escapes_in_a_send_become_the_keys_they_name() {
         assert_eq!(unescape(r"a\sb\r").unwrap(), b"a b\r");
         assert_eq!(unescape(r"\e[A\x03\\").unwrap(), b"\x1b[A\x03\\");
@@ -900,6 +1008,7 @@ mod tests {
             "resize 80 lots",
             "send \\x4",
             "clipimage",
+            "reopen",
             "branch cut",
             "branch cut alpha",
         ] {

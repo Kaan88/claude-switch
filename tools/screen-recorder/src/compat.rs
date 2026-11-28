@@ -614,7 +614,7 @@ fn run_script(setup: &Setup, run: &Run, i: usize) {
     let note = match recorder.run(&script.body) {
         Ok(()) => String::new(),
         Err(Abort::Stopped) => return finish(Status::Skipped("stopped".to_owned()), Vec::new(), String::new()),
-        Err(why @ (Abort::Start(_) | Abort::Script(_) | Abort::Io(_))) => {
+        Err(why @ (Abort::Start(_) | Abort::Script(_) | Abort::Io(_) | Abort::Refused(_))) => {
             return finish(Status::Error(why.to_string()), Vec::new(), String::new());
         }
         Err(why @ Abort::Timeout(_)) => why.to_string(),

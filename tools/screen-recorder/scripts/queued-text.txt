@@ -1,0 +1,28 @@
+# Two messages sent while a turn runs, as Chat's Send does it then: a one-line text, then two
+# lines, each pasted into the empty input and entered once the input shows it. Between them the
+# input reads empty again while the turn goes on. The transcript copy shows how Claude Code
+# hands both to the turn. Two or three model requests.
+#: args --permission-mode default --settings {scripts}/allow-ping.json
+#: seconds 60
+start
+send Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1
+sleep 800
+send \r
+wait ctrl+b to run in background 60000
+sleep 1500
+send \e[200~Also reply with the word echo.\e[201~
+sleep 1000
+snap typed
+send \r
+sleep 1500
+snap one_sent
+send \e[200~Then reply with the word foxtrot.\rOn one line.\e[201~
+sleep 1000
+snap lines_typed
+send \r
+sleep 1500
+snap two_sent
+gone esc to interrupt 90000
+quiet 1500 30000
+snap after
+tscopy transcript

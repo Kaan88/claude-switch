@@ -6,9 +6,12 @@
   recognised (and Press Enter's check finds it): Claude Code shows the text right after the
   picture's marker, without the space Chat looked for.
 - Tools: the Claude Code compatibility check (`tools/cli-compat.ps1`) also checks what Chat now
-  relies on in Claude Code's files: a message sent while a turn runs (with a picture) and how the
-  transcript and the rewind list show it, thinking shown as updates, and that a branch's cut copy
-  resumes under its new id.
+  relies on in Claude Code's files: messages sent while a turn runs (with a picture, one line, two
+  lines, two in a row) and how the transcript and the rewind list show them, what Esc does with
+  messages waiting in Claude Code's queue, thinking shown as updates, and that a branch's cut copy
+  resumes under its new id, in print mode and in the terminal. Its picture step refuses to run
+  when the clipboard holds more than plain text, and leaves the clipboard alone when something was
+  copied during the run.
 - Chat: the round "jump to latest" button no longer covers the last line of text while you are
   scrolled back; the text ends above it.
 - Chat: buttons under your messages and under Claude's answer to each turn, shown while you point

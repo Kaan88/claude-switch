@@ -59,8 +59,9 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `watch MS NAME` | Snaps `NAME-001`, `NAME-002`, … once a second while the screen changes. |
 | `resize COLS ROWS` | |
 | `tscopy NAME` | Copies the newest transcript of the work folder (`REC_PROJECT`; in `recorder compat` the run's own) to `NAME.jsonl`, as it is on disk now. |
-| `clipimage FILE` | Writes a small PNG as `FILE` in the work folder and puts it on the clipboard, for `send \ev` (Alt+V, as Chat sends a pasted picture). The clipboard's text is kept and put back when the script ends (anything else on it is lost; it is emptied when it held no text). Uses Windows PowerShell. |
+| `clipimage FILE` | Writes a small PNG as `FILE` in the work folder and puts it on the clipboard, for `send \ev` (Alt+V, as Chat sends a pasted picture). It refuses, and ends the script, when the clipboard holds anything but plain text (a picture, files, formatted text): that could not be put back. The text is put back when the script ends (the clipboard is emptied when it held none), unless something was copied meanwhile (the clipboard's sequence number changed): then it is left as it is. Uses Windows PowerShell. |
 | `help NAME` | `claude --help`, with the same account, into `NAME.help.txt`. |
+| `reopen NAME` | Ends the recorded Claude Code and starts it again with `--resume` and the id of the branch `NAME` wrote (as the app's Branch opens it), then waits for its input as `start` does. |
 | `branch NAME prompt\|answer TEXT` | Only in `recorder compat`: a branch as the app makes one at a message (the first prompt or the last answer that contains TEXT). The newest transcript is copied up to the end of that message's turn, under a new id, by the app's own code (`view::model::branch_cut` and `core::branch`, through the check's test program `cli_branch_write`, which never sees the API key); then `claude -p --resume <id> --output-format json` asks which of the words alpha, bravo and charlie it has replied with. `NAME.id` holds the id, `NAME.json` the answer. |
 
 Lines that start with `#:` are for `recorder compat` (comments to a plain run): `#: args …` (more
@@ -113,9 +114,19 @@ those too:
   Rewind to it). Thinking shown as updates cannot be asked for from a script (Claude Code chooses
   it; `--thinking-display` takes only `summarized`, `omitted` and `highlights`), and Haiku leaves
   that thinking's text empty: the check sees the mode, not text shown as an answer.
-- `branch`: two turns, then a branch cut after the first answer (`branch`) that resumes in print
-  mode under its new id and remembers that answer only; and `claude --help` still lists
-  `--resume` and `--fork-session` (Open a copy and Branch use them).
+- `queued-text`: two messages sent during a turn as Chat sends them, a one-line text and two lines,
+  each entered once the input shows it. Between them the input reads empty again while the turn
+  goes on, and the transcript records both as messages during the turn, which starts no other.
+- `queued-esc`: two messages waiting in Claude Code's queue, then Esc (Chat's Stop). Claude Code
+  does not put them back on its input: it sends them as the next turn (ordinary prompts), and the
+  input reads empty, so Chat's take-back has nothing to do. It also records
+  `[Request interrupted by user for tool use]`, which the reader takes for a prompt (see
+  `docs/TODO.md`).
+- `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
+  first turn, one at the end of the newest. Each resumes in print mode under its new id and
+  remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),
+  which shows the first turn and not the second, with its input ready. And `claude --help` still
+  lists `--resume` and `--fork-session` (Open a copy and Branch use them).
 
 ### On this desktop
 
@@ -144,8 +155,8 @@ again, `q` or Ctrl+C stops. The screen also ends when the worker stopped unexpec
 and gives the terminal back. However it ends, the scratch folder (`%TEMP%\cs-compat`) is removed,
 and from the account's folder the scratch transcripts (`projects\…-cs-compat-work`, only that
 folder) and the files named after those sessions (`plans`, `session-env`, `file-history`). `queued` puts a
-small picture on the clipboard and puts its text back at the end (a picture or files on it
-before are lost). What
+small picture on the clipboard and puts its text back at the end; it refuses to start when the
+clipboard holds anything but plain text. What
 stays in the account is Claude Code's own bookkeeping: the scratch folder's entry in `.claude.json`,
 its lines in the prompt history, and a small file in `shell-snapshots` per session that used Bash
 (they carry no session name, so they cannot be told from those of other sessions).
@@ -189,10 +200,11 @@ from what cargo and the check's test program see, so no build script or proc mac
 
 ### What a run costs
 
-The scripts make about 26 model requests (12 of the 14 scripts talk to the model; a failed script
+The scripts make about 31 model requests (14 of the 16 scripts talk to the model; a failed script
 is recorded once more before it counts). A full run with Haiku 5.5 on Claude Code 2.1.332 takes
-three to five minutes and comes to about $0.12 at API prices (measured: 26 requests in 3:33, no
-script recorded twice; `queued` and `branch` are about $0.02 of it): nearly all of it is Claude
+four to six minutes and comes to about $0.13 at API prices (measured: 31 requests in 4:15, no
+script recorded twice; the four scripts about messages sent mid-turn and Branch are about $0.04 of
+it): nearly all of it is Claude
 Code's own system prompt, sent with each request. On a subscription account it counts against the
 plan's usage instead. The estimate on the screen is what the transcripts hold, so requests Claude
 Code makes on the side (titles, auto mode's checks) are not in it.
@@ -242,6 +254,7 @@ runs of blanks count as one and `\n` is a line break.
 | `tell`, `keep` | The declining row of a permission prompt and of the plan approval |
 | `notes`, `rows`, `answers` | A question's descriptions, a panel's rows, a review's `question = answer` pairs |
 | `answer`, `lines`, `wrapped` | This text reads back exactly on the highlighted row; the input shows this text of several lines; this long line |
+| `shows`, `hides` | Every text of the value (` \| ` between them) is somewhere on the screen, or none is |
 
 A section can also name a file the script wrote instead of a snapshot (the check looks for
 `<state>.ansi`, then these):

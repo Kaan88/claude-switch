@@ -1622,8 +1622,10 @@ are asked what each screen is (`screens/compat.rs`, the expectations in
 expected. `tools/screen-recorder/README.md` ("After a Claude Code update") says how to read a
 failure and what to do. Its first run found that the second of two prompts was not recognised,
 which the fixtures had not shown. It also checks what Chat reads from Claude Code's files and
-flags: a message sent while a turn runs as the transcript records it, thinking shown as updates,
-and a branch's cut copy resumed under its new id (scripts `queued` and `branch`).
+flags: messages sent while a turn runs as the transcript records them, what Esc does with messages
+waiting in Claude Code's queue, thinking shown as updates, and branches cut at a turn's end resumed
+under their new ids in print mode and in the terminal (scripts `queued`, `queued-text`,
+`queued-esc` and `branch`).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat

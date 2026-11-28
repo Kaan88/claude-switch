@@ -1,0 +1,22 @@
+# What Chat reads from scripts/queued-esc.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+# Two messages wait in Claude Code's queue: its input reads empty ("Press up to edit queued
+# messages" is faint), so Chat may send the next one.
+[waiting]
+kind = working
+input =
+working = yes
+
+# Esc: the waiting messages go as the next turn; nothing is put back on the input, so Chat has
+# nothing to take back.
+[after_esc]
+kind = idle
+input =
+send = yes
+shows = Also reply with the word echo.
+
+# They are recorded as ordinary prompts (not as messages during a turn). Claude Code also records
+# "[Request interrupted by user for tool use]" as a user text after them, which the reader takes
+# for a prompt as well (2.1.332; docs/TODO.md).
+[transcript]
+prompts = Run exactly this with the Bash tool and nothing else: ping -n 21 127.0.0.1 | Also reply with the word echo. | Then reply with the word foxtrot. On one line. | [Request interrupted by user for tool use]

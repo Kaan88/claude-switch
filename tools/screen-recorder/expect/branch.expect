@@ -8,7 +8,19 @@ send = yes
 [cli]
 flags = --resume --fork-session
 
-# The copy cut after "alpha" resumes under its own id and remembers alpha only.
+# Cut at the end of the first turn: it resumes under its own id and remembers alpha only.
 [branched]
 resumed = yes
 words = alpha
+
+# Cut at the end of the newest turn: both turns.
+[newest]
+resumed = yes
+words = alpha, bravo
+
+# Opened in the terminal: the first turn and not the second, and the input ready for a message.
+[resumed]
+kind = idle
+send = yes
+shows = Reply with just the word: alpha
+hides = Reply with just the word: bravo
