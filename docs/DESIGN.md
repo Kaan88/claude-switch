@@ -1829,7 +1829,7 @@ above" and the drawer does not open by itself; the working line reads "Waiting f
 (monospace text: a mock-up, code, a layout); the terminal shows the highlighted option's preview in
 a box right of the choices. Chat reads previews only from the call's input in the transcript
 (`QuestionOption::preview`: plain text, escape sequences and control characters other than tab and
-line break dropped, cut at 8,000 characters or 200 lines with a line saying so), never from the
+line break dropped (absent or `null`: none), cut at 8,000 characters or 200 lines with a line saying so), never from the
 screen. The card built from the call shows the preview of the option under the pointer, else the
 one ↑ and ↓ moved to (whether or not the field has the keys; they write nothing), else the first
 option that has one; an option without one says so. It is drawn with the command output's grid
@@ -1840,8 +1840,10 @@ otherwise (the narrowest window). It is as tall as the tallest of the question's
 16 rows, so the card does not jump as the pointer moves; a short window cuts it to 10, then 5 rows
 before the question is cut, and the wheel over it scrolls a longer one. A drag selects (the
 selection scrolls on past its edges); Ctrl+C copies the selection, Copy the selection or the whole
-preview, as plain text (a wrapped line as one line). The pane only looks. When Chat reads a
-question from the screen (the menu card, and every check before a key), a box beside the choices
+preview, as plain text (a wrapped line as one line); a press anywhere else, or another option's
+preview, drops the selection. The pane only looks. When Chat reads a question from the screen (the
+menu card, and every check before a key, from the same reading the card was built from), a box
+beside the choices
 is left out first (`screens::side_box`, `question_view`): a top-left corner and rule at column 12
 or further right, its side down to its bottom corner on every row, text left of it, and a menu
 footer under it; the cells right of its column on its rows, and on the "Notes: press n to add
@@ -1852,7 +1854,9 @@ fixtures `preview_*`): the box starts at column 34 of 100, on the first option's
 the preview; an option without one shows "No preview available"; the footer adds "n to add
 notes". Such a question has no "Type something" row, and its "Chat about this" (under the rule)
 has no number: the menu reader passes that rule when only that row is under it and reads the row
-as the menu's last entry, walked to like any other. So a card for such a question has no field
+as the menu's last entry, walked to like any other (one Down below the last option). While it is
+current the last option keeps its own `❯` in the same colours and weight; that row shows a `❯`
+only while current, so its mark wins (recorded, fixture `preview_chat`). So a card for such a question has no field
 (a form's page turns with Back and Next of its own), and a typed answer for it stops before any
 key. Notes (`n`) are left to the terminal. Whether the transcript holds the call while the
 question waits differs from run to run (two tries of the same recording: once it did, once not):

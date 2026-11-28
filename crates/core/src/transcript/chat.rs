@@ -293,9 +293,10 @@ const MAX_PREVIEW_LINES: usize = 200;
 
 /// An option's `preview`, as plain text: tabs and line breaks kept, every other control character
 /// (escape sequences included) dropped, cut at [`MAX_PREVIEW`] characters or
-/// [`MAX_PREVIEW_LINES`] lines with a last line saying so. `None` when it is not text.
+/// [`MAX_PREVIEW_LINES`] lines with a last line saying so. Absent or `null` is no preview; `None`
+/// when it is anything else but text.
 fn preview(value: Option<&Value>) -> Option<String> {
-    let Some(value) = value else { return Some(String::new()) };
+    let Some(value) = value.filter(|v| !v.is_null()) else { return Some(String::new()) };
     let mut rest = value.as_str()?;
     let mut plain = String::with_capacity(rest.len().min(4 * MAX_PREVIEW));
     while let Some(c) = rest.chars().next() {
@@ -725,6 +726,12 @@ mod tests {
         assert_eq!(long.last(), Some(&"… (the rest is in the terminal)"));
         let bad = json!({"questions":[{"question":"Q","options":[{"label":"A","preview":7}]}]});
         assert_eq!(ToolCard::from_input("AskUserQuestion", &bad), None);
+        // `null` is no preview, not a question to leave to the terminal.
+        let null = json!({"questions":[{"question":"Q","options":[{"label":"A","preview":null}]}]});
+        let Some(ToolCard::Questions(questions)) = ToolCard::from_input("AskUserQuestion", &null) else {
+            panic!("a null preview dropped the card");
+        };
+        assert_eq!(questions[0].options[0].preview, "");
     }
 
     #[test]
