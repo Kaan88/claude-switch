@@ -337,7 +337,9 @@ fn production_requires_tls_and_plaintext_never_receives_the_bearer() {
         let mut hello = vec![0; usize::from(u16::from_be_bytes([header[3], header[4]]))];
         stream.read_exact(&mut hello).unwrap();
         assert!(!hello.windows(TOKEN.len()).any(|w| w == TOKEN.as_bytes()));
-        response(&mut stream, "200 OK", "", "{}");
+        // A plain reply ends the handshake. WinHTTP may already have dropped the connection, so a
+        // failed write is fine: what matters was checked above.
+        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
     });
     assert_eq!(request(&dir.0, endpoint, Duration::from_secs(4), || true, reading, None, now_ms), Err(Error::Network));
     server.join().unwrap();
