@@ -45,11 +45,13 @@
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
 //!   listed, else the missing ones).
 //! - A live record (`live`, `<state>.live.json` and `<state>.transcripts/`), compared with the
-//!   script's `before` state: `session` (what the record names now: `same` session as before, the
-//!   one the earlier transcript's `continued-in` names (`continued`), another (`new`), `none`),
-//!   `continued-in` (`yes` when the app's reader finds that record in the earlier transcript),
-//!   `written` (`yes` when the transcript of the session it went on in, else of the one the record
-//!   names, exists) and `prompts` (that transcript's prompts, as for a transcript copy).
+//!   script's `before` state; read from it even when the state also has a screen: `session` (what
+//!   the record names now: the `same` session as before, the one the earlier transcript's
+//!   `continued-in` names (`continued`), another (`new`), `none`), `continued-in` (`yes` when the
+//!   app's reader finds that record in the earlier transcript), `forks` (how each transcript whose
+//!   `derived-from` names the earlier session came from it, ` | ` between, `-` for none),
+//!   `prompts` (the prompts of the transcript of the session the record names, as for a transcript
+//!   copy) and `fork-prompts` (the same of the one derived transcript).
 //!
 //! `cargo test -p claude-switch cli_compat -- --ignored --nocapture` with `CS_COMPAT_RECORDINGS`
 //! (a folder per script, `<script>/<state>.ansi`; absolute, as the test runs in the crate's
@@ -323,6 +325,9 @@ fn branch_fact(json: &Path, key: &str) -> String {
     }
 }
 
+/// The keys of a live record (`live`): see the module's notes.
+const LIVE_KEYS: [&str; 5] = ["session", "continued-in", "forks", "prompts", "fork-prompts"];
+
 /// What a live record (`live`, `<state>.live.json` beside `<state>.transcripts/`) says, compared
 /// with the first one the script wrote (`before.live.json`).
 fn live_fact(live: &Path, key: &str) -> String {
@@ -332,26 +337,52 @@ fn live_fact(live: &Path, key: &str) -> String {
     };
     let id = |path: &Path| read(path).and_then(|v| v["record"]["sessionId"].as_str().map(str::to_owned));
     let folder = live.parent().unwrap_or(Path::new("."));
-    let state = live.file_name().unwrap_or_default().to_string_lossy().trim_end_matches(".live.json").to_owned();
-    let transcripts = folder.join(format!("{state}.transcripts"));
+    let name = live.file_name().unwrap_or_default().to_string_lossy();
+    let transcripts = folder.join(format!("{}.transcripts", name.trim_end_matches(".live.json")));
     let now = id(live);
     let Some(before) = id(&folder.join("before.live.json")) else { return "no record before".to_owned() };
-    // The session the transcript left before says the conversation went on in, as Chat reads it.
-    let continued = Reader::open(transcripts.join(format!("{before}.jsonl")), 64 << 20)
-        .ok()
-        .and_then(|reader| reader.chat().continued_in);
-    let target = continued.clone().or(now.clone()).unwrap_or_default();
-    let written = transcripts.join(format!("{target}.jsonl"));
+    let transcript = |id: &str| transcripts.join(format!("{id}.jsonl"));
+    // The session the earlier transcript says the conversation went on in, as Chat reads it.
+    let continued = Reader::open(transcript(&before), 64 << 20).ok().and_then(|reader| reader.chat().continued_in);
+    // Sessions derived from the earlier one (Claude Code's `derived-from`), with how.
+    let derived: Vec<(String, String)> = std::fs::read_dir(&transcripts)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let text = std::fs::read_to_string(&path).ok()?;
+            let via = text.lines().find_map(|line| {
+                let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+                (value["type"] == "derived-from").then_some(())?;
+                value["sessions"].as_array()?.iter().find_map(|s| {
+                    s["id"]
+                        .as_str()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(&before))
+                        .then(|| s["via"].as_str().unwrap_or("?").to_owned())
+                })
+            })?;
+            Some((path.file_stem()?.to_string_lossy().into_owned(), via))
+        })
+        .collect();
     match key {
-        "session" => match now {
+        "session" => match now.as_deref() {
             None => "none".to_owned(),
             Some(now) if now.eq_ignore_ascii_case(&before) => "same".to_owned(),
-            Some(now) if continued.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(&now)) => "continued".to_owned(),
+            Some(now) if continued.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(now)) => "continued".to_owned(),
             Some(_) => "new".to_owned(),
         },
         "continued-in" => yes(continued.is_some()),
-        "written" => yes(written.is_file()),
-        "prompts" => transcript_fact(&written, "prompts"),
+        "forks" => {
+            let mut vias: Vec<String> = derived.iter().map(|(_, via)| via.clone()).collect();
+            vias.sort();
+            if vias.is_empty() { NONE.to_owned() } else { vias.join(" | ") }
+        }
+        "prompts" => now.map_or_else(|| "no record".to_owned(), |id| transcript_fact(&transcript(&id), "prompts")),
+        "fork-prompts" => match derived.as_slice() {
+            [(id, _)] => transcript_fact(&transcript(id), "prompts"),
+            other => format!("{} derived sessions", other.len()),
+        },
         _ => format!("unknown key {key}"),
     }
 }
@@ -375,11 +406,14 @@ type Reads = dyn Fn(&str, &str) -> String;
 /// state is a snapshot (`<state>.ansi`) or a file the script wrote instead (see the module).
 fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<(String, String, String)>, String> {
     let file = |extension: &str| Some(folder.join(format!("{state}.{extension}"))).filter(|p| p.is_file());
+    // A state can have a screen and a live record (`snap` and `live` under one name): the live
+    // record's keys are read from it, the others from the screen.
+    let live = file("live.json");
     let read: Box<Reads> = if let Some(path) = file("ansi") {
         let text = std::fs::read_to_string(&path).map_err(|_| "no recording".to_owned())?;
         let screen = recorded(&text.replace("\r\n", "\n"));
         Box::new(move |key, want| fact(&screen, key, want))
-    } else if let Some(path) = file("live.json") {
+    } else if let Some(path) = live.clone() {
         Box::new(move |key, _| live_fact(&path, key))
     } else if let Some(path) = file("jsonl") {
         Box::new(move |key, _| transcript_fact(&path, key))
@@ -393,7 +427,10 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
     Ok(wanted
         .iter()
         .filter_map(|(key, want)| {
-            let got = read(key, want);
+            let got = match &live {
+                Some(path) if LIVE_KEYS.contains(&key.as_str()) => live_fact(path, key),
+                _ => read(key, want),
+            };
             (!matches(want, &got)).then(|| (key.clone(), want.clone(), got))
         })
         .collect())

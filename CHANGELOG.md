@@ -2,11 +2,12 @@
 
 ## Unreleased
 
-- Chat: after `/fork` in a Claude tab, Chat follows the session the terminal goes on in (Claude
-  Code names it in the transcript it leaves) instead of staying on the old conversation; the
-  forked conversation shows once its transcript is written with the next message.
-- Tools: `recorder compat` has a `fork` script that records what `/fork` does to the live session
-  record and the transcripts, and a `live` op for it.
+- Chat: when Claude Code moves a tab's conversation to a new session after `/fork` and says so in
+  the transcript it leaves, Chat follows it instead of staying on the old conversation; the
+  conversation shows there once its transcript is written with the next message.
+- Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
+  record and the transcripts (a `live` op records both), and whether Chat reads the screen after
+  it as an idle input.
 - Chat and the Session view: after a rewind, the turns it replaced are no longer shown once the
   next message is written; the conversation follows the active branch of the transcript.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time

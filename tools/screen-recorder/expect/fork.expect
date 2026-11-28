@@ -5,16 +5,22 @@
 kind = idle
 send = yes
 
-# Seen in transcripts of Claude Code 2.1.325 and 2.1.332: the terminal goes on in a new session,
-# and the transcript the fork leaves ends with a `continued-in` record naming it. Its transcript
-# is written only with the next message.
+# Claude Code 2.1.332 (recorded 2026-11-28): the terminal stays in its session, the fork is a
+# background session derived from it with a copy of the conversation, and the input is idle
+# again (Chat's slash command is done; Send is offered).
 [forked]
-session = continued
-continued-in = yes
-written = no
+kind = idle
+send = yes
+session = same
+continued-in = no
+forks = background
+prompts = Reply with just the word: alpha
+fork-prompts = Reply with just the word: alpha
 
-# The next message writes the new session's transcript: the copied conversation and the new turn.
+# The next turn goes on in the same session's transcript, which Chat reads.
 [after]
-session = continued
-written = yes
+kind = idle
+send = yes
+session = same
+continued-in = no
 prompts = Reply with just the word: alpha | Reply with just the word: bravo

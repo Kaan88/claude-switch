@@ -718,3 +718,55 @@ fn the_session_a_fork_goes_on_in_is_read_from_the_record_it_writes_last() {
     fs::write(agents.join("agent-a.jsonl"), continued(NEXT)).unwrap();
     assert_eq!(Reader::open(agents.join("agent-a.jsonl"), 4096).unwrap().chat().continued_in, None);
 }
+
+/// Claude Code 2.1.332's `/fork`, recorded by `recorder compat` (script `fork`, trimmed: context
+/// attachments are stubs that keep their links, account fields are left out): the terminal's own
+/// transcript, and the background session the fork made from it.
+const FORK_TAB: &str = include_str!("fixtures/fork-2.1.332/b251c8e6-184e-48ea-a1db-c43a9618612d.jsonl");
+const FORK_COPY: &str = include_str!("fixtures/fork-2.1.332/d356e845-f0ad-412a-a14a-bd7e652ebc66.jsonl");
+
+fn shown(reader: &Reader) -> Vec<String> {
+    reader
+        .items()
+        .map(|(_, item)| match &item.kind {
+            ItemKind::Prompt { text, .. } => format!("> {text}"),
+            ItemKind::Assistant { markdown } => markdown.clone(),
+            ItemKind::Tool { name, .. } => name.clone(),
+            ItemKind::Notice { text, .. } => format!("! {text}"),
+        })
+        .collect()
+}
+
+#[test]
+fn after_fork_the_tabs_transcript_goes_on_and_the_copy_shows_only_the_copied_turn() {
+    let folder = Folder::new();
+    let path = folder.session();
+    // As the file grew: up to `/fork`, then its records, then the next turn.
+    let fork = FORK_TAB.find("<command-name>/fork").unwrap();
+    let fork = FORK_TAB[..fork].rfind('\n').unwrap() + 1;
+    let bravo = FORK_TAB.find("Reply with just the word: bravo").unwrap();
+    let bravo = FORK_TAB[..bravo].rfind('\n').unwrap() + 1;
+    fs::write(&path, &FORK_TAB[..fork]).unwrap();
+    let mut reader = Reader::open(&path, 256 * 1024).unwrap();
+    assert_eq!(shown(&reader), ["> Reply with just the word: alpha", "alpha"]);
+    append(&path, &FORK_TAB[fork..bravo]);
+    let changes = reader.poll().unwrap();
+    assert!(!changes.reset && !changes.branch_changed);
+    // The command's row; Claude Code's note to the model about the fork is no prompt and no turn.
+    assert_eq!(shown(&reader), ["> Reply with just the word: alpha", "alpha", "/fork"]);
+    let chat = reader.chat();
+    assert!(matches!(chat.latest, Some((_, ChatPhase::EndTurn))), "{chat:?}");
+    assert_eq!(chat.continued_in, None, "2.1.332 leaves the terminal in its session");
+    append(&path, &FORK_TAB[bravo..]);
+    reader.poll().unwrap();
+    let after = ["> Reply with just the word: alpha", "alpha", "/fork", "> Reply with just the word: bravo", "bravo"];
+    assert_eq!(shown(&reader), after);
+    assert!(matches!(reader.chat().latest, Some((_, ChatPhase::EndTurn))));
+
+    // The background copy: its task notification about the fork is not a prompt of the user's.
+    let copy = folder.0.join("copy.jsonl");
+    fs::write(&copy, FORK_COPY).unwrap();
+    let reader = Reader::open(&copy, 256 * 1024).unwrap();
+    assert_eq!(shown(&reader), ["> Reply with just the word: alpha", "alpha"]);
+    assert_eq!(reader.chat().continued_in, None);
+}

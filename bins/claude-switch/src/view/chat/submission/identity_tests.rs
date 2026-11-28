@@ -390,3 +390,58 @@ fn a_continuation_is_not_followed_while_the_live_record_names_another_session() 
     assert!(!f.tab().follow_continuation());
     assert_eq!(f.tab().pane.as_ref().unwrap().pinned_id(), Some(A));
 }
+
+/// Item 80 with what Claude Code 2.1.332 recorded (`recorder compat`, script `fork`): the terminal
+/// stays in its session and the fork is a background session whose transcript (a copy of the
+/// conversation) appears beside it, newer. The tab keeps its session and reads the next turn.
+#[test]
+fn after_a_recorded_fork_the_tab_keeps_its_session_and_reads_the_next_turn() {
+    const TAB_ID: &str = "b251c8e6-184e-48ea-a1db-c43a9618612d";
+    const COPY_ID: &str = "d356e845-f0ad-412a-a14a-bd7e652ebc66";
+    let fixture = |id: &str| {
+        let path =
+            format!("{}/../../crates/core/src/transcript/fixtures/fork-2.1.332/{id}.jsonl", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(path).unwrap()
+    };
+    let (tab, copy) = (fixture(TAB_ID), fixture(COPY_ID));
+    let mut f = Fixture::new("fork-recorded", |root| model::Source::File(handover_transcript(root, root, TAB_ID)));
+    let root = f.root.clone();
+    let path = handover_transcript(&root, &root, TAB_ID);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let fork = tab[..tab.find("<command-name>/fork").unwrap()].rfind('\n').unwrap() + 1;
+    std::fs::write(&path, &tab[..fork]).unwrap();
+    assert!(f.tab().apply_live_identity(Some(TAB_ID)));
+    let prompts = |f: &mut Fixture, want: usize| {
+        let pane = f.tab().pane.as_mut().unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let count = |pane: &crate::view::Pane| {
+            pane.model
+                .items
+                .values()
+                .filter(|i| matches!(i.kind, claude_switch_core::transcript::ItemKind::Prompt { .. }))
+                .count()
+        };
+        pane.model.poll();
+        while count(pane) < want && Instant::now() < deadline {
+            pane.model.collect();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            pane.model.poll();
+        }
+        count(pane)
+    };
+    assert_eq!(prompts(&mut f, 1), 1);
+
+    // `/fork`: its records in the tab's transcript, and the background copy beside it.
+    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    std::io::Write::write_all(&mut file, &tab.as_bytes()[fork..]).unwrap();
+    std::fs::write(handover_transcript(&root, &root, COPY_ID), &copy).unwrap();
+    // The live record goes on naming the tab's session.
+    f.tab().apply_live_identity(Some(TAB_ID));
+    assert!(!f.tab().follow_continuation(), "2.1.332 writes no continued-in");
+    assert_eq!(prompts(&mut f, 2), 2, "the turn after the fork is read");
+    let pane = f.tab().pane.as_ref().unwrap();
+    assert_eq!(pane.pinned_id(), Some(TAB_ID));
+    assert_eq!(pane.verified_transcript(), Some(path.as_path()));
+    assert!(!pane.chat.identity_unverified && pane.model.error.is_none());
+    assert_eq!(f.tab().resume_id.as_deref(), Some(TAB_ID));
+}
