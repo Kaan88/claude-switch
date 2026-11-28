@@ -17,6 +17,7 @@ const COMPACT: u32 = 3;
 const COPY_BASE: u32 = 4;
 /// Above every `COPY_BASE + account` id.
 const OPEN_FOLDER: u32 = 100_000;
+const FIND: u32 = 100_001;
 
 #[derive(Clone, Copy)]
 pub struct Drag {
@@ -94,7 +95,8 @@ impl AppState {
         let folder = self.tab_folder(id).is_some();
         items.extend([
             Item::new(COMPACT, "Compact and open as…").enabled(tab.resume_id.is_some()),
-            Item::new(OPEN_FOLDER, "Open working folder").enabled(folder).sep(),
+            Item::new(OPEN_FOLDER, "Open working folder").enabled(folder),
+            Item::new(FIND, "Find…").hint("Ctrl+Shift+F").sep(),
             Item::new(RENAME, "Rename tab…").sep(),
             Item::new(CLOSE, "Close"),
             Item::new(CLOSE_OTHERS, "Close others").enabled(self.tabs.list.len() > 1),
@@ -120,6 +122,10 @@ impl AppState {
                 self.dialog = Some(dialogs::name_dialog("Rename tab", title, NameFor::Tab(id)));
             }
             CLOSE => self.ask_close_tab(id),
+            FIND => {
+                self.show_tab(id);
+                self.open_find();
+            }
             OPEN_FOLDER => {
                 if let Some(folder) = self.tab_folder(id) {
                     self.open_working_folder(now, &folder);

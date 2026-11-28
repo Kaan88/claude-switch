@@ -120,6 +120,8 @@ pub enum Target {
     TabClose(u64),
     /// The terminal of the tab shown.
     Terminal,
+    /// A control of the find bar over the terminal shown.
+    Find(crate::termfind::FindControl),
     SessionToggle,
     ChatMode(bool),
     Chat(crate::view::chat::Control),

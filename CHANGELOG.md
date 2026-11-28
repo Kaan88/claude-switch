@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Terminal tabs: find in the screen and the scrollback. Ctrl+Shift+F (while the terminal has the
+  keyboard, as in Windows Terminal), "Find in terminal" in the palette or "Find…" in the tab's menu
+  opens a bar at the top right of the terminal, also over Chat's terminal drawer. Matches are marked
+  as you type, the current one in its own colour, with a count ("3 of 12"); Enter or ↑ goes to the
+  match above, Shift+Enter or ↓ to the one below, Aa (Alt+C) matches case (off by default), Escape
+  closes it. A match across a wrapped line is found.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

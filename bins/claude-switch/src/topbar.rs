@@ -265,6 +265,7 @@ pub fn tip_of(t: Target) -> Option<&'static str> {
         Target::SearchConversation => "In conversations (Ctrl+Shift+F) — toggle full-text search",
         Target::Account => "The account sessions are opened as",
         Target::SessionToggle => "Toggle session view (Ctrl+Shift+E)",
+        Target::Find(control) => return crate::termfind::tip_of(control),
         _ => return None,
     })
 }

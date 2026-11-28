@@ -123,6 +123,8 @@ impl App for AppState {
             Event::Text(t) => {
                 if self.dialog.is_some() {
                     dialogs::text_input(self, &t);
+                } else if self.find_focused() {
+                    self.find_text(&t);
                 } else if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
                     if !self.chat_text(cx, &t) {
                         self.term_text(&t);

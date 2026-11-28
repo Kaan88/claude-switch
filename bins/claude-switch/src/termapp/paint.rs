@@ -1,6 +1,9 @@
 //! The same terminal surface draws the full tab and the Chat drawer.
 
 use super::{AppState, CURSOR, Cx, Msg, Rect, Target};
+
+/// The animator's name for the find box's caret.
+const FIND_CARET: &str = "term-find-caret";
 use crate::term::Term;
 use claude_switch_core::config::{AppearancePrefs, TerminalCursor};
 use mdshared_term::{CursorShape, Screen};
@@ -35,7 +38,16 @@ fn visible_notice(t: &Term, view: View) -> Range<usize> {
 impl AppState {
     /// Draws the shown tab, including the scrollback and the app-owned end notice.
     pub fn draw_terminal(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect) {
-        self.paint_terminal(p, area, |screen, view, blink, row| {
+        let focused = self.window_focused && self.find_focused();
+        let blink = self.blink;
+        let caret = self.tabs.shown_mut().and_then(|tab| tab.term.find.as_mut()).map(|find| {
+            let on = find.field.blink_caret(cx.anim(), FIND_CARET, blink, focused);
+            if focused && blink.is_some() && cx.anim().animates() {
+                cx.animating(crate::termfind::Bar::layout(area).field);
+            }
+            on
+        });
+        self.paint_terminal(p, area, caret.unwrap_or(false), |screen, view, blink, row| {
             let shown = termview::cursor_blinks_on(cx.anim(), CURSOR, blink, screen, view);
             if blink.is_some()
                 && cx.anim().animates()
@@ -50,17 +62,25 @@ impl AppState {
     /// [`draw_terminal`](Self::draw_terminal) without a window, the cursor shown when it is.
     #[cfg(test)]
     pub fn draw_terminal_still(&mut self, p: &mut Painter, area: Rect) {
-        self.paint_terminal(p, area, |_, _, _, _| true);
+        self.paint_terminal(p, area, true, |_, _, _, _| true);
     }
 
     fn paint_terminal(
         &mut self,
         p: &mut Painter,
         area: Rect,
+        caret_on: bool,
         cursor: impl FnOnce(&Screen, View, Option<std::time::Duration>, Option<Rect>) -> bool,
     ) {
         let pal = *self.pal();
         let scheme = self.terminal_scheme();
+        if let Some(tab) = self.tabs.shown_mut() {
+            let t = &mut tab.term;
+            let changes = t.changes;
+            if let Some(find) = &mut t.find {
+                find.update(&t.screen, changes, t.screen.end_line());
+            }
+        }
         let (Some(metrics), Some(tab)) = (self.metrics, self.tabs.shown()) else {
             p.fill(area, scheme.background);
             return;
@@ -76,6 +96,7 @@ impl AppState {
         let surface = Surface { area, inner, metrics, scheme, pal };
         surface.draw(p, &mut self.cell_font, t, view, prefs.terminal_opacity);
         self.hits.push((area, Target::Terminal));
+        self.draw_find_bar(p, area, caret_on);
     }
 }
 
@@ -128,6 +149,9 @@ impl Surface {
             p.fill(area, scheme.background);
         }
         termview::draw_screen_with_background(p, font, &scheme, &metrics, grid, &t.screen, sel, view, opacity);
+        if let Some(find) = &t.find {
+            crate::termfind::draw_marks(p, &pal, find, &t.screen, view, &metrics, inner);
+        }
         // Selection, explicit backgrounds and cursor ink are already backed by termview.
         // The ended message is ordinary grid text, so repaint its bands as opaque.
         let notice = visible_notice(t, view);
@@ -206,12 +230,12 @@ mod tests {
         let mut gfx = Gfx::new();
         let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
         p.set_frost_key(Some(Key::new(DARK.page, 217)));
-        st.paint_terminal(&mut p, window, |_, _, _, _| false);
+        st.paint_terminal(&mut p, window, false, |_, _, _, _| false);
         let base = p.bmp.pixels.clone();
         let ground = pixel(p.bmp, 0, 0);
         assert!(ground[3] < 255);
         st.main_menu(Rect::new(446.0, 8.0, 24.0, 24.0));
-        st.paint_terminal(&mut p, window, |_, _, _, _| false);
+        st.paint_terminal(&mut p, window, false, |_, _, _, _| false);
         assert_eq!(p.bmp.pixels.as_slice(), base.as_slice(), "opening a menu repainted the grid differently");
         let cards = Cards::for_frame(&st, &p);
         let pal = *st.pal();

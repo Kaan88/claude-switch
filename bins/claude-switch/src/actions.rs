@@ -52,6 +52,7 @@ const SET_TOPIC: u32 = 31;
 const MEANING_INDEX: u32 = 240;
 const MEANING_ASK: u32 = 241;
 pub const NEW_OPENCODE: u32 = 242;
+pub const FIND_TERMINAL: u32 = 243;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -171,6 +172,7 @@ impl AppState {
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
             NEW_OPENCODE => self.ask_new_opencode_tab(),
+            FIND_TERMINAL => self.open_find(),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
             CLOSE_TAB => {
                 if let Some(t) = self.tabs.active {
@@ -614,6 +616,7 @@ impl AppState {
         }
         if self.terminal_shown() {
             entries.push(Entry::new(PASTE, "Paste").group(0));
+            entries.push(Entry::new(FIND_TERMINAL, "Find in terminal").hint("Ctrl+Shift+F").group(0));
         }
         if self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) {
             entries.push(Entry::new(CHAT_LAYOUT, "Switch Chat / Terminal · F6 in palette").group(0));

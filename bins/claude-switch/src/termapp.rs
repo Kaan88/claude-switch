@@ -96,7 +96,11 @@ impl AppState {
 
     /// Whether the terminal shown has the keyboard: the window has it and nothing is over it.
     pub fn terminal_focused(&self) -> bool {
-        self.window_focused && self.nothing_over() && self.terminal_shown() && !self.chat_takes_input()
+        self.window_focused
+            && self.nothing_over()
+            && self.terminal_shown()
+            && !self.chat_takes_input()
+            && !self.tabs.shown().is_some_and(|tab| tab.term.find.as_ref().is_some_and(|find| find.focused))
     }
 
     fn term_wake(&self) -> impl Fn() + Send + Sync + 'static {
@@ -289,7 +293,8 @@ impl AppState {
             }
             w.output = true;
             w.cursor |= r.cursor_moved;
-            if tab.term.scroll > 0 {
+            if tab.term.scroll > 0 || tab.term.find.is_some() {
+                // Find marks move with the text, wherever it changed.
                 // Scrollback growth can move the overlaid thumb outside the dirty grid rows.
                 w.all = true;
                 continue;
@@ -333,6 +338,7 @@ impl AppState {
         let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected, keyboard);
         match action {
             KeyAction::Command(c) => self.command(now, c, None),
+            KeyAction::Find => self.open_find(),
             KeyAction::Copy => self.copy_selection(),
             KeyAction::Paste if !ended => self.paste(),
             KeyAction::Page(n) => {
@@ -431,6 +437,9 @@ impl AppState {
         let (area, m) = (self.term_area, self.metrics?);
         let tab = self.tabs.shown_mut()?;
         let t = &mut tab.term;
+        if let Some(find) = &mut t.find {
+            find.focused = false;
+        }
         let modes = t.screen.modes();
         let b = button_of(button)?;
         // Windows Terminal passes mouse input to a tracking program before trying local

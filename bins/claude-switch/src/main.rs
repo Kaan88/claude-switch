@@ -53,6 +53,7 @@ mod tabcontrols;
 mod tabs;
 mod term;
 mod termapp;
+mod termfind;
 mod termkeys;
 mod termtheme;
 #[cfg(test)]

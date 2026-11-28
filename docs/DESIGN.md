@@ -333,7 +333,25 @@ whether a later first message keeps that id could only be seen with a model requ
 relied on.
 A folder that is gone is listed in the "Tabs not reopened" notice.
 
-**Not there:** more than one terminal in a tab, search or links in the terminal,
+**Find in a terminal.** Ctrl+Shift+F while the terminal has the keyboard (Windows Terminal's key;
+Ctrl+F stays the program's), "Find in terminal" in the palette or "Find…" in the tab's menu opens a
+bar at the top right of the terminal shown; in Chat it opens the terminal drawer and sits over it.
+Each terminal keeps its own bar (`Term::find`, `termfind.rs`). The search reads every line the screen
+keeps, from the oldest scrollback line to the bottom row (`Screen::first_line`..`end_line`,
+`line_at`), joins rows a wrap continued into one line, and matches characters case-insensitively
+unless Aa is on; matches do not overlap and trailing blanks never match. It runs again only when the
+query, the case setting or the terminal's change count (`Term::changes`: output and resizes) moved,
+at the next frame. A new query picks the last match that starts above the bottom of the view (a
+search upwards, as Windows Terminal's default) and scrolls it into the middle when it is not
+shown; new output keeps the current match without scrolling. Enter, ↑ and F3 go up (older),
+Shift+Enter, ↓ and Shift+F3 down, both round from the ends; the count reads "N of M" with matches
+numbered top to bottom. The marks are blended over the drawn grid in the palette's `find_mark` and
+`find_current` at the Markdown viewer's alphas, so termview's own colours, selection and cursor are
+untouched. While the bar has the keyboard, keys go to its box (the window's shortcuts still work)
+and the cursor is drawn unfocused; a press on the grid gives the keyboard back to the program and
+leaves the bar open; Escape or its × closes it.
+
+**Not there:** more than one terminal in a tab, links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host
 has no name for Insert); input-method composition (the host turns input methods off on Windows).
 

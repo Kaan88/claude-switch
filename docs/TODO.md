@@ -122,7 +122,9 @@ as the second account, Windows Terminal, the desktop hand-over.
 - The account selector's drop-down shows each account's colour dot before its name, as the selector
   itself does (owner, 2026-11-28). Blocked on the toolkit: drop-down items cannot carry a colour
   swatch ("For the toolkit", item 1).
-- Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
+- Multiple terminal splits, font-family settings, tab reordering, restoring tabs. (Search in the
+  scrollback is done, 2026-11-28: DESIGN.md, "Find in a terminal". Not there yet: mouse selection
+  and the right-click menu in its box, regular expressions, whole words.)
 - Reuse Conversation in Sessions details later. That view is currently a short read-only preview
   and has no independently scrollable transcript region.
 - Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.
