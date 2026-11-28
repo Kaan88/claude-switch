@@ -115,6 +115,14 @@ impl AppState {
         }
     }
 
+    /// The tooltip of a control of the shown tab's session view.
+    pub(crate) fn session_tip(&self, target: Target) -> Option<String> {
+        let Target::Chat(Control::Detail(hit)) = target else { return None };
+        let tab = self.tabs.shown()?;
+        let pane = tab.pane.as_ref()?;
+        (hit.tab() == tab.id).then(|| super::side::Details::tip(&pane.model, hit)).flatten()
+    }
+
     fn detail_control(&mut self, hit: super::side::Hit) {
         let Some(tab) = self.tabs.shown_mut() else { return };
         let Some(pane) = &mut tab.pane else { return };
@@ -287,6 +295,9 @@ impl AppState {
             let suggested = shown && chat.popups.read_next_prompt(&tab.term.screen);
             // The card first: the gate asks it whether it answers the pending call's menu.
             let card = chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
+            // What the terminal's agent list says about the agents, for every place they show.
+            let listed = super::question::listed_agents(&pane.model, &tab.term.screen);
+            let card = card | listed.is_some_and(|listed| pane.model.set_listed(listed));
             let idle = chat.screen_idle(&tab.term, now);
             chat.settle(idle);
             let queued = chat.reconcile_queued(&pane.model, idle, now);

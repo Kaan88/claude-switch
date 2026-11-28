@@ -7,6 +7,7 @@ use claude_switch_core::transcript::{
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::theme::Palette;
 
+use super::super::agent_status::{State, Status};
 use super::super::links::{Files, NamedFile};
 use super::super::model::{Group, Model};
 use super::super::outputs::{Destination, Output};
@@ -1065,15 +1066,18 @@ impl Rows<'_> {
         row
     }
 
-    pub fn agents(&mut self, agents: &[Subagent]) {
+    pub fn agents(&mut self, agents: &[Subagent], status: impl Fn(&Subagent) -> Status) {
         for a in agents {
-            let (state, tone) = match a.finished {
-                Some(true) => ("Finished", Tone::Muted),
-                Some(false) => ("Running", Tone::Accent),
-                None => ("Unknown", Tone::Normal),
+            let shown = status(a);
+            let tone = match shown.state {
+                State::Running => Tone::Accent,
+                State::Finished | State::Stopped => Tone::Muted,
+                State::Unknown => Tone::Normal,
             };
+            let label = format!("{}  {}", shown.mark(), shown.word);
+            let state = label.as_str();
             let start = a.started_at.as_deref().and_then(seconds);
-            let end = if a.finished != Some(false) { a.last_activity_at.as_deref().and_then(seconds) } else { None };
+            let end = if !shown.running() { a.last_activity_at.as_deref().and_then(seconds) } else { None };
             let mut info: Vec<String> =
                 [a.agent_type.as_deref(), a.model.as_deref()].into_iter().flatten().map(str::to_owned).collect();
             if let Some(depth) = a.spawn_depth {
@@ -1090,6 +1094,11 @@ impl Rows<'_> {
                 detail.push('\n');
                 detail.push_str(tool);
             }
+            // Why nothing tells, where the page has no pointer to rest on a mark.
+            if shown.state == State::Unknown {
+                detail.push('\n');
+                detail.push_str(shown.why);
+            }
             let mut row = self.card(
                 Id::Agent(a.id.clone()),
                 a.description.as_deref().unwrap_or(&a.id),
@@ -1099,7 +1108,7 @@ impl Rows<'_> {
                 None,
             );
             row.agent = Some(a.id.clone());
-            row.busy = a.finished == Some(false);
+            row.busy = shown.running();
             row.started = if row.busy { start } else { None };
             self.put(row);
         }

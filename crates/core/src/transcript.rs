@@ -138,14 +138,42 @@ pub struct Subagent {
     pub agent_type: Option<String>,
     pub description: Option<String>,
     pub model: Option<String>,
-    /// Unknown when no usable sidecar has been written yet.
-    pub finished: Option<bool>,
+    /// How it ended and where that was read; `None` while nothing in the files says it ended
+    /// (it may run, or have ended without a record: see [`AgentEnd`]).
+    pub end: Option<(AgentEnd, EndSource)>,
     pub spawn_depth: Option<u64>,
     pub tool_use_id: Option<String>,
     pub started_at: Option<String>,
     pub last_activity_at: Option<String>,
     pub tool_calls: usize,
     pub last_tool_summary: Option<String>,
+}
+
+/// How a subagent's work ended. Claude Code 2.1.332 writes `finished: true` into the agent's
+/// sidecar when it ends (also when it was stopped) and never `false`, so a running agent and one
+/// whose end went unrecorded (a closed or crashed session) read the same here: no end. What the
+/// terminal's agent list shows tells them apart while the session runs in a tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentEnd {
+    Finished,
+    /// Stopped by the user (the agent list's `x`, TaskStop) or by Claude Code.
+    Stopped,
+    /// Esc during its turn: its transcript, or its foreground call's result, says so.
+    Interrupted,
+    Failed,
+}
+
+/// Where an agent's end was read, the most direct first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndSource {
+    /// The `<task-notification>` a background agent reports through.
+    Notification,
+    /// The result of the Agent call that ran it in the foreground.
+    Result,
+    /// Claude Code's `agent-<id>.meta.json` (`finished`, `stoppedByUser`, `sweptByStop`).
+    Sidecar,
+    /// The agent's own transcript ends with its final answer or an interruption.
+    Transcript,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -254,6 +282,7 @@ impl Reader {
         let view = &mut self.view;
         self.tail.earlier(|offset, line| view.line(offset, line, &mut changes))?;
         view.finish(&mut changes);
+        self.settle_agents(&mut changes);
         Ok(changes)
     }
 
@@ -341,30 +370,25 @@ impl Reader {
                     Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
                     Err(err) => return Err(err),
                 };
-                self.agents.insert(
-                    id.to_owned(),
-                    AgentFollow { tail, info: Subagent { id: id.into(), ..Subagent::default() } },
-                );
+                self.agents.insert(id.to_owned(), AgentFollow::new(tail, id));
                 changes.subagents_changed = true;
             }
             seen.insert(id.to_owned());
             let agent = self.agents.get_mut(id).expect("agent was inserted");
             let before = agent.info.clone();
             if agent.tail.replaced()? {
-                *agent = AgentFollow {
-                    tail: Tail::open(&path, 0)?,
-                    info: Subagent { id: id.into(), ..Subagent::default() },
-                };
+                *agent = AgentFollow::new(Tail::open(&path, 0)?, id);
             }
             let meta = read_sidecar(&path.with_extension("meta.json"))?;
             agent.info.agent_type = string(&meta["agentType"]);
             agent.info.description = string(&meta["description"]);
             agent.info.model = string(&meta["model"]);
-            agent.info.finished = meta["finished"].as_bool();
+            agent.sidecar_end = sidecar_end(&meta);
             agent.info.spawn_depth = meta["spawnDepth"].as_u64();
             agent.info.tool_use_id = string(&meta["toolUseId"]);
-            let info = &mut agent.info;
-            agent.tail.append(|_, line| agent_line(info, line))?;
+            let (info, end) = (&mut agent.info, &mut agent.transcript_end);
+            agent.tail.append(|_, line| agent_line(info, end, line))?;
+            agent.info.end = agent.end(&self.view);
             changes.subagents_changed |= before != agent.info;
         }
         let count = self.agents.len();
@@ -378,13 +402,55 @@ impl Reader {
                 .collect();
             self.view.set_links(links, changes);
         }
+        self.settle_agents(changes);
         Ok(())
+    }
+
+    /// The agents' ends again, after the session's own records changed (a notification, a result).
+    fn settle_agents(&mut self, changes: &mut Changes) {
+        for agent in self.agents.values_mut() {
+            let end = agent.end(&self.view);
+            changes.subagents_changed |= agent.info.end != end;
+            agent.info.end = end;
+        }
     }
 }
 
 struct AgentFollow {
     tail: Tail,
     info: Subagent,
+    sidecar_end: Option<AgentEnd>,
+    /// What the newest record of the agent's own transcript says: its final answer, an Esc, or
+    /// nothing (it was mid-step).
+    transcript_end: Option<AgentEnd>,
+}
+
+impl AgentFollow {
+    fn new(tail: Tail, id: &str) -> Self {
+        let info = Subagent { id: id.into(), ..Subagent::default() };
+        Self { tail, info, sidecar_end: None, transcript_end: None }
+    }
+
+    /// The session's notification first (a background agent's own report), then its foreground
+    /// call's result, then the sidecar, then the end of its own transcript.
+    fn end(&self, view: &View) -> Option<(AgentEnd, EndSource)> {
+        let result = || view.agent_results.get(self.info.tool_use_id.as_deref()?).map(|(_, end)| *end);
+        view.background
+            .agent_end(&self.info.id)
+            .map(|end| (end, EndSource::Notification))
+            .or_else(|| result().map(|end| (end, EndSource::Result)))
+            .or(self.sidecar_end.map(|end| (end, EndSource::Sidecar)))
+            .or(self.transcript_end.map(|end| (end, EndSource::Transcript)))
+    }
+}
+
+/// Claude Code writes `stoppedByUser`, `sweptByStop` and `finished` only as `true`.
+fn sidecar_end(meta: &Value) -> Option<AgentEnd> {
+    if meta["stoppedByUser"] == true || meta["sweptByStop"] == true {
+        Some(AgentEnd::Stopped)
+    } else {
+        (meta["finished"] == true).then_some(AgentEnd::Finished)
+    }
 }
 
 fn read_sidecar(path: &Path) -> io::Result<Value> {
@@ -423,6 +489,8 @@ struct View {
     /// The newest `continued-in` record: its offset and the session it names.
     continued: Option<(u64, String)>,
     background: background::Background,
+    /// How foreground Agent calls ended, by tool use id: from their results.
+    agent_results: HashMap<String, (ItemId, AgentEnd)>,
     /// The newest slash command, for the output record that follows it.
     last_command: Option<String>,
     /// The newest shell-mode row, which its output record fills.
@@ -461,7 +529,9 @@ impl View {
         }
         let timestamp = value["timestamp"].as_str();
         let id = |block| ItemId { offset, block };
-        if matches!(kind, LineKind::User | LineKind::System) && self.background.notification(id(0), &value) {
+        if matches!(kind, LineKind::User | LineKind::System | LineKind::Attachment)
+            && self.background.notification(id(0), &value)
+        {
             changes.background_changed = true;
             return;
         }
@@ -610,6 +680,9 @@ impl View {
                     }
                     if self.results.get(tool).is_none_or(|(previous, _)| *previous < at) {
                         self.background.result(tool, at, &result.details, structured, result.state == ToolState::Ok);
+                        if let Some(end) = self.background.agent_result(tool, &result.lines, structured, result.state) {
+                            self.agent_results.insert(tool.into(), (at, end));
+                        }
                         changes.background_changed = true;
                         self.results.insert(tool.into(), (at, result));
                         self.update_tool(tool, changes);

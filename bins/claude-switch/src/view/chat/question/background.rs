@@ -7,8 +7,13 @@
 //! keys with the highlight on the main session; ↓ moves it one row at a time to the agent; `x`
 //! stops it ("x to stop" under that row); Esc gives the keys back once the row reads "stopped".
 //! Esc there leaves a running turn alone (recorded with one running).
+use std::collections::BTreeMap;
+
+use claude_switch_core::transcript::Subagent;
+
 use super::screens::{AgentList, AgentState, ListKeys};
 use super::*;
+use crate::view::agent_status::Listed;
 
 pub(super) const NOT_BACKGROUND: &str = "The command did not move to the background. Check the terminal.";
 pub(super) const NO_HINT: &str = "The terminal no longer offers to run this command in the background.";
@@ -85,23 +90,49 @@ fn idle_list(screen: &Screen) -> Option<AgentList> {
 /// description, not known to have finished) and once in the CLI's list, as running.
 pub(super) fn agent_offers(model: &Model, screen: &Screen) -> Vec<AgentOffer> {
     let Some(list) = idle_list(screen) else { return Vec::new() };
-    let names = list.names();
     list.rows
         .iter()
         .enumerate()
         .skip(1)
         .filter(|(_, row)| row.state == AgentState::Running)
-        .filter(|(_, row)| names.iter().filter(|n| **n == (row.name.as_str(), row.description.as_str())).count() == 1)
-        .filter(|(_, row)| {
-            let known = |a: &&claude_switch_core::transcript::Subagent| {
-                a.agent_type.as_deref() == Some(row.name.as_str())
-                    && a.description.as_deref() == Some(row.description.as_str())
-            };
-            let mut known = model.agents.iter().filter(known);
-            known.next().is_some_and(|a| a.finished != Some(true)) && known.next().is_none()
-        })
+        .filter(|&(i, _)| row_agent(model, &list, i).is_some_and(|a| a.end.is_none()))
         .map(|(i, row)| AgentOffer { name: row.name.clone(), description: row.description.clone(), row: i })
         .collect()
+}
+
+/// The transcript's agent a row of the list is: the row is the list's only one with its type and
+/// description, and the transcript knows one agent with both.
+pub(super) fn row_agent<'a>(model: &'a Model, list: &AgentList, i: usize) -> Option<&'a Subagent> {
+    let row = list.rows.get(i).filter(|_| i > 0)?;
+    let names = list.names();
+    if names.iter().filter(|n| **n == (row.name.as_str(), row.description.as_str())).count() != 1 {
+        return None;
+    }
+    let mut known = model.agents.iter().filter(|a| {
+        a.agent_type.as_deref() == Some(row.name.as_str()) && a.description.as_deref() == Some(row.description.as_str())
+    });
+    known.next().filter(|_| known.next().is_none())
+}
+
+/// The agents the CLI's list shows, by id, running or stopped: `None` when the screen cannot tell
+/// (something covers the input, or the list is in a state Chat does not read), empty when the
+/// input shows with no list under it.
+pub(super) fn listed(model: &Model, screen: &Screen) -> Option<BTreeMap<String, Listed>> {
+    let Some(list) = screens::agent_list(screen) else {
+        return screens::no_agent_list(screen).then(BTreeMap::new);
+    };
+    let mut listed = BTreeMap::new();
+    for (i, row) in list.rows.iter().enumerate().skip(1) {
+        let state = match row.state {
+            AgentState::Running => Listed::Running,
+            AgentState::Stopped => Listed::Stopped,
+            AgentState::Other => continue,
+        };
+        if let Some(agent) = row_agent(model, &list, i) {
+            listed.insert(agent.id.clone(), state);
+        }
+    }
+    Some(listed)
 }
 
 fn owned(list: &AgentList) -> Vec<(String, String)> {

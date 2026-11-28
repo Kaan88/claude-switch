@@ -2,7 +2,7 @@ use super::*;
 use crate::state::{AppState, Target};
 use crate::view::chat::Control;
 use crate::view::model::Source;
-use claude_switch_core::transcript::{Item, McpStatus, McpTask, Subagent, Task};
+use claude_switch_core::transcript::{AgentEnd, EndSource, Item, McpStatus, McpTask, Subagent, Task};
 use mdshared_text::bitmap::Bitmap;
 use mdshared_ui::gfx::{Gfx, Painter, Rect};
 use mdshared_ui::theme::DARK;
@@ -333,9 +333,11 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
         Task { content: "Doing".into(), status: TaskStatus::InProgress },
     ];
     model.agents = vec![
-        Subagent { id: "done".into(), finished: Some(true), ..Default::default() },
-        Subagent { id: "busy".into(), finished: Some(false), ..Default::default() },
+        Subagent { id: "done".into(), end: Some((AgentEnd::Finished, EndSource::Sidecar)), ..Default::default() },
+        Subagent { id: "busy".into(), ..Default::default() },
     ];
+    // Running: the terminal's agent list shows it so.
+    model.listed.insert("busy".into(), crate::view::agent_status::Listed::Running);
     put_tool(&mut model, cwd, 2, "Edit", "notes.md", ToolState::Ok);
     model.revision += 1;
     details.refresh_all(&model, cwd);
@@ -367,4 +369,36 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
     assert!(hits.contains(&(Side::Tasks, 0, Part::Fold)));
     assert!(!hits.iter().any(|h| h.0 == Side::Tasks && h.2 == Part::Expand));
     assert!(hits.iter().any(|h| h.0 == Side::Agents));
+}
+
+/// An agent's row says its state in a word, and its tooltip where that was read or why nothing
+/// tells.
+#[test]
+fn an_agent_row_names_its_state_and_its_tooltip_says_why() {
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let mut model = Model::new(Source::File(demo.path().into()), demo.cwd().into(), || {});
+    model.agents = vec![
+        Subagent { id: "gone".into(), description: Some("Trace".into()), ..Default::default() },
+        Subagent {
+            id: "done".into(),
+            description: Some("Compare".into()),
+            end: Some((AgentEnd::Interrupted, EndSource::Transcript)),
+            ..Default::default()
+        },
+    ];
+    model.revision += 1;
+    let tip = |model: &Model, index| Details::tip(model, hit(model, Side::Agents, index, Part::Open));
+    assert_eq!(
+        tip(&model, 0).as_deref(),
+        Some(format!("Unknown. {}", crate::view::agent_status::UNKNOWN_WHY).as_str())
+    );
+    assert_eq!(tip(&model, 1).as_deref(), Some("Interrupted. From the end of its own transcript."));
+    assert!(model.set_listed([("gone".into(), crate::view::agent_status::Listed::Running)].into()));
+    assert_eq!(tip(&model, 0).as_deref(), Some("Running. The terminal's agent list shows it running."));
+    assert!(!model.set_listed([("gone".into(), crate::view::agent_status::Listed::Running)].into()), "the same");
+    // Another section's target has no tooltip; a stale one neither.
+    assert_eq!(Details::tip(&model, hit(&model, Side::Tasks, 0, Part::Open)), None);
+    let stale = hit(&model, Side::Agents, 0, Part::Open);
+    model.revision += 1;
+    assert_eq!(Details::tip(&model, stale), None);
 }

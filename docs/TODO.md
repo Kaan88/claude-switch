@@ -97,6 +97,12 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 - Try Branch from the running app (2026-11-28: `recorder compat` resumes the app's cut copies in
   print mode and in the terminal, but the app's own button, tab and mark were not used for real).
+- Try subagent states with real sessions (2026-11-28; the shapes are from Claude Code 2.1.332's
+  bundle and the recorded agent list, not from a recorded transcript): a background agent running,
+  finished and stopped from the list, a foreground agent finished and interrupted with Esc, and a
+  closed session reopened. Check that Running shows only while the list shows it, and whether an
+  agent stopped from the list gets `stoppedByUser` or no mark (Claude Code's own note says a stop
+  "via the UI leaves no transcript marker"; that one then reads Unknown once the list drops it).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.
@@ -112,15 +118,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Later (the owner's list)
 
-- **Running and finished subagents are not told apart** (owner, 2026-11-28, screenshot: Details ›
-  Background lists agents with `?`, among them one that has finished). `?` is drawn when
-  `agent.finished` is `None` (`view/chat/side/paint.rs`, Side::Agents): Chat found the agent's call but
-  no result. Find which shapes leave it unknown (the result outside the loaded slice, a background
-  agent that reports through a `<task-notification>` instead of a tool result, an interrupted or
-  stopped agent, the agent's own transcript ended) and settle each from what is there: the
-  notification, the agent's transcript end, the agent list under Claude Code's input (running or
-  stopped). Show three plain states (running, finished, stopped or interrupted) with a word, not only a
-  mark, and keep `?` only when nothing can tell, with a tooltip saying why.
 - **The message box talks to the subagent Chat shows** (owner, 2026-11-28). With a subagent's
   conversation open in Chat ("‹ Back · <agent's task>"), the box still sends to the main session.
   It should send to that agent, the way Claude Code does when an agent is picked in the list under its

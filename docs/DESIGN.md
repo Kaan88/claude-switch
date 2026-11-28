@@ -462,8 +462,28 @@ strip come into view as the conversation reaches its end, where it follows again
 by a viewport. Earlier history is loaded on request. Agent transcripts are reachable from expanded
 tool details and the Agents page. A cursor checkpoint detects a replacement or truncate-and-regrow near the
 read position. Transcript lines over 48 MiB are skipped, picture reads respect the same containing-line
-limit, and sidecar metadata over 1 MiB is ignored. The reported agent state comes from the sidecar, so a missing
-completion flag is shown as unknown rather than guessed.
+limit, and sidecar metadata over 1 MiB is ignored.
+
+**Subagent states.** Every place agents show (Details › Background, the header of a subagent's
+conversation, the Agents page) says one of running, finished or stopped (the word "Interrupted"
+or "Failed" when that is how it stopped) in a word beside its mark (◉, ✓, ■), and `?` Unknown only
+when nothing tells; the row's tooltip (on the Agents page, its card) says where the state was read
+or why nothing tells. Claude Code 2.1.332 marks only an end: its sidecar (`agent-<id>.meta.json`)
+gets `finished: true` when the agent ends (also when it is stopped) and `stoppedByUser` or
+`sweptByStop` for a stop, never `finished: false`, and an agent stopped from its list or cut off by
+a closed session may get no mark at all. The reader takes an agent's end from, first to last: a
+`<task-notification>` whose `<task-id>` is the agent's id (`completed`, `failed`, `killed` or
+`stopped`; a user record, a `task_notification` system record, or a `queued_command` attachment
+when it came while a turn ran), the result of the Agent call that ran it in the foreground (not a
+background launch, `status: "async_launched"`; an `is_error` result reading "[Request interrupted
+by user for tool use]" is an interruption), the sidecar, and the newest record of the agent's own
+transcript (an answer with `stop_reason` `end_turn` or `stop_sequence` and no tool call, or Claude
+Code's "[Request interrupted by user]"). History paged in later can settle an agent. None of these
+says an agent still runs: while the session runs in a tab, the terminal's agent list under the
+input does, read on every screen Chat reads (a row whose status starts with its running time is
+running, "stopped …" stopped), and it outranks the files. A row counts only when it is the list's
+only one with its type and description and the transcript knows exactly one such agent. The input
+with no list under it clears what the list said; a screen that covers the input keeps it.
 
 Chat and Session view use the same conversation projection, painting and input. Prompts sit in
 right-aligned tinted bubbles; cardless answers use a palette-accent Claude mark and body-size prose

@@ -16,6 +16,7 @@ use claude_switch_core::transcript::{
 use mdshared_text::image::Image;
 use mdshared_ui::thumbs::MemoryCache;
 
+use super::agent_status::{Listed, Status};
 use super::links::{self, Files, NamedFile, ShellLogs};
 use super::{
     documents::{self, Document},
@@ -219,6 +220,9 @@ pub struct Model {
     pub items: BTreeMap<ItemId, Item>,
     pub groups: Vec<Group>,
     pub agents: Vec<Subagent>,
+    /// The agents the terminal's agent list shows, by id, as Chat last read it (only while the
+    /// session runs in this tab).
+    pub listed: BTreeMap<String, Listed>,
     pub tasks: Vec<Task>,
     pub agent: Option<String>,
     pub has_earlier: bool,
@@ -308,6 +312,7 @@ impl Model {
             items: Default::default(),
             groups: vec![],
             agents: vec![],
+            listed: BTreeMap::new(),
             tasks: vec![],
             agent: None,
             has_earlier: false,
@@ -442,6 +447,21 @@ impl Model {
         }
         changed
     }
+    /// What Chat says about an agent: see `agent_status`.
+    pub fn agent_status(&self, agent: &Subagent) -> Status {
+        Status::of(agent, self.listed.get(&agent.id).copied())
+    }
+
+    /// The terminal's agent list as just read; true when that changed what Chat shows.
+    pub fn set_listed(&mut self, listed: BTreeMap<String, Listed>) -> bool {
+        if self.listed == listed {
+            return false;
+        }
+        self.listed = listed;
+        self.revision += 1;
+        true
+    }
+
     pub fn session_id(&self) -> Option<&str> {
         self.session.as_deref()
     }

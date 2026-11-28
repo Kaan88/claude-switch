@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Chat and the Session view: subagents are told apart in plain words wherever they show (Details ›
+  Background, a subagent's conversation header, the Agents page): Running, Finished, or Stopped
+  (Interrupted, Failed). Before, an agent Claude Code had not marked showed `?` even when it was
+  done, and a running one never showed as running. The end is read from the agent's
+  notification, its call's result, the mark beside its transcript or its transcript's last
+  record; running and stopped from the terminal's agent list. `?` is left only when nothing tells,
+  and its tooltip says why.
+
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog

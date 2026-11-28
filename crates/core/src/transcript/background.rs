@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use super::{ItemId, chat};
+use super::{AgentEnd, ItemId, ToolState, chat};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShellStatus {
@@ -93,6 +93,11 @@ pub(super) struct Background {
     mcp_starts: BTreeMap<String, (ItemId, Option<i64>, String, String)>,
     /// How each MCP task ended, by task id.
     mcp_ends: BTreeMap<String, McpEnd>,
+    /// Agent (or Task) calls by tool use id: whether they asked to run in the background.
+    agent_calls: BTreeMap<String, bool>,
+    /// The newest `<task-notification>` status by task id. A background agent's task id is its
+    /// agent id (the `agent-<id>.jsonl` file's).
+    agent_ends: BTreeMap<String, (ItemId, AgentEnd)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,6 +151,9 @@ impl Background {
         if name.starts_with("mcp__") {
             self.mcp_calls.insert(tool.into(), (item, timestamp.and_then(chat::clock_ms)));
         }
+        if matches!(name, "Agent" | "Task") {
+            self.agent_calls.insert(tool.into(), input["run_in_background"] == true);
+        }
         if name == "Bash"
             && input["run_in_background"].as_bool() == Some(true)
             && let Some(command) = input["command"].as_str()
@@ -196,6 +204,48 @@ impl Background {
         }
     }
 
+    /// How an Agent call that ran in the foreground ended, from its result. A background launch
+    /// (`status: "async_launched"`, also when Ctrl+B moved a running call there) ends later, in a
+    /// notification.
+    pub(super) fn agent_result(
+        &self,
+        tool: &str,
+        lines: &[String],
+        structured: &Value,
+        state: ToolState,
+    ) -> Option<AgentEnd> {
+        let background = *self.agent_calls.get(tool)?;
+        if structured["status"] == "async_launched" || structured["isAsync"] == true {
+            return None;
+        }
+        if background && structured.is_null() {
+            return None;
+        }
+        Some(match state {
+            ToolState::Running => return None,
+            ToolState::Ok => AgentEnd::Finished,
+            ToolState::Failed if lines.iter().any(|l| super::interrupted(l)) => AgentEnd::Interrupted,
+            ToolState::Failed => AgentEnd::Failed,
+        })
+    }
+
+    /// The newest notification's end for this task id.
+    pub(super) fn agent_end(&self, id: &str) -> Option<AgentEnd> {
+        self.agent_ends.get(id).map(|(_, end)| *end)
+    }
+
+    fn note_agent(&mut self, at: ItemId, id: &str, status: &str) {
+        let end = match status {
+            "completed" | "finished" => AgentEnd::Finished,
+            "failed" | "error" => AgentEnd::Failed,
+            "stopped" | "killed" | "cancelled" | "canceled" => AgentEnd::Stopped,
+            _ => return,
+        };
+        if valid_id(id) && self.agent_ends.get(id).is_none_or(|(old, _)| *old <= at) {
+            self.agent_ends.insert(id.into(), (at, end));
+        }
+    }
+
     fn observe_result(&mut self, tool: &str) {
         let Some((id, stop)) = self.observers.get(tool) else { return };
         let Some((item, details, true)) = self.observations.get(tool) else { return };
@@ -236,15 +286,27 @@ impl Background {
     pub(super) fn notification(&mut self, at: ItemId, value: &Value) -> bool {
         let time = value["timestamp"].as_str();
         let content = &value["message"]["content"];
-        let raw = content.as_str().or_else(|| {
-            let [block] = content.as_array()?.as_slice() else { return None };
-            (block["type"] == "text").then(|| block["text"].as_str()).flatten()
-        });
+        // One that came while a turn ran is a `queued_command` attachment.
+        let attachment = &value["attachment"];
+        let raw = if value["type"] == "attachment" {
+            (attachment["type"] == "queued_command" && attachment["commandMode"] == "task-notification")
+                .then(|| attachment["prompt"].as_str())
+                .flatten()
+        } else {
+            content.as_str().or_else(|| {
+                let [block] = content.as_array()?.as_slice() else { return None };
+                (block["type"] == "text").then(|| block["text"].as_str()).flatten()
+            })
+        };
         if let Some(raw) = raw.map(str::trim).filter(|s| s.starts_with("<task-notification>")) {
             if let Some((id, status)) = status_xml(raw) {
                 self.status(at, id, status, time);
             }
-            if let Some((id, end)) = mcp_notification(at, raw, &value["origin"], time) {
+            if let Some((id, status)) = field(raw, "task-id").zip(field(raw, "status")) {
+                self.note_agent(at, id, status);
+            }
+            let origin = if value["type"] == "attachment" { &attachment["origin"] } else { &value["origin"] };
+            if let Some((id, end)) = mcp_notification(at, raw, origin, time) {
                 self.mcp_end(id, end);
             }
             return true;
@@ -257,6 +319,9 @@ impl Background {
                     .and_then(|s| status(s, value["exit_code"].as_i64().and_then(|c| i32::try_from(c).ok()))),
             ) {
                 self.status(at, id, status, time);
+            }
+            if let Some((id, status)) = task.zip(value["status"].as_str()) {
+                self.note_agent(at, id, status);
             }
             return true;
         }

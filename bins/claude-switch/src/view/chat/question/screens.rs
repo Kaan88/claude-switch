@@ -894,6 +894,18 @@ pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
     (fits && rows.len() > 1).then_some(AgentList { keys, rows, highlight })
 }
 
+/// The input shows and no agent list is under it: its hint row offers no "↓ to manage" and no
+/// `● main` row follows (Claude Code draws the list only while background agents exist).
+pub(super) fn no_agent_list(screen: &Screen) -> bool {
+    let Some(input) = input_row(screen) else { return false };
+    let hint = collapse(&screen.row_text(input + 2));
+    !hint.contains(LIST_MANAGE)
+        && !hint.starts_with(LIST_SELECT)
+        && !hint.starts_with(LIST_VIEW)
+        && !(input + 3..(input + 6).min(screen.rows()))
+            .any(|r| agent_row(&screen.row_text(r)).is_some_and(|(_, row)| row.name == "main"))
+}
+
 /// The rewind list Esc Esc opens at an idle prompt (Claude Code 2.1.332, `rewind_*`): its prompts
 /// oldest first, each over a row naming its code changes, then "(current)".
 #[derive(Clone, Debug, PartialEq, Eq)]

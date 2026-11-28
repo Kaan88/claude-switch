@@ -245,11 +245,19 @@ fn has_rows(rows: &[String], text: &str) -> bool {
         })
 }
 
+/// The agents the terminal's list shows: see `background::listed`.
+pub(super) fn listed_agents(
+    model: &Model,
+    screen: &Screen,
+) -> Option<std::collections::BTreeMap<String, crate::view::agent_status::Listed>> {
+    background::listed(model, screen)
+}
+
 /// A subagent may be the one asking: one is running, or the turn started one whose end is unknown.
 fn subagent_may_prompt(model: &Model) -> bool {
-    let finished = |id: &str| model.agents.iter().any(|a| a.id == id && a.finished == Some(true));
+    let finished = |id: &str| model.agents.iter().any(|a| a.id == id && model.agent_status(a).ended());
     let turn = model.chat.prompt.map_or(0, |p| p.saturating_add(1));
-    model.agents.iter().any(|a| a.finished == Some(false))
+    model.agents.iter().any(|a| model.agent_status(a).running())
         || model.items.range(ItemId { offset: turn, block: 0 }..).any(|(_, item)| {
             matches!(&item.kind, ItemKind::Tool { name, subagent, .. }
                 if (name == "Agent" || name == "Task") && !subagent.as_deref().is_some_and(finished))

@@ -4,9 +4,10 @@ use crate::state::AppState;
 use crate::tabs::NewTab;
 use crate::term::Term;
 use crate::view::chat::{Gate, QUIET, Reason};
-use claude_switch_core::transcript::{Item, QuestionOption};
+use claude_switch_core::transcript::{AgentEnd, EndSource, Item, QuestionOption};
 
 const AT: u64 = 100;
+const FINISHED: (AgentEnd, EndSource) = (AgentEnd::Finished, EndSource::Sidecar);
 
 fn question(multi_select: bool) -> Question {
     Question {
@@ -554,15 +555,13 @@ fn a_prompt_must_show_the_whole_command_or_full_path_and_no_subagent_may_be_aski
 
     // A subagent that is running (or that this turn started, end unknown) may be the one asking.
     let pane = f.tab().pane.as_mut().unwrap();
-    pane.model.agents.push(claude_switch_core::transcript::Subagent {
-        id: "a1".into(),
-        finished: Some(false),
-        ..Default::default()
-    });
+    pane.model.agents.push(claude_switch_core::transcript::Subagent { id: "a1".into(), ..Default::default() });
+    pane.model.listed.insert("a1".into(), crate::view::agent_status::Listed::Running);
     f.sync();
     assert_eq!(f.chat().question.answerable, None);
     let pane = f.tab().pane.as_mut().unwrap();
-    pane.model.agents[0].finished = Some(true);
+    pane.model.agents[0].end = Some(FINISHED);
+    pane.model.listed.clear();
     let mut agent = shell("toolu_a", "");
     if let ItemKind::Tool { name, state, card, .. } = &mut agent {
         *name = "Agent".into();
@@ -1007,6 +1006,40 @@ fn recorded_agent_lists_read_with_their_keys_and_states() {
     assert!(list(BG_HINT).is_none() && list(REWIND_IDLE).is_none());
 }
 
+/// The terminal's agent list says which agents run and which were stopped; the input with no list
+/// under it says none is listed, and a screen that covers the input says nothing.
+#[test]
+fn the_agent_list_tells_running_and_stopped_agents_by_their_transcript_ids() {
+    use crate::view::agent_status::{Listed, State};
+    use screens::recorded::*;
+    let mut f = Fixture::idle();
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    let listed = |f: &mut Fixture, fixture: &str| {
+        let pane = f.tab().pane.as_ref().unwrap();
+        super::listed_agents(&pane.model, &recorded(fixture))
+    };
+    let running = std::collections::BTreeMap::from([
+        ("a-First pinger".into(), Listed::Running),
+        ("a-Second pinger".into(), Listed::Running),
+    ]);
+    assert_eq!(listed(&mut f, AGENTS_IDLE), Some(running.clone()));
+    assert_eq!(listed(&mut f, AGENTS_SECOND), Some(running.clone()), "highlighted, still running");
+    let stopped = listed(&mut f, AGENTS_STOPPED).unwrap();
+    assert_eq!(stopped.get("a-Second pinger"), Some(&Listed::Stopped));
+    assert_eq!(listed(&mut f, PROMPT_IDLE), Some(Default::default()), "no list under the input");
+    assert_eq!(listed(&mut f, ASK_SINGLE), None, "a question covers the input");
+    // Read while syncing, for every place agents show; a covered screen keeps the last reading.
+    let now = Instant::now();
+    f.show(AGENTS_IDLE, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    let pane = f.tab().pane.as_ref().unwrap();
+    assert!(pane.model.agents.iter().all(|a| pane.model.agent_status(a).state == State::Running));
+    // Twice in the transcript: no row can say which one it is.
+    f.agent("First pinger");
+    assert!(!listed(&mut f, AGENTS_IDLE).unwrap().contains_key("a-First pinger"));
+}
+
 #[test]
 fn stop_agent_walks_the_list_one_checked_key_at_a_time() {
     use screens::recorded::*;
@@ -1107,7 +1140,7 @@ fn stop_agent_stops_when_the_screen_shows_anything_else() {
     // An agent known to have finished, or one the transcript holds twice, is not offered.
     let mut f = Fixture::idle();
     start(&mut f);
-    f.tab().pane.as_mut().unwrap().model.agents[0].finished = Some(true);
+    f.tab().pane.as_mut().unwrap().model.agents[0].end = Some(FINISHED);
     f.agent("Second pinger");
     f.sync();
     assert!(f.chat().question.agents.is_empty());
@@ -2213,7 +2246,7 @@ fn an_interrupted_side_step_leaves_a_notice_not_a_stuck_card() {
     assert_eq!(f.chat().question.error, Some(INTERRUPTED));
     assert!(!f.chat().question.failed, "only a notice");
     // The agents end; the pending call then asks.
-    f.tab().pane.as_mut().unwrap().model.agents.iter_mut().for_each(|a| a.finished = Some(true));
+    f.tab().pane.as_mut().unwrap().model.agents.iter_mut().for_each(|a| a.end = Some(FINISHED));
     f.screen(&prompt("cargo test --workspace", 0, None), now);
     f.sync();
     assert_eq!(f.chat().question.answerable, Some(AT), "the prompt is answered from the card");

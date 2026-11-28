@@ -1,5 +1,6 @@
 //! Session view integration with the window, terminal and splitter.
 
+pub(crate) mod agent_status;
 pub mod attach;
 pub mod chat;
 mod discovery;

@@ -147,7 +147,7 @@ impl AppState {
         let over = hover
             .and_then(|key| {
                 let text = match layer {
-                    Layer::Base => topbar::tip_of(key)?.into(),
+                    Layer::Base => topbar::tip_of(key).map(Into::into).or_else(|| self.session_tip(key))?,
                     Layer::Dialog => self.dialog_tip(key)?,
                     _ => return None,
                 };
