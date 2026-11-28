@@ -251,7 +251,8 @@ impl AppState {
             matches!(&item.kind, claude_switch_core::transcript::ItemKind::Prompt { synthetic: false, text, .. }
                 if crate::view::chat::question::rewind::listed(text))
         });
-        if prompt && pane.chat.enabled {
+        // Not in a subagent's transcript: its prompts are not the session's.
+        if prompt && pane.chat.enabled && pane.model.agent.is_none() {
             items.push(Item::new(REWIND, "Rewind to here…").sep());
         }
         self.session_view.text_focus = true;
@@ -294,6 +295,10 @@ impl AppState {
         }
         let chat_on = |t: &&mut crate::tabs::Tab| t.pane.as_ref().is_some_and(|p| p.chat.enabled);
         let Some(t) = self.tabs.get_mut(tab).filter(chat_on) else { return false };
+        if t.pane.as_ref().is_some_and(|p| p.model.agent.is_some()) {
+            crate::view::chat::question::rewind::refuse_in_agent(t);
+            return true;
+        }
         crate::view::chat::question::rewind::start(t, now, item);
         true
     }

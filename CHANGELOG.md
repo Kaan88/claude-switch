@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Chat: "Rewind to here…" in the right-click menu is not offered over a subagent's transcript, and
+  is refused there with a word; it would have rewound to a prompt of the agent's.
 - Chat and the Session view: Claude Code's "[Request interrupted by user]" after an Esc is shown
   as a quiet "Interrupted" line, no longer as a message of yours; it starts no new turn, so Stop
   is not offered again for the turn you stopped, and it is not offered for Rewind or prompt recall.

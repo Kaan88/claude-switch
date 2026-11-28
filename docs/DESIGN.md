@@ -404,8 +404,11 @@ before a message sent during the turn, or in a subagent's transcript (whose item
 session's). Claude Code 2.1.332 cannot resume a session up to a message interactively (its hidden
 `--resume-session-at` is for print mode), so `core::branch` writes the copy, off the window's
 thread: the transcript Chat reads (its own file, which must be the one the Sessions list names
-for the session) up to the cut, under a temporary name and then linked to `<new id>.jsonl` beside
-the original, which never replaces a file; each record's own `sessionId` is set to the new id, in
+for the session, compared as resolved paths: a further account reads it through its `projects`
+junction) up to the cut, under a temporary name and then linked to `<new id>.jsonl` beside the
+original, or on a volume without hard links created new there and filled; neither ever replaces
+a file, a temporary name someone else holds is left alone, and temporary copies older than ten
+minutes that a failed branch left are swept; each record's own `sessionId` is set to the new id, in
 place where it has the usual `"sessionId":"<id>"` form, else by reading the record. A cut that is
 not at a line's start is refused. Then `claude --resume <new id>` (`launch::branch`). The original
 is not touched; the branch is marked as a copy of it, as Open a copy's is. File backups
@@ -1559,7 +1562,7 @@ the hint row reads "↓ to resume subagent" and other agents are no longer offer
 "↓ to manage" again. Recorded from Claude Code 2.1.332 (`bg_*`, `agents_*`).
 
 **Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
-typed, in a tab with Chat. It goes through the CLI's own rewind list and never edits the transcript.
+typed, in a tab with Chat, never over a subagent's transcript (refused there with a word). It goes through the CLI's own rewind list and never edits the transcript.
 The first Esc only at an idle, quiet, empty prompt with no turn, pending call or menu (the checks of
 a direct slash command); it shows nothing, so the second follows 150 ms later only while the screen
 still shows that same prompt. The list ("Rewind", "Restore the code and/or conversation to the point

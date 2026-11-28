@@ -30,10 +30,16 @@ fn invalid(why: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, why.to_owned())
 }
 
+/// How old a temporary copy (`<id>.jsonl.part`) must be before a later branch takes it for one
+/// left by a branch that failed and removes it.
+const STALE_PART: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 /// Writes the copy of `source` (the transcript of session `old_id`) as `<new_id>.jsonl` beside it
-/// and returns its path. It is written under a temporary name and then linked to its own name,
-/// which never replaces a file; on any failure nothing is left. A partial last line (one Claude
-/// Code is still writing) is never copied.
+/// and returns its path. It is written under a temporary name (`<new_id>.jsonl.part`) and then
+/// linked to its own name, or on a volume without hard links created new there and filled; either
+/// way no file is ever replaced, and on any failure nothing of this branch is left (a temporary
+/// name someone else holds is not touched). A partial last line (one Claude Code is still writing)
+/// is never copied. Temporary copies of earlier branches that failed are swept first.
 pub fn write(source: &Path, old_id: &str, new_id: &str, cut: Cut) -> io::Result<PathBuf> {
     for id in [old_id, new_id] {
         crate::launch::validate_session_id(id)
@@ -46,18 +52,57 @@ pub fn write(source: &Path, old_id: &str, new_id: &str, cut: Cut) -> io::Result<
     if target.exists() {
         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "A transcript with the new id exists."));
     }
+    if let Some(dir) = source.parent() {
+        sweep(dir, STALE_PART);
+    }
     let temporary = source.with_file_name(format!("{new_id}.jsonl.part"));
+    let mut reader = BufReader::new(File::open(source)?);
+    // Not ours until created here: a name someone else holds is left alone.
+    let file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
     let written = (|| {
-        let mut reader = BufReader::new(File::open(source)?);
-        let file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
         let mut out = BufWriter::new(file);
         copy(&mut reader, &mut out, old_id, new_id, cut)?;
         out.into_inner().map_err(|e| e.into_error())?.sync_all()?;
-        // A link to the target name fails when that name exists: nothing is ever replaced.
-        std::fs::hard_link(&temporary, &target)
+        place(&temporary, &target, |from, to| std::fs::hard_link(from, to))
     })();
     let _ = std::fs::remove_file(&temporary);
     written.map(|()| target)
+}
+
+/// Gives the written temporary copy its own name without replacing anything: a hard link (which
+/// fails when the name exists), or where the volume has none, a file created new and filled.
+fn place(temporary: &Path, target: &Path, link: impl Fn(&Path, &Path) -> io::Result<()>) -> io::Result<()> {
+    match link(temporary, target) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+        Err(_) => {
+            let mut out = OpenOptions::new().write(true).create_new(true).open(target)?;
+            let filled = (|| {
+                io::copy(&mut File::open(temporary)?, &mut out)?;
+                out.sync_all()
+            })();
+            if filled.is_err() {
+                // Created here a moment ago: ours to remove.
+                drop(out);
+                let _ = std::fs::remove_file(target);
+            }
+            filled
+        }
+    }
+}
+
+/// Removes temporary copies (`<uuid>.jsonl.part`, the names only a branch writes) older than `age`
+/// in `dir`: left by a branch that failed half way (the app ended, the disk filled).
+fn sweep(dir: &Path, age: std::time::Duration) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let ours = name.strip_suffix(".jsonl.part").is_some_and(|id| crate::launch::validate_session_id(id).is_ok());
+        let old =
+            entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|e| e >= age);
+        if ours && old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn copy(reader: &mut impl BufRead, out: &mut impl Write, old_id: &str, new_id: &str, cut: Cut) -> io::Result<()> {
@@ -87,10 +132,9 @@ fn copy(reader: &mut impl BufRead, out: &mut impl Write, old_id: &str, new_id: &
         }
         if count(&line, needle) == 0 {
             out.write_all(&line)?;
-        } else if count(&line, needle) == 1 && count(&line, &own) == 1 {
+        } else if let Some(at) = find(&line, &own).filter(|_| count(&line, needle) == 1) {
             // The record's own id in its usual form, and nowhere else: the bytes are replaced in
             // place, the rest of the line is kept as it is.
-            let at = find(&line, &own).expect("counted");
             out.write_all(&line[..at])?;
             out.write_all(&new_own)?;
             out.write_all(&line[at + own.len()..])?;
@@ -116,8 +160,9 @@ fn copy(reader: &mut impl BufRead, out: &mut impl Write, old_id: &str, new_id: &
     out.flush()
 }
 
+/// Where `needle` first occurs in `haystack` (ids in any case, as `count` counts them).
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w.eq_ignore_ascii_case(needle))
 }
 
 /// How often `needle` occurs in `haystack` (ids in any case).
@@ -213,6 +258,62 @@ mod tests {
         let line = format!("{{\"sessionId\" : \"{OLD}\",\"note\":\"{OLD}\"}}\n");
         let out = cut(line.as_bytes(), Cut::Before(line.len() as u64)).unwrap();
         assert_eq!((out[0]["sessionId"].as_str(), out[0]["note"].as_str()), (Some(NEW), Some(OLD)));
+    }
+
+    #[test]
+    fn an_id_in_another_case_is_replaced_without_a_panic() {
+        let line = format!("{{\"sessionId\":\"{}\",\"a\":1}}\n", OLD.to_uppercase());
+        let out = cut(line.as_bytes(), Cut::Before(line.len() as u64)).unwrap();
+        assert_eq!(out[0]["sessionId"], NEW);
+    }
+
+    #[test]
+    fn without_hard_links_the_copy_is_created_new_and_still_never_replaces_a_file() {
+        let dir = std::env::temp_dir().join(format!("cs-branch-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (temporary, target) = (dir.join("t.part"), dir.join("t.jsonl"));
+        std::fs::write(&temporary, b"copied\n").unwrap();
+        let unsupported = |_: &Path, _: &Path| Err(io::Error::from(io::ErrorKind::Unsupported));
+        place(&temporary, &target, unsupported).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"copied\n");
+        assert!(place(&temporary, &target, unsupported).is_err(), "never over a file");
+        assert_eq!(std::fs::read(&target).unwrap(), b"copied\n");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stale_temporary_copies_of_branches_are_swept_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("cs-branch-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ours = dir.join(format!("{NEW}.jsonl.part"));
+        let other = dir.join("notes.jsonl.part");
+        let transcript = dir.join(format!("{OLD}.jsonl"));
+        for path in [&ours, &other, &transcript] {
+            std::fs::write(path, b"x").unwrap();
+        }
+        sweep(&dir, std::time::Duration::from_secs(3600));
+        assert!(ours.exists(), "a fresh one may be another branch's, under way");
+        sweep(&dir, std::time::Duration::ZERO);
+        assert!(!ours.exists() && other.exists() && transcript.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_temporary_name_someone_else_holds_is_left_alone() {
+        let dir = std::env::temp_dir().join(format!("cs-branch-held-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join(format!("{OLD}.jsonl"));
+        let (bytes, at) = transcript();
+        std::fs::write(&source, &bytes).unwrap();
+        let held = dir.join(format!("{NEW}.jsonl.part"));
+        std::fs::write(&held, b"another writer's").unwrap();
+        assert!(write(&source, OLD, NEW, Cut::Before(at[3])).is_err());
+        assert_eq!(std::fs::read(&held).unwrap(), b"another writer's");
+        assert!(!dir.join(format!("{NEW}.jsonl")).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

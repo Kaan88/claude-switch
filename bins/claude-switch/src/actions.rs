@@ -92,6 +92,19 @@ pub const COMMANDS: &[Command] = &[
     Command::new(ARCHIVE_OLD, "session.archive_old", "Archive older sessions…"),
 ];
 
+/// One file, however it is reached: a further account's transcripts are read through its
+/// `projects` junction, the Sessions list names the primary's path (as `share::transcript_reachable`
+/// compares them). Paths that cannot be resolved compare as written, in any case.
+pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => {
+            let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").to_lowercase();
+            norm(a) == norm(b)
+        }
+    }
+}
+
 /// A branch on its way: what starts it once its transcript copy is written.
 pub struct BranchJob {
     launch: claude_switch_core::Launch,
@@ -342,11 +355,7 @@ impl AppState {
         };
         // The launch checks (the account, its login, its folder) are the list's session's; the copy
         // is of the file Chat reads. They must be one file.
-        let same = |a: &Path, b: &Path| {
-            let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").to_lowercase();
-            norm(a) == norm(b)
-        };
-        if !self.source.is_demo() && !same(&session.file, &source) {
+        if !self.source.is_demo() && !same_file(&session.file, &source) {
             return self.error(
                 "Not branched",
                 "The Sessions list has another transcript file for this session than the one Chat reads.".into(),
@@ -367,7 +376,9 @@ impl AppState {
         match self.proxy.clone() {
             Some(proxy) => {
                 std::thread::spawn(move || {
-                    let written = job.write();
+                    // Whatever happens, the window hears of it.
+                    let written = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.write()))
+                        .unwrap_or_else(|_| Err("the branch's writer stopped unexpectedly".to_owned()));
                     if let Ok(proxy) = proxy.lock() {
                         proxy.send(Msg::BranchWritten(Box::new(job), written));
                     }

@@ -2353,3 +2353,16 @@ fn open_terminal_on_a_card_gives_the_terminal_the_keyboard() {
         assert!(chat.drawer == Drawer::Manual && !chat.drawer_focus);
     }
 }
+
+#[test]
+fn rewind_is_refused_in_a_subagents_transcript() {
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.tab().pane.as_mut().unwrap().model.agent = Some("agent-1".into());
+    let tab = f.tab;
+    f.app.tabs.active = Some(tab);
+    assert!(f.app.rewind_from_menu(tab, ids[0], Instant::now()));
+    assert!(f.writes().is_empty(), "nothing is written");
+    assert_eq!(f.chat().error, Some(rewind::IN_AGENT));
+    assert!(f.rewind().is_none());
+}
