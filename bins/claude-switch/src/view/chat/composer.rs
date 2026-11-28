@@ -41,10 +41,19 @@ pub(crate) fn chip_control(key: &str) -> Option<Control> {
     DEFAULT_CHIPS.get(at).copied()
 }
 
-/// The quick-command chips Settings shows, in order.
+/// The quick-command chips Settings shows, in order. The Compact chip is Switch's handover unless
+/// Settings › Chat says Claude Code's `/compact`.
 pub(crate) fn chips_of(prefs: &claude_switch_core::config::ChatPrefs) -> Vec<Control> {
-    prefs.shown().filter_map(chip_control).collect()
+    prefs
+        .shown()
+        .filter_map(chip_control)
+        .map(|c| if c == Control::Compact && prefs.compact_handover { Control::Handover } else { c })
+        .collect()
 }
+
+/// The Compact chip's label: what it runs.
+pub(super) const HANDOVER_LABEL: &str = "Handover";
+pub(super) const COMPACT_LABEL: &str = "/compact";
 
 const MODE_W: f32 = 125.0;
 /// An own command's widest chip.
@@ -56,7 +65,7 @@ fn chip_width(control: Control) -> f32 {
         Control::Effort => EFFORT_CHIP_MAX,
         Control::Context => CONTEXT_CHIP_MAX,
         Control::Mode => MODE_W,
-        Control::Compact => 62.0,
+        Control::Compact | Control::Handover => 62.0,
         Control::Clear => 44.0,
         _ => 32.0,
     }
@@ -456,7 +465,8 @@ impl Draw<'_> {
                 Control::Context => context.as_str(),
                 Control::Mode if mode_shown => mode.as_str(),
                 Control::Mode => continue,
-                Control::Compact => "Compact",
+                Control::Compact => COMPACT_LABEL,
+                Control::Handover => HANDOVER_LABEL,
                 Control::Clear => "Clear",
                 _ => "/ …",
             };
@@ -809,6 +819,19 @@ mod tests {
                 assert!(w <= CONTEXT_CHIP_MAX, "Context {n}: {w}");
             }
         }
+        // The Compact chip says what it runs, in its one width, at every scale.
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut bitmap = Bitmap::new(8, 8);
+            let mut p = Painter::new(&mut bitmap, &mut gfx, scale);
+            for (control, label) in [(Control::Handover, HANDOVER_LABEL), (Control::Compact, COMPACT_LABEL)] {
+                let w = p.measure(Face::Semibold, PILL_FONT, label) + 8.0;
+                assert!(w <= chip_width(control), "{label} at {scale}x: {w}");
+            }
+        }
+        assert_eq!(chip_width(Control::Handover), chip_width(Control::Compact), "either choice lays out the same");
+        // The chips as Settings gives them by default: the Compact chip is the handover.
+        let chips = chips_of(&claude_switch_core::config::ChatPrefs::default());
+        assert!(chips.contains(&Control::Handover));
         // Every 20 px, and around where the Details panel appears and the measure reaches its cap.
         let widths = (760..=1600).step_by(20).chain([899, 900, 901, 1010, 1019, 1020, 1021, 1047, 1048, 1049]);
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -837,7 +860,7 @@ mod tests {
                                 hover: None,
                                 hits: &mut hits,
                                 pins: &[],
-                                chips: &DEFAULT_CHIPS,
+                                chips: &chips,
                                 own: &[],
                                 stop: None,
                                 welcome: false,

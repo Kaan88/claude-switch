@@ -17,7 +17,8 @@
 //!   "showUsage": true,
 //!   "appearance": {"backdrop":"off", "accentSource":"theme", "reduceMotion":false,
 //!                  "cornerRadius":8, "softShadows":true, "cursorBlink":false},
-//!   "chat": {"chips": ["model", "effort"], "commands": ["/review", "", ""], "answerMenus": true}
+//!   "chat": {"chips": ["model", "effort"], "commands": ["/review", "", ""], "compactChip": "handover",
+//!            "answerMenus": true}
 //! }
 //! ```
 //!

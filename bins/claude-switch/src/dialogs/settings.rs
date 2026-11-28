@@ -764,6 +764,7 @@ mod tests {
                 chat_page::OWN_COMMAND + 1,
                 chat_page::OWN_COMMAND + 2,
                 chat_page::RESET_CHIPS,
+                chat_page::SET_COMPACT_CHIP,
                 chat_page::SET_ANSWER_MENUS,
             ],
             &[
