@@ -919,6 +919,37 @@ fn a_menus_highlighted_choice_is_no_input_mark() {
     let screen = recorded(&format!("cursor 0 0\n❯ 1. Yes\n  2. No\n❯ 12. Twelve\n❯ hello\n❯ 1.5 is a number\n{RULE}"));
     assert!(!screen::marks_input(&screen, 0) && !screen::marks_input(&screen, 2));
     assert!(screen::marks_input(&screen, 3) && screen::marks_input(&screen, 4));
+    // Right under the input box's rule, plain or named, `❯ 1. …` is a message on the input.
+    let typed = recorded(&format!("cursor 1 10\n{RULE}\n❯ 1. fix a\n{RULE}"));
+    assert!(screen::marks_input(&typed, 1));
+    let named = recorded(&format!("cursor 1 10\n{NAMED}\n❯ 1. fix a\n{RULE}"));
+    assert!(screen::marks_input(&named, 1));
+}
+
+#[test]
+fn a_message_starting_with_a_number_reads_as_the_input() {
+    // Several lines, sent as typed: the echo check and the take-back read them.
+    let lines = recorded(&format!("cursor 2 10\n{RULE}\n❯ 1. fix a\n  2. fix b\n{RULE}\n  ⏵⏵ auto mode on"));
+    assert!(screen::shows_lines(&lines, "1. fix a\n2. fix b"));
+    assert!(screen::shows_some_input(&lines));
+    // One line.
+    let single = recorded(&format!("cursor 1 8\n{NAMED}\n❯ 1. x\n{RULE}\n  ⏵⏵ auto mode on"));
+    assert!(screen::shows_some_input(&single));
+    assert_eq!(screen::prompt(&single).as_deref(), Some("1. x"));
+    // The activity digest ends at the input box's bottom rule, as for any input.
+    let below =
+        |hint: &str| screen::activity_digest(&recorded(&format!("cursor 1 8\n{RULE}\n❯ 1. x\n{RULE}\n  {hint}")));
+    assert_eq!(below("1m 02s"), below("1m 03s"));
+    // The menu the exclusion is for: its highlighted choice is under its question, no input.
+    let first = format!(
+        "cursor 4 0\n❯ hello\n\n{RULE}\n Do you want to proceed?\n❯ 1. Yes\n  2. No\n\n Esc to cancel · Tab to amend"
+    );
+    let menu = recorded(&first);
+    assert!(!screen::marks_input(&menu, 4));
+    assert!(!screen::shows_some_input(&menu));
+    // A move of the highlight is activity: the menu counts whole.
+    let second = recorded(&first.replace("❯ 1. Yes\n  2.", "  1. Yes\n❯ 2."));
+    assert_ne!(screen::activity_digest(&menu), screen::activity_digest(&second));
 }
 
 #[test]
@@ -937,12 +968,44 @@ fn a_command_after_slash_model_goes_once_the_idle_screen_is_quiet() {
     }
     f.draw(&idle);
     let now = f.now;
-    assert_eq!(blocked(f.tab(), now, Intent::Slash), Some(BUSY_CMD), "not quiet yet");
+    assert_eq!(blocked(f.tab(), now, Intent::Slash), Some(NO_QUIET_PROMPT), "not quiet yet: waited for");
     f.pass(SECOND);
     let now = f.now;
     assert_eq!(blocked(f.tab(), now, Intent::Slash), None);
     AppState::submit_slash(f.tab(), now, "/context", false);
     assert_eq!(f.writes(), [b"/context".to_vec()]);
+    // A chip command right after `/model`, within the quiet time: held, then run by itself.
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&idle);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert!(f.chat().error.is_none() && f.writes().is_empty());
+    assert!(f.chat().staging.command.is_some(), "held by the command's wait");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [b"/context".to_vec()]);
+    assert!(f.chat().staging.command.is_none() && f.chat().error.is_none());
+    // Held the same way, but a turn shows meanwhile: refused as running, nothing written.
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&idle);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert!(f.chat().staging.command.is_some());
+    f.draw(&idle.replace("  ⎿  Set model", "✻ Working… (1s)\n  ⎿  Set model").replacen("cursor 3 2", "cursor 4 2", 1));
+    f.pass(QUIET / 3);
+    assert!(f.writes().is_empty() && f.chat().staging.command.is_none());
+    assert_eq!(f.chat().error, Some(BUSY_CMD));
     // The same transcript with a working line: the turn runs.
     let mut working = idle.replace("  ⎿  Set model", "✻ Working… (3s)\n  ⎿  Set model");
     working = working.replacen("cursor 3 2", "cursor 4 2", 1);

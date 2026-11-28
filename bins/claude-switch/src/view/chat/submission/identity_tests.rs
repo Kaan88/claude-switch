@@ -252,6 +252,26 @@ fn a_message_of_several_lines_keeps_its_breaks_and_waits_for_the_input_line() {
 }
 
 #[test]
+fn a_message_of_numbered_lines_is_entered_once_the_input_shows_it() {
+    // `❯ 1. fix a` under the input box's rule is the input, not a menu's highlighted choice: read
+    // as a menu row, the echo never showed, and the text was left on the CLI's input.
+    let mut f = Fixture::new("numbered-lines", discover);
+    let root = f.root.clone();
+    f.transcript(A, &root);
+    f.tab().apply_live_identity(Some(A));
+    f.chat().demo_progress = true;
+    let now = Instant::now();
+    f.send("1. fix a\n2. fix b", now);
+    let rule = "─".repeat(20);
+    let screen = format!("\x1b[2J\x1b[H\x1b[?2004h{rule}\r\n❯ 1. fix a\r\n  2. fix b\r\n{rule}\x1b[3;12H");
+    f.tab().term.feed(screen.as_bytes());
+    f.chat().writes.clear();
+    assert!(AppState::advance_submission(f.tab(), now, true));
+    assert_eq!(f.chat().writes, [b"\r".to_vec()], "Enter once the input shows both lines");
+    assert!(f.chat().error.is_none() && f.chat().waiting().is_none());
+}
+
+#[test]
 fn a_followed_session_links_only_to_a_verified_one() {
     // A new chat whose transcript was never written: `/clear` moves on, but no parent is recorded.
     let mut f = Fixture::new("link-awaiting", discover);

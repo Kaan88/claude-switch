@@ -24,13 +24,15 @@ pub(in crate::view) fn prompt_mark(c: char) -> bool {
 }
 
 /// Row `row` starts Claude Code's input: its first character is the input mark, and for the
-/// plain `>` the row right above is the input box's rule.
+/// plain `>` the row right above is the input box's rule. A `❯` before a numbered text is a
+/// menu's highlighted choice (`❯ 1. Yes`) unless the input box's rule is right above it: a
+/// message typed or sent as `1. fix a` is the input all the same.
 pub(in crate::view) fn marks_input(screen: &Screen, row: usize) -> bool {
     let text = screen.row_text(row);
+    let ruled = || row.checked_sub(1).and_then(|above| screen.line(above)).is_some_and(|line| rule(line.cells()));
     match text.trim_start().chars().next() {
-        // A menu's highlighted choice (`❯ 1. Yes`) is no input.
-        Some('❯') => !numbered_choice(text.trim_start().trim_start_matches('❯')),
-        Some('>') => row.checked_sub(1).and_then(|above| screen.line(above)).is_some_and(|line| rule(line.cells())),
+        Some('❯') => !numbered_choice(text.trim_start().trim_start_matches('❯')) || ruled(),
+        Some('>') => ruled(),
         _ => false,
     }
 }
