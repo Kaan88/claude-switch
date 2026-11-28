@@ -437,9 +437,12 @@ is dragged with a resize cursor and keeps 60 px for either side. An ended pane s
 and closes on Enter; Enter on the ended tab's own pane is "Close" of the tab, which asks while
 another pane's program runs. Only keys for pane 0 count as input to Claude's terminal for Chat (its
 send gate and card keys); a shell pane's do not. Switching to Chat's layout while a shell pane has
-the keyboard moves it to pane 0, and back again, telling the programs that asked. "Close pane" asks first while the pane's program runs; the tab's own pane
-closes only last (closing it under shells would leave Chat without its terminal), and with no
-other pane it is "Close" of the tab, asking as before. Closing the tab or the window counts the
+the keyboard moves it to pane 0, and back again, telling the programs that asked. "Close pane" asks first while the pane's program runs. The tab's own pane
+never closes alone, since Chat would be left without its terminal: with other panes open, "Close
+pane" on it always asks "Close the whole tab?" (naming how many other panes go with it, running
+or not), and OK closes the tab as Close does; with no other pane it is "Close" of the tab, asking
+as before. Promoting a shell to be the tab's pane was not done: the tab's label, session, account,
+Chat and the safeguard all describe the program it was opened for. Closing the tab or the window counts the
 panes' programs as running. In Chat's layout only pane 0 is shown (in the drawer) and has the
 keyboard; the other panes keep running, their size unchanged, and splitting waits for the
 terminal layout. A split tab's row in `terminal-tabs.json` (Claude and OpenCode tabs; plain shell

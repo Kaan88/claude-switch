@@ -394,15 +394,26 @@ impl AppState {
     }
 
     /// Closes the focused pane of tab `id`, asking while its program runs. The last pane closes
-    /// the tab; the tab's own pane closes only last, since Chat and the session follow it.
-    pub fn ask_close_pane(&mut self, now: Instant, id: u64) {
+    /// the tab. The tab's own pane never closes alone, since Chat and the session follow it:
+    /// with other panes open, closing it asks to close the whole tab.
+    pub fn ask_close_pane(&mut self, id: u64) {
         let Some(tab) = self.tabs.get(id) else { return };
         if !tab.panes.is_split() {
             return self.ask_close_tab(id);
         }
         let pane = tab.focused_pane();
         if pane == MAIN {
-            self.toast("The tab's own pane closes last: close the other panes first, or the tab.".into(), now);
+            // Chat, the session view and the safeguard follow this pane: it never goes alone.
+            // Always asked, running or not, since the other panes go with it.
+            let others = tab.panes.count() - 1;
+            let panes = if others == 1 { "the other pane".to_string() } else { format!("the {others} other panes") };
+            let why = if tab.pane.is_some() { "Chat and the session view need this pane, so " } else { "" };
+            self.dialog = Some(Dialog::Confirm {
+                title: "Close the whole tab?".into(),
+                text: format!("{why}closing it closes the tab with {panes}. Their programs end."),
+                ok: "Close tab".into(),
+                then: Pending::CloseTab(id),
+            });
             return;
         }
         if tab.panes.get(pane).is_some_and(Term::running) {

@@ -127,13 +127,35 @@ fn closing_panes_the_tabs_own_last_and_the_last_closes_the_tab() {
     let (mut st, id, _) = app();
     st.split_pane(now, id, Axis::Down);
     st.focus_pane(MAIN);
-    st.ask_close_pane(now, id);
-    assert_eq!(st.tabs.get(id).unwrap().panes.count(), 2, "the tab's own pane closes last");
+    st.ask_close_pane(id);
+    // The tab's own pane never goes alone: the question is about the whole tab.
+    let Some(crate::dialogs::Dialog::Confirm { title, then, .. }) = st.dialog.take() else { panic!("no question") };
+    assert_eq!(title, "Close the whole tab?");
+    assert!(matches!(then, crate::dialogs::Pending::CloseTab(t) if t == id));
+    assert_eq!(st.tabs.get(id).unwrap().panes.count(), 2, "nothing closed before the answer");
     st.focus_pane(1);
-    st.ask_close_pane(now, id);
+    st.ask_close_pane(id);
     assert!(!st.tabs.get(id).unwrap().panes.is_split());
-    st.ask_close_pane(now, id);
+    st.ask_close_pane(id);
     assert!(st.tabs.get(id).is_none(), "the last pane closes the tab");
+}
+
+#[test]
+fn closing_the_tabs_own_pane_under_others_closes_the_whole_tab_once_confirmed() {
+    let now = Instant::now();
+    let (mut st, id, _) = app();
+    st.split_pane(now, id, Axis::Right);
+    st.split_pane(now, id, Axis::Down);
+    st.focus_pane(MAIN);
+    st.ask_close_pane(id);
+    let Some(crate::dialogs::Dialog::Confirm { text, .. }) = &st.dialog else { panic!("no question") };
+    assert!(text.contains("the 2 other panes"), "{text}");
+    // Cancel keeps everything; OK closes the tab, the other panes with it.
+    crate::dialogs::click(&mut st, now, crate::dialogs::CANCEL, 0.0);
+    assert_eq!(st.tabs.get(id).unwrap().panes.count(), 3);
+    st.ask_close_pane(id);
+    crate::dialogs::click(&mut st, now, crate::dialogs::OK, 0.0);
+    assert!(st.tabs.get(id).is_none());
 }
 
 #[test]

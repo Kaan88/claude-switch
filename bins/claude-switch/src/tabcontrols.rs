@@ -138,7 +138,7 @@ impl AppState {
             }
             CLOSE_PANE => {
                 self.show_tab(id);
-                self.ask_close_pane(now, id);
+                self.ask_close_pane(id);
             }
             OPEN_FOLDER => {
                 if let Some(folder) = self.tab_folder(id) {

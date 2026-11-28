@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Terminal panes: "Close pane" on the tab's own (Claude) pane while other panes are open asks
+  "Close the whole tab?" and closes the tab, instead of refusing; Chat never loses its terminal.
 - Terminal panes: a selection belongs to the pane it was started in; dragging over another pane
   selects to the edge of its own, and moving to another pane clears it, so a tab shows one.
 - Terminal find: whole word (Alt+W) and regular expression (Alt+R) toggles beside "Aa"; a pattern
