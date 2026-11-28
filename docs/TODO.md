@@ -142,13 +142,22 @@ as the second account, Windows Terminal, the desktop hand-over.
   Switch averaged ~6 % of a core over a day. Measure both in the same states (same session idle, a
   turn streaming, minimised) and profile Switch's redraws: a whole-window repaint per animation tick
   (spinner, working line) is the likely cost.
-- **Put idle Claude tabs to sleep** (proposal, 2026-11-28). Every Claude tab keeps its own Claude Code
-  process, ~600-950 MB each and growing with the conversation; the desktop app does the same per open
-  session. A tab idle for a while (setting, off by default) with nothing running (no turn, no
-  background agent or shell, no queued message, no pending question) could end its process and
-  resume the session with `--resume` when the tab is shown or a message is sent. The transcript and
-  the tab stay; what is lost is Claude Code's in-memory state (background tasks would end, so they
-  block sleeping). A resume also starts with a smaller memory footprint.
+- **Memory of Claude tabs** (owner, 2026-11-28: ideas 1 to 4; not a Chat without a terminal). Every
+  Claude tab keeps its own Claude Code process: 680-950 MB each on 2026-11-28 (six tabs ~4.9 GB),
+  growing with the session, plus 65-140 MB of what it starts (MCP servers such as `node` and
+  `sprawl`, shells). One process cannot serve several tabs: an interactive Claude Code is one session
+  per process, as are its background sessions and the desktop app's sessions. In order of worth:
+  1. **Sleep idle tabs.** A tab idle for a while (setting, off by default) with nothing running (no
+     turn, background agent or shell, queued message or pending question) ends its process and
+     resumes with `--resume` when the tab is shown or a message is sent. The tab and transcript
+     stay; Claude Code's in-memory state goes, so background work blocks sleeping.
+  2. **Trim idle tabs' memory first.** Ask Windows to page out an idle tab's process (empty its
+     working set): physical RAM comes back at once, the process keeps running and pages back in when
+     used. Cheap and low-risk; commit is not lowered. A good first step before sleeping.
+  3. **Restart long-lived tabs.** The same end-and-resume as 1, triggered by size: an idle tab whose
+     process has grown past a limit comes back smaller.
+  4. **Share MCP servers between tabs.** Each tab starts its own; run a server once and connect the
+     tabs over HTTP where the server supports it (~65 MB a tab here).
 - **Wrap long lines in Chat's edit diffs** (owner, 2026-11-28, screenshot of a Markdown table row cut
   at the right edge). The patch view of an edit (line numbers, +/- and the changed text) cuts lines
   that are wider than the column. Wrap them instead: continuation rows keep the +/- background, are
