@@ -138,6 +138,20 @@ jobs:
             $record = 'false'
           }
           "record=$record" >> $env:GITHUB_OUTPUT
+      # No key and no build: the /config keys and labels Settings writes must still be in the
+      # installed Claude Code's code (tools/cli-compat.ps1 -KeysOnly). A missing one is a warning.
+      - name: Check the /config keys Settings writes
+        if: steps.decide.outputs.record == 'true'
+        run: |
+          $lines = & pwsh -NoProfile -File tools/cli-compat.ps1 -KeysOnly 2>&1
+          $code = $LASTEXITCODE
+          $lines
+          if ($code -ne 0) {
+            @('### /config keys', '', '```') + $lines + '```' >> $env:GITHUB_STEP_SUMMARY
+            "::warning::Settings > Claude Code > Advanced writes /config keys or labels that Claude Code $env:VERSION no longer has; see the step summary."
+          }
+        env:
+          VERSION: ${{ steps.installed.outputs.version }}
       - name: Set up Rust stable
         if: steps.decide.outputs.record == 'true'
         run: |

@@ -1092,3 +1092,6 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     the session's model and permission mode, MCP connection status, cost and context use, and
     token totals per day or model (whole transcripts would have to be read; the design allows only
     bounded slices). Usage was not repeated: the page links to Settings › Usage.
+    `tools/cli-compat.ps1` checks every key and label of the table in the installed `claude.exe`
+    (`-KeysOnly`, also a warning step in the daily GitHub Actions run); tried here on 2.1.332 (all
+    88 found) and on a copy of the table with a renamed key and label (both reported, exit 1).

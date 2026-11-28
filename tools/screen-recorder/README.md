@@ -143,8 +143,12 @@ those too:
     pwsh tools\cli-compat.ps1 -ConfigDir $env:USERPROFILE\.claude-accounts\<name>\cli
 
 It builds the recorder and starts `recorder compat` with that account (`CLAUDE_CONFIG_DIR`; without
-`-ConfigDir`, the signed-in account whose `projects` folder was written least recently). Other
-switches: `-Only idle,plan` (some scripts), `-OnlyIfNewVersion` (do nothing when this Claude Code
+`-ConfigDir`, the signed-in account whose `projects` folder was written least recently). Before
+that, and without an account, it checks that the installed `claude.exe` still contains every key
+(`key:`) and label (`"Label"`) of `crates/core/src/cc_config.rs`, the `/config` entries Settings ›
+Claude Code › Advanced writes: `MISSING   /config key …` names one Claude Code renamed or dropped,
+and makes the run's exit code 1. `-KeysOnly` runs only that (a few seconds; GitHub Actions runs it
+too, as a warning). Other switches: `-Only idle,plan` (some scripts), `-OnlyIfNewVersion` (do nothing when this Claude Code
 version was already checked in full; the last one is kept in
 `%LOCALAPPDATA%\claude-switch-cli-compat\last-checked.txt`), `-Model`, `-Out`, `-Plain`. Run it from
 a terminal of at least 100 columns; with `CARGO_TARGET_DIR` set, both builds go there.
