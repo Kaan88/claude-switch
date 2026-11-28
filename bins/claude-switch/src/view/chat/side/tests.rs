@@ -372,9 +372,9 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
 }
 
 /// Item 49: after a rewind's next prompt, the panel's sections drop what the replaced turn did
-/// (its written file, its plan, an ended shell), through the worker as Chat reads it.
+/// (its plan, an ended shell) and keep its written file marked, through the worker as Chat reads it.
 #[test]
-fn the_panel_drops_what_a_rewound_turn_did_once_the_next_prompt_is_written() {
+fn the_panel_drops_what_a_rewound_turn_did_but_keeps_its_file_marked() {
     use serde_json::json;
     let dir = crate::testing::unique("cs-side-rewind");
     std::fs::create_dir_all(&dir).unwrap();
@@ -453,7 +453,12 @@ fn the_panel_drops_what_a_rewound_turn_did_once_the_next_prompt_is_written() {
     std::io::Write::write_all(&mut file, prompt("u3", Some("a1"), "two again").as_bytes()).unwrap();
     settle(&mut model, &|m| m.tasks.iter().any(|t| t.content == "first plan"));
     assert_eq!(model.tasks.iter().map(|t| t.content.as_str()).collect::<Vec<_>>(), ["first plan"]);
-    assert_eq!(names(&model), ["kept.md"], "the replaced turn's file is not a changed file");
+    // The replaced turn's file stays, marked: a conversation-only rewind keeps the change on disk.
+    let files = changed_files(&model, &dir);
+    assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["replaced.md", "kept.md"]);
+    assert!(files[0].rewound && !files[1].rewound);
+    assert!(files[0].edits[0].rewound && files[0].edits[0].label.ends_with(" · from a rewound turn"));
+    assert!(model.items.keys().all(|id| *id != files[0].edits[0].id), "not a conversation row");
     assert!(model.shells.is_empty(), "its ended shell is gone");
     drop(model);
     let _ = std::fs::remove_dir_all(&dir);

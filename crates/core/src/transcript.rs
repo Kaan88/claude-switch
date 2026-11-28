@@ -266,6 +266,23 @@ impl Reader {
         self.view.items.get(&id).filter(|_| !self.view.active.hides(id.offset))
     }
 
+    /// The successful writes and edits of turns a rewind replaced (off the active branch, so not in
+    /// [`items`](Self::items)). A rewind may leave their changes on disk ("Restore conversation"
+    /// keeps the code, and the transcript does not say which was chosen), so the Files page still
+    /// lists them, marked.
+    pub fn replaced_writes(&self) -> Vec<(ItemId, Item)> {
+        self.view
+            .items
+            .iter()
+            .filter(|(id, item)| {
+                self.view.active.hides(id.offset)
+                    && matches!(&item.kind, ItemKind::Tool { name, state: ToolState::Ok, file_path: Some(_), .. }
+                        if matches!(name.as_str(), "Write" | "Edit"))
+            })
+            .map(|(&id, item)| (id, item.clone()))
+            .collect()
+    }
+
     pub fn tasks(&self) -> &[Task] {
         &self.view.tasks
     }

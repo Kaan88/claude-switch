@@ -544,12 +544,17 @@ impl Details {
                     let key = Key::File(file.key.clone());
                     let expanded = self.expanded.contains(&key);
                     let name = Path::new(&file.path).file_name().and_then(|s| s.to_str()).unwrap_or(&file.path);
+                    let name = if file.rewound {
+                        format!("{} · {}", first_line(name), super::REWOUND)
+                    } else {
+                        first_line(name).to_owned()
+                    };
                     let opens = file.file.as_ref().is_some_and(|f| f.supports_default_app());
                     if f.sections {
                         out.push(
                             ITEM,
                             Line::File {
-                                name: first_line(name).to_owned(),
+                                name: name.clone(),
                                 added: file.added,
                                 removed: file.removed,
                                 index,
@@ -560,14 +565,7 @@ impl Details {
                     } else {
                         out.push(
                             ROW,
-                            Line::Header {
-                                label: first_line(name).to_owned(),
-                                index,
-                                expanded,
-                                active: false,
-                                split: true,
-                                opens,
-                            },
+                            Line::Header { label: name.clone(), index, expanded, active: false, split: true, opens },
                         );
                     }
                     if expanded {
@@ -581,7 +579,12 @@ impl Details {
                         };
                         out.detail(p, width, format!("{}{suffix}", file.path));
                         for (j, edit) in file.edits.iter().enumerate() {
-                            out.push(ROW, Line::Button { label: edit.label.clone(), index, part: Part::Edit(j) });
+                            if edit.rewound {
+                                // Not in the conversation: nothing to go to.
+                                out.detail(p, width, edit.label.clone());
+                            } else {
+                                out.push(ROW, Line::Button { label: edit.label.clone(), index, part: Part::Edit(j) });
+                            }
                         }
                         self.reveal(out, &key, top);
                     }

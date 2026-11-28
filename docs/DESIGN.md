@@ -2152,8 +2152,12 @@ that do not start with a prompt (tool results recorded against their call, progr
 never left out. The Details pages follow the same branch: the plan is made from the branch's plan
 updates and task calls only (assumed, not yet recorded: that Claude Code's own task list also loses
 a replaced turn's tasks on a rewind; `recorder compat`'s `rewind-task` script checks it against
-the task files Claude Code keeps, and Chat keeps matching the conversation until it is known), the
-changed files from the shown items, and an agent, background
+the task files Claude Code keeps, and Chat keeps matching the conversation until it is known). The
+changed files are the shown items' writes and edits, and also those of replaced turns, marked "from a
+rewound turn" with no row to go to: "Restore conversation" leaves the code as it is, and neither the
+transcript nor the file history says which choice a rewind took (Claude Code appends nothing to the
+transcript on a rewind), so such a change may still be on disk. A replaced write outside the session
+folder can be opened from the list but is not granted to the conversation's links. An agent, background
 shell or MCP task started in a replaced turn is left out once it is known to have ended (a rewind
 stops no process, so a running one stays, with Stop). Recorded from
 Claude Code 2.1.332 (`rewind_*`).

@@ -243,3 +243,48 @@ fn the_bounded_slice_drops_a_replaced_turns_plan_once_history_proves_it() {
     assert!(changes.branch_changed && changes.tasks_changed);
     assert_eq!(tasks(&reader), Vec::<String>::new());
 }
+
+#[test]
+fn a_replaced_turns_writes_are_kept_apart_for_the_files_page() {
+    let folder = Folder::new("writes");
+    let path = folder.0.join("s.jsonl");
+    let write = |uuid: &str, parent: &str, id: &str, file: &str| {
+        tool(uuid, parent, id, "Write", json!({"file_path":file,"content":"x"}))
+            + &result(&format!("{uuid}-r"), uuid, id, "ok")
+    };
+    let failed = tool(
+        "f2",
+        "w2-r",
+        "fail2",
+        "Edit",
+        json!({"file_path":"failed.md","old_string":"a","new_string":"b"}),
+    ) + &link(
+        json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"fail2","is_error":true,"content":"no"}]}}),
+        "f2-r",
+        Some("f2"),
+    );
+    let text = prompt("u1", None, "one")
+        + &write("w1", "u1", "write1", "kept.md")
+        + &answer("a1", "w1-r", "first")
+        + &prompt("u2", Some("a1"), "two")
+        + &write("w2", "u2", "write2", "replaced.md")
+        + &failed
+        + &answer("a2", "f2-r", "second");
+    fs::write(&path, text).unwrap();
+    let mut reader = Reader::open(&path, 1 << 20).unwrap();
+    assert!(reader.replaced_writes().is_empty(), "nothing is replaced before the next prompt");
+    append(&path, &prompt("u3", Some("a1"), "two again"));
+    reader.poll().unwrap();
+    let replaced: Vec<_> = reader
+        .replaced_writes()
+        .into_iter()
+        .map(|(id, item)| {
+            assert!(reader.item(id).is_none(), "not a shown item");
+            match item.kind {
+                ItemKind::Tool { file_path, .. } => file_path.unwrap(),
+                _ => unreachable!(),
+            }
+        })
+        .collect();
+    assert_eq!(replaced, ["replaced.md"], "a failed edit changed nothing");
+}

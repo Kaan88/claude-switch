@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Chat and the Session view: a file changed in a turn a rewind replaced stays in the Files list,
+  marked "from a rewound turn": restoring only the conversation leaves the change on disk.
 - Tools: `recorder compat` has a `rewind-task` script (a task made in a turn that is then rewound)
   and a `taskfiles` op that copies what Claude Code keeps for a session's tasks.
 - Resume in the desktop app as a further account is no longer refused when that account's CLI is

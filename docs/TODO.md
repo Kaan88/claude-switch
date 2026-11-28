@@ -747,6 +747,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     so. `recorder compat` script `rewind-task` (not run yet) creates a task with TaskCreate in the
     turn it then rewinds and copies Claude Code's task files (`taskfiles`) before, right after and
     after the next prompt; its expectations are that assumption.
+    Review (2026-11-28): a file written or edited in a replaced turn now stays in the Files list, marked
+    "from a rewound turn" (its edit rows are text, with nothing to go to), since a conversation-only
+    rewind leaves the change on disk and the transcript does not say whether the code was restored.
     Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
     its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
     the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown
