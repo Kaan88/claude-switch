@@ -133,6 +133,9 @@ as the second account, Windows Terminal, the desktop hand-over.
   time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
   Cancel. Read-only on the bridge's files.
 - A real hand-over out of Desktop (make it let go of a session). No supported way is known.
+- The account selector's drop-down shows each account's colour dot before its name, as the selector
+  itself does (owner, 2026-11-28). Blocked on the toolkit: drop-down items cannot carry a colour
+  swatch ("For the toolkit", item 1).
 - Buttons under each message, as in the desktop app (owner, 2026-11-28): under the user's bubble and
   under Claude's answer, shown on pointing (and under the newest answer always), at least Copy and
   Branch (continue a copy of the conversation from that message), plus Rewind to here under the
