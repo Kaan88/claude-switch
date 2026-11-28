@@ -4,6 +4,11 @@
 
 ## 0.1.7 (2026-11-28)
 
+- Plugin: `/switch-handover:switch-compact` reports Claude Switch's result again when Claude runs it
+  in PowerShell. Claude Switch is a windowed program, so PowerShell did not wait for it: the command
+  showed no result line and no exit code although the handover had started. The skill now pipes the
+  call, which makes PowerShell wait and read both.
+
 - Chat: with a subagent's conversation open, the message box talks to that agent: its edge and
   placeholder take the agent's colour and name ("Message general-purpose…"), and Send picks the
   agent in the list under Claude Code's input and types the message there, each key only once the
