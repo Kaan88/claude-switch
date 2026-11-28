@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Settings › Claude Code › Advanced: the rest of Claude Code's `/config` (taken from 2.1.332), with a
+  search box, a short line on what each does, a "default" mark and Reset to Claude Code's default.
+  `settings.json` entries are saved in the master account and shared; `.claude.json` entries belong
+  to the chosen account and are read-only while it runs Claude Code. A value changed elsewhere since
+  the page read it is never overwritten.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

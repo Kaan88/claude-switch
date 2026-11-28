@@ -1069,3 +1069,19 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     pick up the new turns the terminal shows. Chat follows a tab to a new session after `/clear`,
     compaction and `/resume`; `/fork` probably needs the same (find the forked session's transcript
     and switch the tab to it, as for `/resume`). Not looked into yet.
+
+81. **Claude Code's /config in Settings** (owner, 2026-11-28: "expose Claude Code's advanced
+    configuration like /config, in a separate page, and maybe Status, Usage, Stats"). Done on
+    `feature/cc-advanced`: the entries, keys and defaults of 2.1.332 (DESIGN.md, "Claude Code's
+    /config"), Settings › Claude Code › Advanced. Tested: core writes against temporary folders
+    (master and sharing, nested keys and their neighbours, reset, a value changed meanwhile, a
+    running Claude Code of the account, Claude Code's lock folder, a broken file), the page in the
+    demo (search, change, Reset) and on a temporary folder (refused when changed meanwhile, then
+    saved; read-only while the test's own process poses as a running session), and every label and
+    help line fitting at 760 px, with values set and read-only, in both themes; the pictures were
+    looked at. Not tried: the running app against a real account, and the recording of `/config`
+    (`tools/screen-recorder/scripts/config-list.txt`, to be run by the owner with a scratch,
+    signed-in config folder). Open: read-only rows are a single selected segment (the toolkit has
+    no read-only or label/value row, "For the toolkit", item 4); entries Claude Code hides behind
+    flags are offered all the same (the files cannot tell which flags an account has); the newer
+    user-settings storage behind `storageV5` is not covered.

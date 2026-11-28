@@ -85,6 +85,11 @@ const fn entry(key: &'static str, label: &'static str, help: &'static str, store
     Entry { key, cli_label: label, label, help, store, kind, also_remove: &[] }
 }
 
+/// `e` shown in Switch under a shorter label than `/config`'s.
+const fn short(label: &'static str, e: Entry) -> Entry {
+    Entry { label, ..e }
+}
+
 const fn switch(key: &'static str, label: &'static str, help: &'static str, store: Store, default: bool) -> Entry {
     entry(key, label, help, store, Kind::Switch(default))
 }
@@ -104,21 +109,21 @@ pub const ENTRIES: &[Entry] = &[
         Settings,
         true,
     ),
-    entry(
-        "switchModelsOnFlag",
-        "Switch models when a message is flagged",
-        "When safeguards flag a message.",
-        Settings,
-        Kind::Choice {
-            options: &[("Switch automatically", Bool(true)), ("Ask each time", Bool(false))],
-            default: None,
-        },
+    short(
+        "On a flagged message",
+        entry(
+            "switchModelsOnFlag",
+            "Switch models when a message is flagged",
+            "When safeguards flag one.",
+            Settings,
+            Kind::Choice { options: &[("Switch models", Bool(true)), ("Ask each time", Bool(false))], default: None },
+        ),
     ),
     switch("spinnerTipsEnabled", "Show tips", "Tips beside the spinner.", Settings, true),
     entry(
         "feedbackDrafts",
         "Claude-drafted feedback",
-        "Feedback Claude drafts for you to send.",
+        "Feedback Claude drafts.",
         Settings,
         Kind::Choice {
             options: &[("Notify", Str("notify")), ("Quiet", Str("quiet")), ("Off", Str("off"))],
@@ -156,7 +161,7 @@ pub const ENTRIES: &[Entry] = &[
     entry(
         "workflowSizeGuideline",
         "Dynamic workflow size",
-        "How many agents a workflow may start.",
+        "Agents a workflow may start.",
         Global,
         Kind::Choice {
             options: &[
@@ -213,7 +218,7 @@ pub const ENTRIES: &[Entry] = &[
     entry(
         "worktree.baseRef",
         "Worktree base ref",
-        "Where a new worktree starts from.",
+        "Where new worktrees start.",
         Settings,
         Kind::Choice { options: &[("Fresh", Str("fresh")), ("Head", Str("head"))], default: Some(0) },
     ),
@@ -225,7 +230,7 @@ pub const ENTRIES: &[Entry] = &[
     entry(
         "preferredNotifChannel",
         "Local notifications",
-        "How Claude Code tells you it is done.",
+        "How you hear it is done.",
         Global,
         Kind::Choice {
             options: &[
@@ -269,20 +274,23 @@ pub const ENTRIES: &[Entry] = &[
         Global,
         Kind::Choice { options: &[("Normal", Str("normal")), ("Vim", Str("vim"))], default: Some(0) },
     ),
-    entry(
-        "askUserQuestionTimeout",
-        "Question auto-continue timeout",
-        "Claude goes on if a question is unanswered.",
-        Settings,
-        Kind::Choice {
-            options: &[("Never", Str("never")), ("60 s", Str("60s")), ("5 min", Str("5m")), ("10 min", Str("10m"))],
-            default: Some(0),
-        },
+    short(
+        "Unanswered questions",
+        entry(
+            "askUserQuestionTimeout",
+            "Question auto-continue timeout",
+            "Claude goes on after this.",
+            Settings,
+            Kind::Choice {
+                options: &[("Never", Str("never")), ("60 s", Str("60s")), ("5 min", Str("5m")), ("10 min", Str("10m"))],
+                default: Some(0),
+            },
+        ),
     ),
     entry(
         "modelProposedGoals",
         "Claude-proposed goals",
-        "Goals Claude may set for a session.",
+        "Goals Claude may set.",
         Settings,
         Kind::Choice {
             options: &[("Auto", Str("auto")), ("Always ask", Str("alwaysAsk")), ("Off", Str("disabled"))],
@@ -300,7 +308,7 @@ pub const ENTRIES: &[Entry] = &[
     entry(
         "diffTool",
         "Diff tool",
-        "Where edits are shown with an IDE.",
+        "Where an IDE shows edits.",
         Global,
         Kind::Choice { options: &[("Auto", Str("auto")), ("Terminal", Str("terminal"))], default: Some(0) },
     ),
@@ -321,42 +329,51 @@ pub const ENTRIES: &[Entry] = &[
             default: Some(3),
         },
     ),
-    entry(
-        "remoteControlAtStartup",
-        "Enable Remote Control for all sessions",
-        "Lets claude.ai drive new sessions.",
-        Global,
-        Kind::Choice { options: ON_OFF, default: None },
+    short(
+        "Remote Control for all",
+        entry(
+            "remoteControlAtStartup",
+            "Enable Remote Control for all sessions",
+            "claude.ai can drive sessions.",
+            Global,
+            Kind::Choice { options: ON_OFF, default: None },
+        ),
     ),
     entry(
         "dialogExpiry",
         "Dialog expiry",
-        "How long a remote dialog waits.",
+        "How long remote dialogs wait.",
         Settings,
         Kind::Choice {
             options: &[("60 s", Str("60s")), ("5 min", Str("5m")), ("10 min", Str("10m")), ("Never", Str("never"))],
             default: None,
         },
     ),
-    entry(
-        "crossSessionInbound",
-        "Messages from your other sessions",
-        "Messages your other sessions send.",
-        Settings,
-        Kind::Choice {
-            options: &[("Accept", Str("accept")), ("Hold", Str("hold")), ("Refuse", Str("refuse"))],
-            default: None,
-        },
+    short(
+        "From your other sessions",
+        entry(
+            "crossSessionInbound",
+            "Messages from your other sessions",
+            "Messages they send here.",
+            Settings,
+            Kind::Choice {
+                options: &[("Accept", Str("accept")), ("Hold", Str("hold")), ("Refuse", Str("refuse"))],
+                default: None,
+            },
+        ),
     ),
-    entry(
-        "remoteMessageReceipts",
-        "Delivery notices to and from cloud and Remote Control sessions",
-        "Notices for cloud and remote messages.",
-        Settings,
-        Kind::Choice {
-            options: &[("On", Str("on")), ("Always", Str("always")), ("Off", Str("off"))],
-            default: Some(0),
-        },
+    short(
+        "Remote delivery notices",
+        entry(
+            "remoteMessageReceipts",
+            "Delivery notices to and from cloud and Remote Control sessions",
+            "Cloud and remote messages.",
+            Settings,
+            Kind::Choice {
+                options: &[("On", Str("on")), ("Always", Str("always")), ("Off", Str("off"))],
+                default: Some(0),
+            },
+        ),
     ),
 ];
 
@@ -371,7 +388,7 @@ pub fn get<'a>(root: &'a Value, key: &str) -> Option<&'a Value> {
 
 /// Sets or (with `None`) removes `key` in `root`, making the objects on its path. Everything else
 /// is kept as it is.
-fn put(root: &mut Value, key: &str, value: Option<Value>) {
+pub fn put(root: &mut Value, key: &str, value: Option<Value>) {
     let parts: Vec<&str> = key.split('.').collect();
     let (last, parents) = parts.split_last().expect("a key");
     let mut node = root;

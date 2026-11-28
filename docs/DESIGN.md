@@ -887,8 +887,10 @@ but a polling tick no longer redraws the window unless visible state changes.
 
 ## Settings pages
 
-The category list at left selects one page at right: Appearance, Terminal, Sessions, Chat, Usage,
-Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
+The category list at left selects one page at right: Appearance, Terminal, Sessions, Chat,
+Claude Code (with its sub-page Advanced, indented under it), Usage, Handovers, OpenCode, or
+Notification area. A sub-page's name is "Parent › Name" in the code and its title; the rail shows
+"Name", indented. Only the current page scrolls. Up and Down change
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
 closing Settings. Each window remembers the last page while it runs; category selection is not saved.
 A category switch cross-fades the old page into the new one in 140 ms (the toolkit's
@@ -1035,6 +1037,35 @@ page writes `settings.json` as the user-settings writer does without it. Eight o
 in `settings_sync::PREFS` (Rewind code, Terminal progress bar, Show turn duration, Local
 notifications, Editor mode, Diff tool and the two IDE switches): they go to the sharing accounts
 at the next sync, as Chrome and Auto-compact do; the other G keys stay with their account.
+
+**Settings › Claude Code › Advanced** shows every **Adv** entry with a switch or a choice (a
+segmented control up to four options, else a drop-down), a short line on what it does, and
+"· default" after that line while the key is absent (Claude Code's default applies). A set key
+gets a row under it, "Claude Code's default: On" with **Reset**, which removes the key; a choice
+whose default depends on the plan or on what Claude Code asked has a "Default" option for that
+instead. A saved value the page does not know is shown as it is and kept. A few labels are
+shorter than `/config`'s so they fit beside the control at the narrowest Settings (the table
+keeps both). **Search** at the top filters by label, `/config`'s label, key and help, case aside.
+
+Two sections. "Shared · settings.json of <master>": saved in the master account and brought to the
+sharing accounts by the same sync as the Claude Code page (`settings.json` is backed up before it
+is replaced). "Per account · .claude.json": an **Account** choice (the master first time); only that
+account's file changes. Claude Code holds the whole of `.claude.json` in memory and writes it back
+while it runs and when it exits, so while the chosen account has a running Claude Code (the
+app's running-session scan: a live `sessions/<pid>.json` of that account, terminal or desktop) its
+rows are read-only: each shows its value as a single option with "Close <account>'s sessions to
+change this.", and **Check again** reads again after they were closed. The write itself scans
+again and refuses if one started meanwhile.
+
+Every write (`cc_config::save`) reads the file again and compares the key with the value the page
+showed; when another program changed it since, nothing is written, an error says so, and the
+page shows the current value. Otherwise only the key changes (and, for Dynamic workflows and
+Artifacts, the old `disable…` key `/config` removes too); every other key, known or not, is kept,
+and the file is replaced atomically (a temporary file beside it, then a rename). For
+`.claude.json` the write also holds Claude Code's own lock folder `.claude.json.lock` (what its
+`proper-lockfile` takes when that lock is on); when it exists, the write is refused with "try
+again". A file that is not a JSON object is never replaced. The page reads the files when it
+opens, after every change, and on Check again or another account.
 
 ## Recent sessions and local marks
 

@@ -27,7 +27,7 @@ mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
 pub(crate) use settings::peek::{PEEK_TIP, PeekInput};
-pub(crate) use settings::{OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
+pub(crate) use settings::{CcPage, OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
