@@ -2437,3 +2437,151 @@ fn a_read_outside_the_project_is_a_card_with_or_without_its_call_in_the_transcri
         assert_eq!(f.decide(now + QUIET), Some(Reason::Approval), "{known}");
     }
 }
+
+/// A screen of the recorded agent list with the input as given: `VIEWING_SCREEN`'s rows with its
+/// input row replaced.
+fn viewing_with(input: &str) -> String {
+    agent_send::VIEWING_SCREEN.replace("❯ Message @general-purpose…", &format!("❯ {input}"))
+}
+
+/// The message box over a subagent's conversation: ↓, ↓ to the agent, Enter to show it, the
+/// message, Enter; each key only once the screen shows what the one before led to. Back then
+/// returns Claude Code to the main session through the same list.
+#[test]
+fn a_message_to_the_shown_agent_goes_through_the_agent_list() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    f.tab().pane.as_mut().unwrap().model.agent = Some("a-Second pinger".into());
+    f.show(AGENTS_IDLE, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    f.writes();
+    f.chat().editor.set("Reply with kilo".into());
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [down(1)], "↓ gives the list the keys");
+    assert!(f.chat().waiting().is_some(), "the box waits meanwhile");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the same screen proves nothing");
+    f.show(AGENTS_OPEN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(AGENTS_FIRST, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)], "one row at a time");
+    f.show(AGENTS_SECOND, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Enter on the agent's row, never x");
+    f.show(agent_send::VIEWING_SCREEN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\x1b[200~Reply with kilo\x1b[201~".to_vec()]);
+    assert_eq!(f.chat().question.cli_agent.as_deref(), Some("a-Second pinger"));
+    f.show(&viewing_with("Reply with kilo"), now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.show(agent_send::VIEWING_SCREEN, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().editor.text.is_empty() && f.chat().error.is_none(), "sent");
+    assert!(f.chat().waiting().is_none());
+
+    // The next message goes straight in: Claude Code shows that agent already.
+    f.chat().editor.set("And lima".into());
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [b"\x1b[200~And lima\x1b[201~".to_vec()]);
+    f.show(&viewing_with("And lima"), now);
+    advance(f.tab(), now, true);
+    f.show(agent_send::VIEWING_SCREEN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    assert!(f.chat().editor.text.is_empty());
+
+    // A message for the main session waits while Claude Code shows the agent.
+    f.tab().pane.as_mut().unwrap().model.agent = None;
+    assert_eq!(
+        crate::view::chat::submission::blocked(f.tab(), now, crate::view::chat::Intent::Draft),
+        Some(agent_send::SHOWS_AGENT),
+        "it would go to the agent"
+    );
+    // Back: ↓, Enter on main, and the input names no agent any more.
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(AGENTS_OPEN, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Enter on main, never Esc");
+    f.show(AGENTS_IDLE, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.cli_agent, None);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "nothing more to do");
+}
+
+/// An agent that ended, or that the list does not show running, gets no message; neither does
+/// one while a turn's screen holds the keys. The box says why and keeps the text.
+#[test]
+fn a_message_to_an_agent_that_cannot_take_it_stays_in_the_box() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let setup = |listed: bool| {
+        let mut f = Fixture::idle();
+        f.agent("First pinger");
+        f.agent("Second pinger");
+        f.tab().pane.as_mut().unwrap().model.agent = Some("a-First pinger".into());
+        f.show(if listed { AGENTS_IDLE } else { PROMPT_IDLE }, now);
+        f.app.progress_chat_tabs(now + STEP, true);
+        f.writes();
+        f.chat().editor.set("Reply with kilo".into());
+        f
+    };
+    let mut f = setup(false);
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::UNLISTED), "not sent to main either");
+    assert_eq!(f.chat().editor.text, "Reply with kilo");
+
+    let mut f = setup(true);
+    f.tab().pane.as_mut().unwrap().model.agents[0].end = Some(FINISHED);
+    f.tab().pane.as_mut().unwrap().model.listed.clear();
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::ENDED));
+
+    // The list with the keys elsewhere (a Stop agent's screen): held, nothing written.
+    let mut f = setup(true);
+    f.show(AGENTS_OPEN, now);
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::NOT_READY));
+
+    // The screen does not show the agent selected in time: the message is held.
+    let mut f = setup(true);
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(PROMPT_IDLE, now);
+    advance(f.tab(), now + Duration::from_secs(3), true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::NOT_SELECTED));
+    assert_eq!(f.chat().editor.text, "Reply with kilo");
+
+    // A shell command or an attachment goes to the main session only.
+    let mut f = setup(true);
+    f.chat().shell_mode = true;
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.chat().error, Some(agent_send::SHELL));
+    assert!(f.writes().is_empty());
+}
+
+#[test]
+fn the_placeholder_names_the_agent_claude_code_shows() {
+    use screens::recorded::*;
+    let shown = screens::viewing_agent(&recorded(agent_send::VIEWING_SCREEN));
+    assert_eq!(shown.as_deref(), Some("general-purpose"));
+    assert_eq!(screens::viewing_agent(&recorded(AGENTS_IDLE)), None);
+    assert_eq!(screens::viewing_agent(&recorded(&viewing_with("Message @ two  words"))), None);
+    assert!(screens::names_agent("general-purpose", "general-purpose"));
+    assert!(screens::names_agent("a-very-long-agent-n", "a-very-long-agent-name"), "cut to 20 columns");
+    assert!(!screens::names_agent("Explore", "general-purpose"));
+    assert!(!screens::names_agent("gen", "general-purpose"), "too short to tell");
+}

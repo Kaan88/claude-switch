@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Chat: with a subagent's conversation open, the message box talks to that agent: its edge and
+  placeholder take the agent's colour and name ("Message general-purpose…"), and Send picks the
+  agent in the list under Claude Code's input and types the message there, each key only once the
+  screen shows the one before worked. ‹ Back returns the box, and Claude Code, to the main session.
+  An agent that ended or is not listed running gets no message: the box says so instead of
+  sending to the main session.
+
 - Chat and the Session view: subagents are told apart in plain words wherever they show (Details ›
   Background, a subagent's conversation header, the Agents page): Running, Finished, or Stopped
   (Interrupted, Failed). Before, an agent Claude Code had not marked showed `?` even when it was

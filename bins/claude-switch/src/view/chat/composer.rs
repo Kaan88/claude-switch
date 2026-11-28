@@ -22,6 +22,9 @@ pub(super) struct Draw<'a> {
     pub stop: Option<bool>,
     /// A new session before its first message: the box says what can be typed.
     pub welcome: bool,
+    /// The box sends to this subagent (its conversation is shown): its name and colour, which the
+    /// box's edge and placeholder take.
+    pub agent: Option<(String, mdshared_ui::gfx::Rgb)>,
 }
 
 /// The chips in their default order.
@@ -197,6 +200,10 @@ impl Draw<'_> {
         let clip = p.clip(l.composer);
         // A raised box: with the keyboard its border is a little stronger, not the accent.
         look::raised_box(p, self.pal, l.box_frame, self.focused);
+        // Over a subagent's conversation the box is the agent's: its edge in the agent's colour.
+        if let Some((_, colour)) = &self.agent {
+            look::edged_box(p, self.pal, l.box_frame, *colour);
+        }
         self.attachments(p, chat);
         self.editor(p, chat);
         self.shell_chip(p, l.shell_chip, chat.shell_count);
@@ -360,8 +367,10 @@ impl Draw<'_> {
         }
         let next_chip = chat.popups.next_prompt.clone().filter(|_| !chat.locked());
         // While a turn runs a message goes into it (or waits for it), and the box says so.
+        let to_agent = self.agent.as_ref().map(|(name, _)| format!("Message {name}…"));
         let hint = match () {
             _ if chat.shell_mode => super::shell::HINT,
+            _ if to_agent.is_some() => to_agent.as_deref().unwrap_or_default(),
             _ if self.stop.is_some() && !chat.locked() => QUEUE_HINT,
             _ if self.welcome => super::welcome::HINT,
             _ => "Message Claude Code…",
@@ -371,7 +380,11 @@ impl Draw<'_> {
         let selection = ed.selection();
         let caret_row = ed.caret_row();
         if ed.text.is_empty() {
-            p.text(editor::FACE, editor::TEXT_SIZE, x, e.y + FIRST_ROW, hint, self.pal.muted, width);
+            let ink = match &self.agent {
+                Some((_, colour)) if !chat.shell_mode => *colour,
+                _ => self.pal.muted,
+            };
+            p.text(editor::FACE, editor::TEXT_SIZE, x, e.y + FIRST_ROW, hint, ink, width);
             if let Some(next) = next_chip.as_deref() {
                 let label = format!("↳ {}  ·  Tab", short(next, 80));
                 let w = (p.measure(Face::Ui, PILL_FONT, &label) + 18.0).min(width);
@@ -868,6 +881,7 @@ mod tests {
                                 own: &[],
                                 stop: None,
                                 welcome: false,
+                                agent: None,
                             }
                             .toolbar(&mut p, &chat, &info);
                             let what = format!("{width} px at {scale}x, panel {panel}, {start:?} {model} {mode:?}");
@@ -914,6 +928,7 @@ mod tests {
             own: &own,
             stop: None,
             welcome: false,
+            agent: None,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         let order: Vec<_> = hits.iter().map(|(_, t)| *t).collect();
@@ -955,6 +970,7 @@ mod tests {
             own: &own,
             stop: None,
             welcome: false,
+            agent: None,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         for (r, t) in &hits {
@@ -993,6 +1009,7 @@ mod tests {
                 own: &[],
                 stop: turn,
                 welcome: false,
+                agent: None,
             }
             .composer(&mut p, &mut chat, &ChatInfo::default(), None, None);
             let find = |t: Target| hits.iter().find_map(|(r, hit)| (*hit == t).then_some(*r));
@@ -1042,6 +1059,7 @@ mod tests {
                     own: &[],
                     stop: None,
                     welcome: false,
+                    agent: None,
                 }
                 .toolbar(&mut p, &chat, &info);
                 positions.push(hits);
@@ -1094,6 +1112,7 @@ mod tests {
                 own: &[],
                 stop: None,
                 welcome: false,
+                agent: None,
             }
             .composer(&mut p, &mut chat, &info, suggestions, None);
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();

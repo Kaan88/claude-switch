@@ -11,6 +11,7 @@
 //! before should have led to (the highlight moved, the box ticked, the text typed, the next
 //! question or the review opened), and "Submit answers" only once the review reads every answer
 //! as picked.
+pub(super) mod agent_send;
 mod background;
 mod blocked;
 mod cards;
@@ -472,6 +473,11 @@ pub(super) struct Card {
     agents: Vec<background::AgentOffer>,
     /// A Stop agent in flight. It outlives the pending call: the main turn may move on meanwhile.
     agent_step: Option<background::AgentStep>,
+    /// A message to an agent, or Back to the main session, through the agent list in flight.
+    agent_send: Option<agent_send::Step>,
+    /// The agent Chat left Claude Code showing (its input then sends to that agent), until Back
+    /// brings it to the main session again.
+    pub(super) cli_agent: Option<String>,
     /// A rewind from a prompt bubble, from its first Esc until it is done or its card is closed.
     rewind: Option<rewind::Rewind>,
     /// The pending call's offset while Chat may answer it: its drawer stays closed.
@@ -614,6 +620,7 @@ impl Card {
             .map(|step| step.due)
             .or(background)
             .or(self.agent_step.as_ref().map(|step| step.due))
+            .or(self.agent_send.as_ref().map(agent_send::Step::due))
             .or(rewind)
     }
 }
@@ -1026,6 +1033,11 @@ impl Chat {
         if side {
             card.error = Some(INTERRUPTED);
         }
+        // A message on its way to an agent stays in the box, which says why it stopped.
+        let to_agent = card.agent_send.take().is_some();
+        if to_agent {
+            self.error = Some(agent_send::INTERRUPTED_SEND);
+        }
         let answer = match self.question.step.take() {
             // Enter already went: the step stays and keeps the card from taking a second click
             // until the prompt closes or its wait runs out, as it does without an interruption.
@@ -1040,7 +1052,7 @@ impl Chat {
             }
             None => false,
         };
-        rewind || side || answer
+        rewind || side || to_agent || answer
     }
 
     fn question_failed(&mut self, error: &'static str) {
@@ -1132,6 +1144,8 @@ impl Chat {
             let field = std::mem::take(&mut self.question.field);
             let held = self.question.held.take();
             let agent_step = self.question.agent_step.take();
+            let agent_send = self.question.agent_send.take();
+            let cli_agent = self.question.cli_agent.take();
             let rewind = self.question.rewind.take();
             let error = self.question.error.filter(|_| agent_step.is_some() || step.is_some());
             self.question = Card {
@@ -1139,6 +1153,8 @@ impl Chat {
                 field,
                 held,
                 agent_step,
+                agent_send,
+                cli_agent,
                 rewind,
                 error,
                 step,
@@ -1247,7 +1263,11 @@ impl Chat {
     pub(super) fn question_notice(&self) -> Option<&'static str> {
         let card = &self.question;
         let rewind = card.rewind.as_ref().is_some_and(rewind::Rewind::in_flight);
-        (card.step.is_some() || card.background_step.is_some() || card.agent_step.is_some() || rewind)
+        (card.step.is_some()
+            || card.background_step.is_some()
+            || card.agent_step.is_some()
+            || card.agent_send.is_some()
+            || rewind)
             .then_some(WAITING)
     }
 
@@ -1681,6 +1701,7 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let changed = pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen)
         | background::advance_background(tab, now)
         | background::advance_agent(tab, now, may_write)
+        | agent_send::advance(tab, now, may_write)
         | rewind::advance(tab, now, may_write);
     let pane = tab.pane.as_mut().expect("Chat pane");
     let changed = changed | pane.chat.clear_busy();

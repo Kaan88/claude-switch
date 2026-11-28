@@ -45,6 +45,8 @@ const LIST_SELECT: &str = "↑/↓ to select";
 const LIST_VIEW: &str = "enter to view";
 const LIST_STOP: &str = "x to stop";
 const LIST_CLEAR: &str = "x to clear";
+/// The empty input's placeholder while Claude Code shows an agent, before its name.
+const VIEWING: &str = "Message @";
 /// How many rows above its footer a panel's card copies when it cannot tell where the panel
 /// starts.
 const PANEL_ROWS: usize = 14;
@@ -892,6 +894,23 @@ pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
         ListKeys::Clear => highlight.is_some_and(|h| h > 0),
     };
     (fits && rows.len() > 1).then_some(AgentList { keys, rows, highlight })
+}
+
+/// The agent Claude Code shows instead of the main session, by the name its empty input's
+/// placeholder gives ("Message @general-purpose…": the agent's name or type, cut to 20 columns);
+/// `None` when the input is not empty or shows no such placeholder. From Claude Code 2.1.332's
+/// bundle; the `agent-message` compat script records it.
+pub(in crate::view::chat) fn viewing_agent(screen: &Screen) -> Option<String> {
+    let input = input_row(screen)?;
+    let row = screen.row_text(input);
+    let rest = row.trim().trim_start_matches(prompt_mark).trim();
+    let name = rest.strip_prefix(VIEWING)?.trim_end_matches('…').trim();
+    (!name.is_empty() && !name.contains("  ")).then(|| name.to_owned())
+}
+
+/// The placeholder's name is this agent type's, whole or cut.
+pub(in crate::view::chat) fn names_agent(shown: &str, agent_type: &str) -> bool {
+    shown == agent_type || agent_type.starts_with(shown) && shown.chars().count() >= 8
 }
 
 /// The input shows and no agent list is under it: its hint row offers no "↓ to manage" and no

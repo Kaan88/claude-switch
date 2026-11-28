@@ -103,6 +103,16 @@ as the second account, Windows Terminal, the desktop hand-over.
   closed session reopened. Check that Running shows only while the list shows it, and whether an
   agent stopped from the list gets `stoppedByUser` or no mark (Claude Code's own note says a stop
   "via the UI leaves no transcript marker"; that one then reads Unknown once the list drops it).
+- Record `agent-message` (`pwsh tools\cli-compat.ps1 -Only agent-message`; written 2026-11-28, not
+  run yet) and fix what it shows before trying Chat's messages to a subagent for real. Built from
+  Claude Code 2.1.332's bundle: after Enter on an agent's row, the list gives the keys back and the
+  empty input reads "Message @<agent type>…"; Enter on `main` returns to the main session. Chat's
+  test of the walk uses a screen made from the recorded list with that placeholder
+  (`agent_send::VIEWING_SCREEN`); replace it with the recording. Still open there: whether the
+  placeholder is drawn dim (Chat accepts either), whether ↓ while an agent is shown opens the list
+  on `main` or on that agent (the walk moves from wherever the highlight is), and whether a named
+  agent's placeholder gives its name rather than its type (Chat then holds the message, as the
+  name does not match).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.
@@ -118,15 +128,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Later (the owner's list)
 
-- **The message box talks to the subagent Chat shows** (owner, 2026-11-28). With a subagent's
-  conversation open in Chat ("‹ Back · <agent's task>"), the box still sends to the main session.
-  It should send to that agent, the way Claude Code does when an agent is picked in the list under its
-  input (`↓ to manage`, then the agent: typed text goes to it). Chat picks the agent through that list
-  and sends only once the screen shows that agent selected; otherwise it holds the message and says
-  why. Make the target plain: the box's edge and placeholder take the agent's colour and name
-  ("Message general-purpose…"), and Back returns the box to the main session. An agent that has
-  ended or is not in the list can't be messaged: the box says so instead of sending to main. Record
-  the agent list's selection and a message to an agent with a compat script first.
 - **Question previews and tabbed forms in Chat's card** (owner, 2026-11-28; after the queue job and the
   command-output renderer). Claude Code's question tool can give each option a `preview` (monospace
   text: mock-ups, code, layouts); the terminal shows the options on the left and the highlighted

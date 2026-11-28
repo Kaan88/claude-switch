@@ -1,0 +1,45 @@
+# Messaging a background agent through the agent list (Chat's message box over a subagent's
+# conversation). Written from Claude Code 2.1.332's bundle before the first recording: the
+# placeholder's name (`viewing`) and the screens after Enter are what the bundle draws, and the
+# first run of this script says whether they read so.
+
+[idle]
+kind = idle
+agents = input
+
+[before_transcript]
+prompts = Use the Agent tool once* Then reply only with the word started.
+
+[list]
+agents = select · main
+
+[highlighted]
+agents = stop · general-purpose Count slowly
+
+[viewing]
+viewing = general-purpose
+
+[viewing_later]
+viewing = general-purpose
+
+[typed]
+input = Reply with the word kilo when you are done.
+
+[sent]
+viewing = general-purpose
+
+# The message is the agent's, not the main session's: the main transcript's prompts are only the
+# first one, and the agent's own transcript has its task and then the message.
+[sent_transcript]
+prompts = Use the Agent tool once* Then reply only with the word started.
+agent-prompts = Run the Bash command ping* | Reply with the word kilo when you are done.
+
+[back_list]
+agents = select · main
+
+[back]
+viewing = -
+
+[ended_transcript]
+agents = general-purpose: Count slowly: Finished from Notification
+agent-prompts = Run the Bash command ping* | Reply with the word kilo when you are done.

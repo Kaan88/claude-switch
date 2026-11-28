@@ -2003,6 +2003,29 @@ turn alone. Left is never sent: at the input it opens "Background this session?"
 the hint row reads "↓ to resume subagent" and other agents are no longer offered until it offers
 "↓ to manage" again. Recorded from Claude Code 2.1.332 (`bg_*`, `agents_*`).
 
+**Messages to a subagent.** With a subagent's conversation open ("‹ Back · its task"), the
+message box is that agent's: its edge and placeholder take the agent's colour (the one its sidecar
+names, else one of Claude Code's eight subagent colours picked by its type) and name ("Message
+general-purpose…"), and Send goes to the agent the way Claude Code does when an agent is picked in
+its list. Claude Code 2.1.332 has this: Enter on an agent's row in the list shows that agent, its
+input's placeholder then reads "Message @<name>…" (cut to 20 columns) and what is typed there goes
+to it; Enter on `main` returns to the main session; Esc while an agent is shown may stop it, so
+Chat never sends one there. The keys, each only once newer output shows what the one before led
+to: at an empty input whose hint row offers "↓ to manage", ↓ (the list takes the keys, highlight
+on main), ↓ one row at a time to the agent's row, which must read running and be the transcript's
+one agent with that type and description ("enter to view · x to stop"), Enter (the list gives the
+keys back and the placeholder names the agent's type), the message as a paste, Enter once the
+input shows it; done when the input is empty again. A second message while Claude Code still shows
+that agent goes straight in. ‹ Back returns Claude Code to the main session the same way (↓,
+Enter on main, no placeholder naming an agent), once its input is at rest. While Claude Code shows
+an agent, a message for the main session waits in the box (it would reach the agent). An agent
+that ended, or that the list does not show running, gets nothing: the box says so and keeps the
+text, as it does when the screen does not show the agent selected in time, a turn or a prompt
+holds the keys, or keys typed in the terminal interrupt. Shell commands and attachments go to the
+main session only. The list's screens are recorded (`agents_*`); the screen after Enter and the
+placeholder are from the bundle, and the `agent-message` compat script records the whole walk and
+the agent's transcript (`agentcopy`).
+
 **Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
 typed, in a tab with Chat, never over a subagent's transcript (refused there with a word). It goes through the CLI's own rewind list and never edits the transcript.
 The first Esc only at an idle, quiet, empty prompt with no turn, pending call or menu (the checks of

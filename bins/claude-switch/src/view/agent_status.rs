@@ -9,6 +9,30 @@
 //! background agents only.
 
 use claude_switch_core::transcript::{AgentEnd, EndSource, Subagent};
+use mdshared_ui::gfx::Rgb;
+
+/// Claude Code's colours for subagents, as its own theme draws them (2.1.332's bundle).
+const COLOURS: [(&str, Rgb); 8] = [
+    ("red", [220, 38, 38]),
+    ("blue", [106, 155, 204]),
+    ("green", [22, 163, 74]),
+    ("yellow", [202, 138, 4]),
+    ("purple", [130, 125, 189]),
+    ("orange", [217, 119, 87]),
+    ("pink", [196, 102, 134]),
+    ("cyan", [8, 145, 178]),
+];
+
+/// The agent's colour: the one Claude Code gave it, or one of its colours picked by its type, so
+/// an agent keeps its colour.
+pub fn colour(agent: &Subagent) -> Rgb {
+    if let Some((_, rgb)) = agent.color.as_deref().and_then(|c| COLOURS.iter().find(|(name, _)| *name == c)) {
+        return *rgb;
+    }
+    let key = agent.agent_type.as_deref().unwrap_or(&agent.id);
+    let sum = key.bytes().fold(0usize, |sum, b| sum.wrapping_mul(31).wrapping_add(b.into()));
+    COLOURS[sum % COLOURS.len()].1
+}
 
 /// An agent's row in the terminal's agent list, as last read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

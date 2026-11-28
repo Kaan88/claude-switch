@@ -138,6 +138,9 @@ pub struct Subagent {
     pub agent_type: Option<String>,
     pub description: Option<String>,
     pub model: Option<String>,
+    /// Claude Code's colour for it (`red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink`,
+    /// `cyan`), when its sidecar names one.
+    pub color: Option<String>,
     /// How it ended and where that was read; `None` while nothing in the files says it ended
     /// (it may run, or have ended without a record: see [`AgentEnd`]).
     pub end: Option<(AgentEnd, EndSource)>,
@@ -383,6 +386,7 @@ impl Reader {
             agent.info.agent_type = string(&meta["agentType"]);
             agent.info.description = string(&meta["description"]);
             agent.info.model = string(&meta["model"]);
+            agent.info.color = string(&meta["color"]);
             agent.sidecar_end = sidecar_end(&meta);
             agent.info.spawn_depth = meta["spawnDepth"].as_u64();
             agent.info.tool_use_id = string(&meta["toolUseId"]);

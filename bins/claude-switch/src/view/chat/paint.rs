@@ -294,6 +294,9 @@ impl AppState {
             own: &self.config.chat.commands,
             stop,
             welcome,
+            agent: super::question::agent_send::target(&pane.model).map(|a| {
+                (a.agent_type.clone().unwrap_or_else(|| "the agent".into()), crate::view::agent_status::colour(a))
+            }),
         }
         .composer(p, chat, &pane.model.chat, suggestions, popup);
         frame

@@ -560,7 +560,7 @@ fn session_view_shots() {
 
 /// The demo's agents under Claude Code's input: one running, one stopped. The demo's third agent
 /// (finished) is not listed, as Claude Code drops a finished agent from its list.
-const AGENTS_LISTED: &str = "cursor 31 2
+const AGENTS_LISTED: &str = "cursor 25 2
 @size 100 40
 
 
@@ -627,18 +627,33 @@ fn agent_state_shots() {
         assert_eq!(words, ["Running", "Finished", "Stopped", "Unknown"], "caption, colour, contour, legend");
         shots::settled_at(&mut st, later, WIDE).write_png(&dir.join(format!("10-agents-details-{theme}.png"))).unwrap();
         // The running agent's conversation: its state beside its task over the conversation.
-        let pane = pane(&mut st, id);
-        pane.ui.open_agent("caption", &pane.model);
+        let viewed = pane(&mut st, id);
+        viewed.ui.open_agent("caption", &viewed.model);
         for _ in 0..50 {
             std::thread::sleep(Duration::from_millis(20));
-            pane.model.collect();
-            if pane.model.agent.as_deref() == Some("caption") {
+            viewed.model.collect();
+            if viewed.model.agent.as_deref() == Some("caption") {
                 break;
             }
         }
-        assert_eq!(pane.model.agent.as_deref(), Some("caption"));
+        assert_eq!(viewed.model.agent.as_deref(), Some("caption"));
         let later = shots::show(&mut st, id, AGENTS_LISTED, later);
         shots::settled_at(&mut st, later, NARROW).write_png(&dir.join(format!("10-agent-view-{theme}.png"))).unwrap();
+        // The stopped agent's conversation: the box names it, and a message is refused with a word.
+        let stopped = pane(&mut st, id);
+        stopped.ui.open_agent("contour", &stopped.model);
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(20));
+            stopped.model.collect();
+            if stopped.model.agent.as_deref() == Some("contour") {
+                break;
+            }
+        }
+        stopped.chat.editor.set("Check the second ridge too".into());
+        let later = shots::show(&mut st, id, AGENTS_LISTED, later);
+        AppState::chat_send(shots::tab(&mut st, id), later, false);
+        assert_eq!(pane(&mut st, id).chat.error, Some(super::question::agent_send::ENDED));
+        shots::settled_at(&mut st, later, NARROW).write_png(&dir.join(format!("10-agent-ended-{theme}.png"))).unwrap();
     }
     // The Session view's Agents page, from the files alone: no list, so the caption's end is unknown.
     for (pal, theme) in [(mdshared_ui::theme::DARK, "dark"), (mdshared_ui::theme::LIGHT, "light")] {

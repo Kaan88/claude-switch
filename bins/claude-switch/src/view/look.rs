@@ -92,6 +92,13 @@ pub(super) fn raised_box(p: &mut Painter, pal: &Palette, r: Rect, strong: bool) 
     p.frame(r, BOX_RADIUS, raised(pal), border);
 }
 
+/// The raised box with an edge in `colour`, two device pixels wide: the box belongs to what that
+/// colour stands for (a subagent).
+pub(super) fn edged_box(p: &mut Painter, pal: &Palette, r: Rect, colour: Rgb) {
+    p.rbox(r.inset(-1.0), BOX_RADIUS + 1.0, colour);
+    p.frame(r, BOX_RADIUS, raised(pal), colour);
+}
+
 /// A round button with an icon: `fill` under `ink`.
 pub(super) fn round_icon(p: &mut Painter, r: Rect, fill: Rgb, icon: &str, size: f32, ink: Rgb) {
     p.rbox(r, r.h / 2.0, fill);
