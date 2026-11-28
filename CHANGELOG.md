@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Chat: `!` typed into the empty message box turns it to Claude Code's shell mode, as in the
+  terminal: the command goes as `!command` and runs in Claude Code's shell (Backspace in the empty
+  box leaves the mode). Enter goes only once Claude Code's input shows the command in shell mode,
+  which is not recorded from a real session yet.
 - Chat: while a command runs, a slash command or "Send anyway" is refused with "a turn is
   running" instead of "Claude Code may be waiting for your answer in the terminal", which it was
   not: the screen shows the turn working over an empty input.

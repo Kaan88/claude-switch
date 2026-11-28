@@ -621,7 +621,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 47. **Command results and shell mode in the conversation**: `<local-command-stdout>` and `<bash-input>`/`<bash-stdout>`
     records as mono cards under their command (filtered out today, `prompt_clean.rs`); interactive panels get a
     card; a `!` toggle in the composer once shell mode by paste is verified.
-    **Done except the `!` toggle** (2026-11-27, branch `fix/items-47-tools`). The records were already read into
+    **Done.** The `!` toggle (2026-11-28, `feature/redesign-fixes`): `!` in the empty box, Enter only once
+    the input shows `! command`; to record with `recorder compat` script `shell-paste` before it is trusted.
+    Before that (2026-11-27, branch `fix/items-47-tools`). The records were already read into
     finished rows (`transcript/local.rs`); this pass gave them item 71's quiet look. One-line replies (at most 140
     characters, which covers the shapes found read-only in this machine's transcripts: "Set model to …", "Goal
     set: …", "Settings dialog dismissed", "Reconnected to …") sit on their command's row. Longer output

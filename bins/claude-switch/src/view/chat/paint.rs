@@ -107,7 +107,8 @@ impl AppState {
         let chat = &mut pane.chat;
         // The box grows with the draft: wrap it at the box's width, then lay out for its rows.
         let before = chat.editor.rows.len();
-        chat.editor.flow(p, composer::editor_text_width(chat.layout.editor), chat.layout.editor.h);
+        let width = composer::editor_text_width(chat.layout.editor, chat.shell_mode);
+        chat.editor.flow(p, width, chat.layout.editor.h);
         if chat.editor.rows.len() != before {
             self.layout_chat(area);
         }

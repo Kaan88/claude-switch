@@ -16,6 +16,7 @@ mod readme_shots;
 mod recall;
 mod rename;
 mod screen_report;
+mod shell;
 mod shortcuts;
 #[cfg(test)]
 mod shots;
@@ -219,6 +220,8 @@ pub struct Chat {
     editor_words: Option<std::ops::Range<usize>>,
     chips: Vec<Chip>,
     chip_page: usize,
+    /// The draft is a command for Claude Code's shell mode (`!`, `shell.rs`).
+    shell_mode: bool,
     recall: recall::Recall,
     error: Option<&'static str>,
     retry: Option<Intent>,

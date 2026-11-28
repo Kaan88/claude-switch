@@ -51,6 +51,8 @@ pub enum Control {
     Stop,
     /// Send now on the messages waiting in Claude Code's queue.
     SendQueued,
+    /// The composer's `!` mark: back from shell mode to a message.
+    ShellMode,
     Remove(usize),
     MoreChips,
     Question(super::question::Hit),
@@ -353,6 +355,7 @@ impl AppState {
         let pane = tab.pane.as_mut().expect("Chat pane");
         let chat = &mut pane.chat;
         let changed = match k.name.as_ref() {
+            Some(KeyName::Backspace) if mods.none() && chat.editor.text.is_empty() && chat.leave_shell() => false,
             Some(KeyName::Enter) if !mods.shift && !mods.ctrl && !mods.alt => {
                 self.chat_control(cx, Control::Send);
                 false
@@ -380,6 +383,9 @@ impl AppState {
             return true;
         }
         if chat.popup_text(text) {
+            return true;
+        }
+        if chat.shell_key(text) {
             return true;
         }
         if !chat.locked() {
@@ -611,6 +617,9 @@ impl AppState {
                 }
             }
             Control::MoreChips => chat.chip_page = (chat.chip_page + 1) % chat.attachment_pages(),
+            Control::ShellMode => {
+                chat.leave_shell();
+            }
             Control::Attach if !chat.locked() => self.chat_attach_menu(),
             Control::CancelSend => chat.stop_waiting(),
             Control::Send | Control::Override | Control::SendNow
@@ -838,6 +847,6 @@ impl Chat {
 
     pub(super) fn editor_point(&self, x: f32, y: f32) -> (f32, f32) {
         let rect = self.layout.editor;
-        (x - rect.x - 8.0, y - rect.y)
+        (x - rect.x - super::composer::editor_left(self.shell_mode), y - rect.y)
     }
 }

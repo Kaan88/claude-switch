@@ -1296,8 +1296,14 @@ command whose output is only stderr is a failed row. Output is cut at 60 lines o
 escape sequences and surrounding blank lines removed, the first line's indent kept
 (`transcript/local.rs`). They never count as pending calls. Interactive panels that print their
 result the same way (`/context`, `/usage`, `/config`, `/mcp`) get the same row; a command that
-printed nothing shows no row and does not lend its name to the next output. The composer has no `!`
-toggle: whether a pasted `!` enters the CLI's shell mode is unverified.
+printed nothing shows no row and does not lend its name to the next output. `!` typed into the
+empty box turns the composer to shell mode, as in Claude Code (a `!` mark before the text; Backspace
+in the empty box or a click on the mark leaves it). The command goes as `!command` pasted into an
+idle input only, one line and no attachments, and Enter only once the cursor's row reads
+`! command`: Claude Code 2.1.332's source switches an empty input to shell mode when text starting
+with `!` reaches it, but how the screen shows that is not recorded yet (`recorder compat` script
+`shell-paste`). Without that row nothing more goes and the text-on-the-input notice shows
+(`chat/shell.rs`). The mode ends with the send.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
 from the selected account, the launch folder’s `.claude` directory, and installed plugin caches.

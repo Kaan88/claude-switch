@@ -128,6 +128,9 @@ those too:
   send now"); the key hands both to the running turn at once (moving the running command to the
   background) and stops nothing: the transcript records both as messages during the turn, in
   order, and the turn stays the first prompt's.
+- `shell-paste`: `!echo shellcheck` pasted into the empty input, as the composer's `!` toggle sends
+  a command, then Enter. Not recorded yet: whether the input then shows shell mode as
+  `! echo shellcheck` on the cursor's row, which Chat waits for before Enter.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),

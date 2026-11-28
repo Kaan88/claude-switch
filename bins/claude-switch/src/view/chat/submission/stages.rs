@@ -41,6 +41,8 @@ pub(super) struct LinesWait {
     pub text: String,
     pub picture: bool,
     pub into_turn: bool,
+    /// A command for Claude Code's shell mode: the input shows it as `! command`.
+    pub shell: bool,
 }
 
 pub(super) struct EnterOnly {

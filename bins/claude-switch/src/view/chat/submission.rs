@@ -199,6 +199,7 @@ impl Chat {
     }
 
     fn submitted(&mut self) {
+        self.shell_mode = false;
         self.error = None;
         self.retry = None;
         self.queue = None;
@@ -283,7 +284,10 @@ impl AppState {
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
         let running = || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running;
-        let intent = if !force {
+        let intent = if chat.shell_mode {
+            // A shell command goes into an idle input only, never into a running turn.
+            Intent::Draft
+        } else if !force {
             // While a turn runs, a message goes into Claude Code's visibly empty input at once, as
             // Send now does and as typing in the terminal would: Claude Code hands it to the
             // running turn, and the box is free for the next one. Otherwise it is held.
@@ -327,7 +331,22 @@ impl AppState {
             return;
         }
         chat.recall.end();
-        let Some(bytes) = send_bytes(&chat.chips, &chat.editor.text) else {
+        let shell_text;
+        let text = if chat.shell_mode {
+            if chat.editor.text.trim().contains('\n') {
+                chat.refused(super::shell::ONE_LINE, None);
+                return;
+            }
+            if !chat.chips.is_empty() {
+                chat.refused(REMOVE_ATTACHMENTS, None);
+                return;
+            }
+            shell_text = format!("!{}", chat.editor.text.trim());
+            shell_text.as_str()
+        } else {
+            chat.editor.text.as_str()
+        };
+        let Some(bytes) = send_bytes(&chat.chips, text) else {
             chat.refused(BAD_TEXT, None);
             return;
         };
@@ -460,7 +479,11 @@ impl AppState {
                 Some(Err(LINES_TIMEOUT))
             } else if may_write
                 && chat.output_epoch != wait.stamp.epoch
-                && shows_sent(tab, &wait.expected, wait.into_turn)
+                && if wait.shell {
+                    super::shell::shows(&tab.term.screen, &wait.expected)
+                } else {
+                    shows_sent(tab, &wait.expected, wait.into_turn)
+                }
             {
                 Some(Ok(()))
             } else {
@@ -911,12 +934,13 @@ fn finish(tab: &mut Tab, now: Instant, paste: &[u8], completion: Completion, mar
     // (its default is Yes): Enter goes only once the input line shows the text. So it does for
     // several lines (or the CLI's paste marker). The demo has no CLI to show it.
     let into_turn = into_turn && !chat.demo;
-    if expected.contains('\n') || into_turn && matches!(completion, Completion::Message(_)) {
+    let shell = chat.shell_mode && !chat.demo && matches!(completion, Completion::Message(_));
+    if expected.contains('\n') || into_turn && matches!(completion, Completion::Message(_)) || shell {
         let Completion::Message(text) = completion else { unreachable!("commands are one line") };
         chat.error = None;
         chat.retry = None;
         let due = now + ECHO_TIMEOUT;
-        chat.staging.lines = Some(LinesWait { stamp, due, expected, text, picture, into_turn });
+        chat.staging.lines = Some(LinesWait { stamp, due, expected, text, picture, into_turn, shell });
         return;
     }
     submit_enter(tab, EnterOnly { stamp, expected, completion, picture, into_turn });

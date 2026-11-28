@@ -338,11 +338,21 @@ impl Draw<'_> {
         let e = chat.layout.editor;
         self.hits.push((e, Target::Chat(Control::Editor)));
         let c = p.clip(e);
-        let x = e.x + 8.0;
-        let width = editor_text_width(e);
+        let x = e.x + editor_left(chat.shell_mode);
+        let width = editor_text_width(e, chat.shell_mode);
+        if chat.shell_mode {
+            // Claude Code's own mark for its shell mode; a click leaves it.
+            let mark = Rect::new(e.x + 8.0, e.y + FIRST_ROW - SHELL_MARK / 2.0, SHELL_MARK, SHELL_MARK);
+            let target = Target::Chat(Control::ShellMode);
+            let fill = if self.hover == Some(target) { self.pal.hover } else { self.pal.on };
+            p.rbox(mark, 6.0, fill);
+            p.text_center(Face::Semibold, 13.0, mark, "!", self.pal.accent);
+            self.hits.push((mark, target));
+        }
         let next_chip = chat.popups.next_prompt.clone().filter(|_| !chat.locked());
         // While a turn runs a message goes into it (or waits for it), and the box says so.
         let hint = match () {
+            _ if chat.shell_mode => super::shell::HINT,
             _ if self.stop.is_some() && !chat.locked() => QUEUE_HINT,
             _ if self.welcome => super::welcome::HINT,
             _ => "Message Claude Code…",
@@ -658,10 +668,19 @@ impl Draw<'_> {
     }
 }
 
-/// The editor's wrapping width inside its rectangle (8 px of padding on each side).
-pub(super) fn editor_text_width(e: Rect) -> f32 {
-    (e.w - 16.0).max(0.0)
+/// The editor's wrapping width inside its rectangle (8 px of padding on each side, and the `!`
+/// mark's room in shell mode).
+pub(super) fn editor_text_width(e: Rect, shell: bool) -> f32 {
+    (e.w - 8.0 - editor_left(shell)).max(0.0)
 }
+
+/// Where the draft's text starts in the editor: after the `!` mark in shell mode.
+pub(super) fn editor_left(shell: bool) -> f32 {
+    if shell { 8.0 + SHELL_MARK + 6.0 } else { 8.0 }
+}
+
+/// The `!` mark of shell mode, at the start of the first row.
+const SHELL_MARK: f32 = 20.0;
 
 fn short(s: &str, max: usize) -> String {
     if s.chars().count() <= max { s.into() } else { s.chars().take(max - 1).chain(['…']).collect() }
