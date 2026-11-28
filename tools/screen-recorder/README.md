@@ -59,6 +59,7 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `watch MS NAME` | Snaps `NAME-001`, `NAME-002`, … once a second while the screen changes. |
 | `resize COLS ROWS` | |
 | `tscopy NAME` | Copies the newest transcript of the work folder (`REC_PROJECT`; in `recorder compat` the run's own) to `NAME.jsonl`, as it is on disk now. |
+| `live NAME` | What the recorded Claude Code's live record (`sessions/<pid>.json` in its config folder) names, into `NAME.live.json` (the pid and the record, `null` when there is none), and a copy of every transcript of the work folder in `NAME.transcripts/`, as they are now. For `fork`: whether `/fork` moves the record and when the new session's transcript is written. |
 | `clipimage FILE` | Writes a small PNG as `FILE` in the work folder and puts it on the clipboard, for `send \ev` (Alt+V, as Chat sends a pasted picture). It refuses, and ends the script, when the clipboard holds anything but plain text (a picture, files, formatted text): that could not be put back. The text is put back when the script ends (the clipboard is emptied when it held none), unless something was copied meanwhile (the clipboard's sequence number changed): then it is left as it is. Uses Windows PowerShell. |
 | `help NAME` | `claude --help`, with the same account, into `NAME.help.txt`. |
 | `reopen NAME` | Ends the recorded Claude Code and starts it again with `--resume` and the id of the branch `NAME` wrote (as the app's Branch opens it), then waits for its input as `start` does. |

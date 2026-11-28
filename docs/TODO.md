@@ -1073,4 +1073,22 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     prompt · <title> · continued · <id>"), while Chat keeps showing the old conversation and does not
     pick up the new turns the terminal shows. Chat follows a tab to a new session after `/clear`,
     compaction and `/resume`; `/fork` probably needs the same (find the forked session's transcript
-    and switch the tab to it, as for `/resume`). Not looked into yet.
+    and switch the tab to it, as for `/resume`).
+    Fixed (2026-11-28). Found from Claude Code 2.1.332's bundle and from transcripts it and 2.1.325
+    wrote (keys only): `/fork` starts a background session with a copy (its title "<name> ·
+    continued", the session the "session waiting for a prompt · … · <id>" line names) and moves
+    the terminal to another new session id; it ends the old transcript with a `continued-in` record
+    naming that id, and the new transcript is written only with the next message (the active chain
+    copied with the same uuids, then the new turn). The follow logic works from the live record
+    alone, and since Chat kept the old conversation rather than going empty (as it does for a
+    followed session whose transcript is not written yet), the record most likely went on naming
+    the old session; the CLI's session-switch hook updates the record on a resume, but whether the
+    fork path goes through it was not settled from the minified code. Chat now follows the
+    `continued-in` record of the transcript it reads (DESIGN.md, "Tab identity and interaction
+    checks"), and a record still naming the old session stands for the new one. Checked by unit
+    tests (the reader finds the record only after the newest message and not in a subagent's
+    transcript; a tab follows it, awaits the new transcript, is not taken back by the old record,
+    attaches the new file, and does not follow while the record names a third session). Not
+    checked: against a live `/fork` in the app. `recorder compat`'s new `fork` script records the
+    live record and every transcript before the fork, after it and after the next turn (it starts a
+    background session that has to be ended by hand); not run yet.

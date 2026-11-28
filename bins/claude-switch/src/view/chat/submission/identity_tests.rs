@@ -319,3 +319,74 @@ fn a_confirmed_command_rechecks_the_session_right_before_writing() {
     f.app.chat_confirm_slash(now, f.tab, Some(A.to_owned()), "/rename Parser work", false);
     assert!(!f.chat().writes.is_empty(), "{:?}", f.chat().error);
 }
+
+/// Item 80: `/fork` (Claude Code 2.1.332) moves the terminal to a new session, ends the transcript
+/// it leaves with a `continued-in` record naming it, and writes the new transcript (a copy of the
+/// conversation) only with the next message. Chat follows that record whether or not the live
+/// record moves.
+#[test]
+fn a_fork_is_followed_by_the_record_it_leaves_in_the_transcript() {
+    let mut f = Fixture::new("fork", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    let old = f.transcript(A, &root);
+    let continued = serde_json::json!({"type":"continued-in","sessionId":A,"continuedInSessionId":B});
+    let mut file = std::fs::OpenOptions::new().append(true).open(&old).unwrap();
+    std::io::Write::write_all(&mut file, format!("{continued}\n").as_bytes()).unwrap();
+    assert!(f.tab().apply_live_identity(Some(A)));
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.poll();
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while pane.model.chat.continued_in.is_none() && Instant::now() < deadline {
+        pane.model.collect();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(pane.model.chat.continued_in.as_deref(), Some(B));
+
+    assert!(f.tab().follow_continuation());
+    let pane = f.tab().pane.as_ref().unwrap();
+    assert_eq!(pane.pinned_id(), Some(B));
+    assert!(
+        !pane.chat.identity_unverified && pane.chat.awaiting_transcript,
+        "its transcript comes with the next message"
+    );
+    assert_eq!(pane.continued, Some((B.to_owned(), A.to_owned())), "the fork continues the conversation");
+    assert!(!f.tab().follow_continuation(), "followed once");
+
+    // The live record still naming the session the fork left does not take the pane back.
+    f.tab().apply_live_identity(Some(A));
+    let pane = f.tab().pane.as_ref().unwrap();
+    assert_eq!(pane.pinned_id(), Some(B));
+    assert!(pane.model.error.is_none());
+
+    // The next message writes the new transcript, which is attached.
+    let new = f.transcript(B, &root);
+    f.tab().apply_live_identity(Some(A));
+    assert_eq!(f.tab().pane.as_ref().unwrap().verified_transcript(), Some(new.as_path()));
+    assert_eq!(f.tab().resume_id.as_deref(), Some(B));
+    // The record moving to it changes nothing; a third session is followed as before.
+    assert!(!f.tab().apply_live_identity(Some(B)));
+    f.tab().apply_live_identity(Some(C));
+    assert_eq!(f.tab().pane.as_ref().unwrap().pinned_id(), Some(C));
+}
+
+#[test]
+fn a_continuation_is_not_followed_while_the_live_record_names_another_session() {
+    let mut f = Fixture::new("fork-other", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    let old = f.transcript(A, &root);
+    let continued = serde_json::json!({"type":"continued-in","sessionId":A,"continuedInSessionId":B});
+    let mut file = std::fs::OpenOptions::new().append(true).open(&old).unwrap();
+    std::io::Write::write_all(&mut file, format!("{continued}\n").as_bytes()).unwrap();
+    assert!(f.tab().apply_live_identity(Some(A)));
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.poll();
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while pane.model.chat.continued_in.is_none() && Instant::now() < deadline {
+        pane.model.collect();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // The tab's record already names a third session (pinned once it is followed).
+    f.tab().session = Some(C.to_owned());
+    assert!(!f.tab().follow_continuation());
+    assert_eq!(f.tab().pane.as_ref().unwrap().pinned_id(), Some(A));
+}

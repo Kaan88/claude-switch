@@ -689,3 +689,32 @@ fn a_long_paste_is_shown_as_its_text_without_claude_codes_tags() {
     // A tag without its end stays as it is.
     assert_eq!(super::unwrap_pastes("a <pasted_content id=\"1\">b"), "a <pasted_content id=\"1\">b");
 }
+
+#[test]
+fn the_session_a_fork_goes_on_in_is_read_from_the_record_it_writes_last() {
+    // Claude Code 2.1.332's `/fork` ends the transcript it leaves with this record.
+    const NEXT: &str = "7e6b2a9e-5649-42e7-8db5-01617d00d7cd";
+    let folder = Folder::new();
+    let path = folder.session();
+    let message = |uuid: &str| record(json!({"type":"user","uuid":uuid,"message":{"content":"hi"}}));
+    let continued = |id: &str| record(json!({"type":"continued-in","sessionId":"x","continuedInSessionId":id}));
+    fs::write(&path, message("u1") + &record(json!({"type":"cost-state"}))).unwrap();
+    let mut reader = Reader::open(&path, 4096).unwrap();
+    assert_eq!(reader.chat().continued_in, None);
+    append(&path, continued("not an id"));
+    reader.poll().unwrap();
+    assert_eq!(reader.chat().continued_in, None, "an invalid id is ignored");
+    append(&path, continued(NEXT));
+    reader.poll().unwrap();
+    assert_eq!(reader.chat().continued_in.as_deref(), Some(NEXT));
+    assert_eq!(reader.items().count(), 1, "the record is no item");
+    // The session resumed here later: the conversation goes on in this transcript again.
+    append(&path, message("u2"));
+    reader.poll().unwrap();
+    assert_eq!(reader.chat().continued_in, None);
+    // A subagent's transcript names no continuation.
+    let agents = folder.0.join("session").join("subagents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(agents.join("agent-a.jsonl"), continued(NEXT)).unwrap();
+    assert_eq!(Reader::open(agents.join("agent-a.jsonl"), 4096).unwrap().chat().continued_in, None);
+}

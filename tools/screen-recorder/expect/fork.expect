@@ -1,0 +1,20 @@
+# What Claude Switch relies on after `/fork` (scripts/fork.txt). The keys are explained in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs ("A live record").
+
+[idle]
+kind = idle
+send = yes
+
+# Seen in transcripts of Claude Code 2.1.325 and 2.1.332: the terminal goes on in a new session,
+# and the transcript the fork leaves ends with a `continued-in` record naming it. Its transcript
+# is written only with the next message.
+[forked]
+session = continued
+continued-in = yes
+written = no
+
+# The next message writes the new session's transcript: the copied conversation and the new turn.
+[after]
+session = continued
+written = yes
+prompts = Reply with just the word: alpha | Reply with just the word: bravo

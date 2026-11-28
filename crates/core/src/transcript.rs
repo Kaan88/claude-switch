@@ -208,6 +208,9 @@ impl Reader {
     pub fn chat(&self) -> ChatInfo {
         let mut info = self.view.chat.clone();
         info.generation = self.view.generation;
+        let newest = self.view.active.newest();
+        info.continued_in =
+            self.view.continued.as_ref().filter(|(at, _)| newest.is_none_or(|n| n < *at)).map(|(_, id)| id.clone());
         info.pending = self
             .view
             .items
@@ -416,6 +419,8 @@ struct View {
     chat: ChatInfo,
     /// The active branch, so a rewind's replaced turns are not shown.
     active: active::Active,
+    /// The newest `continued-in` record: its offset and the session it names.
+    continued: Option<(u64, String)>,
     background: background::Background,
     /// The newest slash command, for the output record that follows it.
     last_command: Option<String>,
@@ -438,6 +443,10 @@ impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
         if !self.is_agent {
             self.active.line(offset, line);
+            if decode::line_kind(line).is_none() {
+                self.continued_in(offset, line);
+                return;
+            }
         }
         // Most attachments are large context records; parse only the kinds that are shown.
         if decode::line_kind(line) == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
@@ -692,6 +701,22 @@ impl View {
                     self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
                 }
             }
+        }
+    }
+
+    /// Claude Code's record that the conversation goes on in another session (2.1.332 writes it last
+    /// in the transcript `/fork` leaves, naming the session the terminal goes on in).
+    fn continued_in(&mut self, offset: u64, line: &[u8]) {
+        if !line.windows(14).any(|w| w == b"\"continued-in\"") {
+            return;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(line) else { return };
+        let Some(id) = value["continuedInSessionId"].as_str().filter(|_| value["type"] == "continued-in") else {
+            return;
+        };
+        if crate::launch::validate_session_id(id).is_ok() && self.continued.as_ref().is_none_or(|(at, _)| *at < offset)
+        {
+            self.continued = Some((offset, id.to_owned()));
         }
     }
 

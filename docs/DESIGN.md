@@ -1935,6 +1935,14 @@ Switch cannot explain (the new transcript records another folder, or the record 
 new chat's first message created its file) clears the current identity used by Open, local marks, and
 background transcript notices without moving that draft to the other session. A missing
 PID record retains the existing duplicate-resume guard, not permission to send or mark seen.
+`/fork` (Claude Code 2.1.325 to 2.1.332, seen in transcripts) starts a background session with a
+copy of the conversation and moves the terminal to a new session id: it ends the transcript it
+leaves with a `continued-in` record naming that id, and writes the new transcript (the active chain
+copied under the new id, then the new turn) only with the next message. The shown pane follows
+that record as it follows a new id in the live record (awaiting the transcript, linked as the old
+one's continuation), unless the live record names a third session, and from then on a live record
+still naming the session the fork left stands for the one it went on in. Whether the live record
+itself moves at `/fork` is what `recorder compat`'s `fork` script records; either way Chat follows.
 Real Chat panes start with both Send paths blocked until verification. A verified tab missing from
 the Sessions index requests a refresh when asked to open a handover and explains how to retry.
 

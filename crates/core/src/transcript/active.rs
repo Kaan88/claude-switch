@@ -27,6 +27,8 @@ struct Node {
 pub(super) struct Active {
     nodes: HashMap<String, Node>,
     dirty: bool,
+    /// The newest linked record's offset.
+    newest: Option<u64>,
     /// Offsets of the records off the active branch.
     hidden: BTreeSet<u64>,
 }
@@ -87,7 +89,13 @@ impl Active {
             link.kind.as_deref() == Some("user") && link.message.and_then(|m| m.content).is_some_and(is_prompt);
         let node = Node { offset, parent: parent.map(Cow::into_owned), prompt };
         self.nodes.insert(uuid.into_owned(), node);
+        self.newest = self.newest.max(Some(offset));
         self.dirty = true;
+    }
+
+    /// The newest linked record's offset (a message, notice or command record).
+    pub(super) fn newest(&self) -> Option<u64> {
+        self.newest
     }
 
     pub(super) fn hides(&self, offset: u64) -> bool {

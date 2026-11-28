@@ -44,6 +44,12 @@
 //!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
 //!   listed, else the missing ones).
+//! - A live record (`live`, `<state>.live.json` and `<state>.transcripts/`), compared with the
+//!   script's `before` state: `session` (what the record names now: `same` session as before, the
+//!   one the earlier transcript's `continued-in` names (`continued`), another (`new`), `none`),
+//!   `continued-in` (`yes` when the app's reader finds that record in the earlier transcript),
+//!   `written` (`yes` when the transcript of the session it went on in, else of the one the record
+//!   names, exists) and `prompts` (that transcript's prompts, as for a transcript copy).
 //!
 //! `cargo test -p claude-switch cli_compat -- --ignored --nocapture` with `CS_COMPAT_RECORDINGS`
 //! (a folder per script, `<script>/<state>.ansi`; absolute, as the test runs in the crate's
@@ -317,6 +323,39 @@ fn branch_fact(json: &Path, key: &str) -> String {
     }
 }
 
+/// What a live record (`live`, `<state>.live.json` beside `<state>.transcripts/`) says, compared
+/// with the first one the script wrote (`before.live.json`).
+fn live_fact(live: &Path, key: &str) -> String {
+    use claude_switch_core::transcript::Reader;
+    let read = |path: &Path| {
+        std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    };
+    let id = |path: &Path| read(path).and_then(|v| v["record"]["sessionId"].as_str().map(str::to_owned));
+    let folder = live.parent().unwrap_or(Path::new("."));
+    let state = live.file_name().unwrap_or_default().to_string_lossy().trim_end_matches(".live.json").to_owned();
+    let transcripts = folder.join(format!("{state}.transcripts"));
+    let now = id(live);
+    let Some(before) = id(&folder.join("before.live.json")) else { return "no record before".to_owned() };
+    // The session the transcript left before says the conversation went on in, as Chat reads it.
+    let continued = Reader::open(transcripts.join(format!("{before}.jsonl")), 64 << 20)
+        .ok()
+        .and_then(|reader| reader.chat().continued_in);
+    let target = continued.clone().or(now.clone()).unwrap_or_default();
+    let written = transcripts.join(format!("{target}.jsonl"));
+    match key {
+        "session" => match now {
+            None => "none".to_owned(),
+            Some(now) if now.eq_ignore_ascii_case(&before) => "same".to_owned(),
+            Some(now) if continued.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(&now)) => "continued".to_owned(),
+            Some(_) => "new".to_owned(),
+        },
+        "continued-in" => yes(continued.is_some()),
+        "written" => yes(written.is_file()),
+        "prompts" => transcript_fact(&written, "prompts"),
+        _ => format!("unknown key {key}"),
+    }
+}
+
 /// Whether `claude --help` lists every flag in `want`.
 fn help_fact(help: &Path, key: &str, want: &str) -> String {
     let text = std::fs::read_to_string(help).unwrap_or_default();
@@ -340,6 +379,8 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
         let text = std::fs::read_to_string(&path).map_err(|_| "no recording".to_owned())?;
         let screen = recorded(&text.replace("\r\n", "\n"));
         Box::new(move |key, want| fact(&screen, key, want))
+    } else if let Some(path) = file("live.json") {
+        Box::new(move |key, _| live_fact(&path, key))
     } else if let Some(path) = file("jsonl") {
         Box::new(move |key, _| transcript_fact(&path, key))
     } else if let Some(path) = file("json") {
