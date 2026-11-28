@@ -1,19 +1,21 @@
 //! The message box over a subagent's conversation sends to that agent, the way Claude Code does
-//! when an agent is picked in the list under its input (Claude Code 2.1.332; the list's screens
-//! are the recorded `agents_*` fixtures, the rest is from its bundle and the `agent-message`
-//! compat script records it):
+//! when an agent is picked in the list under its input (Claude Code 2.1.332, recorded by the
+//! `agent-message` compat script, the `agent_message_*` fixtures):
 //!
 //! 1. At a clean, empty input whose hint row offers "↓ to manage", ↓ gives the list the keys with
 //!    the highlight on the main session ("↑/↓ to select").
 //! 2. ↓ (or ↑), one row at a time, each once the highlight moved, to the agent's row, which must
 //!    read running ("enter to view · x to stop").
-//! 3. Enter shows the agent: the list gives the keys back and the empty input's placeholder reads
-//!    "Message @<name>…".
+//! 3. Enter shows the agent: the empty input's dim placeholder reads "Message @<type>…", and the
+//!    list keeps the keys with its highlight on that agent, now marked `●` (`◯ main`).
 //! 4. The message as a paste, and Enter once the input shows it; done when the input is empty
-//!    again. The text then goes to the agent, not to the main session.
+//!    again. The text goes to the agent: while it runs, Claude Code holds it ("· 1 queued" on its
+//!    row) and writes it into the agent's own transcript when it hands it in at the agent's next
+//!    step, not into the main session's.
 //!
-//! Back in Chat returns Claude Code to the main session through the same list: ↓, the highlight
-//! to `main` (row 0), Enter; done once no placeholder names an agent. Esc is never sent while
+//! Back in Chat returns Claude Code to the main session through the same list: ↓ (the highlight
+//! on main, "↑/↓ to select · enter to view"), Enter; main shows again with the list still holding
+//! the keys on it, and one Esc gives them back to the input. Esc goes only there, never while
 //! Claude Code shows an agent: there it may stop the agent.
 //!
 //! Anything else stops with a word and keeps the message in the box. An agent that ended, or that
@@ -79,9 +81,12 @@ enum Stage {
     Opening,
     /// An arrow went: the highlight must be on this row.
     Moving(usize),
-    /// Enter went on the target row: the list must give the keys back, the agent shown (or no
-    /// agent, on the way back).
+    /// Enter went on the target row: the agent must show (the input's placeholder names it; the
+    /// list keeps the keys, its highlight on that agent), or on the way back, main (no placeholder,
+    /// the list keeps the keys on main).
     Picking,
+    /// Back: Esc went from the list on main, which must give the input the keys again.
+    Closing,
     /// The message went as a paste: the input must show it.
     Pasted,
     /// Enter went: the input must be empty again.
@@ -284,13 +289,41 @@ fn next(model: &Model, screen: &Screen, step: &Step) -> Next {
             if fits { Next::Key(b"\r".to_vec(), Stage::Picking) } else { Next::Wait }
         }
         Stage::Picking => {
-            let keys_back = screens::agent_list(screen).is_none_or(|l| l.keys == ListKeys::Input);
+            let list = screens::agent_list(screen);
             let shown = screens::viewing_agent(screen);
-            let picked = match &step.agent {
-                Some(_) => shown.is_some_and(|shown| screens::names_agent(&shown, &step.name)),
-                None => shown.is_none() && screens::input_row(screen).is_some(),
-            };
-            if keys_back && picked && empty_input(screen) { Next::Picked } else { Next::Wait }
+            match &step.agent {
+                // The list keeps the keys on the agent it now shows; typed text goes to the input.
+                Some(_) => {
+                    let on_agent = list.as_ref().is_none_or(|l| {
+                        l.keys == ListKeys::Input
+                            || l.keys == ListKeys::Select
+                                && l.highlight.is_some_and(|h| h == step.row && l.rows[h].shown)
+                    });
+                    let named = shown.is_some_and(|shown| screens::names_agent(&shown, &step.name));
+                    if named && on_agent && empty_input(screen) { Next::Picked } else { Next::Wait }
+                }
+                // Main shows again and the list keeps the keys on it: one Esc gives them back. Esc
+                // goes only with no agent shown (there it could stop the agent).
+                None => match list {
+                    Some(l)
+                        if shown.is_none()
+                            && l.keys == ListKeys::Select
+                            && l.highlight == Some(0)
+                            && l.rows[0].shown =>
+                    {
+                        Next::Key(ESC.to_vec(), Stage::Closing)
+                    }
+                    _ => Next::Wait,
+                },
+            }
+        }
+        Stage::Closing => {
+            let keys_back = screens::agent_list(screen).is_none_or(|l| l.keys == ListKeys::Input);
+            if keys_back && screens::viewing_agent(screen).is_none() && clean_prompt(screen) {
+                Next::Picked
+            } else {
+                Next::Wait
+            }
         }
         Stage::Pasted => {
             let expected = step.message.as_ref().map_or("", |(_, text)| text.as_str());
@@ -360,6 +393,7 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             let why = match (&step.agent, step.stage) {
                 (None, _) => STILL_AGENT,
                 (Some(_), Stage::Pasted | Stage::Entered) => NOT_TAKEN,
+                (Some(_), Stage::Closing) => STILL_AGENT,
                 _ => NOT_SELECTED,
             };
             return fail(tab, why);
@@ -375,43 +409,3 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     tab.pane.as_mut().unwrap().chat.question.agent_send = Some(step);
     true
 }
-
-#[cfg(test)]
-pub(in crate::view::chat) const VIEWING_SCREEN: &str = "cursor 28 2
-@size 100 40
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-────────────────────────────────────────────────────────────────────────────────────────────────────
-❯ Message @general-purpose…
-────────────────────────────────────────────────────────────────────────────────────────────────────
-  ? for shortcuts · ↓ to manage
-
-  ● main
-  ◯ general-purpose  First pinger                                              9s · ↓ 37.7k tokens
-  ◯ general-purpose  Second pinger                                             9s · ↓ 37.5k tokens
-";

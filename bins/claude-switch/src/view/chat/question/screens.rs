@@ -808,12 +808,15 @@ pub(super) enum AgentState {
     Other,
 }
 
-/// One row of the agent list: `● main` first, then `◯ type  description  status`.
+/// One row of the agent list: `● main` first, then `◯ type  description  status`. The filled mark
+/// is on the row Claude Code shows: main, or the agent picked with Enter (`◯ main`, `● type …`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentRow {
     pub name: String,
     pub description: String,
     pub state: AgentState,
+    /// Its mark is filled: Claude Code shows this one.
+    pub shown: bool,
 }
 
 /// The agent list the CLI draws under its input box while background agents exist (Claude Code
@@ -837,9 +840,10 @@ fn agent_row(row: &str) -> Option<(bool, AgentRow)> {
     let row = row.trim();
     let highlighted = row.starts_with(prompt_mark);
     let row = row.trim_start_matches(prompt_mark).trim_start();
+    let shown = row.starts_with('●');
     let rest = row.strip_prefix(['●', '◯'])?.strip_prefix(' ')?;
     if rest == "main" {
-        let main = AgentRow { name: "main".into(), description: String::new(), state: AgentState::Other };
+        let main = AgentRow { name: "main".into(), description: String::new(), state: AgentState::Other, shown };
         return Some((highlighted, main));
     }
     let parts: Vec<&str> = rest.split("  ").map(str::trim).filter(|p| !p.is_empty()).collect();
@@ -851,17 +855,23 @@ fn agent_row(row: &str) -> Option<(bool, AgentRow)> {
     } else {
         AgentState::Other
     };
-    Some((highlighted, AgentRow { name: name.into(), description: description.into(), state }))
+    Some((highlighted, AgentRow { name: name.into(), description: description.into(), state, shown }))
 }
 
 /// The agent list under the input box, and where its keys are; `None` for anything else.
 pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
     let input = input_row(screen)?;
-    let hint = screen.row_text(input + 2).trim().to_owned();
+    // The hint row ends with the effort ("◐ medium · /effort") after a gap, also while the list
+    // has the keys (2.1.332, `agent-message`): only what comes before the gap is the hint.
+    let row = screen.row_text(input + 2);
+    let hint = row.trim().split("   ").next().unwrap_or_default().trim().to_owned();
     let parts: Vec<String> = hint.split(" · ").map(collapse).collect();
     let has = |part: &str| parts.iter().any(|p| p == part);
     let keys = match () {
-        _ if hint == LIST_SELECT => ListKeys::Select,
+        // With the highlight on main; "· enter to view" after it while Claude Code shows an agent.
+        _ if hint == LIST_SELECT || parts.len() == 2 && parts[0] == LIST_SELECT && parts[1] == LIST_VIEW => {
+            ListKeys::Select
+        }
         _ if parts.first().is_some_and(|p| p == LIST_VIEW) && has(LIST_STOP) => ListKeys::Stop,
         _ if parts.first().is_some_and(|p| p == LIST_VIEW) && has(LIST_CLEAR) => ListKeys::Clear,
         // The input's hint row ends with the effort, after a gap.
@@ -889,7 +899,8 @@ pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
     }
     let fits = match keys {
         ListKeys::Input => highlight.is_none(),
-        ListKeys::Select => highlight == Some(0),
+        // On main, or right after Enter on the agent Claude Code now shows.
+        ListKeys::Select => highlight.is_some_and(|h| h == 0 || rows[h].shown),
         ListKeys::Stop => highlight.is_some_and(|h| h > 0 && rows[h].state == AgentState::Running),
         ListKeys::Clear => highlight.is_some_and(|h| h > 0),
     };

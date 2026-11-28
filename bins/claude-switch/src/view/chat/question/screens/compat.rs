@@ -800,7 +800,15 @@ fn the_fixtures_read_as_the_states_the_check_names() {
         (AGENTS_OPEN, "agents = select · main"),
         (AGENTS_SECOND, "agents = stop · general-purpose Second pinger"),
         (AGENTS_STOPPED, "agents = clear · general-purpose Second pinger"),
-        (crate::view::chat::question::agent_send::VIEWING_SCREEN, "viewing = general-purpose\nagents = input"),
+        (AGENT_MESSAGE_IDLE, "kind = idle\nagents = input\nviewing = -"),
+        (AGENT_MESSAGE_LIST, "agents = select · main"),
+        (AGENT_MESSAGE_HIGHLIGHTED, "agents = stop · general-purpose Count slowly"),
+        (AGENT_MESSAGE_VIEWING, "viewing = general-purpose\nagents = select · general-purpose Count slowly"),
+        (AGENT_MESSAGE_TYPED, "input = Reply with the word kilo when you are done."),
+        (AGENT_MESSAGE_SENT, "viewing = general-purpose\nagents = input"),
+        (AGENT_MESSAGE_BACK_LIST, "agents = select · main"),
+        (AGENT_MESSAGE_BACK, "viewing = -\nagents = select · main"),
+        (AGENT_MESSAGE_ENDED, "shows = Agent \"Count slowly\" finished"),
         (
             super::recorded::REWIND_ACTIONS,
             "kind = rewind-actions

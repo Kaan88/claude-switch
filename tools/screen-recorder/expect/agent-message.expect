@@ -1,7 +1,7 @@
 # Messaging a background agent through the agent list (Chat's message box over a subagent's
-# conversation). Written from Claude Code 2.1.332's bundle before the first recording: the
-# placeholder's name (`viewing`) and the screens after Enter are what the bundle draws, and the
-# first run of this script says whether they read so.
+# conversation). First recorded 2026-11-28 (run 20261128-122040, Claude Code 2.1.332): the
+# screens are Chat's `agent_message_*` fixtures. `back_closed` and the agent's end are not
+# recorded yet.
 
 [idle]
 kind = idle
@@ -16,8 +16,10 @@ agents = select · main
 [highlighted]
 agents = stop · general-purpose Count slowly
 
+# The agent shows: its input's dim placeholder names it, and the list keeps the keys on it.
 [viewing]
 viewing = general-purpose
+agents = select · general-purpose Count slowly
 
 [viewing_later]
 viewing = general-purpose
@@ -25,21 +27,37 @@ viewing = general-purpose
 [typed]
 input = Reply with the word kilo when you are done.
 
+# Sent: the agent holds it until its next step ("· 1 queued" on its row).
 [sent]
 viewing = general-purpose
+agents = input
+shows = 1 queued
 
-# The message is the agent's, not the main session's: the main transcript's prompts are only the
-# first one, and the agent's own transcript has its task and then the message.
+# Not on disk yet: the main transcript has only the first prompt, the agent's only its task.
 [sent_transcript]
 prompts = Use the Agent tool once* Then reply only with the word started.
-agent-prompts = Run the Bash command ping* | Reply with the word kilo when you are done.
+agent-prompts = Run the Bash command ping*
+agents = general-purpose: Count slowly: -
 
 [back_list]
 agents = select · main
 
+# Main shows again; the list keeps the keys on it.
 [back]
 viewing = -
+agents = select · main
 
+# One Esc from the list on main: the input has the keys again.
+[back_closed]
+viewing = -
+agents = input
+
+[ended]
+shows = Agent "Count slowly" finished
+
+# Handed in at the agent's next step, the message is in the agent's own transcript (a
+# `queued_command` without `commandMode`), never in the main session's.
 [ended_transcript]
 agents = general-purpose: Count slowly: Finished from Notification
 agent-prompts = Run the Bash command ping* | Reply with the word kilo when you are done.
+prompts = Use the Agent tool once* Then reply only with the word started.

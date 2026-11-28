@@ -758,7 +758,7 @@ impl View {
             }
             LineKind::Attachment => {
                 let attachment = &value["attachment"];
-                if let Some(prompt) = queued_prompt(attachment) {
+                if let Some(prompt) = queued_prompt(attachment, self.is_agent) {
                     // A message the user sent while a turn ran: Claude Code records it only here and
                     // hands it to Claude inside the running turn, so it starts no turn of its own.
                     let mut texts = Vec::new();
@@ -1022,10 +1022,15 @@ fn message_text(value: &Value) -> String {
 /// The content of a message the user typed while a turn ran (`queued_command`, `commandMode:
 /// "prompt"`, `origin.kind: "human"`; recorded from Claude Code 2.1.332). Background task
 /// notifications and messages from other sessions use the same record and are not prompts.
-fn queued_prompt(attachment: &Value) -> Option<&Value> {
-    (attachment["type"] == "queued_command"
-        && attachment["commandMode"] == "prompt"
-        && attachment["origin"]["kind"] == "human")
+///
+/// A message the user sent to a running subagent (its conversation shown, the "· 1 queued" on its
+/// row) waits in Claude Code's memory and is written into the agent's own transcript when it is
+/// handed in at the agent's next step, as a `queued_command` without `commandMode` (2.1.332's
+/// bundle; `recorder compat`'s `agent-message`): in an agent's transcript that is a prompt too.
+fn queued_prompt(attachment: &Value, agent: bool) -> Option<&Value> {
+    let mode = &attachment["commandMode"];
+    let human = attachment["origin"]["kind"] == "human" || agent && attachment["origin"].is_null();
+    (attachment["type"] == "queued_command" && (mode == "prompt" || agent && mode.is_null()) && human)
         .then(|| &attachment["prompt"])
 }
 

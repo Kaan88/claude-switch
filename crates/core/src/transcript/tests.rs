@@ -457,6 +457,38 @@ fn agent_ends_are_read_from_each_record_that_tells() {
     assert_eq!(end("interrupted"), Some((AgentEnd::Interrupted, EndSource::Transcript)));
 }
 
+/// A message the user sent to a running agent is written into the agent's own transcript when it
+/// is handed in, as a `queued_command` without `commandMode` (Claude Code 2.1.332's bundle; the
+/// `agent-message` compat run showed it held in memory until then). In the agent's transcript that
+/// is a prompt; in the session's, the same record is not.
+#[test]
+fn a_message_handed_to_an_agent_is_a_prompt_of_its_own_transcript() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let dir = path.with_extension("").join("subagents");
+    fs::create_dir_all(&dir).unwrap();
+    let handed = json!({"type":"attachment","isSidechain":true,"attachment":{"type":"queued_command",
+        "prompt":"Reply with kilo","origin":{"kind":"human"}}});
+    let notice = json!({"type":"attachment","isSidechain":true,"attachment":{"type":"queued_command",
+        "commandMode":"task-notification","prompt":"<task-notification>x</task-notification>"}});
+    let task = record(json!({"type":"user","isSidechain":true,"message":{"content":"Count slowly"}}));
+    fs::write(dir.join("agent-a1.jsonl"), [task, record(handed.clone()), record(notice)].concat()).unwrap();
+    fs::write(&path, [prompt("start one"), record(handed)].concat()).unwrap();
+    let reader = Reader::open(&path, 1024 * 1024).unwrap();
+    let prompts = |reader: &Reader| -> Vec<(String, bool)> {
+        reader
+            .items()
+            .filter_map(|(_, item)| match &item.kind {
+                ItemKind::Prompt { text, queued, .. } => Some((text.clone(), *queued)),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(prompts(&reader), [("start one".to_owned(), false)], "not the session's prompt");
+    let agent = reader.open_subagent("a1", 1024 * 1024).unwrap();
+    assert_eq!(prompts(&agent), [("Count slowly".to_owned(), false), ("Reply with kilo".to_owned(), true)]);
+}
+
 /// A notification paged in with earlier history settles an agent the newest slice left unknown.
 #[test]
 fn an_agent_end_in_earlier_history_is_found_when_it_loads() {

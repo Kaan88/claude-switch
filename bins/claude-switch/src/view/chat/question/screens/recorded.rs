@@ -82,6 +82,21 @@ pub(in crate::view::chat) const AGENTS_SECOND: &str = include_str!("../fixtures/
 pub(in crate::view::chat) const AGENTS_STOPPED: &str = include_str!("../fixtures/agents_stopped.txt");
 pub(in crate::view::chat) const AGENTS_CLOSED: &str = include_str!("../fixtures/agents_closed.txt");
 pub(in crate::view::chat) const AGENTS_SHELL: &str = include_str!("../fixtures/agents_shell.txt");
+/// A message to a background agent through the list (Claude Code 2.1.332, `agent-message`, run
+/// 20261128-122040): the list on main, on the agent, the agent shown (the list keeps the keys, its
+/// input's dim "Message @general-purpose…"), the message typed and sent ("· 1 queued" on the row),
+/// back on main, and the agent's end ("Agent \"Count slowly\" finished · 1m 3s").
+pub(in crate::view::chat) const AGENT_MESSAGE_IDLE: &str = include_str!("../fixtures/agent_message_idle.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_LIST: &str = include_str!("../fixtures/agent_message_list.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_HIGHLIGHTED: &str =
+    include_str!("../fixtures/agent_message_highlighted.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_VIEWING: &str = include_str!("../fixtures/agent_message_viewing.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_TYPED: &str = include_str!("../fixtures/agent_message_typed.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_SENT: &str = include_str!("../fixtures/agent_message_sent.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_BACK_LIST: &str =
+    include_str!("../fixtures/agent_message_back_list.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_BACK: &str = include_str!("../fixtures/agent_message_back.ansi");
+pub(in crate::view::chat) const AGENT_MESSAGE_ENDED: &str = include_str!("../fixtures/agent_message_ended.ansi");
 pub(in crate::view::chat) const REWIND_IDLE: &str = include_str!("../fixtures/rewind_idle.txt");
 pub(in crate::view::chat) const REWIND_OPEN: &str = include_str!("../fixtures/rewind_open.txt");
 pub(in crate::view::chat) const REWIND_UP1: &str = include_str!("../fixtures/rewind_up1.txt");

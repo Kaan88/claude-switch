@@ -103,16 +103,14 @@ as the second account, Windows Terminal, the desktop hand-over.
   closed session reopened. Check that Running shows only while the list shows it, and whether an
   agent stopped from the list gets `stoppedByUser` or no mark (Claude Code's own note says a stop
   "via the UI leaves no transcript marker"; that one then reads Unknown once the list drops it).
-- Record `agent-message` (`pwsh tools\cli-compat.ps1 -Only agent-message`; written 2026-11-28, not
-  run yet) and fix what it shows before trying Chat's messages to a subagent for real. Built from
-  Claude Code 2.1.332's bundle: after Enter on an agent's row, the list gives the keys back and the
-  empty input reads "Message @<agent type>…"; Enter on `main` returns to the main session. Chat's
-  test of the walk uses a screen made from the recorded list with that placeholder
-  (`agent_send::VIEWING_SCREEN`); replace it with the recording. Still open there: whether the
-  placeholder is drawn dim (Chat accepts either), whether ↓ while an agent is shown opens the list
-  on `main` or on that agent (the walk moves from wherever the highlight is), and whether a named
-  agent's placeholder gives its name rather than its type (Chat then holds the message, as the
-  name does not match).
+- Record `agent-message` again (`pwsh tools\cli-compat.ps1 -Only agent-message`). Run
+  20261128-122040 recorded the walk up to Back (the `agent_message_*` fixtures); not yet
+  recorded: the Esc that gives the input its keys back after Back (`back_closed`, Chat's walk
+  sends it), the message typed as a bracketed paste while the list has the keys (the first run
+  typed it as plain keys), and the agent's end with the message in its own transcript
+  (`ended_transcript`; the first run's `wait completed` never matched 2.1.332's "Agent "Count
+  slowly" finished · 1m 3s"). Still open: whether a named agent's placeholder gives its name
+  rather than its type (Chat then holds the message, as the name does not match).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.

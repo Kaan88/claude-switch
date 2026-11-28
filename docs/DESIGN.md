@@ -2013,18 +2013,26 @@ to it; Enter on `main` returns to the main session; Esc while an agent is shown 
 Chat never sends one there. The keys, each only once newer output shows what the one before led
 to: at an empty input whose hint row offers "↓ to manage", ↓ (the list takes the keys, highlight
 on main), ↓ one row at a time to the agent's row, which must read running and be the transcript's
-one agent with that type and description ("enter to view · x to stop"), Enter (the list gives the
-keys back and the placeholder names the agent's type), the message as a paste, Enter once the
-input shows it; done when the input is empty again. A second message while Claude Code still shows
-that agent goes straight in. ‹ Back returns Claude Code to the main session the same way (↓,
-Enter on main, no placeholder naming an agent), once its input is at rest. While Claude Code shows
+one agent with that type and description ("enter to view · x to stop"), Enter (the input's dim
+placeholder names the agent's type; the list keeps the keys, its highlight on that agent, now
+marked `●` with `◯ main`), the message as a paste, Enter once the input shows it; done when the
+input is empty again. While the agent runs, Claude Code holds the message ("· 1 queued" on its
+row) and writes it into the agent's own transcript only when it hands it in at the agent's next
+step, as a `queued_command` without `commandMode`, which the reader takes as a prompt there; it is
+never in the main transcript. A second message while Claude Code still shows that agent goes
+straight in. ‹ Back returns Claude Code to the main session the same way: ↓ (highlight on main,
+"↑/↓ to select · enter to view"), Enter on main; main shows again with the list still holding
+the keys on it, and one Esc, only with no agent shown and main highlighted, gives them to the
+input. The hint row ends with the effort after a gap ("◐ medium · /effort"), also while the list
+has the keys; the reader cuts it off. While Claude Code shows
 an agent, a message for the main session waits in the box (it would reach the agent). An agent
 that ended, or that the list does not show running, gets nothing: the box says so and keeps the
 text, as it does when the screen does not show the agent selected in time, a turn or a prompt
 holds the keys, or keys typed in the terminal interrupt. Shell commands and attachments go to the
-main session only. The list's screens are recorded (`agents_*`); the screen after Enter and the
-placeholder are from the bundle, and the `agent-message` compat script records the whole walk and
-the agent's transcript (`agentcopy`).
+main session only. Recorded from Claude Code 2.1.332 by the `agent-message` compat script
+(`agent_message_*`, run 20261128-122040), with the agent's transcript (`agentcopy`); the Esc that
+closes the list after Back and the message in the agent's transcript after its end are in the
+script but not recorded yet.
 
 **Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
 typed, in a tab with Chat, never over a subagent's transcript (refused there with a word). It goes through the CLI's own rewind list and never edits the transcript.
