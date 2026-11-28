@@ -2341,4 +2341,15 @@ fn open_terminal_on_a_card_gives_the_terminal_the_keyboard() {
     let mut chat = Chat::default();
     chat.question_failed("The question changed.");
     assert!(chat.drawer == Drawer::Manual && chat.drawer_focus);
+    // Not while a selection in the conversation waits for Ctrl+C (or the box holds text).
+    for keep in [true, false] {
+        let mut chat = Chat::default();
+        if keep {
+            chat.set_selection(true);
+        } else {
+            chat.editor.set("draft".into());
+        }
+        chat.question_failed("The question changed.");
+        assert!(chat.drawer == Drawer::Manual && !chat.drawer_focus);
+    }
 }

@@ -24,7 +24,8 @@
 - Chat: when the terminal opens for a question Chat cannot answer itself (Claude Code may be
   waiting, a permission prompt Chat cannot read whole, or a card's answer that could not go), the
   terminal takes the keyboard, so the answer can be typed at once; not while you are typing in the
-  message box. "Open terminal" on a card already did so.
+  message box, the box or a card's field holds text, or text is selected in the conversation (so
+  Ctrl+C copies it and never reaches Claude Code). "Open terminal" on a card already did so.
 - Chat and the Session view: a drag after a double click selects on by whole words, and after
   a triple click by whole paragraphs, in the conversation; in the message box a drag after a
   double click goes by whole words. A drag after a double or triple click used to do nothing.

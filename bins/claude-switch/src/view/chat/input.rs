@@ -233,6 +233,7 @@ impl AppState {
             chat.settle(chat.screen_idle(&tab.term, now));
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
+            chat.set_selection(pane.ui.has_selection());
             let changed =
                 card | chat.react_at(decision.1, now) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);

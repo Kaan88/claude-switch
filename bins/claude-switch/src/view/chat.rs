@@ -199,6 +199,9 @@ pub struct Chat {
     /// When a key last went to the message box: the terminal does not take the keyboard from
     /// someone typing there.
     typed_at: Option<Instant>,
+    /// The conversation has a selection (set each tick from the pane): Ctrl+C is meant for it, so
+    /// the terminal does not take the keyboard by itself.
+    selection: bool,
     reason: Option<Reason>,
     suppressed: Option<Reason>,
     /// The Details panel is closed: by the user's own choice, else because it has no section.
@@ -507,11 +510,27 @@ impl Chat {
     fn react_at(&mut self, reason: Option<Reason>, now: Instant) -> bool {
         let closed = self.drawer == Drawer::Closed;
         let changed = self.react(reason);
-        let typing = self.typed_at.is_some_and(|at| now.saturating_duration_since(at) < TYPING);
-        if closed && matches!(self.drawer, Drawer::Auto(Reason::Tool | Reason::Permission)) && !typing {
+        if closed && matches!(self.drawer, Drawer::Auto(Reason::Tool | Reason::Permission)) && !self.keeps_keyboard(now)
+        {
             self.drawer_focus = true;
         }
         changed
+    }
+
+    /// The keyboard stays with Chat rather than going to the terminal by itself: a key went to the
+    /// message box a moment ago, the box or a card's field holds text, or the conversation has a
+    /// selection. The next key (Enter, a digit, Ctrl+C) would otherwise land on Claude Code's prompt.
+    pub(super) fn keeps_keyboard(&self, now: Instant) -> bool {
+        self.typed_at.is_some_and(|at| now.saturating_duration_since(at) < TYPING)
+            || !self.editor.text.trim().is_empty()
+            || !self.chips.is_empty()
+            || !self.question.field.text().is_empty()
+            || self.selection
+    }
+
+    /// Whether the conversation has a selection, from the pane, each tick.
+    pub(super) fn set_selection(&mut self, selection: bool) {
+        self.selection = selection;
     }
 
     fn react(&mut self, reason: Option<Reason>) -> bool {

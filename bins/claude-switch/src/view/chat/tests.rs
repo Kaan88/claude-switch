@@ -880,6 +880,18 @@ fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answ
         chat.react_at(None, now);
         assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus);
     }
+    // Nor while the keyboard is in use here: text in the box, an attachment, text in a card's
+    // field, or a selection in the conversation (Ctrl+C is meant for it, never for the CLI).
+    let draft = |chat: &mut Chat| chat.editor.set("half a sentence".into());
+    let field = |chat: &mut Chat| chat.question.field.set_text("my own answer");
+    let selected = |chat: &mut Chat| chat.set_selection(true);
+    for (what, keep) in [("draft", draft as fn(&mut Chat)), ("field", field), ("selection", selected)] {
+        let mut chat = Chat::default();
+        keep(&mut chat);
+        assert!(chat.keeps_keyboard(now), "{what}");
+        chat.react_at(Some(Reason::Permission), now);
+        assert!(chat.drawer == Drawer::Auto(Reason::Permission) && !chat.drawer_focus, "{what}");
+    }
     // A drawer the user opened keeps its focus as it was.
     let mut chat = Chat { drawer: Drawer::Manual, ..Chat::default() };
     chat.react_at(Some(Reason::Permission), now);

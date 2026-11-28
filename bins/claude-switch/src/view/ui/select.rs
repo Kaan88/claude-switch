@@ -119,6 +119,11 @@ impl Ui {
         (!text.is_empty()).then_some(text)
     }
 
+    /// Something is selected in the conversation.
+    pub(in crate::view) fn has_selection(&self) -> bool {
+        self.selection.as_ref().is_some_and(|s| s.anchor != s.focus)
+    }
+
     /// Copies the selection through `set_clipboard`; false when there is none to copy.
     pub fn copy_selection_to(&self, set_clipboard: impl FnOnce(&str) -> bool) -> bool {
         self.selected_text().is_some_and(|text| set_clipboard(&text))

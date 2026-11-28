@@ -1243,7 +1243,9 @@ it only while the screen shows neither the working line nor an idle input (an id
 bell), and a process exit does. When it opens for a question Chat cannot answer (that wait, or a
 permission prompt Chat cannot read whole), or a card's answer could not go, or "Open terminal" on a
 card is clicked, the terminal takes the keyboard, so the answer can be typed at once; an automatic
-opening leaves it with the message box while a key went there within the last second. Only an automatically
+opening, or a card's answer that could not go, leaves it with Chat while a key went to the message
+box within the last second, the box or a card's field holds text, or the conversation has a
+selection (Ctrl+C is meant for it and never reaches the CLI that way). Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. Chat
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
