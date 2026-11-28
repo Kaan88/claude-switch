@@ -490,15 +490,48 @@ impl Recorder {
     /// What the live record of the recorded process names (Claude Switch follows a tab's session by
     /// it), with a copy of every transcript of the work folder: `NAME.live.json` holds the pid and
     /// the record (`null` when there is none), `NAME.transcripts/<id>.jsonl` the transcripts.
-    fn live(&mut self, name: &str) -> Result<(), Abort> {
-        self.pump();
-        let config = self
-            .env
+    /// The recorded account's config folder: `CLAUDE_CONFIG_DIR` as `claude` got it, else the
+    /// first account's.
+    fn config_dir(&self) -> Result<PathBuf, Abort> {
+        self.env
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
             .map(|(_, value)| PathBuf::from(value))
             .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".claude")))
-            .ok_or_else(|| Abort::Script("live: no CLAUDE_CONFIG_DIR and no USERPROFILE".into()))?;
+            .ok_or_else(|| Abort::Script("no CLAUDE_CONFIG_DIR and no USERPROFILE".into()))
+    }
+
+    /// Copies what Claude Code keeps for the newest session's tasks (its `tasks` and `todos`
+    /// entries, named after the session) into `NAME.tasks/<folder>/`, as they are now. Notes how
+    /// many entries; none is a result too.
+    fn task_files(&mut self, name: &str) -> Result<(), Abort> {
+        self.pump();
+        let config = self.config_dir()?;
+        let Some(session) = self.newest_transcript()? else {
+            self.note(&format!("taskfiles {name}: no transcript"));
+            return Ok(());
+        };
+        let id = session.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let to = self.out.join(format!("{name}.tasks"));
+        std::fs::create_dir_all(&to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+        let mut copied = 0;
+        for folder in ["tasks", "todos"] {
+            for entry in std::fs::read_dir(config.join(folder)).into_iter().flatten().filter_map(Result::ok) {
+                if !entry.file_name().to_string_lossy().to_lowercase().contains(&id) {
+                    continue;
+                }
+                let target = to.join(folder).join(entry.file_name());
+                copied +=
+                    copy_tree(&entry.path(), &target).map_err(|e| Abort::Io(format!("{}: {e}", target.display())))?;
+            }
+        }
+        self.note(&format!("taskfiles {name}: {copied} files for {id}"));
+        Ok(())
+    }
+
+    fn live(&mut self, name: &str) -> Result<(), Abort> {
+        self.pump();
+        let config = self.config_dir()?;
         let pid = self.pty.pid();
         let record = std::fs::read(config.join("sessions").join(format!("{pid}.json")))
             .ok()
@@ -764,6 +797,7 @@ impl Recorder {
             }
             Step::Branch { name, at } => self.branch(&name, &at)?,
             Step::Live(name) => self.live(&name)?,
+            Step::TaskFiles(name) => self.task_files(&name)?,
             // Claude Code again, resuming the session `branch` wrote, as the app's Branch opens it.
             Step::Reopen(name) => {
                 let id = std::fs::read_to_string(self.out.join(format!("{name}.id"))).unwrap_or_default();
@@ -844,6 +878,9 @@ enum Step {
     /// The recorded process's live record (`sessions/<pid>.json`) into `NAME.live.json` and every
     /// transcript of the work folder into `NAME.transcripts/`, as they are now.
     Live(String),
+    /// What Claude Code keeps for the recorded session's tasks: every entry of the account's
+    /// `tasks` and `todos` folders named after the session, copied into `NAME.tasks/`.
+    TaskFiles(String),
     /// A branch at a message: `prompt TEXT` or `answer TEXT`.
     Branch {
         name: String,
@@ -1059,6 +1096,8 @@ impl Step {
                 Step::Branch { name: name.to_owned(), at: at.to_owned() }
             }
             "live" if !rest.is_empty() => Step::Live(rest.to_owned()),
+            "taskfiles" if !rest.is_empty() => Step::TaskFiles(rest.to_owned()),
+            "taskfiles" => return Err("taskfiles needs NAME".to_owned()),
             "live" => return Err("live needs NAME".to_owned()),
             "start" => Step::Start,
             _ => return Err(format!("unknown op {op}")),
@@ -1097,6 +1136,28 @@ pub fn main(args: &[String]) {
     if let Err(why) = recorder.run(&script) {
         eprintln!("{why}");
         std::process::exit(1);
+    }
+}
+
+/// Copies a file, or a folder and everything under it, to `to`; the number of files copied.
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<usize> {
+    let meta = std::fs::symlink_metadata(from)?;
+    if meta.is_dir() {
+        std::fs::create_dir_all(to)?;
+        let mut count = 0;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            count += copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(count)
+    } else if meta.is_file() {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(from, to)?;
+        Ok(1)
+    } else {
+        Ok(0)
     }
 }
 

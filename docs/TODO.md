@@ -742,6 +742,11 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     unit tests: a rewind (plan, ended and running shells, finished and running agents, a new plan after
     it), a fork's copy, a compaction (and a rewind after it), the bounded slice with history paged in, and
     the panel's sections through the worker (the written file, the plan and the ended shell go).
+    Review (2026-11-28): whether Claude Code's own task list also drops a replaced turn's tasks on a
+    rewind is not recorded; Chat drops them, as the conversation drops the turn, and DESIGN.md says
+    so. `recorder compat` script `rewind-task` (not run yet) creates a task with TaskCreate in the
+    turn it then rewinds and copies Claude Code's task files (`taskfiles`) before, right after and
+    after the next prompt; its expectations are that assumption.
     Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
     its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
     the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown

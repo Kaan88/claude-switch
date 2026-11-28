@@ -1,0 +1,35 @@
+# A task in a rewound turn (scripts/rewind-task.txt). The keys are explained in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+
+[idle]
+kind = idle
+
+# The second turn made the task: Chat's Tasks page and Claude Code's own task files have it.
+[before-transcript]
+tasks = rewound-task-bravo (Pending)
+
+[before-tasks]
+holds = rewound-task-bravo
+
+[up]
+kind = rewind
+highlight = *rewound-task-bravo*
+
+[restored]
+kind = input
+
+# Not recorded yet (2026-11-28): what Claude Code does with the replaced turn's task. These say what
+# Chat assumes (it leaves the task out, as the conversation leaves the turn out); a mismatch here is
+# Claude Code keeping it.
+[restored-tasks]
+lacks = rewound-task-bravo
+
+[after]
+kind = idle
+
+[after-transcript]
+prompts = Reply with just the word: alpha | Reply with just the word: charlie
+tasks = -
+
+[after-tasks]
+lacks = rewound-task-bravo

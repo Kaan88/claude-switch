@@ -1,0 +1,54 @@
+# A task in a rewound turn (Claude Switch item 49, review): the second turn creates a task with
+# TaskCreate, then a rewind to that turn's prompt ("Restore conversation") and a new prompt. The
+# transcript copies show what Chat's Tasks page reads; `taskfiles` copies what Claude Code keeps for
+# the session's tasks (its `tasks` and `todos` entries) before the rewind, right after it and after
+# the next prompt. Chat leaves a replaced turn's tasks out (DESIGN.md, "Rewind"); `lacks` after the
+# rewind says whether Claude Code does too. Three model requests; the model may not call the tool
+# (look at `before-transcript`'s `tasks` first).
+#: args --permission-mode default
+#: seconds 80
+start
+send Reply with just the word: alpha
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+send Use the TaskCreate tool once to create a task with the subject rewound-task-bravo, then reply with just the word: bravo
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap idle
+tscopy before-transcript
+taskfiles before-tasks
+send \e
+sleep 150
+send \e
+wait (current) 5000
+quiet 500 5000
+send \e[A
+sleep 500
+quiet 500 5000
+snap up
+send \r
+wait Restore conversation 5000
+quiet 500 5000
+send \r
+gone Restore conversation 5000
+quiet 1000 10000
+snap restored
+taskfiles restored-tasks
+send \x15
+sleep 500
+quiet 500 5000
+send Reply with just the word: charlie
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap after
+tscopy after-transcript
+taskfiles after-tasks

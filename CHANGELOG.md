@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Tools: `recorder compat` has a `rewind-task` script (a task made in a turn that is then rewound)
+  and a `taskfiles` op that copies what Claude Code keeps for a session's tasks.
 - Resume in the desktop app as a further account is no longer refused when that account's CLI is
   not signed in: it opens the account's desktop app, which has its own sign-in.
 - Resume in the desktop app says "Asked the desktop app to open … as <account>": the desktop app

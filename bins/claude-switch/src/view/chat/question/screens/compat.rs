@@ -71,7 +71,11 @@
 //!   does, or `name: plain`; `-` for none). With `agentcopy` (the `subagents` folder kept beside
 //!   the copy): `agents` (each agent as `type: description: end`, the end as the reader reads it,
 //!   `Finished from Notification` or `-`) and `agent-prompts` (the prompts of the agents' own
-//!   transcripts, their tasks and the messages sent to them).
+//!   transcripts, their tasks and the messages sent to them). `tasks`: the task list Chat shows for
+//!   it, each as `content (Status)`, `-` for none.
+//! - What Claude Code keeps for a session's tasks (`taskfiles`, the `<state>.tasks/` folder):
+//!   `holds` (the value when a file there contains it, else `not found`) and `lacks` (the value
+//!   when none does, else `found`).
 //! - A branch (`branch`, `<state>.json` and `<state>.id`): `resumed` (`yes` when Claude Code
 //!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
@@ -404,6 +408,8 @@ fn transcript_fact(path: &Path, key: &str) -> String {
                 })
                 .collect(),
         ),
+        // The task list Chat shows for the transcript (its Tasks page).
+        "tasks" => joined(reader.tasks().iter().map(|t| format!("{} ({:?})", t.content, t.status)).collect()),
         // Its agents (`agentcopy` keeps the `subagents` folder beside the copy) and their ends.
         "agents" => joined(
             reader
@@ -557,6 +563,42 @@ fn live_fact(live: &Path, key: &str) -> String {
     }
 }
 
+/// What Claude Code keeps for a session's tasks (`taskfiles`, `<state>.tasks/`): `holds` (the value
+/// itself when some file there contains it, else `not found`) and `lacks` (the value itself when no
+/// file contains it, else `found`).
+fn task_files_fact(dir: &Path, key: &str, want: &str) -> String {
+    fn texts(dir: &Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                texts(&path, out);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                out.push(text);
+            }
+        }
+    }
+    let mut all = Vec::new();
+    texts(dir, &mut all);
+    let found = all.iter().any(|text| text.contains(want));
+    match key {
+        "holds" => {
+            if found {
+                want.to_owned()
+            } else {
+                "not found".to_owned()
+            }
+        }
+        "lacks" => {
+            if found {
+                "found".to_owned()
+            } else {
+                want.to_owned()
+            }
+        }
+        _ => format!("unknown key {key}"),
+    }
+}
+
 /// Whether `claude --help` lists every flag in `want`.
 fn help_fact(help: &Path, key: &str, want: &str) -> String {
     let text = std::fs::read_to_string(help).unwrap_or_default();
@@ -613,6 +655,8 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
         Box::new(move |key, _| branch_fact(&path, key))
     } else if let Some(path) = file("help.txt") {
         Box::new(move |key, want| help_fact(&path, key, want))
+    } else if let Some(dir) = Some(folder.join(format!("{state}.tasks"))).filter(|p| p.is_dir()) {
+        Box::new(move |key, want| task_files_fact(&dir, key, want))
     } else {
         return Err("no recording".to_owned());
     };
@@ -794,6 +838,35 @@ fn compat_facts() {
             }
         }
     }
+}
+
+#[test]
+fn task_files_and_a_transcripts_tasks_read_as_the_rewind_task_script_checks() {
+    let dir = crate::testing::unique("cs-compat-tasks");
+    let tasks = dir.join("state.tasks").join("tasks").join("abc");
+    std::fs::create_dir_all(&tasks).unwrap();
+    std::fs::write(tasks.join("1.json"), r#"{"id":"1","subject":"rewound-task-bravo"}"#).unwrap();
+    let wanted = |key: &str, want: &str| vec![(key.to_owned(), want.to_owned())];
+    assert_eq!(check(&dir, "state", &wanted("holds", "rewound-task-bravo")), Ok(vec![]));
+    let lacks = check(&dir, "state", &wanted("lacks", "rewound-task-bravo")).unwrap();
+    assert_eq!(lacks[0].2, "found");
+    assert_eq!(check(&dir, "state", &wanted("lacks", "something else")), Ok(vec![]));
+    // A transcript copy's task list, as Chat's Tasks page reads it.
+    let call = serde_json::json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"TaskCreate",
+        "input":{"subject":"rewound-task-bravo","description":"d"}}]}});
+    let result = serde_json::json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1",
+        "content":"Task #1 created successfully: rewound-task-bravo"}]},"toolUseResult":{"task":{"id":"1","subject":"rewound-task-bravo"}}});
+    std::fs::write(
+        dir.join("copy.jsonl"),
+        format!(
+            "{call}
+{result}
+"
+        ),
+    )
+    .unwrap();
+    assert_eq!(transcript_fact(&dir.join("copy.jsonl"), "tasks"), "rewound-task-bravo (Pending)");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

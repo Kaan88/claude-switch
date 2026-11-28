@@ -2150,7 +2150,10 @@ newest record without hiding that prompt. Records whose parents lead out of the 
 and records without a `uuid`, sidechains, a subagent's transcript, and records hanging off the chain
 that do not start with a prompt (tool results recorded against their call, progress, notices) are
 never left out. The Details pages follow the same branch: the plan is made from the branch's plan
-updates and task calls only, the changed files from the shown items, and an agent, background
+updates and task calls only (assumed, not yet recorded: that Claude Code's own task list also loses
+a replaced turn's tasks on a rewind; `recorder compat`'s `rewind-task` script checks it against
+the task files Claude Code keeps, and Chat keeps matching the conversation until it is known), the
+changed files from the shown items, and an agent, background
 shell or MCP task started in a replaced turn is left out once it is known to have ended (a rewind
 stops no process, so a running one stays, with Stop). Recorded from
 Claude Code 2.1.332 (`rewind_*`).
