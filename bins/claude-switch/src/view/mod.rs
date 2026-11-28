@@ -10,6 +10,7 @@ pub(crate) mod model;
 mod outputs;
 mod pictures;
 mod preview;
+pub mod reader;
 mod shells;
 mod text;
 mod ui;
@@ -572,22 +573,42 @@ impl AppState {
     pub fn draw_session_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect) {
         let mouse = self.picture_pointer();
         let radius = crate::windowlook::Cards::for_frame(self, p).decoration(10.0);
+        if let Some(reader) = self.shown_reader() {
+            reader.draw_overlay(p, pal, window, mouse, radius);
+        }
         if let Some(pane) = self.shown_pane(window.w) {
             pane.ui.draw_overlay(p, pal, window, &pane.model, mouse, radius);
         }
     }
 
     pub fn picture_overlay(&self) -> bool {
-        self.session_visible(self.session_view.area.w)
-            && self.tabs.shown().and_then(|tab| tab.pane.as_ref()).is_some_and(|pane| pane.ui.overlay_open())
+        let details = !self.terminal_shown()
+            && !self.tabs.workers_shown()
+            && self.details_reader.as_ref().is_some_and(|r| r.overlay_open() && self.selected.as_ref() == Some(&r.id));
+        details
+            || self.session_visible(self.session_view.area.w)
+                && self.tabs.shown().and_then(|tab| tab.pane.as_ref()).is_some_and(|pane| pane.ui.overlay_open())
     }
 
     pub fn session_key(&mut self, width: f32, name: &KeyName, mods: Mods) -> bool {
+        // The details conversation has the keys it was clicked for only while the Sessions page
+        // keeps the keyboard there: once Tab, Ctrl+F or typing moved it, the reader lets go.
+        let list = self.focus == crate::state::Focus::List;
+        if let Some(reader) = self.shown_reader() {
+            if !list && !reader.overlay_open() {
+                reader.blur();
+                return false;
+            }
+            return reader.key(name, mods);
+        }
         (self.session_view.text_focus || self.picture_overlay())
             && self.shown_pane(width).is_some_and(|pane| pane.ui.key(name, mods))
     }
 
     pub fn clear_session_text_focus(&mut self) {
+        if let Some(reader) = &mut self.details_reader {
+            reader.blur();
+        }
         self.session_view.text_focus = false;
         if let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) {
             pane.ui.blur();
@@ -595,6 +616,15 @@ impl AppState {
     }
 
     pub fn session_press(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32, clicks: u32) -> bool {
+        let mods = cx.mods();
+        if let Some(reader) = self.shown_reader() {
+            if reader.press(x, y, clicks, mods) {
+                self.pressed = None;
+                self.focus = crate::state::Focus::List;
+                return true;
+            }
+            return false;
+        }
         let width = cx.size().0;
         let overlay = self.picture_overlay();
         if !overlay
@@ -646,6 +676,10 @@ impl AppState {
         }
         if !self.nothing_over() {
             return false;
+        }
+        let mods = cx.mods();
+        if let Some(reader) = self.shown_reader() {
+            return reader.release(x, y, mods);
         }
         let Some(pane) = self.shown_pane(cx.size().0) else { return false };
         let previous = pane.ui.detail_side();
@@ -704,6 +738,12 @@ impl AppState {
         if !self.picture_overlay() && self.session_view.splitter.dragging() {
             return Some(self.session_view.splitter.drag(area, AXIS, x, y));
         }
+        if !self.splitter.dragging()
+            && let Some(reader) = self.shown_reader()
+        {
+            let changed = reader.moved(x, y);
+            return (changed || reader.owns_pointer(x, y)).then_some(changed);
+        }
         if let Some(pane) = self.shown_pane(area.w) {
             let changed = pane.ui.moved(x, y);
             return (changed || pane.ui.owns_pointer(x, y)).then_some(changed);
@@ -712,6 +752,13 @@ impl AppState {
     }
 
     pub fn session_pointer_cursor(&self, x: f32, y: f32) -> Option<Cursor> {
+        if self.tabs.workers_shown() {
+            return None;
+        }
+        if !self.terminal_shown() {
+            let reader = self.details_reader.as_ref().filter(|r| self.selected.as_ref() == Some(&r.id))?;
+            return reader.pointer_cursor(x, y);
+        }
         let area = self.session_view.area;
         if !self.session_visible(area.w) {
             return None;
@@ -724,6 +771,9 @@ impl AppState {
 
     pub fn session_pointer_left(&mut self) {
         self.mouse = (-1.0, -1.0);
+        if let Some(reader) = self.shown_reader() {
+            reader.pointer_left();
+        }
         let width = self.session_view.area.w;
         if let Some(pane) = self.shown_pane(width) {
             // Re-evaluate hover on re-entry rather than leaving a hot button behind.

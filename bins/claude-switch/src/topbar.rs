@@ -194,7 +194,7 @@ pub fn draw_below_title_with(
     let mut moving = None;
     let terminal = st.terminal_shown().then(|| st.terminal_scheme());
     let mut top = TITLE_H;
-    if !st.tabs.is_empty() {
+    if st.tabs.strip_shown() {
         let look = tabs::Look {
             hover: st.hover,
             pressed: st.pressed,

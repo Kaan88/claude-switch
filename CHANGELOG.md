@@ -65,6 +65,15 @@
   as you type, the current one in its own colour, with a count ("3 of 12"); Enter or ↑ goes to the
   match above, Shift+Enter or ↓ to the one below, Aa (Alt+C) matches case (off by default), Escape
   closes it. A match across a wrapped line is found.
+- Sessions: the details show the selected session's conversation as Chat draws it (answers in
+  Markdown, code blocks, tool rows that open), read-only, in a region that scrolls on its own and
+  follows new messages; it replaces the short "Last messages" list. Earlier history loads on
+  request.
+- Workers tab: beside Sessions while the OpenCode bridge's job folder (`%TEMP%\opencode-agent`)
+  exists, the bridge's jobs live: worker, model, folder, state, running time and last tool, with
+  jobs whose server has exited shown as "Owner gone". The selected job's output streams from its
+  event log. **Cancel job…** ends the job's worker and the processes it started, after a confirm,
+  and only while that process is still the job's; otherwise it says why it did not.
 - Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
   record and the transcripts (a `live` op records both), and whether Chat reads the screen after
   it as an idle input.

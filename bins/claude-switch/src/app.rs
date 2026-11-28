@@ -51,6 +51,7 @@ impl AppState {
     fn timers(&self, cx: &mut Cx<'_, Msg>) {
         for at in [
             self.next_poll,
+            self.feed_poll,
             self.conversation_search.due.filter(|_| self.scanned),
             self.tip.deadline(),
             self.toasts.deadline(),
@@ -91,6 +92,7 @@ impl AppState {
                 self.request_window_close(cx);
             }
             Target::TabClose(id) => self.ask_close_tab(id),
+            Target::Worker(_) | Target::WorkerCancel => self.workers_activate(t),
             Target::RestoreTabs => self.begin_tab_restore(now),
             Target::DismissTabs => self.dismiss_tab_restore(),
             Target::SessionToggle => self.toggle_session_view(),
@@ -340,6 +342,14 @@ impl AppState {
             Self::cursor_moved(cx);
             return;
         }
+        if self.tabs.workers_shown() {
+            if !self.workers_key(&name)
+                && let Some(id) = self.keymap.lookup(&name, mods)
+            {
+                self.command(now, id, None);
+            }
+            return;
+        }
         if matches!(name, KeyName::Char('f' | 'F')) && mods.ctrl && mods.shift && !mods.alt {
             self.key_used = true;
             self.toggle_conversation_search(now);
@@ -476,7 +486,9 @@ impl AppState {
                 self.term_press(x, y, Button::Left, clicks, cx.mods());
                 return;
             }
-            Some(Target::Search | Target::Entry(_)) if self.terminal_shown() => self.show_sessions(),
+            Some(Target::Search | Target::Entry(_)) if self.terminal_shown() || self.tabs.workers_shown() => {
+                self.show_sessions()
+            }
             _ => {}
         }
         let area = self.main_area(cx);

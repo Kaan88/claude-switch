@@ -51,6 +51,10 @@ built by one agent (merge `d2deea0`) and released at the owner's word before a r
 
 ## Completed follow-ups
 
+- The Sessions details show the conversation with the shared view, read-only, in a region that
+  scrolls on its own (2026-11-28, branch `feature/workers-tab`; DESIGN.md, "Session organization").
+  Seen in the picture test `sessions_details_shots` in both themes; not tried in the running app
+  with a real, long transcript.
 - Open a copy is in the palette and under "Open elsewhere"; the Desktop and cold-cache warnings
   share one confirmation. Both are documented in `DESIGN.md`.
 - Shell and Desktop launches strip the CLI config, login and session variables. Confirm dialogs use
@@ -119,9 +123,12 @@ as the second account, Windows Terminal, the desktop hand-over.
   currently falls back to "Choose in Claude Code's menu above"; show its tabs in the card so it can
   be answered in Chat, with the Submit step. Check with a compat script that asks a question with
   previews and one with several questions.
-- **Workers tab**, after a usable first version: the bridge's jobs live (worker, model, folder, running
-  time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
-  Cancel. Read-only on the bridge's files.
+- **Workers tab**: built 2026-11-28 on branch `feature/workers-tab` (DESIGN.md, "The Workers tab").
+  Seen only in the picture test `workers_tab_shots` (made-up jobs, both themes, wide and 760×480)
+  and unit tests; never in the running app against the real folder. To try: the first scan of a
+  folder with many job files (it parses each state file once), a job's output while it runs, and
+  Cancel on a real running job (the unit test ends a process tree it started itself). Not built: a
+  way to cancel a queued job (only the bridge can), copying the output, the job's reply.
 - A real hand-over out of Desktop (make it let go of a session). No supported way is known.
 - The account selector's drop-down shows each account's colour dot before its name, as the selector
   itself does (owner, 2026-11-28). Blocked on the toolkit: drop-down items cannot carry a colour
@@ -132,8 +139,6 @@ as the second account, Windows Terminal, the desktop hand-over.
   words) and splits (DESIGN.md, "Panes"; not there yet: keys to split or move between panes,
   panes in saved and reopened tabs, splits shown in Chat's layout, closing the tab's own pane
   while others are open, dragging a selection across panes).
-- Reuse Conversation in Sessions details later. That view is currently a short read-only preview
-  and has no independently scrollable transcript region.
 - Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.
 
 ## For the toolkit (what the app's authors had to work around)
@@ -170,6 +175,9 @@ as the second account, Windows Terminal, the desktop hand-over.
     Claude Code can read the clipboard via its own Alt+V key.
 21. `host::Event` has no file-drop event with positions or file batches. The raw winit hook supplies
     file paths to the active terminal tab, with a short coalescing delay for multiple files.
+
+22. No list widget with virtual rows, hover and selection for app data: the Workers tab draws its
+    own rows, as the Sessions list does.
 
 ### Done in the toolkit
 

@@ -5,7 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use claude_switch_core::sessions::PreviewLine;
 use claude_switch_core::{AccountStatus, Config, Running, Session};
 use mdshared_app::job::Job;
 use mdshared_ui::anim::Stack;
@@ -64,8 +63,6 @@ pub const HEAD_H: f32 = 30.0;
 pub const ROW_H: f32 = 62.0;
 /// How often the running sessions are read while the window is shown.
 pub const POLL: Duration = Duration::from_secs(5);
-/// How many messages the preview shows.
-pub const PREVIEW_LINES: usize = 6;
 
 /// Which part has the keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +114,9 @@ pub enum Target {
     Dialog(u32),
     /// A tab of the strip, by its id ([`crate::tabs::SESSIONS`] for the list), and its close button.
     Tab(u64),
+    /// A job in the Workers tab's list, by its place, and the selected job's Cancel.
+    Worker(usize),
+    WorkerCancel,
     TabClose(u64),
     /// The terminal of the tab shown.
     Terminal,
@@ -216,8 +216,12 @@ pub struct AppState {
     pub key_used: bool,
     pub accounts_dd: Dropdown<String>,
     pub splitter: Splitter,
-    pub preview: Option<(String, Vec<PreviewLine>)>,
-    pub preview_job: Option<(String, Job<Vec<PreviewLine>>)>,
+    /// The selected session's conversation in the details, read-only.
+    pub details_reader: Option<crate::view::reader::Reader>,
+    /// When the shown details conversation and the Workers tab are read again.
+    pub feed_poll: Option<Instant>,
+    /// The OpenCode bridge's jobs (the Workers tab).
+    pub workers: crate::workers_tab::WorkersTab,
     pub last_account: Option<(String, String)>,
     pub scan_job: Option<Job<Scan>>,
     pub running_job: Option<Job<crate::source::ActivityScan>>,
@@ -337,8 +341,9 @@ impl AppState {
             key_used: false,
             accounts_dd: Dropdown::new(Vec::<(String, String)>::new(), 0),
             splitter,
-            preview: None,
-            preview_job: None,
+            details_reader: None,
+            feed_poll: None,
+            workers: Default::default(),
             last_account: None,
             scan_job: None,
             running_job: None,
@@ -493,15 +498,8 @@ impl AppState {
                 changed |= self.apply_activity(r);
             }
         }
-        if let Some((id, job)) = &self.preview_job
-            && !job.running()
-        {
-            let lines = job.take().unwrap_or_default();
-            if self.selected.as_ref() == Some(id) {
-                self.preview = Some((id.clone(), lines));
-            }
-            self.preview_job = None;
-            changed = true;
+        if let Some(reader) = &mut self.details_reader {
+            changed |= reader.collect();
         }
         changed |= self.take_conversation_search();
         changed |= self.take_related();
@@ -597,7 +595,7 @@ impl AppState {
             }
             None => {
                 self.selected = None;
-                self.preview = None;
+                self.details_reader = None;
                 self.session_size.cancel();
                 self.cancel_related();
             }
@@ -623,18 +621,19 @@ impl AppState {
         let wake = self.wake_fn();
         self.session_size.start(&session, self.source.is_demo(), wake);
         self.last_account = self.source.last_account(&self.config, &session).map(|account| (id.to_string(), account));
-        if !again && self.preview.as_ref().is_some_and(|(p, _)| p == id) {
+        if let Some(reader) = self.details_reader.as_ref().filter(|r| r.id == id && r.file == session.file) {
+            // The same session again (a rescan): the reader goes on from where it read.
+            if again {
+                reader.poll();
+            }
             return;
         }
-        if !again {
-            self.preview = None;
-        }
-        if let Some((_, job)) = &self.preview_job {
-            job.cancel();
-        }
-        let source = self.source.clone();
-        let job = Job::start(self.wake_fn(), move |_, _| source.preview(&session, PREVIEW_LINES)).ok();
-        self.preview_job = job.map(|j| (id.to_string(), j));
+        let wake = self.wake_fn();
+        self.details_reader = if self.source.is_demo() {
+            crate::view::reader::Reader::demo(id, &session.file, &session.title, wake).ok()
+        } else {
+            Some(crate::view::reader::Reader::new(id, session.file.clone(), session.cwd.clone(), wake))
+        };
     }
 
     pub fn running_of(&self, id: &str) -> Option<&Running> {

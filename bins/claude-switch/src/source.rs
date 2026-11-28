@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use claude_switch_core::grouping::{Project, projects_for_scan};
-use claude_switch_core::sessions::{self, PreviewLine, ScanCache, Stamp};
+use claude_switch_core::sessions::{self, ScanCache, Stamp};
 use claude_switch_core::share::{self, ShareState};
 use claude_switch_core::{
     Account, AccountStatus, App, Config, Launch, Refusal, Roots, Running, Session, accounts, config, launch, running,
@@ -122,14 +122,6 @@ impl Source {
             }
         }
         ActivityScan { running, updates }
-    }
-
-    /// The last few messages. Runs on a worker thread.
-    pub fn preview(&self, s: &Session, max: usize) -> Vec<PreviewLine> {
-        match self {
-            Source::Real(_) => sessions::preview(&s.file, max),
-            Source::Demo => demo::preview(s, max),
-        }
     }
 
     pub fn last_account(&self, c: &Config, s: &Session) -> Option<String> {

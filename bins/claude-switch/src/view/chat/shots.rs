@@ -357,3 +357,26 @@ fn session_view_shots() {
         bmp.write_png(&dir.join(format!("8-session-view-command-{theme}.png"))).unwrap();
     }
 }
+
+/// The Sessions page with the selected session's conversation in its details (the shared
+/// conversation view, read-only), the details scrolled to their end: into `CS_CHAT_SHOTS`.
+#[test]
+#[ignore = "writes pictures of the Sessions details; run by hand"]
+fn sessions_details_shots() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = std::env::var_os("CS_CHAT_SHOTS").map(|d| workspace.join(PathBuf::from(d)));
+    let scratch = crate::testing::Scratch::created("cs-details-shots");
+    let dir = dir.as_deref().unwrap_or(&scratch);
+    std::fs::create_dir_all(dir).unwrap();
+    for (dark, theme) in [(true, "dark"), (false, "light")] {
+        let mut st = shots::window(dark);
+        let now = Instant::now();
+        shots::settled_at(&mut st, now, WIDE);
+        let top = shots::settled_at(&mut st, now, WIDE);
+        top.write_png(&dir.join(format!("9-sessions-details-top-{theme}.png"))).unwrap();
+        st.details_scroll.wheel(-100_000.0);
+        let end = shots::settled_at(&mut st, now, WIDE);
+        end.write_png(&dir.join(format!("9-sessions-details-end-{theme}.png"))).unwrap();
+        assert!(st.details_reader.as_ref().is_some_and(|r| r.loaded()));
+    }
+}
