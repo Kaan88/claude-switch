@@ -6,8 +6,9 @@
   cannot read whole is left with its drawer closed, or a send is refused because Chat cannot read
   the screen, the part of the terminal screen that matters shows as a card above the message box:
   from the call that waits down to the input, in the terminal's font and colours, following the
-  screen while it stays. **Answer in terminal** opens the drawer with the keyboard; **Dismiss**
-  hides it until the next time. It goes once Chat can read the screen again. Chat still types
+  screen while it stays. **Answer in terminal** opens the drawer with the keyboard, and the
+  drawer closes again by itself once the wait is over, unless you resized it or typed in Chat
+  meanwhile; **Dismiss** hides it until the next time. It goes once Chat can read the screen again. Chat still types
   nothing into such a screen, and the drawer no longer opens by itself for these waits.
 - Chat and the Session view: what a command printed (`/context`, `/mcp`, `/cost`, shell mode) is
   drawn as the terminal draws it, from the colour codes Claude Code recorded: the terminal's font,

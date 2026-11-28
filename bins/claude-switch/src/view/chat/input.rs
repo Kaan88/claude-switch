@@ -383,6 +383,7 @@ impl AppState {
             Some(Target::Chat(Control::Grip)) => {
                 chat.resizing = Some((y, chat.layout.drawer.h));
                 chat.drawer_focus = true;
+                super::terminal_card::keep(chat);
                 true
             }
             Some(Target::Chat(Control::Editor)) => {
@@ -533,7 +534,7 @@ impl AppState {
             Control::Drawer => chat.toggle_drawer(),
             Control::Open if chat.drawer == Drawer::Closed => chat.open_drawer(),
             Control::Open => chat.drawer_focus = true,
-            Control::Screen(hit) => super::terminal_card::press(chat, hit),
+            Control::Screen(hit) => super::terminal_card::press(chat, hit, cx.now()),
             Control::Panel => {
                 // The user's own choice: it holds whatever the panel has to show.
                 chat.side_choice = Some(chat.side_hidden);

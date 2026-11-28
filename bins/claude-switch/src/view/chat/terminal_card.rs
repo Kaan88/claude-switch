@@ -7,6 +7,8 @@
 //!
 //! It only looks. **Answer in terminal** opens the drawer with the keyboard, as "Open terminal"
 //! does; nothing here ever writes to the terminal, and no key (Tab included) acts on the card.
+//! The drawer it opened closes by itself once the cause is gone, by the rule the automatic
+//! drawer follows (see [`gone`]), unless the user resized it or typed in Chat since.
 //!
 //! Which rows: the bottom of the screen up to its last row with text, at most [`MAX_ROWS`], from
 //! the last row there that starts one of Claude Code's messages or tool calls (`●`), so the card
@@ -14,6 +16,7 @@
 //! text gets smaller to fit the card's width, down to [`MIN_FONT`], and past that the right
 //! side is cut (dialog borders reach the terminal's edge and would only wrap into noise).
 use std::ops::Range;
+use std::time::Instant;
 
 use mdshared_term::{Attrs, Cell, Color, Screen};
 use mdshared_ui::gfx::{Face, Painter, Rect};
@@ -36,7 +39,7 @@ const INNER: f32 = 8.0;
 /// The most of the conversation the card takes.
 const SHARE: f32 = 0.6;
 /// The bullet Claude Code starts a message or a tool call with.
-const BULLETS: [char; 2] = ['●', '⏺'];
+pub(super) const BULLETS: [char; 2] = ['●', '⏺'];
 
 /// Refused sends that point to the terminal because Chat cannot read what it shows.
 const REFUSALS: [&str; 6] = [
@@ -81,6 +84,8 @@ pub(super) struct Card {
     cause: Option<Cause>,
     /// The cause the user dismissed it for: it stays away until that cause is gone.
     dismissed: Option<Cause>,
+    /// When **Answer in terminal** opened the drawer, while it may still close it by itself.
+    answered: Option<Instant>,
     /// The rows shown, with their colour codes, as last read from the screen.
     source: String,
     /// How many rows, and the widest row's cells.
@@ -109,7 +114,15 @@ impl Card {
 /// terminal because Chat cannot read the screen, or such a refused send while the screen is not
 /// ready; not while the terminal is in view or a question card shows the prompt.
 pub(super) fn cause(chat: &Chat) -> Option<Cause> {
-    if chat.drawer != Drawer::Closed || chat.question.visible() && !chat.question.only_denials() {
+    if chat.drawer != Drawer::Closed {
+        return None;
+    }
+    unread(chat)
+}
+
+/// [`cause`] whether or not the terminal is in view.
+fn unread(chat: &Chat) -> Option<Cause> {
+    if chat.question.visible() && !chat.question.only_denials() {
         return None;
     }
     match chat.reason {
@@ -122,8 +135,39 @@ pub(super) fn cause(chat: &Chat) -> Option<Cause> {
     }
 }
 
+/// The cause the card showed is gone, by the automatic drawer's rule: Claude Code no longer
+/// waits (no reason, or one a card in Chat answers) and no send is refused for the screen.
+fn gone(chat: &Chat) -> bool {
+    unread(chat).is_none()
+        && chat.reason.is_none_or(|r| matches!(r, Reason::Question | Reason::Approval | Reason::Menu | Reason::Slash))
+}
+
+/// Closes the drawer **Answer in terminal** opened once its cause is gone, unless the user took
+/// it over: closed or resized it, or typed in Chat since. Whether it closed it.
+fn settle(chat: &mut Chat) -> bool {
+    let Some(at) = chat.terminal_card.answered else { return false };
+    if chat.drawer != Drawer::Manual || chat.typed_at.is_some_and(|t| t > at) {
+        chat.terminal_card.answered = None;
+        return false;
+    }
+    if !gone(chat) {
+        return false;
+    }
+    chat.terminal_card.answered = None;
+    chat.drawer = Drawer::Closed;
+    chat.drawer_focus = false;
+    true
+}
+
+/// The user resized, closed or opened the drawer: it is theirs, and stays open after the cause
+/// is gone.
+pub(super) fn keep(chat: &mut Chat) {
+    chat.terminal_card.answered = None;
+}
+
 /// Reads the card's rows from the live screen, each tick: whether anything it shows changed.
 pub(super) fn observe(chat: &mut Chat, screen: &Screen) -> bool {
+    let closed = settle(chat);
     let cause = cause(chat);
     if cause.is_none() {
         chat.terminal_card.dismissed = None;
@@ -134,15 +178,18 @@ pub(super) fn observe(chat: &mut Chat, screen: &Screen) -> bool {
         Some(_) => encode(screen, rows(screen)),
         None => (String::new(), 0, 0),
     };
-    let changed = card.cause != cause || card.source != source;
+    let changed = closed || card.cause != cause || card.source != source;
     (card.cause, card.source, card.rows, card.cols) = (cause, source, rows, cols);
     changed
 }
 
-/// A click on one of the card's buttons. Never writes to the terminal.
-pub(super) fn press(chat: &mut Chat, hit: Hit) {
+/// A click on one of the card's buttons at `now`. Never writes to the terminal.
+pub(super) fn press(chat: &mut Chat, hit: Hit, now: Instant) {
     match hit {
-        Hit::Answer => chat.open_drawer(),
+        Hit::Answer => {
+            chat.open_drawer();
+            chat.terminal_card.answered = Some(now);
+        }
         Hit::Dismiss => {
             chat.terminal_card.dismissed = chat.terminal_card.cause;
             chat.terminal_card.cause = None;

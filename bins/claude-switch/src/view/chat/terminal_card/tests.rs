@@ -1,6 +1,7 @@
 use super::*;
 use crate::term::Term;
 use mdshared_term::Color;
+use std::time::Duration;
 
 /// A terminal of `cols` by `rows` that shows `bytes` (rows end with `\r\n`).
 fn term(cols: u16, rows: u16, bytes: &str) -> Term {
@@ -125,7 +126,7 @@ fn dismiss_holds_until_the_cause_is_gone_and_answer_opens_the_terminal_with_the_
     let t = term(70, 20, WAITING);
     let mut chat = chat_for(Reason::Tool);
     observe(&mut chat, &t.screen);
-    press(&mut chat, Hit::Dismiss);
+    press(&mut chat, Hit::Dismiss, Instant::now());
     assert_eq!(chat.terminal_card.cause, None);
     observe(&mut chat, &t.screen);
     assert_eq!(chat.terminal_card.cause, None, "dismissed for this wait");
@@ -134,10 +135,62 @@ fn dismiss_holds_until_the_cause_is_gone_and_answer_opens_the_terminal_with_the_
     chat.reason = Some(Reason::Tool);
     observe(&mut chat, &t.screen);
     assert_eq!(chat.terminal_card.cause, Some(Cause::Reason(Reason::Tool)), "a new wait shows it again");
-    press(&mut chat, Hit::Answer);
+    press(&mut chat, Hit::Answer, Instant::now());
     assert!(chat.drawer == Drawer::Manual && chat.drawer_focus, "the drawer, with the keyboard");
     observe(&mut chat, &t.screen);
     assert_eq!(chat.terminal_card.cause, None, "the terminal is in view");
+}
+
+#[test]
+fn the_drawer_answer_opened_closes_once_the_cause_is_gone() {
+    let t = term(70, 20, WAITING);
+    let now = Instant::now();
+    // Claude Code stops waiting, or asks something a card in Chat answers: the drawer closes and
+    // the keyboard comes back, as the automatic drawer did.
+    for after in [None, Some(Reason::Question), Some(Reason::Approval), Some(Reason::Menu), Some(Reason::Slash)] {
+        let mut chat = chat_for(Reason::Tool);
+        observe(&mut chat, &t.screen);
+        press(&mut chat, Hit::Answer, now);
+        observe(&mut chat, &t.screen);
+        chat.reason = Some(Reason::Permission);
+        assert!(!observe(&mut chat, &t.screen) && chat.drawer == Drawer::Manual, "another wait keeps it");
+        chat.reason = after;
+        assert!(observe(&mut chat, &t.screen), "{after:?}");
+        assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus, "{after:?}");
+        // Closed by itself once: a later Open terminal is the user's own.
+        chat.open_drawer();
+        chat.reason = None;
+        observe(&mut chat, &t.screen);
+        assert_eq!(chat.drawer, Drawer::Manual, "{after:?}");
+    }
+    // A refused send: until the screen is ready again.
+    let mut chat = Chat { error: Some(submission::CHECK), last_gate: Some(Gate::Check), ..Chat::default() };
+    observe(&mut chat, &t.screen);
+    press(&mut chat, Hit::Answer, now);
+    observe(&mut chat, &t.screen);
+    assert_eq!(chat.drawer, Drawer::Manual);
+    chat.last_gate = Some(Gate::Ready);
+    observe(&mut chat, &t.screen);
+    assert_eq!(chat.drawer, Drawer::Closed);
+    // Not once the user took it over: resized it, typed in Chat, or closed and opened it again.
+    let took: [fn(&mut Chat, Instant); 3] = [
+        |chat, _| keep(chat),
+        |chat, now| chat.typed_at = Some(now + Duration::from_millis(5)),
+        |chat, _| {
+            chat.toggle_drawer();
+            chat.open_drawer();
+        },
+    ];
+    for (n, take) in took.into_iter().enumerate() {
+        let mut chat = Chat { typed_at: Some(now), ..chat_for(Reason::Bell) };
+        observe(&mut chat, &t.screen);
+        press(&mut chat, Hit::Answer, now);
+        take(&mut chat, now);
+        observe(&mut chat, &t.screen);
+        chat.reason = None;
+        observe(&mut chat, &t.screen);
+        assert_eq!(chat.drawer, Drawer::Manual, "case {n}");
+    }
 }
 
 #[test]
@@ -162,7 +215,7 @@ fn the_card_never_writes_to_the_terminal() {
             &mut Vec::new(),
         );
         if let Some(hit) = hit {
-            press(&mut chat, hit);
+            press(&mut chat, hit, Instant::now());
         }
         t.feed(b"");
     }

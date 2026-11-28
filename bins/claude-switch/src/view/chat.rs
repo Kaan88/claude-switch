@@ -602,6 +602,7 @@ impl Chat {
     }
 
     fn toggle_drawer(&mut self) {
+        terminal_card::keep(self);
         if self.drawer == Drawer::Closed {
             self.open_drawer();
         } else {
@@ -613,6 +614,7 @@ impl Chat {
     }
 
     pub(super) fn open_drawer(&mut self) {
+        terminal_card::keep(self);
         self.drawer = Drawer::Manual;
         self.drawer_focus = true;
     }
