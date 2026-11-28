@@ -135,6 +135,20 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Later (the owner's list)
 
+- **CPU and memory against the Claude desktop app** (owner, 2026-11-28). Measured once: Switch
+  ~275 MB private in one process against the desktop app's ~1.8 GB in 13 (Claude Code's own
+  processes not counted: the same CLI on both sides, ~600-950 MB each). CPU was not comparable:
+  Switch drew a live turn (25.6 % of one core over 30 s) while the desktop app was idle (1.2 %), and
+  Switch averaged ~6 % of a core over a day. Measure both in the same states (same session idle, a
+  turn streaming, minimised) and profile Switch's redraws: a whole-window repaint per animation tick
+  (spinner, working line) is the likely cost.
+- **Put idle Claude tabs to sleep** (proposal, 2026-11-28). Every Claude tab keeps its own Claude Code
+  process, ~600-950 MB each and growing with the conversation; the desktop app does the same per open
+  session. A tab idle for a while (setting, off by default) with nothing running (no turn, no
+  background agent or shell, no queued message, no pending question) could end its process and
+  resume the session with `--resume` when the tab is shown or a message is sent. The transcript and
+  the tab stay; what is lost is Claude Code's in-memory state (background tasks would end, so they
+  block sleeping). A resume also starts with a smaller memory footprint.
 - **Wrap long lines in Chat's edit diffs** (owner, 2026-11-28, screenshot of a Markdown table row cut
   at the right edge). The patch view of an edit (line numbers, +/- and the changed text) cuts lines
   that are wider than the column. Wrap them instead: continuation rows keep the +/- background, are
