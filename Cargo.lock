@@ -430,7 +430,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "claude-switch"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "claude-switch-core",
  "getrandom 0.3.4",
@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "claude-switch-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -1955,7 +1955,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "opencode-cli"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde_json",
 ]

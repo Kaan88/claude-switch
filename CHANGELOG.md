@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.7 (2026-11-28)
+
 - Chat: with a subagent's conversation open, the message box talks to that agent: its edge and
   placeholder take the agent's colour and name ("Message general-purpose…"), and Send picks the
   agent in the list under Claude Code's input and types the message there, each key only once the
