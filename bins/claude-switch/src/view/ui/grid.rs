@@ -21,7 +21,7 @@ use mdshared_ui::termview::{self, CellFont, Metrics, Scheme, View};
 use mdshared_ui::theme::Palette;
 
 /// The size of the output's text, as the conversation's other mono text.
-pub(super) const FONT_SIZE: f32 = 12.0;
+pub(in crate::view) const FONT_SIZE: f32 = 12.0;
 /// The most rows an output takes, whatever its width: the screen's own limit.
 const MAX_ROWS: usize = mdshared_term::screen::MAX_SIDE;
 /// How far text with no colour of its own goes towards the background.
@@ -35,6 +35,9 @@ pub(in crate::view) struct Look {
     pub font: CellFont,
     /// The terminal theme's colours; without one, those that go with the palette.
     pub scheme: Option<Scheme>,
+    /// Text the program gave no colour keeps the terminal's own colour (a live screen), instead
+    /// of the quieter one of command output in the conversation.
+    pub loud: bool,
 }
 
 impl Look {
@@ -43,7 +46,9 @@ impl Look {
     /// output is muted beside the answers. Colours the program named are drawn as they are.
     pub fn scheme(&self, pal: &Palette) -> Scheme {
         let mut scheme = self.scheme.unwrap_or_else(|| Scheme::from_palette(pal));
-        scheme.foreground = mdshared_ui::gfx::mix(scheme.foreground, scheme.background, QUIET);
+        if !self.loud {
+            scheme.foreground = mdshared_ui::gfx::mix(scheme.foreground, scheme.background, QUIET);
+        }
         scheme
     }
 }
@@ -55,7 +60,7 @@ struct Row {
     bounds: Vec<usize>,
 }
 
-pub(super) struct Grid {
+pub(in crate::view) struct Grid {
     screen: Screen,
     metrics: Metrics,
     /// The rows that hold the output (the screen may have more, all blank).
@@ -166,7 +171,12 @@ fn cut<'a>(line: &[Piece<'a>], room: usize) -> (Vec<Piece<'a>>, usize, bool) {
 impl Grid {
     /// `source` (with its colour codes, or plain) in a grid as many cells wide as fit `width`.
     pub fn new(source: &str, metrics: Metrics, width: f32) -> Grid {
-        let cols = Self::cols_for(metrics, width);
+        Self::with_cols(source, metrics, Self::cols_for(metrics, width))
+    }
+
+    /// `source` in a grid of `cols` columns (at least one, at most the screen's limit).
+    pub fn with_cols(source: &str, metrics: Metrics, cols: usize) -> Grid {
+        let cols = cols.clamp(1, mdshared_term::screen::MAX_SIDE);
         let pieces = pieces(source);
         // The rows it can take at most, so that nothing scrolls off the top; what does not fit
         // in the most the screen holds is left out at the end.
@@ -205,6 +215,12 @@ impl Grid {
     /// The columns of a grid in `width`.
     pub fn cols_for(metrics: Metrics, width: f32) -> usize {
         ((width / metrics.cell_w()).floor() as usize).clamp(1, mdshared_term::screen::MAX_SIDE)
+    }
+
+    /// The screen the grid was laid out on.
+    #[cfg(test)]
+    pub fn screen(&self) -> &Screen {
+        &self.screen
     }
 
     pub fn cols(&self) -> usize {

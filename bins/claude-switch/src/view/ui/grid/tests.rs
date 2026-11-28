@@ -209,7 +209,7 @@ fn cells_are_painted_in_the_terminal_themes_colours() {
     let mut scheme = Scheme::from_palette(&pal);
     scheme.ansi[1] = [200, 10, 20];
     scheme.background = [1, 2, 3];
-    let mut look = Look { font: CellFont::new(), scheme: Some(scheme) };
+    let mut look = Look { font: CellFont::new(), scheme: Some(scheme), loud: false };
     // A red background (colour 1 of the theme) on the first four cells, the default after.
     let g = grid("\u{1b}[41m    \u{1b}[0m    ", 8);
     let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new(8 * 7, 15));

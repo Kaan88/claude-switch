@@ -301,7 +301,8 @@ fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
         let reason = if answerable { Reason::Question } else { Reason::Tool };
         assert_eq!(decision, (Gate::Check, Some(reason)));
         pane.chat.react(decision.1);
-        assert_eq!(pane.chat.drawer == Drawer::Closed, answerable);
+        // Neither opens the drawer: the card answers it, or `terminal_card` shows the screen.
+        assert_eq!(pane.chat.drawer, Drawer::Closed);
     }
 }
 

@@ -445,7 +445,11 @@ fn a_silent_turn_with_nothing_chat_can_read_opens_the_terminal() {
     // A short silence is only a slow turn.
     assert_eq!(f.pass(SECOND), (Gate::Running, None));
     assert_eq!(f.pass(SECOND * 4), (Gate::Check, Some(Reason::Tool)));
-    assert_eq!(f.chat().drawer, Drawer::Auto(Reason::Tool));
+    // The terminal shows as a card in the conversation (`terminal_card`); the drawer opens on its click.
+    assert_eq!(
+        super::super::terminal_card::cause(f.chat()),
+        Some(super::super::terminal_card::Cause::Reason(Reason::Tool))
+    );
     // Under the working line the same silence is a slow tool.
     f.show(WORKING_TOOL);
     assert_eq!(f.pass(SECOND * 6), (Gate::Running, None));

@@ -69,6 +69,25 @@ const BENCH: (&str, &str, &str) = (
     "cargo bench -p tiles --bench eviction",
 );
 
+/// A made-up terminal screen `cols` wide: the benchmark's command waits at a question of its
+/// own, in colour, over Claude Code's input box.
+fn waiting_screen(cols: usize) -> String {
+    let rule = format!("\x1b[38;5;244m{}\x1b[0m", "─".repeat(cols));
+    [
+        "\x1b[2m  ⎿  Read tiles/src/cache.rs (212 lines)\x1b[0m".to_owned(),
+        String::new(),
+        "\x1b[32m●\x1b[0m \x1b[1mBash\x1b[0m(cargo bench -p tiles --bench eviction)".to_owned(),
+        "  ⎿  \x1b[33mwarning\x1b[0m: the baseline \x1b[1mmain\x1b[0m is 3 days old".to_owned(),
+        "     Overwrite the saved baseline? \x1b[36m[y/N]\x1b[0m ".to_owned(),
+        String::new(),
+        rule.clone(),
+        "\x1b[1m❯\x1b[0m ".to_owned(),
+        rule,
+        "  \x1b[2m? for shortcuts\x1b[0m".to_owned(),
+    ]
+    .join("\r\n")
+}
+
 /// One frame of the window in `state`.
 fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
     let now = Instant::now() + Duration::from_secs(1);
@@ -190,6 +209,21 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             let later = shots::show(&mut st, id, shots::IDLE, now);
             (demo, st, later)
         }
+        "terminal-card" => {
+            // The benchmark's command waits at a question of its own, which Chat cannot read:
+            // after the silence, the screen shows as a card above the message box.
+            let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            let later = shots::show(&mut st, id, shots::IDLE, now);
+            let tab = shots::tab(&mut st, id);
+            let (cols, rows) = (tab.term.screen.cols(), tab.term.screen.rows());
+            tab.term.screen = mdshared_term::Screen::new(cols, rows, 0);
+            tab.term.screen.feed(waiting_screen(cols).as_bytes());
+            tab.pane.as_mut().unwrap().chat.output(later, true, false);
+            let later = later + Duration::from_secs(6);
+            st.progress_chat_tabs(later, true);
+            (demo, st, later)
+        }
         other => panic!("no such state: {other}"),
     };
     let bmp = shots::settled_at(&mut st, later, size);
@@ -220,6 +254,7 @@ fn chat_shots() {
         "pointing",
         "command",
         "command-custom",
+        "terminal-card",
     ];
     for (n, state) in states.into_iter().enumerate().filter(|(_, state)| want(state)) {
         for (size, width) in [(WIDE, "wide"), (NARROW, "narrow")] {

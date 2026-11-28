@@ -20,6 +20,7 @@ mod shortcuts;
 mod shots;
 pub(super) mod side;
 pub(super) mod submission;
+mod terminal_card;
 mod undo;
 mod welcome;
 
@@ -189,6 +190,8 @@ pub struct Chat {
     /// pickers or permission prompts; they stay in the terminal.
     pub(crate) menus_off: bool,
     question: question::Card,
+    /// The part of the terminal screen Chat cannot read, shown in the conversation.
+    terminal_card: terminal_card::Card,
     mode_step: Option<submission::mode::ModeStep>,
     /// The permission mode as the screen last showed it.
     mode_shown: Option<&'static str>,
@@ -538,9 +541,14 @@ impl Chat {
         self.reason = reason;
         // A question or request the card can answer does not open the drawer, and closes one it opened.
         // A command's results and menus now show in the conversation: a slash command alone does
-        // not open it either.
-        let reason =
-            reason.filter(|r| !matches!(r, Reason::Question | Reason::Approval | Reason::Menu | Reason::Slash));
+        // not open it either. Nor does a screen Chat cannot read (Claude Code may be waiting, the
+        // bell): `terminal_card` shows it in the conversation and opens the drawer on a click.
+        let reason = reason.filter(|r| {
+            !matches!(
+                r,
+                Reason::Question | Reason::Approval | Reason::Menu | Reason::Slash | Reason::Tool | Reason::Bell
+            )
+        });
         match (self.drawer, reason) {
             (Drawer::Closed, Some(reason)) if Some(reason) != self.suppressed => self.drawer = Drawer::Auto(reason),
             (Drawer::Auto(_), Some(reason)) => self.drawer = Drawer::Auto(reason),
