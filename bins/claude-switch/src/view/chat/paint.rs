@@ -269,7 +269,7 @@ impl AppState {
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
         }
         chat.question.colours = Some(diff);
-        super::question::Draw { pal, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
+        super::question::Draw { pal, scheme, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
         super::terminal_card::draw(chat, p, pal, scheme, hover, &mut self.hits);
         if std::mem::take(&mut chat.question.relayout) {
             // The card was measured at another scale: the next frame lays it out at this one.

@@ -457,13 +457,18 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     true
 }
 
+/// Between the rows that say what a choice does and the choices.
+const CHOICES_GAP: f32 = 8.0;
+
 /// The height of a rewind's card inside its padding: its head, prompt, the CLI's choices for it
 /// while they show, a note and the foot.
 pub(super) fn height(rewind: &Rewind) -> f32 {
     let actions = rewind.actions.as_ref().filter(|_| rewind.choosing());
     let rows = actions.map_or(0, |a| a.body.len().min(BODY_LINES + 2));
     let choices = actions.map_or(0, |a| a.choices.len());
-    let list = if choices > 0 { choices as f32 * cards::CHOICE_ROW + 10.0 } else { 0.0 };
+    // The list keeps a gap from the rows over it.
+    let gap = if rows > 0 && choices > 0 { CHOICES_GAP } else { 0.0 };
+    let list = if choices > 0 { choices as f32 * cards::CHOICE_ROW + 10.0 + gap } else { 0.0 };
     let note = if rewind.note.is_some() { LINE } else { 0.0 };
     cards::HEAD + 10.0 + LINE + 8.0 + rows as f32 * LINE + list + note + cards::FOOT
 }
@@ -497,6 +502,9 @@ impl Draw<'_> {
                 })
                 .collect();
             if !rows.is_empty() {
+                if !actions.body.is_empty() {
+                    y += CHOICES_GAP;
+                }
                 y += self.choices(p, hits, inner.x, y, inner.w, &rows, true, cards::Density::Plain) + 10.0;
             }
         }

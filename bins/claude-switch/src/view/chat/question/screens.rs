@@ -303,11 +303,18 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
         text.chars().count() >= screen.cols() && solid_rule(text.trim_start())
     };
     let first_number = |from: usize| (from..footer).find_map(|row| numbered(&rows[row].1).map(|(n, _)| n));
+    // Under the rule of a question whose options have previews there is only an unnumbered
+    // "Chat about this" (Claude Code 2.1.332, recorded `preview_*`): the choices are above it.
+    let only_chat = |from: usize| {
+        let mut texts = (from..footer).map(|row| rows[row].1.as_str()).filter(|t| !t.is_empty());
+        texts.next() == Some(CHAT_ABOUT) && texts.next().is_none()
+    };
     let mut first = window;
     let mut below = footer;
     while let Some(top) = (window..below).rev().find(|&row| full(row)) {
         first = top + 1;
-        if first_number(first).is_none_or(|n| n == 1) {
+        let passed = first_number(first).is_none() && only_chat(first);
+        if !passed && first_number(first).is_none_or(|n| n == 1) {
             break;
         }
         first = window;
@@ -323,6 +330,13 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
         } else {
             entries.clear();
         }
+    }
+    // That unnumbered "Chat about this" is the menu's last row the arrow keys reach.
+    if let Some(last) = entries.last().map(|e| e.row)
+        && let Some(row) = (last + 1..footer).find(|&row| rows[row].1 == CHAT_ABOUT)
+        && only_chat(row)
+    {
+        entries.push(Entry { row, highlighted: rows[row].0, text: CHAT_ABOUT.to_owned() });
     }
     if entries.is_empty() {
         entries = trust_choices(&rows, footer);
@@ -1166,6 +1180,97 @@ pub(super) fn review(screen: &Screen) -> Option<Review> {
         _ => None,
     };
     Some(Review { answers, highlight })
+}
+
+/// The row under a question's preview box about notes (Claude Code 2.1.332).
+const NOTES: &str = "Notes:";
+
+/// How far right a box beside a question's choices starts at least: the choices' own column
+/// (`❯ 1. `) and a short label come first.
+const SIDE_BOX_LEFT: usize = 12;
+
+/// A box Claude Code draws beside a question's choices: the highlighted option's `preview`
+/// (recorded from 2.1.332, fixtures `preview_*`: column 34 of 100). Its column and its rows, top
+/// and bottom edges included, and the "Notes: press n to add notes" row under it when there is
+/// one: a top-left corner (`┌` or `╭`) followed by a rule at column [`SIDE_BOX_LEFT`] or further
+/// right, the same column's side (`│`) on every row down to a bottom-left corner (`└` or `╰`),
+/// text left of it on one of those rows, and a menu footer under it. The lowest such box counts.
+pub(super) fn side_box(screen: &Screen) -> Option<(usize, std::ops::Range<usize>)> {
+    let footer = (0..screen.rows()).rposition(|r| menu_footer(&screen.row_text(r)))?;
+    let ch = |r: usize, c: usize| screen.cell(r, c).ch;
+    let mut found = None;
+    for top in 0..footer {
+        for col in SIDE_BOX_LEFT..screen.cols().saturating_sub(2) {
+            if !matches!(ch(top, col), '┌' | '╭') || ch(top, col + 1) != '─' {
+                continue;
+            }
+            let mut bottom = None;
+            for r in top + 1..footer {
+                match ch(r, col) {
+                    '│' | '┃' => {}
+                    '└' | '╰' => {
+                        bottom = Some(r);
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            let Some(bottom) = bottom.filter(|&b| b > top + 1) else { continue };
+            let beside = (top..=bottom).any(|r| (0..col).any(|c| !ch(r, c).is_whitespace()));
+            // Under the box, in its column, a row about the notes the terminal takes with the
+            // answer ("Notes: press n to add notes"): the box's too.
+            let from_col = |r: usize| (col..screen.cols()).map(|c| ch(r, c)).collect::<String>();
+            let notes = (bottom + 1..(bottom + 3).min(footer))
+                .find(|&r| !screen.row_text(r).trim().is_empty())
+                .filter(|&r| from_col(r).trim_start().starts_with(NOTES) && (0..col).all(|c| ch(r, c) == ' '));
+            if beside {
+                found = Some((col, top..notes.unwrap_or(bottom) + 1));
+            }
+            break;
+        }
+    }
+    found
+}
+
+/// The screen as a question is read from it: without the box [`side_box`] finds beside the
+/// choices, whose rows would otherwise run into the choices' and the question's text. Every
+/// other cell, the cursor and the modes the keys are encoded for are as they were.
+pub(in crate::view::chat) fn question_view(screen: &Screen) -> std::borrow::Cow<'_, Screen> {
+    use crate::view::chat::terminal_card::sgr;
+    let Some((col, rows)) = side_box(screen) else { return std::borrow::Cow::Borrowed(screen) };
+    let modes = screen.modes();
+    let mut feed = String::new();
+    if modes.app_cursor {
+        feed.push_str("\x1b[?1h");
+    }
+    if modes.bracketed_paste {
+        feed.push_str("\x1b[?2004h");
+    }
+    for r in 0..screen.rows() {
+        let Some(line) = screen.line(r) else { continue };
+        let end = if rows.contains(&r) { col } else { screen.cols() };
+        let cells = &line.cells()[..end.min(line.cells().len())];
+        let end = cells.iter().rposition(|c| c.ch != ' ' || c.bg != mdshared_term::Color::Default).map_or(0, |i| i + 1);
+        feed.push_str(&format!("\x1b[{};1H", r + 1));
+        let mut pen = None;
+        for cell in cells[..end].iter().filter(|c| !c.is_spacer()) {
+            let look = (cell.fg, cell.bg, cell.attrs);
+            if pen != Some(look) {
+                feed.push_str(&sgr(look));
+                pen = Some(look);
+            }
+            feed.push(if cell.ch.is_control() { ' ' } else { cell.ch });
+        }
+        feed.push_str("\x1b[0m");
+    }
+    let cursor = screen.cursor();
+    feed.push_str(&format!("\x1b[{};{}H", cursor.row + 1, cursor.col + 1));
+    if !modes.cursor_visible {
+        feed.push_str("\x1b[?25l");
+    }
+    let mut view = Screen::new(screen.cols(), screen.rows(), 0);
+    view.feed(feed.as_bytes());
+    std::borrow::Cow::Owned(view)
 }
 
 #[cfg(test)]

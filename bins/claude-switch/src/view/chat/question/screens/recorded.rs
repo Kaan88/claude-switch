@@ -102,6 +102,16 @@ pub(in crate::view::chat) const REWIND_OPEN: &str = include_str!("../fixtures/re
 pub(in crate::view::chat) const REWIND_UP1: &str = include_str!("../fixtures/rewind_up1.txt");
 pub(in crate::view::chat) const REWIND_UP2: &str = include_str!("../fixtures/rewind_up2.txt");
 pub(in crate::view::chat) const REWIND_ACTIONS: &str = include_str!("../fixtures/rewind_actions.txt");
+/// A question whose options have previews (2026-11-28, `recorder compat` scripts `preview` and
+/// `preview-form`): the highlighted option's preview in a box beside the choices, "Notes: press n
+/// to add notes" under it, no "Type something" row, an unnumbered "Chat about this"; an option
+/// without one shows "No preview available".
+pub(in crate::view::chat) const PREVIEW_ASKED: &str = include_str!("../fixtures/preview_asked.ansi");
+pub(in crate::view::chat) const PREVIEW_NONE: &str = include_str!("../fixtures/preview_none.ansi");
+pub(in crate::view::chat) const PREVIEW_FORM: &str = include_str!("../fixtures/preview_form.ansi");
+pub(in crate::view::chat) const PREVIEW_FORM_TREE: &str = include_str!("../fixtures/preview_form_tree.ansi");
+pub(in crate::view::chat) const PREVIEW_FORM_EXTRAS: &str = include_str!("../fixtures/preview_form_extras.ansi");
+pub(in crate::view::chat) const PREVIEW_FORM_REVIEW: &str = include_str!("../fixtures/preview_form_review.ansi");
 pub(in crate::view::chat) const REWIND_CLOSED: &str = include_str!("../fixtures/rewind_closed.txt");
 pub(in crate::view::chat) const REWIND_ACTIONS_CODE: &str = include_str!("../fixtures/rewind_actions_code.txt");
 pub(in crate::view::chat) const REWIND_ACTIONS_CODE_DOWN: &str =

@@ -64,6 +64,23 @@ pub(super) enum Density {
     Tight,
 }
 
+/// A form's tab row and the space under it.
+const TABS_ROW: f32 = 30.0;
+const TABS_GAP: f32 = 10.0;
+
+/// One tab of a form's card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Tab {
+    pub label: String,
+    /// The card holds an answer for it.
+    pub answered: bool,
+    /// The card shows it.
+    pub current: bool,
+    /// The terminal's form shows it now (read from the screen as before every key).
+    pub terminal: bool,
+    pub hit: Hit,
+}
+
 /// A choice of a card's list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Choice {
@@ -123,7 +140,18 @@ pub(super) enum Part {
     Choices {
         rows: Vec<Choice>,
         enabled: bool,
+        /// The preview of the option under the pointer or the keyboard, beside the list.
+        side: Option<preview::Size>,
     },
+    /// A form's tabs: its questions, then Submit.
+    Tabs(Vec<Tab>),
+    /// The Submit step's answers: each question, the answer the card holds, and whether it has one.
+    Answers(Vec<(String, String, bool)>),
+    /// Buttons at the right, the last the primary one (`true`).
+    Buttons(Vec<(&'static str, Hit, bool)>),
+    /// The preview of the option under the pointer or the keyboard, under the list (a narrow
+    /// card). Laid out by `preview::lay`, which turns it into the list's `side` in a wide card.
+    Preview(preview::Size),
     Field {
         placeholder: &'static str,
         send: Send,
@@ -153,7 +181,16 @@ impl Part {
                 (lines.len() + usize::from(*more > 0)) as f32 * WELL_LINE + 2.0 * WELL_PAD + WELL_GAP
             }
             Part::Panel { rows, more } => (rows.len() + usize::from(*more > 0)) as f32 * PANEL_ROW + 8.0,
-            Part::Choices { rows, .. } => rows.iter().map(|row| choice_height(row, density)).sum::<f32>() + LIST_GAP,
+            Part::Choices { rows, side, .. } => {
+                let list = rows.iter().map(|row| choice_height(row, density)).sum::<f32>();
+                list.max(side.map_or(0.0, |s| s.h())) + LIST_GAP
+            }
+            Part::Preview(size) => size.h() + LIST_GAP,
+            Part::Tabs(_) => TABS_ROW + TABS_GAP,
+            Part::Answers(rows) => {
+                rows.len() as f32 * 2.0 * TEXT_ROW + rows.len().saturating_sub(1) as f32 * 6.0 + ASK_GAP
+            }
+            Part::Buttons(_) => FIELD_ROW + FIELD_GAP,
             Part::Field { .. } => FIELD_ROW + FIELD_GAP,
             Part::Status { .. } => STATUS_ROW,
             Part::Foot { .. } => FOOT,
@@ -241,8 +278,22 @@ pub(super) fn fit(parts: &mut [Part], room: f32) -> Density {
             *lines = (*lines).min(keep);
         }
     };
-    let steps: [(Step, usize); 7] =
-        [(well, 4), (rows, 2), (ask, 4), (well, WELL_LEAST), (rows, ROWS_LEAST), (ask, ASK_LEAST), (ask, ASK_LEAST)];
+    let preview: Step = |part, keep| {
+        if let Part::Preview(size) | Part::Choices { side: Some(size), .. } = part {
+            size.rows = size.rows.min(keep);
+        }
+    };
+    let steps: [(Step, usize); 9] = [
+        (well, 4),
+        (rows, 2),
+        (preview, 10),
+        (ask, 4),
+        (well, WELL_LEAST),
+        (rows, ROWS_LEAST),
+        (preview, preview::LEAST_ROWS),
+        (ask, ASK_LEAST),
+        (ask, ASK_LEAST),
+    ];
     for (step, keep) in steps {
         parts.iter_mut().for_each(|part| step(part, keep));
         if height(parts, density) <= room {
@@ -340,25 +391,29 @@ fn question(chat: &Chat, questions: Option<&[Question]>, width: f32, scale: f32)
     };
     let can_answer = card.answerable.is_some() || card.failed && answerable(questions);
     let is_form = form(questions);
+    // Esc declines what the card shows, under the same checks as a choice.
+    let close = card.answerable.is_some() && card.step.is_none();
+    if is_form && card.form.page >= questions.len() {
+        return review(chat, questions, can_answer, close, width, scale);
+    }
     let page = if is_form { card.form.page.min(questions.len() - 1) } else { 0 };
     let question = &questions[page];
     let chosen = if is_form { card.form.chosen.get(page).cloned().unwrap_or_default() } else { Vec::new() };
     let more = questions.len() - 1;
     let mut note = match more {
-        _ if is_form && more > 0 => format!("{} of {}", page + 1, questions.len()),
+        _ if is_form => String::new(),
         0 => String::new(),
         n => format!("{n} more in the terminal"),
     };
     if question.multi_select {
         note = if note.is_empty() { "Several answers".into() } else { format!("{note} · Several answers") };
     }
-    // Esc declines what the card shows, under the same checks as a choice.
-    let close = card.answerable.is_some() && card.step.is_none();
     let chip = if question.header.is_empty() { "Claude asks" } else { question.header.as_str() };
-    let mut parts = vec![
-        Part::Head { chip: chip.into(), title: String::new(), icon: "", note, close },
-        ask(&question.question, width, 15.5, scale),
-    ];
+    let mut parts = vec![Part::Head { chip: chip.into(), title: String::new(), icon: "", note, close }];
+    if is_form {
+        parts.push(tabs(chat, questions, page));
+    }
+    parts.push(ask(&question.question, width, 15.5, scale));
     let rows = question
         .options
         .iter()
@@ -371,14 +426,31 @@ fn question(chat: &Chat, questions: Option<&[Question]>, width: f32, scale: f32)
             on: chosen.get(i).copied().unwrap_or(false),
         })
         .collect();
-    parts.push(Part::Choices { rows, enabled: can_answer });
-    if can_answer {
+    parts.push(Part::Choices { rows, enabled: can_answer, side: None });
+    let previews = question.options.iter().any(|o| !o.preview.is_empty());
+    if previews {
+        // Sized and placed (beside the list or under it) by `preview::lay`.
+        parts.push(Part::Preview(preview::Size { w: width, rows: 0, cell: 0.0 }));
+    }
+    if can_answer && previews {
+        // Claude Code offers no "Type something" with previews (2.1.332): no field, and a
+        // form's page turns with buttons of their own.
+        if is_form {
+            let mut buttons = Vec::new();
+            if page > 0 {
+                buttons.push(("Back", Hit::Back, false));
+            }
+            buttons.push(("Next", Hit::Next, false));
+            parts.push(Part::Buttons(buttons));
+        }
+    } else if can_answer {
         let send = if is_form {
             let mut buttons = Vec::new();
             if page > 0 {
                 buttons.push(("Back", Hit::Back));
             }
-            buttons.push(if page + 1 < questions.len() { ("Next", Hit::Next) } else { ("Submit", Hit::Submit) });
+            // The last question leads to the Submit step, as the terminal's form does.
+            buttons.push(("Next", Hit::Next));
             Send::Buttons(buttons)
         } else {
             Send::Arrow(Hit::Answer)
@@ -395,6 +467,64 @@ fn question(chat: &Chat, questions: Option<&[Question]>, width: f32, scale: f32)
     } else {
         Part::Foot { left: Vec::new(), text: TERMINAL_ONLY, right }
     });
+    parts
+}
+
+/// A form's tabs: one per question (its header, or its number without one), then Submit. The
+/// current one is filled, an answered one ticked, and the one the terminal shows marked.
+fn tabs(chat: &Chat, questions: &[Question], page: usize) -> Part {
+    let card = &chat.question;
+    let summary = form_summary(questions, &card.form, &card.field);
+    let mut tabs: Vec<Tab> = questions
+        .iter()
+        .enumerate()
+        .map(|(i, q)| Tab {
+            label: if q.header.is_empty() { format!("Question {}", i + 1) } else { q.header.clone() },
+            answered: !summary[i].is_empty(),
+            current: i == page,
+            terminal: card.form_shown == Some(i),
+            hit: Hit::Page(i),
+        })
+        .collect();
+    tabs.push(Tab {
+        label: "Submit".into(),
+        answered: false,
+        current: page >= questions.len(),
+        terminal: card.form_shown == Some(questions.len()),
+        hit: Hit::Page(questions.len()),
+    });
+    Part::Tabs(tabs)
+}
+
+/// The form's Submit step: every question with the answer the card holds, then Submit answers.
+/// Nothing went to the terminal yet.
+fn review(chat: &Chat, questions: &[Question], can_answer: bool, close: bool, width: f32, scale: f32) -> Vec<Part> {
+    let card = &chat.question;
+    let summary = form_summary(questions, &card.form, &card.field);
+    let mut parts = vec![
+        Part::Head { chip: "Submit".into(), title: String::new(), icon: "", note: String::new(), close },
+        tabs(chat, questions, questions.len()),
+        ask("Review your answers", width, 15.5, scale),
+    ];
+    let rows = questions
+        .iter()
+        .zip(summary)
+        .map(|(q, answer)| {
+            let missing = answer.is_empty();
+            (collapse(&q.question), if missing { "Not answered yet".to_owned() } else { answer }, !missing)
+        })
+        .collect();
+    parts.push(Part::Answers(rows));
+    parts.extend(status(chat));
+    if can_answer {
+        parts.push(Part::Buttons(vec![("Back", Hit::Back, false), ("Submit answers", Hit::Submit, true)]));
+    }
+    let mut right = vec![("Open terminal", Hit::Open)];
+    if close {
+        right.push(("Esc to skip", Hit::Escape));
+    }
+    let text = if can_answer { "" } else { TERMINAL_ONLY };
+    parts.push(Part::Foot { left: Vec::new(), text, right });
     parts
 }
 
@@ -439,7 +569,7 @@ fn permission(chat: &Chat, kind: &ItemKind, width: f32, scale: f32) -> Vec<Part>
             on: false,
         })
         .collect();
-    parts.push(Part::Choices { rows, enabled: can_answer });
+    parts.push(Part::Choices { rows, enabled: can_answer, side: None });
     if can_answer && shown.deny.is_some() {
         parts
             .push(Part::Field {
@@ -502,7 +632,8 @@ fn menu(chat: &Chat, menu: &MenuShown, width: f32, scale: f32) -> Vec<Part> {
             Choice {
                 // A question's rows are not all numbered on the screen (Next, Submit): only its
                 // options, which come before the row for another answer.
-                number: (!menu.question || other.is_some_and(|at| i < at)).then_some(i + 1),
+                // Without that row (previews), the options are the rows before "Chat about this".
+                number: (!menu.question || other.or(about).is_some_and(|at| i < at)).then_some(i + 1),
                 note: if note.trim() == label { String::new() } else { note },
                 label: label.to_owned(),
                 hit: Hit::Option(i),
@@ -511,7 +642,7 @@ fn menu(chat: &Chat, menu: &MenuShown, width: f32, scale: f32) -> Vec<Part> {
             }
         })
         .collect();
-    parts.push(Part::Choices { rows, enabled: true });
+    parts.push(Part::Choices { rows, enabled: true, side: None });
     if let Some((_, boxed)) = menu.other {
         // A multi-select question adds the text to its answers; any other answers with it.
         let send = if boxed { Send::Buttons(vec![("Add answer", Hit::Answer)]) } else { Send::Arrow(Hit::Answer) };
@@ -667,6 +798,59 @@ impl Draw<'_> {
         total
     }
 
+    /// A form's tabs in one row: each as wide as its label, all narrowed alike when the row is
+    /// too narrow. A tick before an answered one, a dot after the one the terminal shows.
+    fn tabs(&self, p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, tabs: &[Tab]) {
+        let pal = self.pal;
+        let edge = look::edge(pal);
+        const PAD: f32 = 12.0;
+        const TICK: f32 = 16.0;
+        const DOT: f32 = 10.0;
+        const GAP: f32 = 6.0;
+        let natural: Vec<f32> = tabs
+            .iter()
+            .map(|t| {
+                let extra = if t.answered { TICK } else { 0.0 } + if t.terminal { DOT } else { 0.0 };
+                p.measure(Face::Semibold, 12.5, &t.label).ceil() + 4.0 + 2.0 * PAD + extra
+            })
+            .collect();
+        let total: f32 = natural.iter().sum::<f32>() + GAP * tabs.len().saturating_sub(1) as f32;
+        let shrink = if total > r.w {
+            (r.w - GAP * tabs.len().saturating_sub(1) as f32).max(0.0)
+                / (total - GAP * tabs.len().saturating_sub(1) as f32)
+        } else {
+            1.0
+        };
+        let mut x = r.x;
+        for (tab, w) in tabs.iter().zip(natural) {
+            let w = (w * shrink).floor();
+            let b = Rect::new(x, r.y, w, r.h);
+            let target = Self::target(tab.hit);
+            let hot = self.hover == Some(target);
+            let fill = match (tab.current, hot) {
+                (true, _) => pal.selection,
+                (false, true) => pal.hover,
+                _ => pal.page,
+            };
+            p.frame(b, r.h / 2.0, fill, if tab.current { mix(edge, pal.text, 0.35) } else { edge });
+            let mut tx = b.x + PAD;
+            let mut room = (b.w - 2.0 * PAD).max(0.0);
+            if tab.answered && room > TICK {
+                p.icon(glyph::CHECK, 11.0, tx + 5.0, b.cy(), pal.accent);
+                tx += TICK;
+                room -= TICK;
+            }
+            if tab.terminal && room > DOT {
+                p.rbox(Rect::new(b.right() - PAD - 5.0, b.cy() - 2.5, 5.0, 5.0), 2.5, pal.accent);
+                room -= DOT;
+            }
+            let ink = if tab.current { pal.text } else { pal.muted };
+            p.text(Face::Semibold, 12.5, tx, b.cy(), &tab.label, ink, room);
+            hits.push((b, target));
+            x += w + GAP;
+        }
+    }
+
     /// The card's own text field, with what sends it.
     fn field(
         &self,
@@ -789,6 +973,10 @@ impl Draw<'_> {
     ) {
         let pal = self.pal;
         let density = chat.question.density;
+        // The preview follows the pointer over the options (and stays when it leaves them).
+        if let Some(Target::Chat(Control::Question(Hit::Option(at)))) = self.hover {
+            chat.question.previews.hover(at);
+        }
         let colours = chat.question.colours.unwrap_or_else(|| look::Diff::fallback(pal));
         let (x, w) = (r.x + INSET, (r.w - 2.0 * INSET).max(1.0));
         let over = (height(parts, density) - r.h).max(0.0).floor();
@@ -899,8 +1087,47 @@ impl Draw<'_> {
                     p.text(Face::Ui, 11.0, x, cy, &format!("{more} more rows in the terminal"), pal.muted, w);
                 }
             }
-            Part::Choices { rows, enabled } => {
+            Part::Choices { rows, enabled, side: None } => {
                 self.choices(p, hits, x, y, w, rows, *enabled, density);
+            }
+            Part::Choices { rows, enabled, side: Some(size) } => {
+                let list_w = (w - size.w - preview::GAP).max(1.0);
+                self.choices(p, hits, x, y, list_w, rows, *enabled, density);
+                self.preview(p, chat, hits, Rect::new(x + list_w + preview::GAP, y, size.w, size.h()), size);
+            }
+            Part::Preview(size) => self.preview(p, chat, hits, Rect::new(x, y, w, size.h()), size),
+            Part::Tabs(tabs) => self.tabs(p, hits, Rect::new(x, y, w, TABS_ROW), tabs),
+            Part::Answers(rows) => {
+                let mut top = y;
+                for (question, answer, given) in rows {
+                    p.text(Face::Ui, 12.5, x, top + TEXT_ROW / 2.0, question, pal.muted, w);
+                    let ink = if *given { pal.text } else { pal.warn };
+                    let arrow = "→ ";
+                    let aw = p.measure(Face::Ui, 13.5, arrow);
+                    p.text(Face::Ui, 13.5, x, top + TEXT_ROW * 1.5, arrow, pal.muted, aw + 1.0);
+                    p.text(Face::Semibold, 13.5, x + aw, top + TEXT_ROW * 1.5, answer, ink, (w - aw).max(0.0));
+                    top += 2.0 * TEXT_ROW + 6.0;
+                }
+            }
+            Part::Buttons(buttons) => {
+                let mut right = x + w;
+                let cy = y + FIELD_ROW / 2.0;
+                for (label, hit, primary) in buttons.iter().rev() {
+                    let bw = p.measure(Face::Semibold, 12.5, label) + 28.0;
+                    let b = Rect::new(right - bw, cy - 15.0, bw, 30.0);
+                    let target = Self::target(*hit);
+                    let hot = self.hover == Some(target);
+                    let (fill, ink) = match (primary, hot) {
+                        (true, false) => (pal.accent, pal.on_accent),
+                        (true, true) => (mix(pal.accent, pal.text, 0.12), pal.on_accent),
+                        (false, true) => (pal.hover, pal.text),
+                        (false, false) => (look::quiet_fill(pal, pal.page), pal.text),
+                    };
+                    p.rbox(b, 15.0, fill);
+                    p.text_center(Face::Semibold, 12.5, b, label, ink);
+                    hits.push((b, target));
+                    right = b.x - 8.0;
+                }
             }
             Part::Field { placeholder, send } => {
                 self.field(p, chat, hits, Rect::new(x, y, w, FIELD_ROW), placeholder, send);
@@ -1099,7 +1326,7 @@ mod tests {
         let parts = vec![
             Part::Head { chip: "Size".into(), title: String::new(), icon: "", note: String::new(), close: true },
             ask("Which size?", 600.0, 15.5, 1.0),
-            Part::Choices { rows: (1..=4).map(choice).collect(), enabled: true },
+            Part::Choices { rows: (1..=4).map(choice).collect(), enabled: true, side: None },
             Part::Foot { left: Vec::new(), text: "", right: vec![("Open terminal", Hit::Open)] },
         ];
         let roomy = height(&parts, Density::Roomy);
@@ -1255,6 +1482,7 @@ mod tests {
                     on: false,
                 }],
                 enabled: true,
+                side: None,
             },
             Part::Foot { left: Vec::new(), text: "", right: vec![("Open terminal", Hit::Open)] },
         ];

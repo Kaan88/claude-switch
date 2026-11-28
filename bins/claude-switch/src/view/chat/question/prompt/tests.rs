@@ -26,7 +26,14 @@ impl Live {
             let pal = mdshared_ui::theme::DARK;
             p.fill(Rect::new(0.0, 0.0, w, h), pal.page);
             let pane = self.tab().pane.as_mut().unwrap();
-            Draw { pal: &pal, hover: None, focused: true, now }.card(&mut p, &mut pane.chat, &pane.model, &mut hits);
+            Draw {
+                pal: &pal,
+                scheme: mdshared_ui::termview::Scheme::from_palette(&pal),
+                hover: None,
+                focused: true,
+                now,
+            }
+            .card(&mut p, &mut pane.chat, &pane.model, &mut hits);
         }
         if let Ok(dir) = std::env::var("CS_SHOT_DIR") {
             let name = format!("prompt_card_{}x{}_{}.png", w as u32, h as u32, hits.len());

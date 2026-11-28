@@ -1818,11 +1818,54 @@ second deadline; a mismatch, timeout or a question still open eight seconds afte
 why, and opens the drawer. While the card can answer, sends are refused with "Answer Claude's question
 above" and the drawer does not open by itself; the working line reads "Waiting for your answer".
 
+**Previews** (2026-11-28, `question/preview.rs`). An option of a question may carry a `preview`
+(monospace text: a mock-up, code, a layout); the terminal shows the highlighted option's preview in
+a box right of the choices. Chat reads previews only from the call's input in the transcript
+(`QuestionOption::preview`: plain text, escape sequences and control characters other than tab and
+line break dropped, cut at 8,000 characters or 200 lines with a line saying so), never from the
+screen. The card built from the call shows the preview of the option under the pointer, else the
+one ↑ and ↓ moved to (whether or not the field has the keys; they write nothing), else the first
+option that has one; an option without one says so. It is drawn with the command output's grid
+renderer (`view/ui/grid.rs`): the terminal's font, cell grid and theme colours at full strength on
+the terminal's background, the text smaller to fit the widest preview line down to 9 px, past that
+wrapped. Beside the choices when the card is at least 720 px wide inside (56 % of it), under them
+otherwise (the narrowest window). It is as tall as the tallest of the question's previews, at most
+16 rows, so the card does not jump as the pointer moves; a short window cuts it to 10, then 5 rows
+before the question is cut, and the wheel over it scrolls a longer one. A drag selects (the
+selection scrolls on past its edges); Ctrl+C copies the selection, Copy the selection or the whole
+preview, as plain text (a wrapped line as one line). The pane only looks. When Chat reads a
+question from the screen (the menu card, and every check before a key), a box beside the choices
+is left out first (`screens::side_box`, `question_view`): a top-left corner and rule at column 12
+or further right, its side down to its bottom corner on every row, text left of it, and a menu
+footer under it; the cells right of its column on its rows, and on the "Notes: press n to add
+notes" row under it, are blanked in a copy of the screen (cursor and key modes kept), so its rows
+no longer run into the choices and the question.
+Recorded from Claude Code 2.1.332 (`recorder compat` scripts `preview` and `preview-form`,
+fixtures `preview_*`): the box starts at column 34 of 100, on the first option's row, as tall as
+the preview; an option without one shows "No preview available"; the footer adds "n to add
+notes". Such a question has no "Type something" row, and its "Chat about this" (under the rule)
+has no number: the menu reader passes that rule when only that row is under it and reads the row
+as the menu's last entry, walked to like any other. So a card for such a question has no field
+(a form's page turns with Back and Next of its own), and a typed answer for it stops before any
+key. Notes (`n`) are left to the terminal. Whether the transcript holds the call while the
+question waits differs from run to run (two tries of the same recording: once it did, once not):
+Chat shows the card built from the call, with its previews, whenever the call is there, and the
+menu card read from the screen (choices, "Chat about this", no preview) otherwise; the check's
+`asked` key accepts either.
+
 **Forms.** Several questions, or a multi-select one, are a form (decided 2026-11-27: it was the main
-reason to open the terminal). The card shows one question at a time ("Size · 1 of 2", Back, Next);
-a click picks a choice (single choice) or ticks a box (multi-select), and the field holds that
-question's "Type something" text; Enter in it turns to the next question, and on the last one submits, as the Submit button does. Nothing reaches the terminal before Submit, and nothing is picked
-for the user. Submit first checks the card: every question answered, a single choice by one choice
+reason to open the terminal). The card shows one question at a time under a row of tabs, as the
+terminal's form has them (2026-11-28): each question's header (or "Question n" without one), then
+Submit. A tab turns the card's page; an answered question's tab has a tick, the shown one is
+filled, and the one the terminal's form shows now has a dot (the same reading as before every key:
+`form_question` for each question, the review for Submit; no dot when the screen shows none of
+them). A click picks a choice (single choice) or ticks a box (multi-select), and the field holds
+that question's "Type something" text; Back and Next turn the page, and Enter in the field turns
+to the next question. After the last question comes the Submit step, in the card: "Review your
+answers", each question with the answer the card holds (labels in option order, then the text, as
+the terminal's review writes them; "Not answered yet" in the warning colour), Back and **Submit
+answers** (Enter there submits too). Nothing reaches the terminal before Submit, and nothing is
+picked for the user. Submit first checks the card: every question answered, a single choice by one choice
 or one text, texts short, without control characters and not starting with a digit; otherwise it
 shows the question and says why. Then Chat drives the CLI's form one key at a time, each written only
 while the screen shows exactly what the key before should have led to, with a two second deadline
@@ -2079,7 +2122,8 @@ line, whole, or cut with "…" (a prompt of several lines always is). A later pr
 read stops it before Enter. Enter must lead to the prompt's choices, under "Restore to the point
 before you sent this message:" with the prompt quoted; the card shows that screen's rows and its
 numbered choices (for example "Restore code and conversation", "Restore conversation", "Restore
-code", "Summarize from here", "Summarize up to here", "Never mind") and chooses nothing by itself. A
+code", "Summarize from here", "Summarize up to here", "Never mind"), the list 8 px under the rows
+(picture `rewind-choices`, from the recorded screen), and chooses nothing by itself. A
 click moves the highlight one row at a time and Enter goes on the choice only with the same choices
 on screen; it is done when neither rewind screen shows and the input is back (Claude Code then puts
 the prompt back on its input after a conversation restore). Cancel writes Esc (back to the list),

@@ -4,7 +4,9 @@
 //!
 //! An expectation file has a `[state]` section per snapshot of its script and `key = value` lines
 //! under it; `#` starts a comment. Only the keys a section names are compared. In a value `*`
-//! stands for any text, runs of blanks count as one, and `\n` is a line break. The keys:
+//! stands for any text, runs of blanks count as one, and `\n` is a line break; ` || ` between
+//! values accepts any of them (for what Claude Code does one way or the other from run to run,
+//! said in a comment beside it). The keys:
 //!
 //! - `kind`: what the screen is to Chat, the first that fits of `full-screen`, `blocked` (the
 //!   list of calls auto mode blocked), `plan`,
@@ -44,6 +46,9 @@
 //!   or `type description`), as `select · main`; `-` when Chat reads no list. `viewing`: the agent
 //!   the empty input's placeholder names while Claude Code shows one ("Message @name…"), `-` for
 //!   none.
+//! - `side`: `yes` when a box stands beside a question's choices (an option's preview), which
+//!   Chat leaves out when it reads the question: every key but `shows`, `hides` and `side` is
+//!   read from the screen without it.
 //! - `card`: the first row the terminal card would show (`view/chat/terminal_card.rs`):
 //!   `call: ` and the call's text (`Bash(…)`) when it starts at a tool call, whether its bullet
 //!   (`●` or `⏺` at column 0, which blinks while the call runs) is lit or not; `bullet: ` and
@@ -59,7 +64,9 @@
 //!   `answers` (Claude's answers), `thinking` (the `thinkingDisplay` values of records with
 //!   thinking, `-` for none), `phase` (the newest record's phase as the app reads it: `active`,
 //!   `end-turn`, `unknown`, `-` for none; after a local command such as `/cost` typed at rest,
-//!   `end-turn` when its output ended it), `outputs` (each command output row as `name: colours`
+//!   `end-turn` when its output ended it), `asked` (each `AskUserQuestion` call as
+//!   `headers (N previews, M multi-select, state)`, the state `running` while it waits: whether
+//!   the transcript holds a question while the terminal asks it; `-` for none), `outputs` (each command output row as `name: colours`
 //!   when the reader kept colour codes (SGR) beside its text, which Chat draws as the terminal
 //!   does, or `name: plain`; `-` for none). With `agentcopy` (the `subagents` folder kept beside
 //!   the copy): `agents` (each agent as `type: description: end`, the end as the reader reads it,
@@ -247,6 +254,7 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
             }
         }),
         "viewing" => viewing_agent(s).unwrap_or_else(|| NONE.to_owned()),
+        "side" => yes(side_box(s).is_some()),
         "sent" => {
             let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
             shown(typed || screen::shows_lines(s, want), "the input's rows do not read it")
@@ -255,8 +263,13 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
     }
 }
 
-/// `text` matches `pattern`, where `*` is any text; blanks are collapsed on both sides.
+/// `text` matches one of the patterns ` || ` separates (see [`matches_one`]).
 fn matches(pattern: &str, text: &str) -> bool {
+    pattern.split(" || ").any(|one| matches_one(one, text))
+}
+
+/// `text` matches `pattern`, where `*` is any text; blanks are collapsed on both sides.
+fn matches_one(pattern: &str, text: &str) -> bool {
     let (pattern, text) = (collapse(pattern), collapse(text));
     let parts: Vec<&str> = pattern.split('*').collect();
     let Some((first, rest)) = parts.split_first() else { return false };
@@ -423,6 +436,27 @@ fn transcript_fact(path: &Path, key: &str) -> String {
                     .collect(),
             )
         }
+        "asked" => joined(
+            items
+                .iter()
+                .filter_map(|(_, item)| match &item.kind {
+                    ItemKind::Tool { name, state, card, .. } if name == "AskUserQuestion" => {
+                        let state = format!("{state:?}").to_lowercase();
+                        Some(match card {
+                            Some(ToolCard::Questions(questions)) => {
+                                let headers: Vec<&str> = questions.iter().map(|q| q.header.as_str()).collect();
+                                let previews =
+                                    questions.iter().flat_map(|q| &q.options).filter(|o| !o.preview.is_empty()).count();
+                                let multi = questions.iter().filter(|q| q.multi_select).count();
+                                format!("{} ({previews} previews, {multi} multi-select, {state})", headers.join(" · "))
+                            }
+                            _ => format!("unread input ({state})"),
+                        })
+                    }
+                    _ => None,
+                })
+                .collect(),
+        ),
         "thinking" => {
             let mut seen: Vec<String> = Vec::new();
             for line in std::fs::read_to_string(path).unwrap_or_default().lines() {
@@ -562,10 +596,14 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
     let read: Box<Reads> = if let Some(path) = file("ansi") {
         let text = std::fs::read_to_string(&path).map_err(|_| "no recording".to_owned())?;
         let screen = recorded(&text.replace("\r\n", "\n"));
+        // Chat reads a question without the preview box beside its choices; what shows on the
+        // screen is the screen's.
+        let view = question_view(&screen).into_owned();
         let folder = folder.to_owned();
         Box::new(move |key, want| match key {
             "activity" => activity_as(&folder, &screen, want),
-            _ => fact(&screen, key, want),
+            "shows" | "hides" | "shows-any" | "side" => fact(&screen, key, want),
+            _ => fact(&view, key, want),
         })
     } else if let Some(path) = live.clone() {
         Box::new(move |key, _| live_fact(&path, key))
@@ -767,6 +805,9 @@ fn a_pattern_matches_whole_texts_with_stars_for_any_text() {
     assert!(matches("a  b", "a b") && matches("*", "") && matches("*b*", "abc") && matches("a*", "a"));
     assert!(!matches("a", "ab") && !matches("a*c", "ab") && !matches("*b", "abc") && !matches("", "a"));
     assert!(matches("ab*ab", "abab") && !matches("ab*ab", "ab"));
+    // Either of two values; a single bar is part of a value.
+    assert!(matches("- || A (1 previews, running)", "-") && matches("- || A*", "A (1 previews, running)"));
+    assert!(!matches("- || A", "B") && !matches("a | b", "a"));
 }
 
 #[test]

@@ -17,6 +17,21 @@
   record; running and stopped from the terminal's agent list. `?` is left only when nothing tells,
   and its tooltip says why.
 
+- Chat: a question whose options have previews (mock-ups, code) shows the preview of the option
+  under the pointer, or the one ↑ and ↓ move to, in the terminal's font, cell grid and colours:
+  beside the choices in a wide card, under them in a narrow one, as tall as the tallest preview up
+  to 16 rows, scrolling with the wheel when longer. A drag selects in it; Ctrl+C or Copy copies
+  plain text. The previews come from the question's call in the transcript when Claude Code has
+  written it there (it does not always while the question waits); otherwise the card is read from
+  the screen, now including a question with previews (the box beside the choices is left out), and
+  shows its choices without previews. Such a question offers no typed answer in Claude Code, so
+  its card has no text field.
+- Chat: a form of several questions (or a multi-select one) built from the question's call shows
+  its tabs, as the terminal does ("Layout · Extras · Names · Submit"): a tick on each answered
+  question, a dot on the one the terminal shows, and a click turns the page. After the last
+  question comes the Submit step in the card, with every answer and **Submit answers**; Chat then
+  drives Claude Code's form as before, one checked key at a time.
+- Chat: the rewind card's choices no longer touch the lines above them that say what they do.
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog

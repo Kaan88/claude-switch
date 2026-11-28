@@ -115,6 +115,50 @@ fn user_theme(dark: bool) -> mdshared_ui::theme::Palette {
     crate::termtheme::named::palette(&theme, &prefs, None)
 }
 
+/// The wide and narrow windows at the other common scale.
+const WIDE_100: Size = Size { w: 1280.0, h: 980.0, scale: 1.0 };
+const NARROW_150: Size = Size { w: 760.0, h: 720.0, scale: 1.5 };
+
+/// The question of the "preview" pictures, as the transcript's call has it: three layouts for the
+/// tile cache, two with a preview (a mock-up drawn with box lines, a tree), one without.
+fn layout_question() -> serde_json::Value {
+    let row = |s: &str| format!("│ {s:<36}│");
+    let flat = [
+        format!("┌─ cache {}┐", "─".repeat(29)),
+        row("z12_x2154_y1430.png    18 KB  map"),
+        row("z12_x2155_y1430.png    21 KB  map"),
+        row("z13_x4308_y2860.png   212 KB  dem"),
+        row("index.json             3 KB"),
+        format!("└{}┘", "─".repeat(37)),
+        "One folder, one size limit for both kinds.".to_owned(),
+    ]
+    .join("\n");
+    let nested = [
+        "cache/",
+        "├── map/",
+        "│   ├── 12/2154/1430.png",
+        "│   └── 12/2155/1430.png",
+        "├── dem/",
+        "│   └── 13/4308/2860.png",
+        "└── index.json",
+        "",
+        "fn path(kind: Kind, z: u8, x: u32, y: u32) -> PathBuf {",
+        "    root.join(kind.dir()).join(format!(\"{z}/{x}/{y}.png\"))",
+        "}",
+    ]
+    .join("\n");
+    serde_json::json!({"questions": [{
+        "header": "Layout",
+        "question": "Which folder layout should the tile cache use?",
+        "multiSelect": false,
+        "options": [
+            {"label": "Flat folder", "description": "Every tile in one folder, named by kind and place.", "preview": flat},
+            {"label": "Nested by kind and zoom", "description": "A folder per kind, then per zoom level.", "preview": nested},
+            {"label": "One packed file", "description": "All tiles in one file with an index."}
+        ]
+    }]})
+}
+
 /// A window only just tall enough for Chat.
 const TINY: Size = Size { w: 760.0, h: 400.0, scale: 1.0 };
 const TINY_WIDE: Size = Size { w: 1280.0, h: 420.0, scale: 1.25 };
@@ -226,6 +270,69 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             let later = shots::show(&mut st, id, shots::QUESTION, now);
             (demo, st, later)
         }
+        "preview" | "preview-hover" => {
+            // A question whose options have previews, from the transcript's pending call: the
+            // first option's preview, or (hover) the one under the pointer.
+            let demo = Transcript::new_asking(
+                "Now add elevation tiles to the same cache.",
+                "Elevation tiles are about ten times larger than map tiles, so where they live matters.",
+                layout_question(),
+            )
+            .unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            shots::running(&mut st, id, "Waiting for your answer");
+            let later = shots::show(&mut st, id, crate::view::chat::question::screens::recorded::PREVIEW_ASKED, now);
+            if state == "preview-hover" {
+                let mut anim = mdshared_ui::anim::Animator::new();
+                shots::frame_at(&mut st, &mut anim, later, size);
+                let target = crate::state::Target::Chat(super::Control::Question(super::question::Hit::Option(1)));
+                let (r, _) = *st.hits.iter().find(|(_, t)| *t == target).expect("the second option");
+                st.mouse = (r.cx(), r.cy());
+                st.hover = Some(target);
+            }
+            (demo, st, later)
+        }
+        "form-tabs" | "form-submit" => {
+            // A form of three questions from the transcript's pending call: its tabs, the
+            // multi-select page with two boxes ticked and a typed answer, or the Submit step.
+            let mut input = layout_question();
+            let extras = serde_json::json!({
+                "header": "Extras", "question": "Which extras should the cache keep beside each tile?",
+                "multiSelect": true,
+                "options": [
+                    {"label": "Logs", "description": "Who fetched it and when."},
+                    {"label": "Metrics", "description": "Hits and misses per zoom level."},
+                    {"label": "Traces", "description": "The full request, for debugging."}
+                ]
+            });
+            let name = serde_json::json!({
+                "header": "Names", "question": "How should tile files be named?", "multiSelect": false,
+                "options": [{"label": "Short", "description": "z/x/y.png"}, {"label": "Long", "description": "kind_z_x_y.png"}]
+            });
+            input["questions"].as_array_mut().unwrap().extend([extras, name]);
+            let demo = Transcript::new_asking(
+                "Now add elevation tiles to the same cache.",
+                "A few choices before I start.",
+                input,
+            )
+            .unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            shots::running(&mut st, id, "Waiting for your answer");
+            let later = shots::show(&mut st, id, shots::IDLE, now);
+            use super::question::{Hit, press};
+            let tab = shots::tab(&mut st, id);
+            press(tab, later, Hit::Option(1));
+            press(tab, later, Hit::Page(1));
+            press(tab, later, Hit::Option(0));
+            press(tab, later, Hit::Option(2));
+            tab.pane.as_mut().unwrap().chat.question.field.set_text("alerts");
+            if state == "form-submit" {
+                press(tab, later, Hit::Page(2));
+                press(tab, later, Hit::Option(0));
+                press(tab, later, Hit::Page(3));
+            }
+            (demo, st, later)
+        }
         "permission" => {
             let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
             let (mut st, id) = shots::chat_window(dark, &demo);
@@ -265,10 +372,14 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
         }
         // A card read from the screen alone over the showcase: a form's question, a plain menu, a
         // read-only panel, the list of blocked calls.
-        "form" | "menu" | "panel" | "blocked" => {
-            use crate::view::chat::question::screens::recorded::{BLOCKED_TWO, MENU_MODEL, PANEL_USAGE, PLAIN_FORM};
+        "form" | "menu" | "panel" | "blocked" | "preview-screen" => {
+            use crate::view::chat::question::screens::recorded::{
+                BLOCKED_TWO, MENU_MODEL, PANEL_USAGE, PLAIN_FORM, PREVIEW_ASKED,
+            };
             let screen = match state {
                 "form" => PLAIN_FORM,
+                // A question with previews whose call the transcript does not hold (yet).
+                "preview-screen" => PREVIEW_ASKED,
                 "menu" => MENU_MODEL,
                 "panel" => PANEL_USAGE,
                 _ => BLOCKED_TWO,
@@ -285,6 +396,20 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             let (mut st, id) = shots::chat_window(dark, &demo);
             let later = shots::show(&mut st, id, REWIND_ACTIONS, now);
             pane(&mut st, id).chat.question.rewinding("Fix the flaky tile cache test");
+            (demo, st, later)
+        }
+        "rewind-choices" => {
+            // The rewind's Enter went on the prompt's row and Claude Code shows its choices for it
+            // (recorded): Chat reads them from the screen, and the card offers them.
+            use crate::view::chat::question::screens::recorded::REWIND_ACTIONS;
+            let demo = Transcript::new_showcase(None).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            let later = shots::show(&mut st, id, REWIND_ACTIONS, now);
+            pane(&mut st, id).chat.question.rewinding("Reply with just the word bravo.");
+            let later = later + Duration::from_millis(200);
+            pane(&mut st, id).chat.output(later, true, false);
+            st.progress_chat_tabs(later, true);
+            assert!(pane(&mut st, id).chat.question.rewind_choosing(), "the card offers the choices");
             (demo, st, later)
         }
         "very-short" | "scale-125" | "scale-200" | "custom-theme" => {
@@ -428,6 +553,11 @@ fn chat_shots() {
         "conversation",
         "steps",
         "question",
+        "preview",
+        "preview-hover",
+        "preview-screen",
+        "form-tabs",
+        "form-submit",
         "permission",
         "running",
         "scrolled",
@@ -445,6 +575,7 @@ fn chat_shots() {
         "panel",
         "blocked",
         "rewind",
+        "rewind-choices",
         "very-short",
         "scale-125",
         "scale-200",
@@ -457,6 +588,14 @@ fn chat_shots() {
             "scale-125" | "scale-200" => [(WIDE_125, "wide"), (NARROW_200, "narrow")],
             _ => [(WIDE, "wide"), (NARROW, "narrow")],
         };
+        // The question cards at both common scales, wide and narrow.
+        let more: &[(Size, &str)] =
+            if state.starts_with("preview") || state.starts_with("form-") || state == "rewind-choices" {
+                &[(WIDE_100, "wide-100"), (NARROW_150, "narrow-150")]
+            } else {
+                &[]
+            };
+        let sizes: Vec<(Size, &str)> = sizes.into_iter().chain(more.iter().copied()).collect();
         for (size, width) in sizes {
             for (dark, theme) in [(true, "dark"), (false, "light")] {
                 let name = format!("{}-{state}-{width}-{theme}.png", n + 1);

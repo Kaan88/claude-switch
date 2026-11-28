@@ -44,9 +44,10 @@ with queued messages and Send now (Claude Code's Ctrl+X Ctrl+S). Still to do:
   patch on real edits (diff line numbers), "Run in background" on the working line, queued
   messages and their Send now (recorded only through `recorder compat`), a card scrolled under
   its pinned foot.
-- Never drawn: a form built from the transcript's pending call (laid out as the form read from the
-  screen, which `chat_shots` draws), the rewind card's choices (the picture shows a rewind on its
-  way).
+- Drawn 2026-11-28 (`chat_shots`): a form built from the transcript's pending call (`form-tabs`,
+  `form-submit`) and the rewind card's choices (`rewind-choices`, the recorded choices screen
+  read by Chat's own rewind step; looking at it found the list flush against the rows above it,
+  now apart). Neither tried in the running app.
 - Decided, to confirm by the owner: typing while a card is docked still goes nowhere (the card
   says so once); Stop is a small square in its own slot beside Send whenever a turn runs; Chat's
   side padding is 28 px, 12 px under a 560 px column; code blocks sit about 40 px lower (header
@@ -140,6 +141,20 @@ as the second account, Windows Terminal, the desktop hand-over.
   currently falls back to "Choose in Claude Code's menu above"; show its tabs in the card so it can
   be answered in Chat, with the Submit step. Check with a compat script that asks a question with
   previews and one with several questions.
+  - Previews built 2026-11-28 on `feature/question-previews` (DESIGN.md, "Previews"). Seen only in
+    the picture test (`chat_shots` states `preview`, `preview-hover`, `preview-screen`: wide and
+    narrow, 100 % and 150 %, both themes) and unit tests over screens recorded from 2.1.332 on
+    2026-11-28 (`fixtures/preview_*`; the first recording found the reader did not see such a
+    question at all, fixed the same day, 18 of 18 states read as expected offline). Whether the
+    transcript holds the call while the question waits is racy (once yes, once no): to record
+    again with `preview` and `preview-form`, several times, and to try in the running app both
+    ways (the card with its previews, and the screen's card). Not built: notes (`n`).
+  - Form tabs and the Submit step built 2026-11-28 on the same branch (DESIGN.md, "Forms"), for
+    the card built from the transcript's call. Seen in `chat_shots` states `form-tabs` and
+    `form-submit` (same sizes and themes) and unit tests; the keys to Claude Code's form are the
+    ones already tested over recorded screens. Not done: tabs on the menu card read from the
+    screen, which is what shows while Claude Code (as 2.1.332 did) keeps the call out of the
+    transcript until it is answered: that card still answers one page at a time.
 - **Workers tab**: built 2026-11-28 on branch `feature/workers-tab` (DESIGN.md, "The Workers tab").
   Seen only in the picture test `workers_tab_shots` (made-up jobs, both themes, wide and 760×480)
   and unit tests; never in the running app against the real folder. To try: the first scan of a
