@@ -34,20 +34,29 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
 
 The ten changes of the redesign study (branch `design/chat-redesign`, `docs/chat-redesign.md`) were
 built by one agent (merge `d2deea0`) and released at the owner's word before a review (owner,
-2026-11-28). Still to do:
+2026-11-28). A read-only review found twelve issues; all were fixed on `feature/redesign-fixes`
+(cards that fit or scroll, a card on a new session, the task progress below 900 px, Stop's own
+slot and turn check, "Run in background" without its line, the question's measure and mark, the
+code header's patch, Esc under a card, the older cards' layout, per-frame work, copied spacers),
+with queued messages and Send now (Claude Code's Ctrl+X Ctrl+S). Still to do:
 
-- A correctness review of the branch (`main` b71f1a4 to `ee3500a`) for behaviour that changed beyond
-  the look: sending, queueing, Send now, card answering, Stop, undo, prompt recall.
 - Never tried in the running app or in a real session: the banner read on the empty state, the
-  patch on real edits (diff line numbers), "Run in background" on the working line.
-- Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind and
-  blocked-calls cards, a card in a very short window; scales other than 100 % and 150 %; the new
-  cards and panel in custom themes.
-- Decided by the builder, to confirm: typing while a card is docked goes nowhere until the card's
-  field is clicked; with a draft, Stop is an icon-only square beside Send; Chat's side padding grew
-  12 to 28 px; code blocks sit about 40 px lower (header drawn in a spacer, the renderer is an
-  external crate); the Session view keeps its strip and its tabs.
-- Not updated: the README's screenshots, `docs/DESIGN.md`, this file's Chat items.
+  patch on real edits (diff line numbers), "Run in background" on the working line, queued
+  messages and their Send now (recorded only through `recorder compat`), a card scrolled under
+  its pinned foot.
+- Never drawn: a form built from the transcript's pending call (laid out as the form read from the
+  screen, which `chat_shots` draws), the rewind card's choices (the picture shows a rewind on its
+  way).
+- Decided, to confirm by the owner: typing while a card is docked still goes nowhere (the card
+  says so once); Stop is a small square in its own slot beside Send whenever a turn runs; Chat's
+  side padding is 28 px, 12 px under a 560 px column; code blocks sit about 40 px lower (header
+  drawn in a spacer, the renderer is an external crate); the Session view keeps its strip and its
+  tabs; a cut command well says how many lines are only in the terminal.
+- Not done: the cards' parts are built each frame (the question's measure, the costly part, is
+  cached); the code header still hides the renderer's own language label with a patch (in the
+  box's colour, only in the band the renderer keeps free of code, never over a selection) as the
+  renderer has no setting to leave it out.
+- Not updated: the README's screenshots, this file's Chat items.
 
 ## Completed follow-ups
 
@@ -213,7 +222,7 @@ and in the README, not committed, and not copied to the installed clone
 
 Status of items 23 to 60 (2026-11-27, merged into `main` after two reviews by Claude Fable and the fixes
 of both): built and passing format, lint and the test suite: 23 to 31, 34 to 48, 50 to 55, 57, 58 and 60.
-Partly: 47 (no `!` toggle in the composer). 22, 53 (with Stop agent), 49 (rewind), 56 and 59 were built on
+47's `!` toggle followed on 2026-11-28 (`feature/redesign-fixes`). 22, 53 (with Stop agent), 49 (rewind), 56 and 59 were built on
 2026-11-27, 49 and 53 against recorded screens and 49 before a live check of 42 and 48 (see the items). Not built:
 32 (later; fonts need toolkit work). Item 14 for Settings text rows waits for the toolkit pin move
 (toolkit 7da7b22). Nothing was tried against a live Claude Code: the screen shapes the cards read (the
@@ -646,7 +655,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 47. **Command results and shell mode in the conversation**: `<local-command-stdout>` and `<bash-input>`/`<bash-stdout>`
     records as mono cards under their command (filtered out today, `prompt_clean.rs`); interactive panels get a
     card; a `!` toggle in the composer once shell mode by paste is verified.
-    **Done except the `!` toggle** (2026-11-27, branch `fix/items-47-tools`). The records were already read into
+    **Done.** The `!` toggle (2026-11-28, `feature/redesign-fixes`): `!` in the empty box, Enter only once
+    the input shows `! command`; to record with `recorder compat` script `shell-paste` before it is trusted.
+    Before that (2026-11-27, branch `fix/items-47-tools`). The records were already read into
     finished rows (`transcript/local.rs`); this pass gave them item 71's quiet look. One-line replies (at most 140
     characters, which covers the shapes found read-only in this machine's transcripts: "Set model to …", "Goal
     set: …", "Settings dialog dismissed", "Reconnected to …") sit on their command's row. Longer output
@@ -657,7 +668,7 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     one record with two text blocks (`<bash-input>` then `<bash-stdout>`). The reader stopped at the first
     block and lost the output; it now reads every block. Checked: parser, reader and row unit tests (the
     shapes copied from real records), plus a bitmap test with `/model`, `/context` and two shell commands
-    (one failing) in light and dark, whose pictures were looked at. Not built: the `!` toggle. Shell mode
+    (one failing) in light and dark, whose pictures were looked at. The `!` toggle was not built then. Shell mode
     by paste was not checked against a real Claude Code: that needs an interactive CLI session driven
     through a terminal, which this pass did not start. Nothing was seen in the running app.
 48. **CLI menus and dialogs as cards**: any menu, picker or startup dialog the CLI shows (the native /model and
@@ -1096,8 +1107,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     footer's words are shown as they are); `ruleSource` values other than `flagSettings` (the names
     of the other settings files are Claude Code's documented ones); a No given with text; a denial
     inside a subagent (not counted: it is in the subagent's transcript, and only the CLI's passing
-    notice under the input says so). Open: the count is hidden while another card has the card's
-    place; a rule can only be changed in the terminal.
+    notice under the input says so). The count stays on a line over another card that has the card's
+    place (2026-11-28, `feature/redesign-fixes`). Open: a rule can only be changed in the terminal.
 
 80. **Later: `/fork` breaks Chat's continuation** (owner, 2026-11-27: "fork broke chat continuation, I
     think. not a big deal right now. note it."; screenshot). After `/fork` typed in a Claude tab,

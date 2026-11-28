@@ -359,6 +359,7 @@ impl Chat {
             return false;
         }
         self.recall.end();
+        self.shell_mode = false;
         let at = text.len();
         self.editor.set(text);
         self.editor.move_to(at, false);

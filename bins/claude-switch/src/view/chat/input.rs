@@ -52,6 +52,10 @@ pub enum Control {
     /// The CLI's suggested next prompt.
     NextPrompt,
     Stop,
+    /// Send now on the messages waiting in Claude Code's queue.
+    SendQueued,
+    /// The composer's `!` mark: back from shell mode to a message.
+    ShellMode,
     Remove(usize),
     MoreChips,
     Question(super::question::Hit),
@@ -68,6 +72,27 @@ pub(super) fn chip_slash(control: Control) -> Option<&'static str> {
         Control::Compact => Some("/compact"),
         Control::Clear => Some("/clear"),
         _ => None,
+    }
+}
+
+/// What a key does while a card stands in the composer's place.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Docked {
+    /// What the card's own "Esc to …" button does, under the same checks.
+    Escape,
+    /// A key that would have edited or sent the hidden draft: the card says once where typing goes.
+    TypedAway,
+    Nothing,
+}
+
+/// Escape does what the card's "Esc to …" button does, only while the card draws that button
+/// (`hits` is the last frame's); Enter, Backspace and Delete go nowhere, and say so.
+pub(super) fn docked_key(hits: &[(mdshared_ui::gfx::Rect, Target)], name: Option<&KeyName>, mods: Mods) -> Docked {
+    let escape = Target::Chat(Control::Question(super::question::Hit::Escape));
+    match name {
+        Some(KeyName::Escape) if mods.none() && hits.iter().any(|(_, t)| *t == escape) => Docked::Escape,
+        Some(KeyName::Enter | KeyName::Backspace | KeyName::Delete) => Docked::TypedAway,
+        _ => Docked::Nothing,
     }
 }
 
@@ -262,8 +287,12 @@ impl AppState {
             let suggested = shown && chat.popups.read_next_prompt(&tab.term.screen);
             // The card first: the gate asks it whether it answers the pending call's menu.
             let card = chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
-            chat.settle(chat.screen_idle(&tab.term, now));
+            let idle = chat.screen_idle(&tab.term, now);
+            chat.settle(idle);
+            let queued = chat.reconcile_queued(&pane.model, idle, now);
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
+            // An ended program has no queue left: its bubbles (and the poll for them) end too.
+            let queued = queued | (decision.0 == super::Gate::Ended && chat.forget_queued());
             let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
             chat.set_selection(pane.ui.has_selection());
             let changed =
@@ -277,15 +306,19 @@ impl AppState {
                 // Chat says Claude Code may be waiting and cannot show why: keep what it read.
                 super::screen_report::save(tab, now, super::Reason::Tool.label());
             }
-            redraw |= shown && (changed || catalog || suggested || reported || advanced || collected || recalled);
+            redraw |=
+                shown && (changed || catalog || suggested || reported || advanced || collected || recalled || queued);
         }
         redraw
     }
 
-    fn has_chat_work(tab: &Tab) -> bool {
+    pub(super) fn has_chat_work(tab: &Tab) -> bool {
         tab.pane.as_ref().is_some_and(|pane| {
             pane.chat.enabled
-                && (pane.chat.queue.is_some() || pane.chat.waiting().is_some() || pane.chat.command_in_flight())
+                && (pane.chat.queue.is_some()
+                    || pane.chat.waiting().is_some()
+                    || pane.chat.command_in_flight()
+                    || !pane.chat.queued.is_empty())
         })
     }
 
@@ -330,8 +363,18 @@ impl AppState {
             return true;
         }
         // A card stands where the composer is: the hidden draft takes no keys, and Enter sends
-        // nothing. The card's own field takes them once it was clicked (above).
+        // nothing. The card's own field takes them once it was clicked (above). Escape does what
+        // the card's own "Esc to …" button does, under the same checks, while the card offers it.
         if self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.question.docked()) {
+            match docked_key(&self.hits, k.name.as_ref(), mods) {
+                Docked::Escape => self.chat_control(cx, Control::Question(super::question::Hit::Escape)),
+                Docked::TypedAway => {
+                    if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+                        pane.chat.question.note_typed_away();
+                    }
+                }
+                Docked::Nothing => {}
+            }
             return true;
         }
         if mods.none()
@@ -350,6 +393,7 @@ impl AppState {
         let pane = tab.pane.as_mut().expect("Chat pane");
         let chat = &mut pane.chat;
         let changed = match k.name.as_ref() {
+            Some(KeyName::Backspace) if mods.none() && chat.editor.text.is_empty() && chat.leave_shell() => false,
             Some(KeyName::Enter) if !mods.shift && !mods.ctrl && !mods.alt => {
                 self.chat_control(cx, Control::Send);
                 false
@@ -368,7 +412,18 @@ impl AppState {
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
         chat.typed_at = Some(cx.now());
-        if super::question::text(chat, text) || chat.question.docked() || chat.popup_text(text) {
+        if super::question::text(chat, text) {
+            return true;
+        }
+        if chat.question.docked() {
+            // Typing goes nowhere while a card stands in the composer's place: said once.
+            chat.question.note_typed_away();
+            return true;
+        }
+        if chat.popup_text(text) {
+            return true;
+        }
+        if chat.shell_key(text) {
             return true;
         }
         if !chat.locked() {
@@ -497,7 +552,14 @@ impl AppState {
 
     pub fn chat_control(&mut self, cx: &mut Cx<'_, Msg>, control: Control) {
         match control {
-            Control::Stop => return self.stop_conversation(cx, None),
+            Control::Stop => {
+                // The turn the button was drawn for: the same check as the working line's Stop.
+                let expected = self.tabs.shown().and_then(|t| t.pane.as_ref()).and_then(|p| p.chat.stop_turn);
+                if expected.is_some() {
+                    self.stop_conversation(cx, expected);
+                }
+                return;
+            }
             Control::Detail(hit) => return self.detail_control(hit),
             Control::Shells => {
                 self.select_shell(None);
@@ -510,6 +572,15 @@ impl AppState {
                 if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.as_ref().is_some_and(|p| p.chat.enabled))
                 {
                     super::question::press(tab, cx.now(), hit);
+                }
+                return self.arm_chat_tick(cx);
+            }
+            Control::SendQueued => {
+                // As Send: read the newest screen before the checks.
+                self.term_woke(cx);
+                if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.as_ref().is_some_and(|p| p.chat.enabled))
+                {
+                    AppState::chat_send_queued(tab, cx.now());
                 }
                 return self.arm_chat_tick(cx);
             }
@@ -579,6 +650,9 @@ impl AppState {
             Control::Open if chat.drawer == Drawer::Closed => chat.open_drawer(),
             Control::Open => chat.drawer_focus = true,
             Control::Screen(hit) => super::terminal_card::press(chat, hit, cx.now()),
+            // A window too narrow for the panel cannot show it: the click is not taken as a choice
+            // that would keep the panel closed (or open) once the window is wide again.
+            Control::Panel if !chat.layout.panel_room => {}
             Control::Panel => {
                 // The user's own choice: it holds whatever the panel has to show.
                 chat.side_choice = Some(chat.side_hidden);
@@ -596,6 +670,9 @@ impl AppState {
                 }
             }
             Control::MoreChips => chat.chip_page = (chat.chip_page + 1) % chat.attachment_pages(),
+            Control::ShellMode => {
+                chat.leave_shell();
+            }
             Control::Attach if !chat.locked() => self.chat_attach_menu(),
             Control::CancelSend => chat.stop_waiting(),
             Control::Send | Control::Override | Control::SendNow
@@ -823,6 +900,6 @@ impl Chat {
 
     pub(super) fn editor_point(&self, x: f32, y: f32) -> (f32, f32) {
         let rect = self.layout.editor;
-        (x - rect.x - 8.0, y - rect.y)
+        (x - rect.x - super::composer::editor_left(self.shell_mode), y - rect.y)
     }
 }

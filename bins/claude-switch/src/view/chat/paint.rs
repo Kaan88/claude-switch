@@ -33,9 +33,13 @@ impl AppState {
         let chat = &mut pane.chat;
         chat.shell_count = pane.model.running_shells();
         // The panel opens when it has a first section to show and closes when none is left,
-        // unless the user opened or closed it.
-        chat.details.refresh_all(&pane.model, &pane.cwd);
-        chat.side_hidden = !chat.side_choice.unwrap_or_else(|| chat.details.has_sections(&pane.model));
+        // unless the user opened or closed it. Its lists are brought up to date only while it
+        // shows.
+        let (details, model, cwd) = (&mut chat.details, &pane.model, &pane.cwd);
+        chat.side_hidden = !chat.side_choice.unwrap_or_else(|| details.wants_panel(model, cwd));
+        if !chat.side_hidden {
+            chat.details.refresh_all(&pane.model, &pane.cwd);
+        }
         let running = chat.shell_count != 0;
         let reveal = matches!(chat.side, Side::Shells | Side::Outputs);
         let (panel, drawer, chips, notice) = (
@@ -107,7 +111,8 @@ impl AppState {
         let chat = &mut pane.chat;
         // The box grows with the draft: wrap it at the box's width, then lay out for its rows.
         let before = chat.editor.rows.len();
-        chat.editor.flow(p, composer::editor_text_width(chat.layout.editor), chat.layout.editor.h);
+        let width = composer::editor_text_width(chat.layout.editor, chat.shell_mode);
+        chat.editor.flow(p, width, chat.layout.editor.h);
         if chat.editor.rows.len() != before {
             self.layout_chat(area);
         }
@@ -129,13 +134,24 @@ impl AppState {
         let asking = chat.question.visible() && !chat.question.only_denials();
         let waiting = pane.ui.working().is_some_and(|w| super::question::waits_for_user(&w.label));
         pane.ui.hide_working(asking && waiting);
-        // Stop is the composer's: on Send while a turn runs, dimmed while its checks fail.
+        // Stop is the composer's: beside Send while a turn runs, dimmed while its checks fail.
         let info = &pane.model.chat;
         let running = chat.last_gate == Some(super::Gate::Running) || pane.ui.working().is_some() && !waiting;
         let stop_ready = pane.ui.working().is_some_and(|w| w.stop.is_some())
             || chat.last_gate == Some(super::Gate::Running) && chat.can_stop(info);
         let stop = running.then_some(stop_ready);
+        // The turn this Stop is drawn for: a click stops that turn only, never one that started
+        // since (the working line's Stop carries its turn the same way).
+        chat.stop_turn = if stop_ready && running {
+            pane.ui
+                .working()
+                .and_then(|w| w.stop)
+                .or_else(|| info.prompt.map(|prompt| crate::view::working::Turn(info.generation, prompt)))
+        } else {
+            None
+        };
         pane.ui.set_offer(chat.question.background_inline());
+        pane.ui.set_queued(chat.queued_shown());
         // An empty conversation: the greeting of a new session (drawn below), or a quiet line
         // while there is nothing to read yet.
         let welcome = l.greeting.h > 0.0 && !docked;
@@ -144,8 +160,9 @@ impl AppState {
             _ if chat.identity_unverified => Some("The conversation appears here when its transcript is available."),
             _ => Some("Reading the conversation…"),
         });
-        // With the panel closed the working line shows the task list's progress.
-        pane.ui.show_progress(l.side.w <= 0.0);
+        // With the panel closed the working line shows the task list's progress, which opens it;
+        // not where the window has no room for the panel (the click could not show it).
+        pane.ui.show_progress(l.side.w <= 0.0 && l.panel_room);
         // The pending call the card asks about has not started: its line says it waits.
         let own = asking && chat.question.answerable.is_some() && chat.question.answerable == info.pending;
         pane.ui.set_awaiting(super::question::pending(&pane.model).filter(|_| own).map(|p| p.item));
@@ -166,6 +183,10 @@ impl AppState {
             // "2 of 3" on the working line opens the panel, as its own button does.
             self.hits.push((r, Target::Chat(Control::Panel)));
         }
+        if let Some(r) = pane.ui.queued_rect() {
+            // Send now under the messages waiting in Claude Code's queue.
+            self.hits.push((r, Target::Chat(Control::SendQueued)));
+        }
         if let Some(r) = pane.ui.offer_rect() {
             // "Run in background" on the command's line: the same click as the card's button.
             self.hits.push((r, Target::Chat(Control::Question(super::question::Hit::Background))));
@@ -173,6 +194,13 @@ impl AppState {
         frame.0 = pane.ui.scroll_deadline();
         if pane.ui.animating() && motion {
             frame.1 = Some(l.conversation);
+        }
+        // Where the command's line could not show "Run in background", the card offers it: laid
+        // out in the next frame, which is asked for at once.
+        let inline = pane.ui.offer_drawn();
+        if chat.question.offer_inline != inline {
+            chat.question.offer_inline = inline;
+            frame.1 = Some(area);
         }
         let mut hit = |p: &mut Painter, r, label: &str, control, selected| {
             let target = Target::Chat(control);
@@ -243,6 +271,10 @@ impl AppState {
         chat.question.colours = Some(diff);
         super::question::Draw { pal, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
         super::terminal_card::draw(chat, p, pal, scheme, hover, &mut self.hits);
+        if std::mem::take(&mut chat.question.relayout) {
+            // The card was measured at another scale: the next frame lays it out at this one.
+            frame.1 = Some(area);
+        }
         if details_active {
             self.hits.extend(detail_hits);
         }

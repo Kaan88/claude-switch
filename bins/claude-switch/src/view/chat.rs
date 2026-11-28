@@ -10,11 +10,13 @@ mod layout;
 mod paint;
 mod popups;
 pub(super) mod question;
+mod queued;
 #[cfg(test)]
 pub(crate) mod readme_shots;
 mod recall;
 mod rename;
 mod screen_report;
+mod shell;
 mod shortcuts;
 #[cfg(test)]
 mod shots;
@@ -31,6 +33,7 @@ pub use layout::Layout;
 pub use paint::STRIP_RESERVE;
 pub use paint::strip_button;
 pub(crate) use rename::PROMPT_WAIT as RENAME_PROMPT_WAIT;
+pub(in crate::view) use queued::Shown as QueuedShown;
 pub use shortcuts::MenuMode;
 
 use std::path::PathBuf;
@@ -226,10 +229,18 @@ pub struct Chat {
     editor_words: Option<std::ops::Range<usize>>,
     chips: Vec<Chip>,
     chip_page: usize,
+    /// The draft is a command for Claude Code's shell mode (`!`, `shell.rs`).
+    shell_mode: bool,
     recall: recall::Recall,
     error: Option<&'static str>,
     retry: Option<Intent>,
     queue: Option<Queue>,
+    /// Messages sent into a running turn that Claude Code keeps in its queue, until the
+    /// transcript shows them handed in (`queued.rs`), and when Send now's keys went.
+    queued: Vec<queued::Queued>,
+    send_now: Option<Instant>,
+    /// What the last refused Send now said, which its next success takes back.
+    send_now_refused: Option<&'static str>,
     image_wait: Option<ImageWait>,
     staging: submission::Staging,
     commands: commands::Picker,
@@ -256,6 +267,8 @@ pub struct Chat {
     /// A message or command Chat submitted: the output it was written after, and when.
     sent: Option<(u64, Instant)>,
     last_gate: Option<Gate>,
+    /// The turn the composer's Stop was last drawn for: its click stops that turn only.
+    stop_turn: Option<crate::view::working::Turn>,
     demo: bool,
     demo_progress: bool,
     #[cfg(test)]
@@ -527,6 +540,7 @@ impl Chat {
     /// `end` is the followed transcript's length then: only records after it count as new.
     pub(super) fn followed(&mut self, info: &ChatInfo, end: u64) {
         self.interrupt_submission();
+        self.forget_queued();
         self.first_sent = false;
         self.stopped = None;
         self.pending = None;
@@ -593,6 +607,14 @@ impl Chat {
         before != (self.drawer, self.reason)
     }
 
+    /// The transcript's pending call runs: the screen shows the CLI's working line, and the call
+    /// has been pending for a moment (a permission prompt is drawn as soon as it is written).
+    pub(super) fn call_running(&self, term: &crate::term::Term, now: Instant) -> bool {
+        !self.demo
+            && submission::screen::working(&term.screen)
+            && self.pending.is_some_and(|(_, at)| now.saturating_duration_since(at) >= QUIET)
+    }
+
     fn can_stop(&self, info: &ChatInfo) -> bool {
         self.reason.is_none() && self.fresh_turn_to_stop(info)
     }
@@ -617,6 +639,7 @@ impl Chat {
             && !self.first_sent
             && self.queue.is_none()
             && self.waiting().is_none()
+            && !self.question.asks(model)
     }
 
     pub(super) fn is_demo(&self) -> bool {

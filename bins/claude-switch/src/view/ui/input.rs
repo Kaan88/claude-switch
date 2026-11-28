@@ -366,7 +366,7 @@ impl Ui {
             Action::CopyMessage(id) => {
                 // As the right-click menu's Copy message: the text as shown.
                 let text = self.rows.iter().find(|r| r.id == Id::Message(id)).and_then(|r| r.body.as_ref());
-                if let Some(text) = text.map(|b| b.text().to_owned())
+                if let Some(text) = text.map(|b| crate::view::preview::copyable(b.text()).into_owned())
                     && platform::set_clipboard_text(&text)
                 {
                     self.copied = Some(text);
@@ -586,7 +586,7 @@ mod tests {
                     false,
                 );
                 // Chat keeps room beside the column for the composer's box, which is wider.
-                let available = width - 2.0 * CHAT_PAD - GUTTER;
+                let available = width - 2.0 * super::chat_pad(width) - GUTTER;
                 let expected = match reading {
                     Reading::Narrow => available.min(560.0),
                     Reading::Medium => available.min(720.0),

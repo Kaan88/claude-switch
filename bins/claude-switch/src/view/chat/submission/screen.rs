@@ -218,6 +218,18 @@ pub(in crate::view::chat) fn working(screen: &Screen) -> bool {
         || (row.saturating_sub(5)..row).any(|i| crate::view::working::working_row(&screen.row_text(i)))
 }
 
+/// Claude Code shows messages waiting in its queue and names Ctrl+X Ctrl+S as the key that sends
+/// them now: the row under them reads "⎿  Queued · ctrl+x ctrl+s to send now" (2.1.332, also
+/// without Unicode), a few rows above the input, over the working line.
+pub(in crate::view::chat) fn send_now_offered(screen: &Screen) -> bool {
+    let row = screen.cursor().row;
+    (row.saturating_sub(10)..row).any(|i| {
+        let text = screen.row_text(i);
+        let text = text.trim().trim_start_matches(['⎿', ' ']);
+        text.trim_end() == "Queued · ctrl+x ctrl+s to send now"
+    })
+}
+
 pub(super) fn interrupted(screen: &Screen) -> bool {
     let row = screen.cursor().row;
     (row.saturating_sub(5)..row)

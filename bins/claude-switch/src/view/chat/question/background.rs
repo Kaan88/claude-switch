@@ -283,13 +283,15 @@ impl Card {
     }
 }
 
-/// The card's height for the background controls, without its padding, field and status rows.
+/// The height of the background controls' card inside its padding.
 pub(super) fn height(card: &Card) -> Option<f32> {
-    // The offer alone is on the command's line in the conversation, not in a card.
-    let offered = card.background.is_some() && card.background_inline().is_none();
-    let shell = if offered { LINE + 6.0 } else { 0.0 };
+    // The offer alone is on the command's line in the conversation, not in a card; while that
+    // line is out of view (scrolled away, folded into a group) the card offers it.
+    let inline = card.background_inline().is_some() && card.offer_inline;
+    let offered = card.background.is_some() && !inline;
+    let shell = if offered { LINE + 8.0 } else { 0.0 };
     let agents = card.agents.len() as f32 * (CHOICE + 4.0);
-    (offered || !card.agents.is_empty()).then_some(HEADER + shell + agents)
+    (offered || !card.agents.is_empty()).then_some(cards::HEAD + 10.0 + shell + agents + 4.0 + cards::FOOT)
 }
 
 impl Draw<'_> {
@@ -301,31 +303,22 @@ impl Draw<'_> {
         let shell = card.background.clone();
         let mut y = inner.y;
         let title = if shell.is_some() { "Running a shell command" } else { "Background agents" };
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, title, pal.muted, inner.w);
-        y += HEADER;
+        self.head(p, hits, Rect::new(inner.x, y, inner.w, cards::HEAD), title, ("", ""), "", false);
+        y += cards::HEAD + 10.0;
         if let Some(shell) = &shell {
-            p.text(Face::Mono, 11.5, inner.x, y + LINE / 2.0, &shell.command, pal.text, inner.w);
-            y += LINE + 6.0;
+            p.text(Face::Mono, 12.0, inner.x, y + LINE / 2.0, &shell.command, pal.text, inner.w);
+            y += LINE + 8.0;
         }
         for (i, agent) in card.agents.iter().enumerate() {
             let row = Rect::new(inner.x, y, inner.w, CHOICE);
             let label = format!("{} · {}", agent.name, agent.description);
-            p.text(Face::Ui, 12.0, row.x, row.cy(), &label, pal.text, (row.w - 130.0).max(0.0));
-            let r = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
-            let target = Target::Chat(Control::Question(Hit::StopAgent(i)));
-            super::super::paint::button(p, pal, r, "Stop agent", self.hover == Some(target), false);
-            hits.push((r, target));
+            let w = self.plain(p, hits, row.right() + 8.0, row.cy(), "Stop agent", Hit::StopAgent(i), true);
+            p.text(Face::Ui, 12.5, row.x, row.cy(), &label, pal.text, (row.w - w - 8.0).max(0.0));
             y += CHOICE + 4.0;
         }
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
+        y += 4.0;
         let status = card.error.or_else(|| chat.question_notice()).unwrap_or("");
-        let room = if shell.is_some() { 160.0 } else { 0.0 };
-        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - room).max(0.0));
-        if shell.is_some() {
-            let r = Rect::new(row.right() - 150.0, row.y, 150.0, row.h);
-            let target = Target::Chat(Control::Question(Hit::Background));
-            super::super::paint::button(p, pal, r, "Run in background", self.hover == Some(target), false);
-            hits.push((r, target));
-        }
+        let right: &[(&str, Hit)] = if shell.is_some() { &[("Run in background", Hit::Background)] } else { &[] };
+        self.foot(p, hits, Rect::new(inner.x, y, inner.w, cards::FOOT), &[], status, right);
     }
 }

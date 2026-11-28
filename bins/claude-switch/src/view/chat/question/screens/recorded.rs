@@ -108,6 +108,10 @@ pub(in crate::view::chat) const PLAIN_SUGGEST: &str = include_str!("../fixtures/
 pub(in crate::view::chat) const WORKING_TOOL: &str = include_str!("../fixtures/working_tool.ansi");
 pub(in crate::view::chat) const PLAIN_WORKING_TYPED: &str = include_str!("../fixtures/plain_working_typed.ansi");
 pub(in crate::view::chat) const PLAIN_QUEUED: &str = include_str!("../fixtures/plain_queued.ansi");
+/// Two messages in Claude Code's queue while a command runs, and right after Ctrl+X Ctrl+S sent
+/// them (recorded 2026-11-28 from Claude Code 2.1.332, `recorder compat` script `queued-now`).
+pub(in crate::view::chat) const QUEUED_TWO: &str = include_str!("../fixtures/queued_two.ansi");
+pub(in crate::view::chat) const QUEUED_NOW_SENT: &str = include_str!("../fixtures/queued_now_sent.ansi");
 pub(in crate::view::chat) const DECLINED_WRAPPED: &str = include_str!("../fixtures/declined_wrapped.ansi");
 pub(in crate::view::chat) const STATUS_FOOTER: &str = include_str!("../fixtures/status_footer.ansi");
 pub(in crate::view::chat) const PLAIN_INTERRUPTED: &str = include_str!("../fixtures/plain_interrupted.ansi");

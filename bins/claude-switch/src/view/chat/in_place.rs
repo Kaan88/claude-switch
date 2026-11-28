@@ -78,7 +78,7 @@ impl AppState {
                 if !shown || !pane.chat.enabled || pane.chat.locked() || pane.chat.error.is_some() {
                     return Step::Wait; // The gate's own retry clears a refusal once the prompt is idle.
                 }
-                if !pane.chat.editor.text.trim().is_empty() || !pane.chat.chips.is_empty() {
+                if pane.chat.has_draft() {
                     // A draft would become the cleared session's first message: never /clear under
                     // it; wait for it to go (the deadline says why if it stays).
                     return Step::Wait;
@@ -135,7 +135,7 @@ impl AppState {
                 if !shown || !chat.enabled || chat.locked() || chat.error.is_some() {
                     return Step::Wait;
                 }
-                if !chat.editor.text.trim().is_empty() || !chat.chips.is_empty() {
+                if chat.has_draft() {
                     return Step::Wait; // Never replace the user's draft; the deadline says why.
                 }
                 let prompt = tab.in_place.as_ref().map(|j| j.prompt.clone()).unwrap_or_default();
@@ -316,6 +316,12 @@ mod tests {
         assert_eq!(r.chat().editor.text, "A draft of mine");
         assert!(r.chat().writes.is_empty());
         r.chat().editor.set(String::new());
+        // Nor is shell mode turned on with no command yet: the handover would have gone as a
+        // shell command, refused as several lines, with the session already cleared.
+        r.chat().shell_mode = true;
+        assert!(!r.st.in_place_tick(now));
+        assert!(r.chat().editor.text.is_empty() && r.chat().writes.is_empty() && r.chat().shell_mode);
+        r.chat().shell_mode = false;
 
         // 3. The handover as the new session's genuine first message: an ordinary Send of several
         // lines, staged until the input line shows them, then entered by the gate.

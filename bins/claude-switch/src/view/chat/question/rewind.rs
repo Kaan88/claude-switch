@@ -21,6 +21,8 @@ use super::*;
 /// How long after the first Esc the second one goes; the CLI takes two within about a second, so
 /// a second Esc that cannot go within `ESC_LATEST` of the first stops the rewind instead.
 const ESC_GAP: Duration = Duration::from_millis(150);
+/// What the card says while a rewind's keys are on their way.
+const REWINDING: &str = "Rewinding in Claude Code…";
 const ESC_LATEST: Duration = Duration::from_millis(600);
 
 /// The menu was opened over a subagent's transcript: its prompts are not the session's.
@@ -455,64 +457,68 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
     true
 }
 
-/// The card's height for a rewind, without its padding, field and status rows.
+/// The height of a rewind's card inside its padding: its head, prompt, the CLI's choices for it
+/// while they show, a note and the foot.
 pub(super) fn height(rewind: &Rewind) -> f32 {
     let actions = rewind.actions.as_ref().filter(|_| rewind.choosing());
     let rows = actions.map_or(0, |a| a.body.len().min(BODY_LINES + 2));
     let choices = actions.map_or(0, |a| a.choices.len());
+    let list = if choices > 0 { choices as f32 * cards::CHOICE_ROW + 10.0 } else { 0.0 };
     let note = if rewind.note.is_some() { LINE } else { 0.0 };
-    HEADER + LINE + 6.0 + rows as f32 * LINE + choices as f32 * (CHOICE + 4.0) + note
+    cards::HEAD + 10.0 + LINE + 8.0 + rows as f32 * LINE + list + note + cards::FOOT
 }
 
 impl Draw<'_> {
-    /// The rewind: its prompt, then the CLI's choices for it as buttons while they show.
+    /// The rewind: its prompt, then the CLI's choices for it while they show.
     pub(super) fn rewind(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, hits: &mut Vec<(Rect, Target)>) {
         let pal = self.pal;
         let Some(rewind) = chat.question.rewind.clone() else { return };
         let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, "Rewind to before", pal.muted, inner.w);
-        y += HEADER;
+        self.head(p, hits, Rect::new(inner.x, y, inner.w, cards::HEAD), "Rewind to before", ("", ""), "", false);
+        y += cards::HEAD + 10.0;
         let prompt = collapse(&rewind.prompt);
-        p.text(Face::Semibold, 12.5, inner.x, y + LINE / 2.0, &prompt, pal.text, inner.w);
-        y += LINE + 6.0;
+        p.text(Face::Semibold, 13.5, inner.x, y + LINE / 2.0, &prompt, pal.text, inner.w);
+        y += LINE + 8.0;
         if let Some(actions) = rewind.actions.as_ref().filter(|_| rewind.choosing()) {
             for row in actions.body.iter().take(BODY_LINES + 2) {
-                copied_row(p, Face::Ui, 11.5, inner.x, y + LINE / 2.0, row, pal.muted, inner.w);
+                copied_row(p, Face::Ui, 12.0, inner.x, y + LINE / 2.0, row, pal.muted, inner.w);
                 y += LINE;
             }
-            for (i, choice) in actions.choices.iter().enumerate() {
-                let row = Rect::new(inner.x, y, inner.w, CHOICE);
-                let target = Target::Chat(Control::Question(Hit::Option(i)));
-                p.rbox(row, 6.0, if self.hover == Some(target) { pal.hover } else { pal.bar });
-                let label = format!("{}. {choice}", i + 1);
-                p.text(Face::Semibold, 12.0, row.x + 10.0, row.cy(), &label, pal.text, row.w - 20.0);
-                hits.push((row, target));
-                y += CHOICE + 4.0;
+            let rows: Vec<cards::Choice> = actions
+                .choices
+                .iter()
+                .enumerate()
+                .map(|(i, choice)| cards::Choice {
+                    number: Some(i + 1),
+                    label: choice.clone(),
+                    note: String::new(),
+                    hit: Hit::Option(i),
+                    on: false,
+                })
+                .collect();
+            if !rows.is_empty() {
+                y += self.choices(p, hits, inner.x, y, inner.w, &rows, true, cards::Density::Plain) + 10.0;
             }
         }
         if let Some(note) = rewind.note {
-            p.text(Face::Ui, 11.5, inner.x, y + LINE / 2.0, note, pal.muted, inner.w);
+            p.text(Face::Ui, 12.0, inner.x, y + LINE / 2.0, note, pal.muted, inner.w);
             y += LINE;
         }
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
-        let status = rewind.error.or_else(|| rewind.in_flight().then_some(WAITING)).unwrap_or("");
-        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - 250.0).max(0.0));
-        let mut x = row.right();
-        let mut button = |label: &str, hit: Hit, w: f32| {
-            x -= w;
-            let r = Rect::new(x, row.y, w, row.h);
-            let target = Target::Chat(Control::Question(hit));
-            super::super::paint::button(p, pal, r, label, self.hover == Some(target), false);
-            hits.push((r, target));
-            x -= 8.0;
-        };
-        if rewind.choosing() {
-            button("Cancel", Hit::Escape, 80.0);
-        }
+        let status =
+            rewind.error.or_else(|| rewind.in_flight().then_some(REWINDING)).or(self.typed(chat)).unwrap_or("");
+        let mut right = Vec::new();
         if rewind.failed() {
-            button("Close", Hit::Close, 70.0);
-            button("Open terminal", Hit::Open, 120.0);
+            right.extend([("Open terminal", Hit::Open), ("Close", Hit::Close)]);
         }
+        if rewind.choosing() {
+            right.push(("Cancel (Esc)", Hit::Escape));
+        }
+        self.foot(p, hits, Rect::new(inner.x, y, inner.w, cards::FOOT), &[], status, &right);
+    }
+
+    /// The hint a card shows once a key went nowhere while it stands in the composer's place.
+    fn typed(&self, chat: &Chat) -> Option<&'static str> {
+        chat.question.typed_hint()
     }
 }
 

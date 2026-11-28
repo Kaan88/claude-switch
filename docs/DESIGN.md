@@ -1546,8 +1546,39 @@ stop it. Such a send leaves the turn as the transcript shows it (Claude Code rec
 that turn, never as a new prompt), so Stop stays available. Whether a send goes into a running turn
 is read from the gate when its first key is written, not from the button: Send now into an idle
 input (no turn, or one that ended while the draft waited) is an ordinary send.
+A call the turn runs does not hold the message back once the screen shows the CLI's working line
+and the call has been pending for 750 ms (a permission prompt is drawn as soon as its call is
+written): Claude Code queues a message typed during a running command as at any other moment of
+the turn (decided 2026-11-28 with queued messages, below). Within that moment the draft is held,
+and goes into the turn by itself, under Send now's checks, once the call counts as running (or as
+an ordinary send if the turn ends first). While a call is pending a message that a prompt drawn in
+the same instant would take as its answer (one character, or a number of up to three digits) is
+held until no call is pending. A command or the override is then refused as during any running turn, not as an answer
+Claude Code may wait for: a permission question has no input box and is read first.
 While messages wait in Claude Code's queue its input reads empty ("Press up to edit queued
-messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332). A draft that only has to wait is held, not
+messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332).
+**Queued messages.** A message whose Enter went into a running turn waits in Claude Code's queue
+(the screen shows it with "⎿ Queued · ctrl+x ctrl+s to send now" under the queue) until Claude
+Code hands it to the turn at its next step, recorded as a `queued_command` (a prompt "during a
+turn"), or sends it as the next prompt when the turn ends or is stopped. Until the transcript
+shows it, Chat shows each such message as a quiet bubble at the end of the conversation, in the
+order it was sent, with "Queued — waiting for its turn" under it (`chat/queued.rs`). A bubble goes
+with the first prompt after its Enter (the transcript's length then) that reads the same,
+spacing aside (or the same after attached paths or a picture's marker), each prompt taken by one
+bubble in order; at an idle input Claude Code's queue is empty and what is left goes; another
+session's transcript or an ended program forgets them. Under the bubbles,
+**Send now** (Send all now for several: Claude Code hands its whole queue in at once) writes
+Claude Code's own `chat:sendNow` key, Ctrl+X Ctrl+S, the key the screen names. With its input
+empty it hands every queued message to the running turn at once, moving a running command to the
+background (its call's result says so) and stopping nothing (recorded 2026-11-28 from 2.1.332,
+`recorder compat` script `queued-now`; Ctrl+Enter is bound to the same action but a terminal
+cannot always tell it from Enter, and Ctrl+X Enter is `chat:queueSubmit`). Chat writes those two
+keys only while the screen names them under the queue, the gate reads the turn running with no
+card, prompt or menu up, the input reads empty (with text on it the same key sends that text too)
+and no other keys of Chat's are on their way; it never types a queued message again or takes one
+off the queue. While the keys' result is not in the transcript the button reads "Sending now…"
+and takes no click, for five seconds at most. A draft held in the box (above) is not in Claude
+Code's queue and has no bubble. A draft that only has to wait is held, not
 refused: a running turn whose input does not read empty, a prompt the CLI is still
 drawing, a command's output, a new chat's transcript, a picture while the input is not empty. It is
 locked (text and attachments) until it sends or is cancelled, and goes out by itself, also in a
@@ -1636,8 +1667,20 @@ output that moves the cursor or clears the screen still reads top to bottom); li
 the box wrap; selection and Copy give the grid's plain text. The Session view draws it the same
 way. Without the escaped copy (older records) the plain text is drawn in the same grid. They never count as pending calls. Interactive panels that print their
 result the same way (`/context`, `/usage`, `/config`, `/mcp`) get the same row; a command that
-printed nothing shows no row and does not lend its name to the next output. The composer has no `!`
-toggle: whether a pasted `!` enters the CLI's shell mode is unverified.
+printed nothing shows no row and does not lend its name to the next output. `!` typed into the
+empty box turns the composer to shell mode, as in Claude Code (a `!` mark before the text; Backspace
+in the empty box or a click on the mark leaves it). The command goes as `!command` pasted into an
+idle input only, one line and no attachments, and Enter only once the cursor's row reads
+`! command`: Claude Code 2.1.332's source switches an empty input to shell mode when text starting
+with `!` reaches it, but how the screen shows that is not recorded yet (`recorder compat` script
+`shell-paste`). Without that row nothing more goes and the text-on-the-input notice shows
+(`chat/shell.rs`). The mode ends with the send. A command that wraps is read over its rows, from
+the `!` row down to the cursor's (no rule between), spacing aside. A draft whose text starts with
+`!` (pasted, recalled, set by code) turns the box to shell mode with the `!` as its mark, as Claude
+Code would take it; one sent that way is first shown so, with a notice, and goes on the next Send.
+Shell mode with no command yet counts as a draft: the in-place handover, text a card leaves for
+the box and a message given back after a stop wait for it; the suggested next prompt and a start
+under a new session's box (clicks of the user's) leave it.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
 from the selected account, the launch folder’s `.claude` directory, and installed plugin caches.
@@ -1861,7 +1904,9 @@ ago, and while the screen still shows that list; Esc that only closes needs no w
 longer than eight rows or wider than the card is shown cut, with no button to mark that call. A
 list Chat cannot read (a call's row that wraps, a mark it does not know) shows as rows only, with
 Close while Esc just closes and Open terminal otherwise. The dialog's other tabs (Allow, Ask,
-Deny, Auto mode, Workspace) are read-only panels in Chat: changing a rule is the terminal's.
+Deny, Auto mode, Workspace) are read-only panels in Chat: changing a rule is the terminal's. While another card has the card's place (a question, a permission prompt, a menu), the
+count stays in view on a line of that card over what it asks, in the warning colour; the list comes
+back with the strip once that card is gone.
 
 A card answers ahead of a queued draft: the queue waits for the turn to end, which waits for the
 answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer
@@ -2015,11 +2060,11 @@ expected. `tools/screen-recorder/README.md` ("After a Claude Code update") says 
 failure and what to do. Its first run found that the second of two prompts was not recognised,
 which the fixtures had not shown. It also checks what Chat reads from Claude Code's files and
 flags: messages sent while a turn runs as the transcript records them, what Esc does with messages
-waiting in Claude Code's queue, thinking shown as updates, and branches cut at a turn's end resumed
-under their new ids in print mode and in the terminal (scripts `queued`, `queued-text`,
-`queued-esc` and `branch`), a new handover session reading its file without a prompt and a
-command left typed on the input taken off with Ctrl+U (script `handover`), and a handover-sized
-paste shown on the input in time (script `long-paste`).
+waiting in Claude Code's queue and its own Send now for them, thinking shown as updates, and
+branches cut at a turn's end resumed under their new ids in print mode and in the terminal
+(scripts `queued`, `queued-text`, `queued-esc`, `queued-now` and `branch`), a new handover session
+reading its file without a prompt and a command left typed on the input taken off with Ctrl+U
+(script `handover`), and a handover-sized paste shown on the input in time (script `long-paste`).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat

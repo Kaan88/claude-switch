@@ -110,12 +110,7 @@ impl Ui {
     pub(super) fn selected_text(&self) -> Option<String> {
         let text = self.selection.as_ref()?.text(&self.rows);
         // The room kept above a code block for its header is not text.
-        let spacer = crate::view::preview::SPACER;
-        let text = if text.contains(spacer) {
-            text.split('\n').filter(|line| *line != spacer).collect::<Vec<_>>().join("\n")
-        } else {
-            text
-        };
+        let text = crate::view::preview::copyable(&text).into_owned();
         (!text.is_empty()).then_some(text)
     }
 
@@ -224,7 +219,7 @@ impl Ui {
         };
         match id {
             COPY => self.selected_text(),
-            COPY_MESSAGE => message().map(|b| b.text().to_owned()),
+            COPY_MESSAGE => message().map(|b| crate::view::preview::copyable(b.text()).into_owned()),
             COPY_MARKDOWN => message().map(|b| b.raw().to_owned()),
             _ => {
                 self.select_all();

@@ -154,6 +154,14 @@ check those too:
   `<local-command-stdout>` with the colour codes (SGR) of its grid, which Chat draws as the
   terminal does (command output in the grid renderer); output without them would show as plain
   text.
+- `queued-now`: two messages waiting in Claude Code's queue, then Ctrl+X Ctrl+S (Chat's Send now
+  on a queued message). The screen names that key under the queue ("Queued · ctrl+x ctrl+s to
+  send now"); the key hands both to the running turn at once (moving the running command to the
+  background) and stops nothing: the transcript records both as messages during the turn, in
+  order, and the turn stays the first prompt's.
+- `shell-paste`: `!echo shellcheck` pasted into the empty input, as the composer's `!` toggle sends
+  a command, then Enter. Not recorded yet: whether the input then shows shell mode as
+  `! echo shellcheck` on the cursor's row, which Chat waits for before Enter.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),

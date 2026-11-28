@@ -3,6 +3,7 @@ use mdshared_ui::tokens::legible;
 
 use super::rows::{CHIP_H, Thumb, chip_rect, chips_height, thumb_rect, thumbs_height};
 use super::*;
+use crate::view::preview::code_ground;
 
 impl Ui {
     pub(super) fn conversation_footer(&mut self, p: &mut Painter, pal: &Palette, r: Rect, visible: bool, main: bool) {
@@ -172,7 +173,7 @@ impl Ui {
                 }
                 // A diff's lines are never wrapped: its row cuts them.
                 let cut = (row.style == Style::Edit).then(|| p.clip(Rect::new(tx, py, geo.tw, text.height())));
-                text.draw(p, Rect::new(tx, py, geo.tw, text.height()), body, range, pal, &mut self.grid);
+                text.draw(p, Rect::new(tx, py, geo.tw, text.height()), body, range.clone(), pal, &mut self.grid);
                 if let Some(cut) = cut {
                     p.restore(cut);
                 }
@@ -191,14 +192,19 @@ impl Ui {
                         // Drawn as the renderer draws its box: a hairline of one device pixel.
                         let frame = Rect::new(head.x, head.y, head.w, head.h + lap);
                         p.rbox(frame, 6.0, pal.line);
-                        p.rbox(frame.inset(p.px()), (6.0 - p.px()).max(0.0), pal.field);
+                        p.rbox(frame.inset(p.px()), (6.0 - p.px()).max(0.0), code_ground(pal));
                         // The seam: the box's own top edge and corners, and this frame's lower edge.
-                        p.fill(Rect::new(head.x + p.px(), box_top - 1.0, head.w - 2.0 * p.px(), lap + 1.0), pal.field);
+                        let seam = Rect::new(head.x + p.px(), box_top - 1.0, head.w - 2.0 * p.px(), lap + 1.0);
+                        p.fill(seam, code_ground(pal));
                         let lang = if block.lang.is_empty() { "text" } else { block.lang };
-                        if !block.lang.is_empty() {
+                        if !block.lang.is_empty() && range.is_none() {
                             // The renderer's own label in the box's corner: the header has it now.
-                            let w = p.measure(Face::Ui, 12.0, block.lang) + 26.0;
-                            p.fill(Rect::new(head.right() - w - 2.0, box_top + 2.0, w, 22.0), pal.field);
+                            // Covered in the box's own colour (the renderer's `code_bg`, see
+                            // `preview::theme`), and only within the band the renderer keeps free
+                            // of code beside the label (12 px from the edge, 8 px before it), so
+                            // no code is covered; never over a selection in the answer.
+                            let w = p.measure(Face::Ui, 12.0, block.lang) + 19.0;
+                            p.fill(Rect::new(head.right() - w - 1.0, box_top + 2.0, w, 22.0), code_ground(pal));
                         }
                         let cy = head.cy() + 3.0;
                         p.text(Face::Ui, 11.5, head.x + 16.0, cy, lang, pal.muted, (head.w - 110.0).max(0.0));

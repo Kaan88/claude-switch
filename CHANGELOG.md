@@ -47,6 +47,55 @@
 - Chat: when Claude Code moves a tab's conversation to a new session after `/fork` and says so in
   the transcript it leaves, Chat follows it instead of staying on the old conversation; the
   conversation shows there once its transcript is written with the next message.
+- Chat: shell mode turned on with no command yet counts as a draft, so a handover continued in
+  place waits for it instead of being sent as a shell command after `/clear`; a draft that starts
+  with `!` shows as shell mode before it goes; a long shell command that wraps is entered.
+- Chat: a one-character message (or a short number) sent while a call is pending waits for the
+  call, as a prompt drawn the same instant could take it as its answer; a message held in the
+  first moment of a call joins Claude Code's queue once the call runs; queued bubbles go when the
+  program ends, and only a prompt with the same text takes one off.
+
+- Chat: a multi-select question read from the screen shows Claude Code's ticked boxes as the
+  card's own ticks instead of "[√]" in the label, and no longer repeats each label under it; the
+  list of blocked calls marks the call its buttons act on with a bar, not a tick; a rewind on its
+  way says "Rewinding in Claude Code…"; a card too tall for a short window says "Scroll for the
+  choices" while they are below.
+- Chat: the count of permissions denied in the current turn stays in view, on a line over another
+  card that holds the card's place (a question or a permission prompt), instead of disappearing
+  until that card is gone.
+- Chat: `!` typed into the empty message box turns it to Claude Code's shell mode, as in the
+  terminal: the command goes as `!command` and runs in Claude Code's shell (Backspace in the empty
+  box leaves the mode). Enter goes only once Claude Code's input shows the command in shell mode,
+  which is not recorded from a real session yet.
+- Chat: while a command runs, a slash command or "Send anyway" is refused with "a turn is
+  running" instead of "Claude Code may be waiting for your answer in the terminal", which it was
+  not: the screen shows the turn working over an empty input.
+- Chat: messages sent while Claude works wait in Claude Code's queue, and Chat now shows each as a
+  quiet bubble at the end of the conversation ("Queued — waiting for its turn"), in the order sent,
+  until Claude Code hands it in. **Send now** under them uses Claude Code's own key for its queue
+  (Ctrl+X Ctrl+S): every queued message goes to the running turn at once, without stopping it. A
+  message sent while a command runs now goes into that queue too, instead of waiting in the box
+  for the turn to end.
+- Chat: a card taller than its room (a long command in a short window, or with the terminal
+  drawer open) no longer cuts off its choices and foot: it lowers its choices, shortens the
+  command (saying how many lines are left out) and the question, and scrolls what still does not
+  fit, with Open terminal and Esc kept in view. Nothing outside a card takes a click meant for
+  it.
+- Chat: a question on a new session shows at the foot of the window, not in the greeting's place.
+- Chat: a question longer than the card shows says so ("The rest of the question is in the
+  terminal") instead of being cut silently.
+- Chat: "Run in background" shows on the card when the command's own line is scrolled out of view.
+- Chat: Stop keeps its own place beside Send while Claude works, so a click on Send never lands
+  on Stop; Stop only stops the turn it was drawn for.
+- Chat: Escape under a card does what its "Esc to …" button says; a key typed while a card waits
+  says where typing goes.
+- Chat: the task progress on the working line ("2 of 3") is not shown where the window is too
+  narrow for the panel it opens.
+- Chat: copied text no longer carries the invisible character kept above code blocks for their
+  header, and the header no longer covers a selection at the code's top.
+- Chat: the rewind, blocked-calls, background and denied-permissions cards are laid out like the
+  other cards; Chat's side margin narrows to 12 px in a narrow window.
+
 - Handover: Claude Code no longer asks in the terminal whether it may read the handover file. A
   new handover tab may read exactly that one file. A handover that continues in the same tab is
   pasted whole up to 15,000 characters, as before; a longer one is still read from its file, and

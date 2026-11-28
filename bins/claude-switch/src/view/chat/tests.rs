@@ -571,6 +571,7 @@ fn compact_and_clear_only_write_after_confirmation() {
     }
 }
 
+mod redesign;
 mod review;
 
 /// Settings › Chat: the Compact chip runs Switch's handover by default, through the same command

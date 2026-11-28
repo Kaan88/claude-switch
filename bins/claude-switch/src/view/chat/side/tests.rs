@@ -281,6 +281,25 @@ fn a_task_opens_the_newest_plan_update_and_only_when_there_is_one() {
     assert_eq!(open(&model), Some(Action::Jump(newest)));
 }
 
+/// Whether the panel opens by itself is answered from the lists the model keeps; the transcript is
+/// scanned for changed files only while nothing else would open it.
+#[test]
+fn the_panel_scans_for_changed_files_only_while_nothing_else_opens_it() {
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let cwd = demo.cwd();
+    let mut model = Model::new(Source::File(demo.path().into()), cwd.into(), || {});
+    let mut details = Details::default();
+    assert!(!details.wants_panel(&model, cwd), "an empty session has nothing to show");
+    assert_eq!(details.files_revision, Some(model.revision), "scanned, with nothing else to show");
+    model.revision += 1;
+    model.tasks.push(claude_switch_core::transcript::Task {
+        content: "Fix the order".into(),
+        status: claude_switch_core::transcript::TaskStatus::InProgress,
+    });
+    assert!(details.wants_panel(&model, cwd));
+    assert_eq!(details.files_revision, Some(model.revision - 1), "not scanned again for this revision");
+}
+
 /// Chat's panel: one list of sections in place of the tabs. A section shows only when it has
 /// something, its head folds it, and every target says which page it belongs to, so what a tab's
 /// row did is still reachable.

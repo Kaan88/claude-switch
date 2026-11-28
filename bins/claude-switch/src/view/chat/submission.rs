@@ -48,6 +48,8 @@ pub(super) const NOT_EMPTY: &str = "The CLI input line is not visibly empty. Wai
 pub(super) const INPUT_HAS_TEXT: &str =
     "The CLI input line already contains text or an attachment. Check the terminal.";
 pub(super) const MENU_OPEN: &str = "Close the CLI menu in the terminal before sending.";
+pub(super) const ANSWER_LIKE: &str =
+    "A message this short could answer a prompt of the running call: it waits for the call to end.";
 pub(super) const BAD_TEXT: &str = "The draft has unsupported control characters.";
 pub(super) const CHANGED_CLIPBOARD: &str = "The clipboard changed. Paste the picture into Chat again.";
 const IMAGE_TIMEOUT_NOTICE: &str = "No image marker yet. The CLI may hold a picture; check the terminal. Draft kept.";
@@ -222,6 +224,7 @@ impl Chat {
     }
 
     fn submitted(&mut self) {
+        self.shell_mode = false;
         self.error = None;
         self.retry = None;
         self.queue = None;
@@ -232,6 +235,13 @@ impl Chat {
         self.chip_page = 0;
         self.recall.end();
     }
+}
+
+/// A message a permission prompt or menu would take as its answer: one character, or a short
+/// number (digits pick choices).
+fn answer_like(text: &str) -> bool {
+    let text = text.trim();
+    text.chars().count() == 1 || !text.is_empty() && text.len() <= 3 && text.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Why a send of this kind cannot go now; `None` when it can.
@@ -274,11 +284,25 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
             return Some(CHECK);
         }
     }
+    // The transcript's pending call runs where the screen shows the turn working over an empty
+    // input: Claude Code waits for no answer (a permission question has no input box and is read
+    // above), so the refusal says a turn runs, not that Claude Code may wait in the terminal.
+    let call_running = gate == Gate::Running && chat.call_running(&tab.term, now);
     match intent {
+        Intent::Slash if pane.model.chat.pending.is_some() && call_running => Some(BUSY_CMD),
         Intent::Interrupted if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
         Intent::Interrupted if !idle_slash_prompt(&tab.term.screen, chat.quiet(now)) => Some(CHECK),
         Intent::Draft if gate != Gate::Ready => Some(CHECK),
-        Intent::Override | Intent::Now if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
+        // A call the turn runs, which the screen shows running (its working line) and has for a
+        // moment, waits for no answer: a message goes into Claude Code's queue as at any other
+        // time of the turn. One just written may still ask for permission, and Override is for
+        // an input no turn holds.
+        // A prompt drawn the same instant would take a lone `1`, `2` or `y` as its answer.
+        Intent::Now if pane.model.chat.pending.is_some() && answer_like(&chat.editor.text) => Some(ANSWER_LIKE),
+        Intent::Now if pane.model.chat.pending.is_some() && !chat.call_running(&tab.term, now) => {
+            Some(Reason::Tool.label())
+        }
+        Intent::Override if pane.model.chat.pending.is_some() && !call_running => Some(Reason::Tool.label()),
         Intent::Override if gate == Gate::Running => Some("A turn is running. Use Queue to send after it ends."),
         Intent::Now if !chat.demo && !clean_prompt(&tab.term.screen) => Some(NOT_EMPTY),
         Intent::Slash if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
@@ -312,7 +336,10 @@ impl AppState {
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
         let running = || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running;
-        let intent = if !force {
+        let intent = if chat.shell_mode {
+            // A shell command goes into an idle input only, never into a running turn.
+            Intent::Draft
+        } else if !force {
             // While a turn runs, a message goes into Claude Code's visibly empty input at once, as
             // Send now does and as typing in the terminal would: Claude Code hands it to the
             // running turn, and the box is free for the next one. Otherwise it is held.
@@ -347,6 +374,18 @@ impl AppState {
             let pane = tab.pane.as_ref().unwrap();
             pane.chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running
         };
+        // Held only because the running turn's call has just started (a permission prompt may
+        // still be drawn for it): it goes into the turn by itself, under Send now's checks, once
+        // the call counts as running, instead of waiting for the turn's end.
+        let young_call = intent == Intent::Draft && {
+            let pane = tab.pane.as_ref().unwrap();
+            let chat = &pane.chat;
+            chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running
+                && pane.model.chat.pending.is_some()
+                && !chat.call_running(&tab.term, now)
+                && !chat.shell_mode
+                && clean_prompt(&tab.term.screen)
+        };
         let pane = tab.pane.as_mut().unwrap();
         let chat = &mut pane.chat;
         if chat.waiting().is_some() || chat.enter_only() || chat.queue.is_some() && intent == Intent::Draft {
@@ -356,7 +395,28 @@ impl AppState {
             return;
         }
         chat.recall.end();
-        let Some(bytes) = send_bytes(&chat.chips, &chat.editor.text) else {
+        // Text set by code that starts with `!` would reach Claude Code as a shell command: say
+        // so in the box first rather than send it as either.
+        if chat.shell_from_text() {
+            chat.refused(super::shell::BANG, None);
+            return;
+        }
+        let shell_text;
+        let text = if chat.shell_mode {
+            if chat.editor.text.trim().contains('\n') {
+                chat.refused(super::shell::ONE_LINE, None);
+                return;
+            }
+            if !chat.chips.is_empty() {
+                chat.refused(REMOVE_ATTACHMENTS, None);
+                return;
+            }
+            shell_text = format!("!{}", chat.editor.text.trim());
+            shell_text.as_str()
+        } else {
+            chat.editor.text.as_str()
+        };
+        let Some(bytes) = send_bytes(&chat.chips, text) else {
             chat.refused(BAD_TEXT, None);
             return;
         };
@@ -375,7 +435,7 @@ impl AppState {
                 latest: pane.model.chat.latest.map(|x| x.0),
                 stop: None,
                 awaiting: chat.awaiting_transcript,
-                now: false,
+                now: young_call,
             });
             chat.error = None;
             chat.retry = None;
@@ -489,7 +549,11 @@ impl AppState {
                 Some(Err(LINES_TIMEOUT))
             } else if may_write
                 && chat.output_epoch != wait.stamp.epoch
-                && shows_sent(tab, &wait.expected, wait.into_turn)
+                && if wait.shell {
+                    super::shell::shows(&tab.term.screen, &wait.expected)
+                } else {
+                    shows_sent(tab, &wait.expected, wait.into_turn)
+                }
             {
                 Some(Ok(()))
             } else {
@@ -775,7 +839,7 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             chat.refused(TAKEBACK_OTHER, None);
             return true;
         };
-        let box_free = chat.editor.text.trim().is_empty() && chat.chips.is_empty() && chat.queue.is_none();
+        let box_free = !chat.has_draft() && chat.queue.is_none();
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         if box_free {
             let epoch = chat.output_epoch.wrapping_sub(1);
@@ -1111,12 +1175,13 @@ fn finish(tab: &mut Tab, now: Instant, paste: &[u8], completion: Completion, mar
     // (its default is Yes): Enter goes only once the input line shows the text. So it does for
     // several lines (or the CLI's paste marker). The demo has no CLI to show it.
     let into_turn = into_turn && !chat.demo;
-    if expected.contains('\n') || into_turn && matches!(completion, Completion::Message(_)) {
+    let shell = chat.shell_mode && !chat.demo && matches!(completion, Completion::Message(_));
+    if expected.contains('\n') || into_turn && matches!(completion, Completion::Message(_)) || shell {
         let Completion::Message(text) = completion else { unreachable!("commands are one line") };
         chat.error = None;
         chat.retry = None;
         let due = now + ECHO_TIMEOUT;
-        chat.staging.lines = Some(LinesWait { stamp, due, expected, text, picture, into_turn });
+        chat.staging.lines = Some(LinesWait { stamp, due, expected, text, picture, into_turn, shell });
         return;
     }
     submit_enter(tab, EnterOnly { stamp, expected, completion, picture, into_turn });
@@ -1137,12 +1202,22 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
         return;
     }
     let pane = tab.pane.as_mut().unwrap();
+    // Where the transcript ends now: Claude Code records the message only after this Enter.
+    let floor = pane
+        .transcript_end()
+        .unwrap_or_else(|| pane.model.items.keys().next_back().map_or(0, |id| id.offset.saturating_add(1)));
+    let generation = pane.model.chat.generation;
     let chat = &mut pane.chat;
     chat.note_sent();
     match input.completion {
         Completion::Message(_) => {
             chat.first_sent |= chat.awaiting_transcript;
             let (expected, text, picture) = (input.expected, chat.editor.text.clone(), input.picture);
+            if input.into_turn {
+                // Into a running turn Claude Code queues it: Chat shows it waiting until the
+                // transcript has it.
+                chat.note_queued(text.clone(), picture, generation, floor);
+            }
             // One sent at an idle input starts a turn: those before it are done with.
             if !input.into_turn {
                 chat.staging.sent.clear();
@@ -1238,5 +1313,7 @@ pub(super) fn stage_deadline(chat: &Chat, now: Instant) -> Option<Instant> {
 mod identity_tests;
 #[cfg(test)]
 pub(in crate::view::chat) mod ready_tests;
+#[cfg(test)]
+mod running_call_tests;
 #[cfg(test)]
 mod tests;
