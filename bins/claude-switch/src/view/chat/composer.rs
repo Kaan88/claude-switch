@@ -17,8 +17,8 @@ pub(super) struct Draw<'a> {
     pub chips: &'a [Control],
     /// Own command lines by slot; an empty one has no chip.
     pub own: &'a [String],
-    /// A turn is running, and whether Stop's checks pass now: Stop is on the Send button (or
-    /// beside it, when there is a draft to send).
+    /// A turn is running, and whether Stop's checks pass now: Stop stands in its own slot beside
+    /// the Send button.
     pub stop: Option<bool>,
     /// A new session before its first message: the box says what can be typed.
     pub welcome: bool,
@@ -493,16 +493,12 @@ impl Draw<'_> {
         let y = row + (SEND - 24.0) / 2.0;
         // The slot left of Send is kept for the small Stop, so nothing moves when it shows.
         let mut x = rsend.x - STOP_SLOT - 4.0;
-        let something = !chat.editor.text.trim().is_empty() || !chat.chips.is_empty();
-        match self.stop {
-            // A turn runs and there is nothing to send: the round button is Stop.
-            Some(ready) if !something && !chat.locked() => self.stop_button(p, rsend, ready, true),
-            // With a draft the round button sends (the draft is queued); Stop stands beside it.
-            Some(ready) => {
-                self.send(p, chat, rsend);
-                self.stop_button(p, Rect::new(x + 1.0, y, 24.0, 24.0), ready, false);
-            }
-            None => self.send(p, chat, rsend),
+        // The round button is always Send. While a turn runs Stop stands in its own slot beside
+        // it, draft or not: a send into the running turn never turns the button under the
+        // pointer into Stop.
+        self.send(p, chat, rsend);
+        if let Some(ready) = self.stop {
+            self.stop_button(p, Rect::new(x + 1.0, y, 24.0, 24.0), ready);
         }
         if self.wide {
             x -= 58.0;
@@ -523,29 +519,18 @@ impl Draw<'_> {
         self.toolbar_pill(p, attach, "Attach…", Control::Attach, false, !chat.locked());
     }
 
-    /// Stop: a square, on the round button or as a small plain button beside Send. It is dimmed
-    /// and takes no click while its checks fail; a click goes the way every Stop does.
-    fn stop_button(&mut self, p: &mut Painter, r: Rect, ready: bool, round: bool) {
+    /// Stop: a small plain button with a square, beside Send. It is dimmed and takes no click
+    /// while its checks fail; a click goes the way every Stop does.
+    fn stop_button(&mut self, p: &mut Painter, r: Rect, ready: bool) {
         let pal = self.pal;
         let target = Target::Chat(Control::Stop);
         let hot = ready && self.hover == Some(target);
-        let ground = look::raised(pal);
-        let side = if round { 10.0 } else { 9.0 };
+        let side = 9.0;
         let square = Rect::new(r.cx() - side / 2.0, r.cy() - side / 2.0, side, side);
-        if round {
-            let fill = match (ready, hot) {
-                (true, true) => mdshared_ui::gfx::mix(pal.text, ground, 0.18),
-                (true, false) => pal.text,
-                _ => look::quiet_fill(pal, ground),
-            };
-            p.rbox(r, r.h / 2.0, fill);
-            p.rbox(square, 2.0, if ready { ground } else { pal.faint });
-        } else {
-            if hot {
-                p.rbox(r, 6.0, pal.hover);
-            }
-            p.rbox(square, 2.0, if ready { pal.text } else { pal.faint });
+        if hot {
+            p.rbox(r, 6.0, pal.hover);
         }
+        p.rbox(square, 2.0, if ready { pal.text } else { pal.faint });
         if ready {
             self.hits.push((r, target));
         }
@@ -940,11 +925,11 @@ mod tests {
         assert_eq!(chips_of(&settings), chips);
     }
 
-    /// While a turn runs, Stop is the round button when there is nothing to send, and a small
-    /// button beside Send when there is a draft; dimmed, it takes no click. Either way the click
-    /// is `Control::Stop`, as the old strip's and the notice bar's Stop were.
+    /// While a turn runs, Stop is a small button in its own slot beside Send, with a draft or
+    /// without: the round button stays Send, so a click on it after a send into the running turn
+    /// never meets Stop. Dimmed, Stop takes no click. Either way the click is `Control::Stop`.
     #[test]
-    fn stop_is_on_the_send_button_while_a_turn_runs_and_beside_it_with_a_draft() {
+    fn stop_stays_in_its_own_slot_while_a_turn_runs_and_the_round_button_stays_send() {
         let mut gfx = Gfx::new();
         let app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
         let mut bitmap = Bitmap::new(1100, 480);
@@ -974,17 +959,17 @@ mod tests {
         let (idle_send, none) = hits_for("", None);
         let idle_send = idle_send.expect("Send when no turn runs");
         assert_eq!(none, None);
-        // Nothing to send: the round button is Stop, where Send was.
-        assert_eq!(hits_for("", Some(true)), (None, Some(idle_send)));
-        // Its checks fail: dimmed, and no click.
-        assert_eq!(hits_for("", Some(false)), (None, None));
-        // A draft: the round button sends (it is queued), Stop is the small button left of it.
-        let (queue, small) = hits_for("next", Some(true));
+        // Nothing to send: the round button is still Send; Stop is the small one beside it.
+        let (round, small) = hits_for("", Some(true));
+        assert_eq!(round, Some(idle_send));
         let small = small.expect("Stop beside Send");
-        assert_eq!(queue, Some(idle_send));
         assert!(
             small.right() <= idle_send.x && small.w < idle_send.w && layout.toolbar.contains(small.cx(), small.cy())
         );
+        // A draft: the same places.
+        assert_eq!(hits_for("next", Some(true)), (Some(idle_send), Some(small)));
+        // Its checks fail: dimmed, and no click.
+        assert_eq!(hits_for("", Some(false)), (Some(idle_send), None));
         assert_eq!(hits_for("next", Some(false)), (Some(idle_send), None));
     }
 

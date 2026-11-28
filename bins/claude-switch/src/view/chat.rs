@@ -245,6 +245,8 @@ pub struct Chat {
     /// A message or command Chat submitted: the output it was written after, and when.
     sent: Option<(u64, Instant)>,
     last_gate: Option<Gate>,
+    /// The turn the composer's Stop was last drawn for: its click stops that turn only.
+    stop_turn: Option<crate::view::working::Turn>,
     demo: bool,
     demo_progress: bool,
     #[cfg(test)]
@@ -581,6 +583,7 @@ impl Chat {
             && !self.first_sent
             && self.queue.is_none()
             && self.waiting().is_none()
+            && !self.question.asks(model)
     }
 
     pub(super) fn is_demo(&self) -> bool {

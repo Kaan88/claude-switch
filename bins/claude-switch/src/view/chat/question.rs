@@ -61,6 +61,8 @@ pub(super) const INTERRUPTED: &str =
     "Chat stopped sending keys: the terminal got other input, or Chat was left or cancelled. Check the terminal.";
 pub(super) const WAITING: &str = "Sending your answer to the terminal…";
 const ASKING: &str = "Waiting for your answer";
+/// Said once a key went nowhere while a card stands in the composer's place.
+const TYPED_AWAY: &str = "Typing goes to the card's field once you click it. Your draft waits in the message box.";
 const APPROVING: &str = "Waiting for your approval";
 const ESC: &[u8] = b"\x1b";
 const NO_ESC: &str = "This menu does not offer Esc. Use the terminal.";
@@ -441,6 +443,19 @@ pub(super) struct Card {
     pub(super) menu: Option<MenuShown>,
     /// The running shell call the CLI offers to move to the background.
     background: Option<background::Shell>,
+    /// A key went nowhere while the card stood in the composer's place: the card says so once.
+    typed_away: bool,
+    /// The parts of the card as last laid out, which are drawn.
+    laid: Option<Vec<cards::Part>>,
+    /// The card's whole height, before it was fitted to its room, and how far it is scrolled.
+    natural: f32,
+    scroll: f32,
+    /// The scale the card was last painted at (0 before the first paint), and that it changed:
+    /// the question is measured at it.
+    painted_scale: f32,
+    pub(super) relayout: bool,
+    /// The conversation drew "Run in background" on the command's own line in the last frame.
+    pub(super) offer_inline: bool,
     /// A Ctrl+B in flight: for which call, until when, and the output it was written after.
     background_step: Option<(background::Shell, Instant, u64)>,
     /// The background agents the CLI's list shows running, which Chat can stop.
@@ -536,6 +551,49 @@ impl Card {
     /// its draft is kept for when the card is gone.
     pub(in crate::view::chat) fn docked(&self) -> bool {
         self.docked && self.visible()
+    }
+
+    /// The scale the card is measured at: the one it was last painted at.
+    pub(super) fn scale(&self) -> f32 {
+        if self.painted_scale > 0.0 { self.painted_scale } else { 1.0 }
+    }
+
+    /// How far the card is scrolled, kept within `over` (how much taller it is than its room).
+    pub(super) fn scroll_parts(&mut self, over: f32) -> f32 {
+        self.scroll = self.scroll.clamp(0.0, over.max(0.0));
+        self.scroll
+    }
+
+    /// The wheel over a card taller than its room: true when the card took it.
+    pub(in crate::view::chat) fn wheel_card(&mut self, x: f32, y: f32, dy: f32) -> bool {
+        if !self.rect.contains(x, y) || self.prompt.is_some() || self.natural <= self.rect.h {
+            return false;
+        }
+        let over = (self.natural - self.rect.h).max(0.0).floor();
+        let step = if dy < 0.0 { cards::WHEEL_STEP } else { -cards::WHEEL_STEP };
+        self.scroll = (self.scroll + step).clamp(0.0, over);
+        true
+    }
+
+    /// A key was typed while the card stands in the composer's place, where nothing takes it.
+    pub(in crate::view::chat) fn note_typed_away(&mut self) {
+        self.typed_away = true;
+    }
+
+    /// What the card says after a key went nowhere: where typing goes, once.
+    pub(super) fn typed_hint(&self) -> Option<&'static str> {
+        self.typed_away.then_some(TYPED_AWAY)
+    }
+
+    /// Something wants a card in the composer's place: a CLI menu, a permission prompt read from
+    /// the screen or for the pending call, or Claude's pending question. A new session's
+    /// greeting then gives way, so the card is laid out at the window's foot.
+    pub(in crate::view::chat) fn asks(&self, model: &Model) -> bool {
+        self.menu.is_some()
+            || self.prompt.is_some()
+            || self.shown.is_some()
+            || self.blocked.is_some()
+            || matches!(pending(model).map(|p| p.kind), Some(Kind::Question(_)))
     }
 
     pub(super) fn deadline(&self) -> Option<Instant> {
@@ -1794,8 +1852,6 @@ pub(super) fn text(chat: &mut Chat, text: &str) -> bool {
     true
 }
 
-const PAD: f32 = 12.0;
-const HEADER: f32 = 18.0;
 const CHOICE: f32 = 28.0;
 const LINE: f32 = 16.0;
 const FIELD: f32 = 30.0;
@@ -1816,11 +1872,11 @@ fn copied_row(p: &mut Painter, face: Face, size: f32, x: f32, cy: f32, text: &st
     }
 }
 
-/// The tool call as the transcript has it, a few lines for the card.
-fn detail(kind: &ItemKind) -> Vec<String> {
-    let ItemKind::Tool { summary, file_path, card, .. } = kind else { return Vec::new() };
+/// The tool call as the transcript has it, a few lines for the card, and how many more it has.
+fn detail(kind: &ItemKind) -> (Vec<String>, usize) {
+    let ItemKind::Tool { summary, file_path, card, .. } = kind else { return (Vec::new(), 0) };
     if is_plan(kind) {
-        return vec!["The plan is shown above, in the conversation.".to_owned()];
+        return (vec!["The plan is shown above, in the conversation.".to_owned()], 0);
     }
     let mut lines: Vec<String> = match card {
         Some(ToolCard::Shell { command, .. }) => command.lines().map(str::to_owned).collect(),
@@ -1829,8 +1885,9 @@ fn detail(kind: &ItemKind) -> Vec<String> {
         }
         _ => file_path.iter().cloned().chain(std::iter::once(summary.clone()).filter(|s| !s.is_empty())).collect(),
     };
+    let more = lines.len().saturating_sub(DETAIL_LINES);
     lines.truncate(DETAIL_LINES);
-    lines
+    (lines, more)
 }
 
 fn tool_title(kind: &ItemKind) -> String {
@@ -1865,8 +1922,9 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     // A permission prompt read from the screen is shown whole: it may take more of the window
     // than the other cards, and wraps its rows at the card's width.
     let screen_prompt = chat.question.prompt.is_some() && !rewind;
-    let old = |inside: f32| 2.0 * PAD + inside + FIELD + STATUS;
-    let parts = cards::parts(chat, model, inner_w);
+    // The cards that are not laid out from parts give their height inside the same padding.
+    let old = |inside: f32| 2.0 * cards::INSET + inside - 6.0;
+    let mut parts = cards::parts(chat, model, inner_w);
     let (wanted, docked) = if rewind {
         (chat.question.rewind.as_ref().map(|r| old(rewind::height(r))), true)
     } else if screen_prompt {
@@ -1886,18 +1944,26 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     let Some(wanted) = wanted.or_else(|| denials::height(&chat.question)) else {
         chat.question.rect = Rect::default();
         chat.question.docked = false;
+        chat.question.typed_away = false;
+        chat.question.laid = None;
+        chat.question.natural = 0.0;
+        chat.question.scroll = 0.0;
         return;
     };
+    chat.question.natural = wanted;
     chat.question.docked = docked;
+    chat.question.typed_away &= docked;
     let conversation = &mut chat.layout.conversation;
     if docked {
         // From the top of the conversation to the foot of the composer's box.
         let whole = (frame.bottom() - conversation.y).max(0.0);
         let room = ((whole - 40.0) * if screen_prompt { PROMPT_SHARE } else { CARD_SHARE }).floor().max(0.0);
         let mut h = wanted.min(room);
-        if let Some(parts) = &parts {
-            chat.question.density = cards::density_for(parts, room);
-            h = cards::height(parts, chat.question.density).min(room);
+        if let Some(parts) = &mut parts {
+            // Denser, then shorter where it can be read elsewhere; what still does not fit scrolls.
+            chat.question.density = cards::fit(parts, room);
+            chat.question.natural = cards::height(parts, chat.question.density);
+            h = chat.question.natural.min(room);
         }
         chat.question.rect = Rect::new(frame.x, frame.bottom() - h, frame.w, h);
         conversation.h = (chat.question.rect.y - 10.0 - conversation.y).max(0.0);
@@ -1909,6 +1975,9 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         chat.question.rect = Rect::new(frame.x, conversation.bottom() - h - 8.0, frame.w, h);
         conversation.h = (conversation.h - h - 16.0).max(0.0);
     }
+    // The parts as laid out are the ones drawn: the two cannot disagree, and the question is
+    // measured once a frame.
+    chat.question.laid = parts;
     prompt::fit(&mut chat.question);
 }
 
@@ -1921,13 +1990,6 @@ pub(super) struct Draw<'a> {
 }
 
 impl Draw<'_> {
-    /// A button of the card.
-    fn button(&self, p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit) {
-        let target = Target::Chat(Control::Question(hit));
-        super::paint::button(p, self.pal, r, label, self.hover == Some(target), false);
-        hits.push((r, target));
-    }
-
     /// The card: in the composer's place while it waits for an answer, else over the composer.
     /// Called by the Chat painter.
     pub(super) fn card(&self, p: &mut Painter, chat: &mut Chat, model: &Model, hits: &mut Vec<(Rect, Target)>) {
@@ -1943,22 +2005,44 @@ impl Draw<'_> {
             p.frame(r, 8.0, pal.popup, pal.popup_line);
         }
         let clip = p.clip(r);
-        let inner = r.inset(PAD);
+        let first = hits.len();
+        // A question is measured at the window's scale: a new one lays the card out again.
+        if chat.question.painted_scale != p.scale {
+            chat.question.painted_scale = p.scale;
+            chat.question.relayout = true;
+        }
+        // The cards drawn from the top scroll as a whole when taller than their room (the wheel
+        // over them); the parts' card keeps its foot in view (`Draw::parts`), and a prompt read
+        // from the screen scrolls its own rows.
+        let over = (chat.question.natural - r.h).max(0.0).floor();
+        let lift = if chat.question.laid.is_some() || chat.question.prompt.is_some() {
+            0.0
+        } else {
+            chat.question.scroll_parts(over)
+        };
+        let inner = Rect::new(
+            r.x + cards::INSET,
+            r.y + cards::INSET - lift,
+            r.w - 2.0 * cards::INSET,
+            r.h - 2.0 * cards::INSET,
+        );
         if rewind_shown(&chat.question, model) {
             self.rewind(p, chat, inner, hits);
         } else if chat.question.prompt.is_some() {
             self.prompt(p, chat, r, hits);
         } else if chat.question.blocked.is_some() {
             self.blocked(p, chat, inner, hits);
-        } else if let Some(mut parts) = cards::parts(chat, model, (r.w - 2.0 * cards::INSET).max(1.0)) {
-            cards::fit_panel(&mut parts, r.h, chat.question.density);
+        } else if let Some(parts) = chat.question.laid.take() {
             self.parts(p, chat, r, &parts, hits);
+            chat.question.laid = Some(parts);
         } else if background::height(&chat.question).is_some() {
             self.background(p, chat, inner, hits);
         } else {
-            self.denials(p, chat, r, hits);
+            self.denials(p, chat, Rect::new(r.x, r.y - lift, r.w, r.h.max(chat.question.natural)), hits);
         }
         p.restore(clip);
+        // Nothing outside the card takes a click meant for it.
+        cards::clip_hits(hits, first, r);
     }
 }
 

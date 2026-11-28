@@ -80,6 +80,8 @@ pub(super) struct View {
     clipped: bool,
     /// The monospace character width the painter measured (0 before the first paint).
     mono: f32,
+    /// The card is short: its choices are drawn low, so that they and its foot stay in it.
+    tight: bool,
 }
 
 impl View {
@@ -153,7 +155,7 @@ impl Chat {
 
     /// The wheel over the card: true when the card took it.
     pub(in crate::view::chat) fn question_wheel(&mut self, x: f32, y: f32, dy: f32) -> bool {
-        self.question.wheel(x, y, dy)
+        self.question.wheel(x, y, dy) || self.question.wheel_card(x, y, dy)
     }
 }
 
@@ -167,11 +169,12 @@ pub(super) fn text_width(card_w: f32) -> f32 {
 
 /// The card's height around the prompt's own rows: its head, the well's padding, the question,
 /// the choices, a row for a notice and the foot.
-fn chrome(prompt: &Prompt) -> f32 {
+fn chrome(prompt: &Prompt, tight: bool) -> f32 {
     let head = cards::INSET + cards::HEAD + 10.0;
     let well = 2.0 * WELL.1 + 12.0;
     let question = LINE + 10.0;
-    let choices = prompt.choices.len() as f32 * cards::CHOICE_ROW + 10.0;
+    let row = if tight { cards::TIGHT_ROW } else { cards::CHOICE_ROW };
+    let choices = prompt.choices.len() as f32 * row + 10.0;
     head + well + question + choices + STATUS + cards::FOOT + cards::INSET - 6.0
 }
 
@@ -179,13 +182,16 @@ fn chrome(prompt: &Prompt) -> f32 {
 pub(super) fn height(card: &mut Card, width: f32) -> f32 {
     let Some(prompt) = &card.prompt else { return 0.0 };
     card.prompt_view.flow(prompt, width);
-    chrome(prompt) + card.prompt_view.lines.len() as f32 * LINE
+    chrome(prompt, false) + card.prompt_view.lines.len() as f32 * LINE
 }
 
-/// The card got its rectangle: how many lines fit.
+/// The card got its rectangle: how many lines fit. A short card draws its choices low first, so
+/// that every choice and the foot keep their place in it while the rows scroll.
 pub(super) fn fit(card: &mut Card) {
     let Some(prompt) = &card.prompt else { return };
-    let room = (card.rect.h - chrome(prompt)) / LINE;
+    let tight = card.rect.h < chrome(prompt, false) + 3.0 * LINE;
+    let room = (card.rect.h - chrome(prompt, tight)) / LINE;
+    card.prompt_view.tight = tight;
     card.prompt_view.room = room.floor().max(0.0) as usize;
 }
 
@@ -248,7 +254,7 @@ impl Draw<'_> {
     pub(super) fn prompt(&self, p: &mut Painter, chat: &mut Chat, card: Rect, hits: &mut Vec<(Rect, Target)>) {
         let pal = self.pal;
         let Some(prompt) = chat.question.prompt.clone() else { return };
-        let notice = chat.question.error.or_else(|| chat.question_notice());
+        let notice = chat.question.error.or_else(|| chat.question_notice()).or_else(|| chat.question.typed_hint());
         // Esc declines without reading on: the prompt's footer always offers it.
         let close = chat.question.prompt_answers() && chat.question.step.is_none();
         let (x, w) = (card.x + cards::INSET, (card.w - 2.0 * cards::INSET).max(1.0));
@@ -304,7 +310,8 @@ impl Draw<'_> {
                 on: false,
             })
             .collect();
-        y += self.choices(p, hits, x, y, w, &rows, can_answer, cards::Density::Plain) + 10.0;
+        let density = if chat.question.prompt_view.tight { cards::Density::Tight } else { cards::Density::Plain };
+        y += self.choices(p, hits, x, y, w, &rows, can_answer, density) + 10.0;
         if let Some(status) = status {
             let ink = if chat.question.error.is_some() { pal.warn } else { pal.muted };
             p.text(Face::Ui, 12.0, x, y + STATUS / 2.0 - 2.0, status, ink, w);

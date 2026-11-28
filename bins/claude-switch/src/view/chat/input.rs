@@ -56,6 +56,27 @@ pub enum Control {
     Start(super::welcome::Start),
 }
 
+/// What a key does while a card stands in the composer's place.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Docked {
+    /// What the card's own "Esc to …" button does, under the same checks.
+    Escape,
+    /// A key that would have edited or sent the hidden draft: the card says once where typing goes.
+    TypedAway,
+    Nothing,
+}
+
+/// Escape does what the card's "Esc to …" button does, only while the card draws that button
+/// (`hits` is the last frame's); Enter, Backspace and Delete go nowhere, and say so.
+pub(super) fn docked_key(hits: &[(mdshared_ui::gfx::Rect, Target)], name: Option<&KeyName>, mods: Mods) -> Docked {
+    let escape = Target::Chat(Control::Question(super::question::Hit::Escape));
+    match name {
+        Some(KeyName::Escape) if mods.none() && hits.iter().any(|(_, t)| *t == escape) => Docked::Escape,
+        Some(KeyName::Enter | KeyName::Backspace | KeyName::Delete) => Docked::TypedAway,
+        _ => Docked::Nothing,
+    }
+}
+
 impl AppState {
     pub(in crate::view) fn select_shell(&mut self, id: Option<claude_switch_core::transcript::ItemId>) {
         let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) else { return };
@@ -296,8 +317,18 @@ impl AppState {
             return true;
         }
         // A card stands where the composer is: the hidden draft takes no keys, and Enter sends
-        // nothing. The card's own field takes them once it was clicked (above).
+        // nothing. The card's own field takes them once it was clicked (above). Escape does what
+        // the card's own "Esc to …" button does, under the same checks, while the card offers it.
         if self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.question.docked()) {
+            match docked_key(&self.hits, k.name.as_ref(), mods) {
+                Docked::Escape => self.chat_control(cx, Control::Question(super::question::Hit::Escape)),
+                Docked::TypedAway => {
+                    if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+                        pane.chat.question.note_typed_away();
+                    }
+                }
+                Docked::Nothing => {}
+            }
             return true;
         }
         if mods.none()
@@ -334,7 +365,15 @@ impl AppState {
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
         chat.typed_at = Some(cx.now());
-        if super::question::text(chat, text) || chat.question.docked() || chat.popup_text(text) {
+        if super::question::text(chat, text) {
+            return true;
+        }
+        if chat.question.docked() {
+            // Typing goes nowhere while a card stands in the composer's place: said once.
+            chat.question.note_typed_away();
+            return true;
+        }
+        if chat.popup_text(text) {
             return true;
         }
         if !chat.locked() {
@@ -453,7 +492,14 @@ impl AppState {
 
     pub fn chat_control(&mut self, cx: &mut Cx<'_, Msg>, control: Control) {
         match control {
-            Control::Stop => return self.stop_conversation(cx, None),
+            Control::Stop => {
+                // The turn the button was drawn for: the same check as the working line's Stop.
+                let expected = self.tabs.shown().and_then(|t| t.pane.as_ref()).and_then(|p| p.chat.stop_turn);
+                if expected.is_some() {
+                    self.stop_conversation(cx, expected);
+                }
+                return;
+            }
             Control::Detail(hit) => return self.detail_control(hit),
             Control::Shells => {
                 self.select_shell(None);
@@ -530,6 +576,9 @@ impl AppState {
             Control::Drawer => chat.toggle_drawer(),
             Control::Open if chat.drawer == Drawer::Closed => chat.open_drawer(),
             Control::Open => chat.drawer_focus = true,
+            // A window too narrow for the panel cannot show it: the click is not taken as a choice
+            // that would keep the panel closed (or open) once the window is wide again.
+            Control::Panel if !chat.layout.panel_room => {}
             Control::Panel => {
                 // The user's own choice: it holds whatever the panel has to show.
                 chat.side_choice = Some(chat.side_hidden);

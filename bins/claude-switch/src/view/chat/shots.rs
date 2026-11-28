@@ -21,7 +21,7 @@ const WIDE: Size = Size { w: 1280.0, h: 980.0, scale: 1.5 };
 /// The narrowest window Chat is drawn in.
 const NARROW: Size = Size { w: 760.0, h: 720.0, scale: 1.0 };
 
-const WORKING: &str = "cursor 33 2
+pub(super) const WORKING: &str = "cursor 33 2
 @size 100 40
 
 
@@ -57,7 +57,30 @@ const WORKING: &str = "cursor 33 2
   ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt
 ";
 
-const WORKING_LINE: &str = "✻ Shimmying… (12s · ↓ 1.2k tokens)";
+pub(super) const WORKING_LINE: &str = "✻ Shimmying… (12s · ↓ 1.2k tokens)";
+
+/// A command of six lines, as the permission card's well shows it.
+pub(super) const LONG_COMMAND: &str = "cargo bench -p tiles --bench eviction -- --save-baseline after
+git stash
+cargo bench -p tiles --bench eviction -- --save-baseline before
+git stash pop
+critcmp before after
+echo compared";
+
+/// The permission prompt for [`LONG_COMMAND`], as Claude Code draws it.
+pub(super) fn long_permission() -> String {
+    let rows: String = LONG_COMMAND.lines().map(|line| format!(" {line}\n")).collect();
+    shots::PERMISSION
+        .replace(
+            "● Bash(cargo bench -p tiles --bench eviction)",
+            "● Bash(cargo bench -p tiles --bench eviction -- --save-baseline…)",
+        )
+        .replace(" cargo bench -p tiles --bench eviction\n", &rows)
+}
+
+/// A window too short for a tall card (the room a 1080p screen at 150 % leaves, or the drawer).
+const SHORT_WIDE: Size = Size { w: 1280.0, h: 560.0, scale: 1.5 };
+const SHORT_NARROW: Size = Size { w: 760.0, h: 520.0, scale: 1.0 };
 
 fn pane(st: &mut AppState, id: u64) -> &mut crate::view::Pane {
     shots::tab(st, id).pane.as_mut().unwrap()
@@ -198,7 +221,10 @@ fn chat_shots() {
     let want = |name: &str| only.as_deref().is_none_or(|only| only.split(',').any(|n| n.trim() == name));
     let states = ["conversation", "steps", "question", "permission", "running", "scrolled", "empty", "pointing"];
     for (n, state) in states.into_iter().enumerate().filter(|(_, state)| want(state)) {
-        for (size, width) in [(WIDE, "wide"), (NARROW, "narrow")] {
+        let short = state == "tall-permission";
+        let sizes =
+            if short { [(SHORT_WIDE, "wide"), (SHORT_NARROW, "narrow")] } else { [(WIDE, "wide"), (NARROW, "narrow")] };
+        for (size, width) in sizes {
             for (dark, theme) in [(true, "dark"), (false, "light")] {
                 let name = format!("{}-{state}-{width}-{theme}.png", n + 1);
                 shot(state, dark, size).write_png(&dir.join(name)).unwrap();

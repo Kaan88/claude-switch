@@ -565,6 +565,7 @@ fn compact_and_clear_only_write_after_confirmation() {
     }
 }
 
+mod redesign;
 mod review;
 
 #[test]

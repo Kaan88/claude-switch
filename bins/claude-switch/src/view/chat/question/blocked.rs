@@ -104,11 +104,11 @@ impl Card {
 
 pub(super) fn height(card: &Card) -> Option<f32> {
     let shown = card.blocked.as_ref()?;
-    let entries = shown.entries.len().min(ENTRIES) as f32 * (CHOICE + 4.0);
+    let entries = shown.entries.len().min(ENTRIES) as f32 * cards::CHOICE_ROW + 10.0;
     let more = if shown.entries.len() > ENTRIES { LINE } else { 0.0 };
     let pending = if shown.pending.is_some() { LINE } else { 0.0 };
     let detail = shown.detail.len().min(DETAIL_ROWS + 1) as f32 * LINE;
-    Some(HEADER + LINE + 6.0 + entries + more + pending + 6.0 + detail + 4.0 + LINE - STATUS)
+    Some(cards::HEAD + 10.0 + LINE + 8.0 + entries + more + pending + 6.0 + detail + 4.0 + LINE + 6.0 + cards::FOOT)
 }
 
 /// A click in the card.
@@ -175,45 +175,42 @@ impl Draw<'_> {
     pub(super) fn blocked(&self, p: &mut Painter, chat: &mut Chat, inner: Rect, hits: &mut Vec<(Rect, Target)>) {
         let pal = self.pal;
         let Some(shown) = chat.question.blocked.clone() else { return };
-        let notice = chat.question.error.or_else(|| chat.question_notice());
+        let notice = chat.question.error.or_else(|| chat.question_notice()).or_else(|| chat.question.typed_hint());
         let mut y = inner.y;
-        p.text(
-            Face::Semibold,
-            11.5,
-            inner.x,
-            y + HEADER / 2.0,
-            "Claude Code · blocked by auto mode",
-            pal.muted,
-            inner.w,
-        );
-        y += HEADER;
-        p.text(Face::Ui, 11.5, inner.x, y + LINE / 2.0, &shown.note, pal.text, inner.w);
-        y += LINE + 6.0;
-        // The calls around the highlighted one; the buttons below act on that one only.
+        let head = Rect::new(inner.x, y, inner.w, cards::HEAD);
+        self.head(p, hits, head, "Blocked by auto mode", ("", ""), "Claude Code", false);
+        y += cards::HEAD + 10.0;
+        p.text(Face::Ui, 12.5, inner.x, y + LINE / 2.0, &shown.note, pal.text, inner.w);
+        y += LINE + 8.0;
+        // The calls around the highlighted one; the buttons below act on that one only, which is
+        // marked as the CLI highlights it and takes no click.
         let first = shown.highlight.saturating_sub(ENTRIES / 2).min(shown.entries.len().saturating_sub(ENTRIES));
-        for (i, entry) in shown.entries.iter().enumerate().skip(first).take(ENTRIES) {
-            let row = Rect::new(inner.x, y, inner.w, CHOICE);
-            let target = Target::Chat(Control::Question(Hit::Option(i)));
-            let on = i == shown.highlight;
-            if on {
-                p.frame(row, 6.0, pal.selection, pal.accent);
-            } else {
-                p.rbox(row, 6.0, if self.hover == Some(target) { pal.hover } else { pal.bar });
-            }
-            let text = format!("{}. {entry}", i + 1);
-            p.text(Face::Semibold, 12.0, row.x + 10.0, row.cy(), &text, pal.text, row.w - 20.0);
-            if !on {
-                hits.push((row, target));
-            }
-            y += CHOICE + 4.0;
-        }
+        let rows: Vec<cards::Choice> = shown
+            .entries
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(ENTRIES)
+            .map(|(i, entry)| cards::Choice {
+                number: Some(i + 1),
+                label: entry.clone(),
+                note: String::new(),
+                hit: Hit::Option(i),
+                on: i == shown.highlight,
+            })
+            .collect();
+        let before = hits.len();
+        y += self.choices(p, hits, inner.x, y, inner.w, &rows, true, cards::Density::Plain) + 10.0;
+        let highlighted = Target::Chat(Control::Question(Hit::Option(shown.highlight)));
+        let drawn: Vec<_> = hits.drain(before..).filter(|(_, t)| *t != highlighted).collect();
+        hits.extend(drawn);
         if shown.entries.len() > ENTRIES {
             let more = format!("{} blocked calls in the list", shown.entries.len());
-            p.text(Face::Ui, 11.0, inner.x, y + LINE / 2.0, &more, pal.muted, inner.w);
+            p.text(Face::Ui, 12.0, inner.x, y + LINE / 2.0, &more, pal.muted, inner.w);
             y += LINE;
         }
         if let Some(pending) = &shown.pending {
-            p.text(Face::Semibold, 11.5, inner.x, y + LINE / 2.0, pending, pal.accent, inner.w);
+            p.text(Face::Semibold, 12.0, inner.x, y + LINE / 2.0, pending, pal.accent, inner.w);
             y += LINE;
         }
         y += 6.0;
@@ -226,16 +223,18 @@ impl Draw<'_> {
         }
         if shown.detail.len() > DETAIL_ROWS {
             let more = format!("{} more rows in the terminal", shown.detail.len() - DETAIL_ROWS);
-            p.text(Face::Ui, 11.0, inner.x, y + LINE / 2.0, &more, pal.muted, inner.w);
+            p.text(Face::Ui, 12.0, inner.x, y + LINE / 2.0, &more, pal.muted, inner.w);
             y += LINE;
         }
         y += 4.0;
         let status = notice.unwrap_or(if cut { CUT } else { EXPLAIN });
-        p.text(Face::Ui, 11.0, inner.x, y + LINE / 2.0, status, pal.muted, inner.w);
-        y += LINE;
+        let ink = if chat.question.error.is_some() { pal.warn } else { pal.muted };
+        p.text(Face::Ui, 12.0, inner.x, y + LINE / 2.0, status, ink, inner.w);
+        y += LINE + 6.0;
         chat.question.blocked_view.note(&shown, self.now, cut);
-        let row = Rect::new(inner.x, y + 4.0, inner.w, FIELD - 4.0);
-        let mut x = row.x;
+        let mut left: Vec<(&str, Hit)> = Vec::new();
+        let label = shown.esc_label();
+        let mut right = vec![("Open terminal", Hit::Open)];
         if chat.question.step.is_none() {
             // What the CLI offers for the highlighted call, by its mark.
             let offers: &[(&str, Hit)] = match shown.marks.get(shown.highlight) {
@@ -245,15 +244,10 @@ impl Draw<'_> {
                 Some(Mark::Retry) => &[("Approve only", Hit::Retry)],
                 None => &[],
             };
-            for (label, hit) in offers {
-                self.button(p, hits, Rect::new(x, row.y, 112.0, row.h), label, *hit);
-                x += 116.0;
-            }
-            let label = shown.esc_label();
-            let w = (p.measure(Face::Semibold, 11.5, &label) + 28.0).max(84.0);
-            self.button(p, hits, Rect::new(row.right() - 124.0 - w, row.y, w, row.h), &label, Hit::Escape);
+            left.extend_from_slice(offers);
+            right.push((label.as_str(), Hit::Escape));
         }
-        self.button(p, hits, Rect::new(row.right() - 120.0, row.y, 120.0, row.h), "Open terminal", Hit::Open);
+        self.foot(p, hits, Rect::new(inner.x, y, inner.w, cards::FOOT), &left, "", &right);
     }
 }
 

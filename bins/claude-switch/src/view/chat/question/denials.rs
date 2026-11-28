@@ -186,7 +186,7 @@ pub(super) fn height(card: &Card) -> Option<f32> {
     }
     let rows = card.denials.len().min(LISTED) as f32 * 2.0 * LINE;
     let more = if card.denials.len() > LISTED { LINE } else { 0.0 };
-    Some(2.0 * PAD + HEADER + 6.0 + rows + more + 4.0 + FIELD)
+    Some(2.0 * cards::INSET - 6.0 + cards::HEAD + 8.0 + rows + more + 6.0 + cards::FOOT)
 }
 
 /// A click in the denials card: nothing here writes a key by itself.
@@ -216,50 +216,46 @@ impl Draw<'_> {
     pub(super) fn denials(&self, p: &mut Painter, chat: &mut Chat, card: Rect, hits: &mut Vec<(Rect, Target)>) {
         let pal = self.pal;
         let denied = chat.question.denials.clone();
+        let (x, w) = (card.x + cards::INSET, (card.w - 2.0 * cards::INSET).max(1.0));
         if !chat.question.denials_watch.open {
-            let row = card.inset(7.0);
-            p.text(Face::Semibold, 11.5, row.x + 5.0, row.cy(), &count_line(denied.len()), pal.warn, row.w - 100.0);
-            self.button(p, hits, Rect::new(row.right() - 84.0, row.y, 84.0, row.h), "Show", Hit::Denials(true));
+            let cy = card.cy();
+            let show = self.plain(p, hits, card.right() - cards::INSET + 8.0, cy, "Show", Hit::Denials(true), true);
+            p.text(Face::Semibold, 12.0, x, cy, &count_line(denied.len()), pal.warn, (w - show - 8.0).max(0.0));
             return;
         }
-        let inner = card.inset(PAD);
-        let mut y = inner.y;
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, &count_line(denied.len()), pal.warn, inner.w - 80.0);
-        let hide = Rect::new(inner.right() - 64.0, inner.y - 2.0, 64.0, HEADER + 2.0);
-        self.button(p, hits, hide, "Hide", Hit::Denials(false));
-        y += HEADER + 6.0;
+        let mut y = card.y + cards::INSET;
+        let cy = y + cards::HEAD / 2.0;
+        let hide = self.plain(p, hits, x + w + 8.0, cy, "Hide", Hit::Denials(false), false);
+        p.text(Face::Semibold, 12.0, x, cy, &count_line(denied.len()), pal.warn, (w - hide - 8.0).max(0.0));
+        y += cards::HEAD + 8.0;
         // The newest ones: the conversation's rows above have them all.
         let skipped = denied.len().saturating_sub(LISTED);
         for d in denied.iter().skip(skipped) {
-            let name_w = p.text(Face::Semibold, 12.0, inner.x, y + LINE / 2.0, &d.tool, pal.text, inner.w * 0.3);
-            let x = inner.x + name_w + 8.0;
-            p.text(Face::Mono, 11.5, x, y + LINE / 2.0, &d.target, pal.text, (inner.right() - x).max(0.0));
+            let name_w = p.text(Face::Semibold, 12.5, x, y + LINE / 2.0, &d.tool, pal.text, w * 0.3);
+            let tx = x + name_w + 8.0;
+            p.text(Face::Mono, 11.5, tx, y + LINE / 2.0, &d.target, pal.text, (x + w - tx).max(0.0));
             y += LINE;
-            p.text(Face::Ui, 11.0, inner.x + 12.0, y + LINE / 2.0, &why(&d.denial), pal.muted, inner.w - 12.0);
+            p.text(Face::Ui, 12.0, x + 12.0, y + LINE / 2.0, &why(&d.denial), pal.muted, w - 12.0);
             y += LINE;
         }
         if skipped > 0 {
             let more = format!("and {skipped} earlier, marked in the conversation above");
-            p.text(Face::Ui, 11.0, inner.x, y + LINE / 2.0, &more, pal.muted, inner.w);
+            p.text(Face::Ui, 12.0, x, y + LINE / 2.0, &more, pal.muted, w);
             y += LINE;
         }
-        let row = Rect::new(inner.x, y + 4.0, inner.w, FIELD - 4.0);
-        let mut x = row.x;
+        y += 6.0;
+        let mut left: Vec<(&str, Hit)> = Vec::new();
         let has = |kind: DenialKind| denied.iter().any(|d| d.denial.kind == kind);
         if has(DenialKind::AutoMode) {
-            self.button(p, hits, Rect::new(x, row.y, 188.0, row.h), "Review blocked calls…", Hit::Review);
-            x += 192.0;
+            left.push(("Review blocked calls…", Hit::Review));
         } else if has(DenialKind::Rule) {
-            self.button(p, hits, Rect::new(x, row.y, 188.0, row.h), "Open /permissions", Hit::Review);
-            x += 192.0;
+            left.push(("Open /permissions", Hit::Review));
         }
         if retry_sentence(&denied).is_some() {
-            self.button(p, hits, Rect::new(x, row.y, 160.0, row.h), "Ask Claude to retry", Hit::AskRetry);
-            x += 164.0;
+            left.push(("Ask Claude to retry", Hit::AskRetry));
         }
-        if let Some(status) = chat.question.error {
-            p.text(Face::Ui, 11.0, x + 4.0, row.cy(), status, pal.muted, (row.right() - x - 4.0).max(0.0));
-        }
+        let status = chat.question.error.unwrap_or("");
+        self.foot(p, hits, Rect::new(x, y, w, cards::FOOT), &left, status, &[]);
     }
 }
 

@@ -34,20 +34,27 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
 
 The ten changes of the redesign study (branch `design/chat-redesign`, `docs/chat-redesign.md`) were
 built by one agent (merge `d2deea0`) and released at the owner's word before a review (owner,
-2026-11-28). Still to do:
+2026-11-28). A read-only review found twelve issues; all were fixed on `feature/redesign-fixes`
+(cards that fit or scroll, a card on a new session, the task progress below 900 px, Stop's own
+slot and turn check, "Run in background" without its line, the question's measure and mark, the
+code header's patch, Esc under a card, the older cards' layout, per-frame work, copied spacers).
+Still to do:
 
-- A correctness review of the branch (`main` b71f1a4 to `ee3500a`) for behaviour that changed beyond
-  the look: sending, queueing, Send now, card answering, Stop, undo, prompt recall.
 - Never tried in the running app or in a real session: the banner read on the empty state, the
-  patch on real edits (diff line numbers), "Run in background" on the working line.
-- Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind and
-  blocked-calls cards, a card in a very short window; scales other than 100 % and 150 %; the new
-  cards and panel in custom themes.
-- Decided by the builder, to confirm: typing while a card is docked goes nowhere until the card's
-  field is clicked; with a draft, Stop is an icon-only square beside Send; Chat's side padding grew
-  12 to 28 px; code blocks sit about 40 px lower (header drawn in a spacer, the renderer is an
-  external crate); the Session view keeps its strip and its tabs.
-- Not updated: the README's screenshots, `docs/DESIGN.md`, this file's Chat items.
+  patch on real edits (diff line numbers), "Run in background" on the working line, a card
+  scrolled under its pinned foot.
+- Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind card;
+  scales other than 100 % and 150 %; the new cards and panel in custom themes.
+- Decided, to confirm by the owner: typing while a card is docked still goes nowhere (the card
+  says so once); Stop is a small square in its own slot beside Send whenever a turn runs; Chat's
+  side padding is 28 px, 12 px under a 560 px column; code blocks sit about 40 px lower (header
+  drawn in a spacer, the renderer is an external crate); the Session view keeps its strip and its
+  tabs; a cut command well says how many lines are only in the terminal.
+- Not done: the cards' parts are built each frame (the question's measure, the costly part, is
+  cached); the code header still hides the renderer's own language label with a patch (in the
+  box's colour, only in the band the renderer keeps free of code, never over a selection) as the
+  renderer has no setting to leave it out.
+- Not updated: the README's screenshots, this file's Chat items.
 
 ## Completed follow-ups
 

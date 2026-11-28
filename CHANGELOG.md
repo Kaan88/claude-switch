@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Chat: a card taller than its room (a long command in a short window, or with the terminal
+  drawer open) no longer cuts off its choices and foot: it lowers its choices, shortens the
+  command (saying how many lines are left out) and the question, and scrolls what still does not
+  fit, with Open terminal and Esc kept in view. Nothing outside a card takes a click meant for
+  it.
+- Chat: a question on a new session shows at the foot of the window, not in the greeting's place.
+- Chat: a question longer than the card shows says so ("The rest of the question is in the
+  terminal") instead of being cut silently.
+- Chat: "Run in background" shows on the card when the command's own line is scrolled out of view.
+- Chat: Stop keeps its own place beside Send while Claude works, so a click on Send never lands
+  on Stop; Stop only stops the turn it was drawn for.
+- Chat: Escape under a card does what its "Esc to …" button says; a key typed while a card waits
+  says where typing goes.
+- Chat: the task progress on the working line ("2 of 3") is not shown where the window is too
+  narrow for the panel it opens.
+- Chat: copied text no longer carries the invisible character kept above code blocks for their
+  header, and the header no longer covers a selection at the code's top.
+- Chat: the rewind, blocked-calls, background and denied-permissions cards are laid out like the
+  other cards; Chat's side margin narrows to 12 px in a narrow window.
+
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

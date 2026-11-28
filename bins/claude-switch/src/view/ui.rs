@@ -164,19 +164,28 @@ const PAD: f32 = 12.0;
 /// Chat's side padding: the composer's box and the cards reach `look::INSET` past the reading
 /// column on each side and still keep the window's margin.
 const CHAT_PAD: f32 = PAD + super::look::INSET;
+/// Under this conversation column Chat keeps only the window's own margin at its sides, as the
+/// Session view does: the column keeps the room.
+const CHAT_PAD_NARROW: f32 = 560.0;
+
+/// Chat's side padding in a conversation area `width` wide.
+pub(super) fn chat_pad(width: f32) -> f32 {
+    if width - 2.0 * CHAT_PAD < CHAT_PAD_NARROW { PAD } else { CHAT_PAD }
+}
 /// The round "jump to latest" button.
 const JUMP: f32 = 34.0;
 
 impl Ui {
     fn pad(&self) -> f32 {
-        if self.chat { CHAT_PAD } else { PAD }
+        if self.chat { chat_pad(self.area.w) } else { PAD }
     }
 
     /// Where the conversation's text goes in a Chat conversation area at `x`, `width` wide:
     /// `(left, width)`. The composer and the cards are laid out on it before the frame is drawn.
     pub(super) fn column_for(&self, x: f32, width: f32) -> (f32, f32) {
         // Chat's column whatever this pane last drew as: the layout is Chat's.
-        self.reading_column(x + CHAT_PAD, (width - 2.0 * CHAT_PAD).max(1.0))
+        let pad = chat_pad(width);
+        self.reading_column(x + pad, (width - 2.0 * pad).max(1.0))
     }
 
     pub(super) fn detail_side(&self) -> Option<super::chat::Side> {
@@ -259,6 +268,12 @@ impl Ui {
     /// Where the last frame drew "Run in background", for the host to take its click.
     pub(super) fn offer_rect(&self) -> Option<Rect> {
         self.offer_rect.filter(|_| self.offer.is_some_and(|(_, busy)| !busy))
+    }
+
+    /// The last frame drew "Run in background" on the command's line (dimmed or not): it is in
+    /// view, so no card has to offer it.
+    pub(super) fn offer_drawn(&self) -> bool {
+        self.offer_rect.is_some()
     }
 
     /// The room Chat's working line takes after the last message.
