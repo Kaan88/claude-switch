@@ -282,12 +282,27 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
         Intent::Override if gate == Gate::Running => Some("A turn is running. Use Queue to send after it ends."),
         Intent::Now if !chat.demo && !clean_prompt(&tab.term.screen) => Some(NOT_EMPTY),
         Intent::Slash if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
+        // The transcript's running turn counts only while the screen shows one: a command's own
+        // record stays the newest and Active when the turn before it had no `end_turn` (Claude
+        // Code 2.1.332), while the CLI is plainly at rest. Over an idle input not yet quiet
+        // (right after `/model`) the gate reads Running from the transcript alone: the command
+        // waits for the input to rest (`CommandWait`), and a turn that shows meanwhile refuses it.
         Intent::Slash
-            if gate == Gate::Running || pane.model.chat.latest.is_some_and(|(_, p)| p == ChatPhase::Active) =>
+            if gate == Gate::Running
+                && (chat.demo
+                    || screen::working(&tab.term.screen)
+                    || busy_title(&tab.program_title)
+                    || !idle_slash_prompt(&tab.term.screen, true))
+                || pane.model.chat.latest.is_some_and(|(_, p)| p == ChatPhase::Active)
+                    && screen::working(&tab.term.screen) =>
         {
             Some(BUSY_CMD)
         }
-        Intent::Slash if !chat.demo && !idle_slash_prompt(&tab.term.screen, chat.quiet(now)) => Some(NO_QUIET_PROMPT),
+        Intent::Slash
+            if !chat.demo && (gate == Gate::Running || !idle_slash_prompt(&tab.term.screen, chat.quiet(now))) =>
+        {
+            Some(NO_QUIET_PROMPT)
+        }
         _ => None,
     }
 }

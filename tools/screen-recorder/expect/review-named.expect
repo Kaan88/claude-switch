@@ -1,0 +1,11 @@
+[review]
+kind = review
+answers = Which size? = Small | Which speed? = Slow
+choices = Submit answers | Cancel
+highlight = Submit answers
+send = no
+
+[done]
+kind = idle
+input =
+send = yes

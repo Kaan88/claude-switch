@@ -31,6 +31,11 @@
 //!   running turn (as typed, wrapped, or as Claude Code's paste marker).
 //! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
 //!   or none is (a resumed branch shows the turns before its cut and none after).
+//! - `dialog`: the readers of menus, questions and dialogs that find one on the screen (`menu`,
+//!   `panel`, `permission`, `review`, `attention`, …, commas between), `none` when none does.
+//! - `activity`: the name of another snapshot of the script whose rows down to the input box's
+//!   bottom rule are the same ([`screen::activity_digest`]): what redraws under it (the list of
+//!   background agents and their timers) is no activity, and keeps no screen from going quiet.
 //!
 //! A state can also be a file the script wrote instead of a snapshot, and its keys are about that:
 //!
@@ -39,7 +44,9 @@
 //!   `pictures` (`yes` when every picture of such a message loads, `none` when it has none),
 //!   `turn` (the prompt that started the newest turn: a message sent during a turn starts none),
 //!   `answers` (Claude's answers), `thinking` (the `thinkingDisplay` values of records with
-//!   thinking, `-` for none).
+//!   thinking, `-` for none), `phase` (the newest record's phase as the app reads it: `active`,
+//!   `end-turn`, `unknown`, `-` for none; after a local command such as `/cost` typed at rest,
+//!   `end-turn` when its output ended it).
 //! - A branch (`branch`, `<state>.json` and `<state>.id`): `resumed` (`yes` when Claude Code
 //!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
@@ -183,6 +190,10 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
                 _ => format!("shown: {}", wrong.join(" | ")),
             }
         }
+        "dialog" => {
+            let read = dialogs_read(s);
+            if read.is_empty() { "none".to_owned() } else { read.join(", ") }
+        }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
         "sent" => {
             let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
@@ -223,7 +234,7 @@ fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
 
 /// What the app's transcript reader makes of a transcript copy.
 fn transcript_fact(path: &Path, key: &str) -> String {
-    use claude_switch_core::transcript::{ItemKind, Reader};
+    use claude_switch_core::transcript::{ChatPhase, ItemKind, Reader};
     let Ok(mut reader) = Reader::open(path, 64 << 20) else { return "the transcript does not read".to_owned() };
     let items: Vec<_> = reader.items().map(|(id, item)| (id, item.clone())).collect();
     let joined = |parts: Vec<String>| if parts.is_empty() { NONE.to_owned() } else { parts.join(" | ") };
@@ -279,6 +290,13 @@ fn transcript_fact(path: &Path, key: &str) -> String {
                 })
                 .collect(),
         ),
+        "phase" => match reader.chat().latest {
+            Some((_, ChatPhase::Active)) => "active",
+            Some((_, ChatPhase::EndTurn)) => "end-turn",
+            Some((_, ChatPhase::Unknown)) => "unknown",
+            None => NONE,
+        }
+        .to_owned(),
         "thinking" => {
             let mut seen: Vec<String> = Vec::new();
             for line in std::fs::read_to_string(path).unwrap_or_default().lines() {
@@ -329,6 +347,20 @@ fn help_fact(help: &Path, key: &str, want: &str) -> String {
     }
 }
 
+/// `other` itself when the snapshot `other` in `folder` has the same rows as `screen` down to the
+/// input box's bottom rule.
+fn activity_as(folder: &Path, screen: &Screen, other: &str) -> String {
+    let Ok(text) = std::fs::read_to_string(folder.join(format!("{other}.ansi"))) else {
+        return format!("no snapshot {other}");
+    };
+    let theirs = screen::activity_digest(&recorded(&text.replace("\r\n", "\n")));
+    if theirs == screen::activity_digest(screen) {
+        other.to_owned()
+    } else {
+        format!("other rows than {other} down to the input's bottom rule")
+    }
+}
+
 /// What a state's file says for a key, given the expected value.
 type Reads = dyn Fn(&str, &str) -> String;
 
@@ -339,7 +371,11 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
     let read: Box<Reads> = if let Some(path) = file("ansi") {
         let text = std::fs::read_to_string(&path).map_err(|_| "no recording".to_owned())?;
         let screen = recorded(&text.replace("\r\n", "\n"));
-        Box::new(move |key, want| fact(&screen, key, want))
+        let folder = folder.to_owned();
+        Box::new(move |key, want| match key {
+            "activity" => activity_as(&folder, &screen, want),
+            _ => fact(&screen, key, want),
+        })
     } else if let Some(path) = file("jsonl") {
         Box::new(move |key, _| transcript_fact(&path, key))
     } else if let Some(path) = file("json") {
@@ -538,15 +574,18 @@ fn a_pattern_matches_whole_texts_with_stars_for_any_text() {
 #[test]
 fn the_fixtures_read_as_the_states_the_check_names() {
     for (fixture, wanted) in [
-        (PROMPT_IDLE, "kind = idle\ninput =\nsend = yes\nworking = no"),
+        (PROMPT_IDLE, "kind = idle\ninput =\nsend = yes\nworking = no\ndialog = none"),
         (PLAIN_TYPED, "kind = input\ninput = Reply with just the word: pong\nsend = no"),
         (WORKING_TOOL, "kind = working\nsend = no"),
-        (PLAIN_PASTED_LINES, "kind = input\ninput = -\nlines = line one\\nline two\\nline three"),
+        (PLAIN_PASTED_LINES, "kind = input\ninput = -\nlines = line one\\nline two\\nline three\ndialog = none"),
         (ASK_SINGLE, "kind = question\ntitle = Which colour do you prefer?\nhighlight = Red (warm)\ncount = 5"),
         (ASK_OTHER_TYPED, "kind = question\nanswer = my own answer"),
         (FORM_MULTI, "kind = question\nchoices = [ ] Apple | [ ] Pear | [ ] Plum | [ ] Type something | Next | *"),
         (ASK_REVIEW, "kind = review\nanswers = Which size? = Small | Which speed? = Slow\nhighlight = Submit answers"),
-        (PERM_BASH, "kind = permission\ntitle = Do you want to proceed?\ncount = 4\ntell = -\nattention = yes"),
+        (
+            PERM_BASH,
+            "kind = permission\ntitle = Do you want to proceed?\ncount = 4\ntell = -\nattention = yes\ndialog = *permission*",
+        ),
         (
             PERM_READ_OUTSIDE,
             "kind = permission\ncount = 3\nhighlight = Yes\nattention = yes\nbody = Read file | Read(*h.md)",
@@ -602,6 +641,20 @@ fn transcripts_branches_and_help_read_as_the_check_names_them() {
     assert_eq!(read("turn"), "ping it");
     assert_eq!(read("answers"), "delta");
     assert_eq!(read("thinking"), "updates");
+    assert_eq!(read("phase"), "end-turn");
+    // A local command typed after the turn ended, with its output: it ends with it.
+    let command = [
+        json!({"type":"user","message":{"content":"<command-name>/cost</command-name>\n<command-message>cost</command-message>\n<command-args></command-args>"}}),
+        json!({"type":"user","message":{"content":"<local-command-stdout>Total cost: $0.00</local-command-stdout>"}}),
+    ];
+    let after = dir.join("after.jsonl");
+    let text: String = lines.iter().chain(&command).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&after, text).unwrap();
+    assert_eq!(transcript_fact(&after, "phase"), "end-turn");
+    let without_output = dir.join("without.jsonl");
+    let text: String = lines.iter().chain(&command[..1]).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&without_output, text).unwrap();
+    assert_eq!(transcript_fact(&without_output, "phase"), "active");
     let branch = dir.join("branched.json");
     std::fs::write(dir.join("branched.id"), "0a1b2c3d-1111-4222-8333-444455556666\n").unwrap();
     let answer = json!({"is_error":false,"session_id":"0a1b2c3d-1111-4222-8333-444455556666","result":"Alpha"});
@@ -615,4 +668,25 @@ fn transcripts_branches_and_help_read_as_the_check_names_them() {
     let wanted = vec![("pictures".to_owned(), "yes".to_owned())];
     assert_eq!(check(&dir, "transcript", &wanted), Ok(Vec::new()));
     assert!(check(&dir, "nothing", &wanted).is_err());
+}
+
+#[test]
+fn activity_compares_the_rows_down_to_the_input_box_with_another_snapshot() {
+    let dir = crate::testing::Scratch::created("cs-compat-activity");
+    let rule = "─".repeat(20);
+    let snap = |name: &str, above: &str, timer: &str| {
+        let text = format!(
+            "cursor 2 2\n{above}\n{rule}\n❯ \n{rule}\n  ⏵⏵ auto mode on · 2 background tasks\n  ◯ general-purpose  {timer}"
+        );
+        std::fs::write(dir.join(format!("{name}.ansi")), text).unwrap();
+    };
+    snap("agents", "Done.", "1m 02s");
+    snap("agents_later", "Done.", "1m 05s");
+    snap("changed", "Done!", "1m 05s");
+    let wanted = |other: &str| vec![("activity".to_owned(), other.to_owned())];
+    assert_eq!(check(&dir, "agents_later", &wanted("agents")), Ok(Vec::new()));
+    let diffs = check(&dir, "changed", &wanted("agents")).unwrap();
+    assert_eq!(diffs.len(), 1, "{diffs:?}");
+    assert!(diffs[0].2.starts_with("other rows than agents"), "{diffs:?}");
+    assert_eq!(check(&dir, "agents", &wanted("gone")).unwrap()[0].2, "no snapshot gone");
 }

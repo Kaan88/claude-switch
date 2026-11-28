@@ -116,6 +116,11 @@ pub(crate) fn screen_permission_prompt(screen: &mdshared_term::Screen) -> bool {
     if !text.trim_start().starts_with("Esc to cancel") {
         return false;
     }
+    // A prompt takes the input box's place: with the box on screen, the rows are the user's own
+    // text (a draft, the message as sent) or the conversation.
+    if crate::view::chat::input_box_shown(screen) {
+        return false;
+    }
     let rows: Vec<_> = (footer.saturating_sub(PROMPT_ROWS)..footer)
         .rev()
         .map(|row| screen.row_text(row))

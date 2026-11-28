@@ -110,6 +110,11 @@ struct Signals<'a> {
     resting: bool,
 }
 
+/// The CLI's live input box is on the screen: no prompt or menu has its place.
+pub(crate) fn input_box_shown(screen: &mdshared_term::Screen) -> bool {
+    question::screens::input_box(screen).is_some()
+}
+
 fn assess(s: Signals<'_>) -> (Gate, Option<Reason>) {
     if s.ended {
         return (Gate::Ended, Some(Reason::Ended));
@@ -239,6 +244,8 @@ pub struct Chat {
     bell: bool,
     slash: bool,
     last_output: Option<Instant>,
+    /// A digest of the rows down to the input box at the last output (`output_on`).
+    drawn: Option<u64>,
     /// When the terminal last got input from the user or from Chat.
     last_input: Option<Instant>,
     /// When this tab last saved a screen report (`screen_report`).
@@ -268,10 +275,30 @@ impl Chat {
         self.react(Some(Reason::Permission));
     }
 
+    /// Tests: the CLI drew something new, whatever the screen holds.
+    #[cfg(test)]
     pub fn output(&mut self, now: Instant, output: bool, bell: bool) {
         if output {
             self.last_output = Some(now);
             self.output_epoch = self.output_epoch.wrapping_add(1);
+        }
+        if bell {
+            self.bell = true;
+            self.suppressed = None;
+        }
+    }
+
+    /// Output from the terminal, as it changed `screen`: every output is newer output (the epoch),
+    /// but only a change of what is drawn down to the input box is activity (`last_output`, which
+    /// `quiet` waits on). The rows under it redraw by themselves while the CLI is at rest.
+    pub fn output_on(&mut self, now: Instant, output: bool, bell: bool, screen: &mdshared_term::Screen) {
+        if output {
+            self.output_epoch = self.output_epoch.wrapping_add(1);
+            let digest = submission::screen::activity_digest(screen);
+            if self.drawn != Some(digest) {
+                self.drawn = Some(digest);
+                self.last_output = Some(now);
+            }
         }
         if bell {
             self.bell = true;

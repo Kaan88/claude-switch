@@ -24,14 +24,47 @@ pub(in crate::view) fn prompt_mark(c: char) -> bool {
 }
 
 /// Row `row` starts Claude Code's input: its first character is the input mark, and for the
-/// plain `>` the row right above is the input box's rule.
+/// plain `>` the row right above is the input box's rule. A `❯` before a numbered text is a
+/// menu's highlighted choice (`❯ 1. Yes`) unless the input box's rule is right above it: a
+/// message typed or sent as `1. fix a` is the input all the same.
 pub(in crate::view) fn marks_input(screen: &Screen, row: usize) -> bool {
     let text = screen.row_text(row);
+    let ruled = || row.checked_sub(1).and_then(|above| screen.line(above)).is_some_and(|line| rule(line.cells()));
     match text.trim_start().chars().next() {
-        Some('❯') => true,
-        Some('>') => row.checked_sub(1).and_then(|above| screen.line(above)).is_some_and(|line| rule(line.cells())),
+        Some('❯') => !numbered_choice(text.trim_start().trim_start_matches('❯')) || ruled(),
+        Some('>') => ruled(),
         _ => false,
     }
+}
+
+/// `1. Yes`: a menu's numbered choice after its highlight mark.
+fn numbered_choice(text: &str) -> bool {
+    let text = text.trim_start();
+    let digits = text.chars().take_while(char::is_ascii_digit).count();
+    digits > 0 && text[digits..].starts_with(". ")
+}
+
+/// A digest of what the CLI draws from the top through its input box's bottom rule (the whole
+/// screen when no input box is found). What it draws under that rule (the hints, the list of
+/// background agents with their running timers and token counts) is left out: redrawn every
+/// second, it would keep the screen from ever going quiet while the CLI is at rest (2.1.332).
+pub(in crate::view) fn activity_digest(screen: &Screen) -> u64 {
+    use std::hash::{Hash, Hasher};
+    // The lowest input mark, right under the box's top rule: an earlier prompt in the history
+    // has no rule over it, and a menu (which has no input box) must count whole.
+    let input = (0..screen.rows())
+        .rev()
+        .find(|&row| marks_input(screen, row))
+        .filter(|&row| row.checked_sub(1).and_then(|above| screen.line(above)).is_some_and(|line| rule(line.cells())));
+    let bottom = input.and_then(|row| {
+        (row + 1..screen.rows()).find(|&below| screen.line(below).is_some_and(|line| rule(line.cells())))
+    });
+    let end = bottom.map_or(screen.rows(), |row| row + 1);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for row in 0..end {
+        screen.row_text(row).hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn footer(line: &str) -> bool {

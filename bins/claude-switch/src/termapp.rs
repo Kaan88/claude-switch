@@ -276,7 +276,7 @@ impl AppState {
             }
             if let Some(pane) = &mut tab.pane {
                 let bell = tab.attention.terminal(&mut tab.term.screen, r.output, focused && shown == Some(tab.id));
-                pane.chat.output(Instant::now(), r.output, bell);
+                pane.chat.output_on(Instant::now(), r.output, bell, &tab.term.screen);
             }
             w.strip |= r.ended;
             if let Some(title) = r.title {

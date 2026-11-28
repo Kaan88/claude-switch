@@ -19,6 +19,16 @@
   model buttons) is followed until Claude Code took it: one that was not entered is taken off the
   input again (only when the input shows exactly that line, never your own text), a rename is
   typed again up to three times, and the box says what happened.
+- Chat: a slash command after `/model` is no longer refused with "A turn is running (the screen
+  reads idle)" when the turn before it ended without an `end_turn` record.
+- Chat: background agents listed under the input (their timers redraw every second) no longer
+  keep the screen from reading quiet, so commands and messages go instead of being refused.
+- Chat: the "Review your answers" step of a question shows as a card when blank rows and the
+  input's rule are drawn under it, instead of sending you to the terminal. A menu's highlighted
+  choice (`❯ 1. Yes`) is no longer taken for the input's mark.
+- Chat: a message that is a numbered list ("1. …", "2. …") no longer shows as a question card
+  that blocks sending. What is in Claude Code's input box, under it or in the conversation above
+  it is never read as a menu, question or dialog.
 - Handover: Claude Code no longer asks in the terminal whether it may read the handover file. A
   new handover tab may read exactly that one file. A handover that continues in the same tab is
   pasted whole up to 15,000 characters, as before; a longer one is still read from its file, and

@@ -45,7 +45,10 @@ impl ChatInfo {
 
     /// A slash command's record (`<command-name>`), seen before it counts as a prompt. Typed at
     /// rest, it may run in the CLI alone and only print (`/model`, `/effort`): its output ends it
-    /// ([`command_done`](Self::command_done)). Typed during a turn it changes nothing.
+    /// ([`command_done`](Self::command_done)). Typed during a turn it changes nothing. At rest is
+    /// only after a turn that plainly ended (`end_turn`): an answer block with no stop reason
+    /// (Unknown) may be followed by a tool call in the same turn. A turn that ended with no
+    /// `end_turn` record leaves the command Active here; the app tells it by the idle screen.
     pub(super) fn command_started(&mut self, at: u64) {
         let at_rest = self.latest.is_none_or(|(_, phase)| phase == Phase::EndTurn);
         self.command_at = at_rest.then_some(at);
@@ -533,7 +536,7 @@ mod tests {
             json!({"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"cargo test"}}]}}),
         ]);
         write(&command);
-        write(&[output]);
+        write(std::slice::from_ref(&output));
         reader.poll().unwrap();
         assert_eq!(phase(&reader), Some(Phase::Active), "the turn goes on");
 
@@ -547,6 +550,23 @@ mod tests {
         reader.poll().unwrap();
         assert_eq!(phase(&reader), Some(Phase::Active));
         assert_eq!(reader.chat().pending, None);
+
+        // An answer block with no stop reason may be the middle of a turn (a streamed text
+        // before a tool call): a command typed after it ends nothing, and the turn goes on. (A
+        // turn that did end that way is told by the idle screen, in the app.)
+        write(&[
+            json!({"type":"user","message":{"content":"Hello again"}}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Let me look."}],"stop_reason":null}}),
+        ]);
+        write(&command);
+        write(&[output]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active), "the turn goes on");
+        write(&[
+            json!({"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ls"}}]}}),
+        ]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active));
     }
 
     #[test]

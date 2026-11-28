@@ -267,13 +267,15 @@ runs of blanks count as one and `\n` is a line break.
 | `answer`, `lines`, `wrapped` | This text reads back exactly on the highlighted row; the input shows this text of several lines; this long line |
 | `sent` | The input shows this message as Chat's echo check before Enter takes it (as typed, wrapped, or as the paste marker) |
 | `shows`, `hides` | Every text of the value (` \| ` between them) is somewhere on the screen, or none is |
+| `activity` | The name of another snapshot of the script with the same rows down to the input box's bottom rule (Chat's activity digest: what redraws under the rule, such as the list of background agents, is no activity) |
+| `dialog` | The readers of menus, questions and dialogs that find one on the screen, commas between; `none` when none does |
 
 A section can also name a file the script wrote instead of a snapshot (the check looks for
 `<state>.ansi`, then these):
 
 | File | Keys |
 | --- | --- |
-| `<state>.jsonl` (`tscopy`), read by the app's transcript reader | `prompts` (each prompt joined with ` \| `, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`), `pictures` (`yes` when every picture of such a message loads, `none` for none), `turn` (the prompt that started the newest turn), `answers`, `thinking` (the `thinkingDisplay` values of records with thinking) |
+| `<state>.jsonl` (`tscopy`), read by the app's transcript reader | `prompts` (each prompt joined with ` \| `, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`), `pictures` (`yes` when every picture of such a message loads, `none` for none), `turn` (the prompt that started the newest turn), `answers`, `thinking` (the `thinkingDisplay` values of records with thinking), `phase` (the newest record's phase: `active`, `end-turn`, `unknown`; `end-turn` after a local command typed at rest whose output ended it) |
 | `<state>.json` and `.id` (`branch`) | `resumed` (`yes`: answered under the copy's id), `words` (which of alpha, bravo, charlie the answer names) |
 | `<state>.help.txt` (`help`) | `flags` (the value itself when `claude --help` lists every flag of it) |
 

@@ -1,0 +1,19 @@
+# A local command typed at rest after a turn (as `/model` is, without changing the account's
+# default model): the transcript holds its record and its output, and the reader takes the
+# output for its end, so Chat does not read a turn running. One model request. `/context`, not `/cost`: on a subscription `/cost` opens the usage panel.
+#: args --permission-mode default
+#: seconds 20
+start
+send Reply with just the word: pong
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+send /context
+sleep 800
+send \r
+sleep 2000
+quiet 1000 15000
+snap after
+tscopy after_transcript

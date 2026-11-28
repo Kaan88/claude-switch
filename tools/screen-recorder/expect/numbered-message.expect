@@ -1,0 +1,16 @@
+# Chat read a menu from the lines of the user's own numbered message (0.1.6): rows in the input
+# box, and the message as sent, are never a menu, question or dialog.
+[draft]
+kind = input
+lines = 1. say pong\n2. nothing else\n3. then stop
+send = no
+dialog = none
+
+[sent]
+dialog = none
+
+[answered]
+kind = idle
+input =
+send = yes
+dialog = none

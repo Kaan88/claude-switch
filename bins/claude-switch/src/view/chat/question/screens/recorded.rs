@@ -228,6 +228,41 @@ fn the_review_step_reads_its_questions_answers_and_highlight() {
 }
 
 #[test]
+fn the_review_step_is_read_over_blank_rows_and_the_inputs_rule_under_it() {
+    // Under "2. Cancel" Claude Code may leave blank rows and the input's rule, plain or named:
+    // taken for the review's last row, the review was not read (owner, 2026-11-28).
+    let review_over = |under: &str| {
+        let rows = [
+            "─".repeat(20).as_str(),
+            "←  ☒ Size  ✔ Submit  →",
+            "",
+            "Review your answers",
+            "",
+            " │ ● Which size should the test use? A long question",
+            " │   that wraps onto a second row.",
+            "   → Small",
+            "",
+            "❯ 1. Submit answers",
+            "  2. Cancel",
+        ]
+        .join("\n");
+        recorded(&format!("cursor 9 2\n{rows}\n{under}"))
+    };
+    let named = "──────────────────── Test session ─";
+    for under in [format!("\n\n\n\n\n{named}"), format!("\n\n{}", "─".repeat(20)), String::new()] {
+        let screen = review_over(&under);
+        let read = review(&screen).expect("the review");
+        assert_eq!(read.highlight, Some(0));
+        let question = "Which size should the test use? A long question that wraps onto a second row.";
+        assert_eq!(read.answers, [(question.to_owned(), "Small".to_owned())]);
+        let panel = panel(&screen).expect("the review as a menu");
+        assert_eq!(panel.menu.expect("its entries").texts(), ["Submit answers", "Cancel"]);
+    }
+    // Text under "Cancel" is no review.
+    assert!(review(&review_over("\nsomething else")).is_none());
+}
+
+#[test]
 fn a_multi_select_shows_its_submit_or_next_row_between_type_something_and_chat_about_this() {
     let row = |fixture: &str| {
         let screen = recorded(fixture);
@@ -769,4 +804,183 @@ fn a_typed_answer_reads_exactly_on_its_row_with_or_without_unicode() {
     assert!(!shows(&pristine, 3, "my own answer"));
     let form = walk_menu(&recorded(FORM_OTHER)).unwrap();
     assert!(!shows(&form, 3, "Type something") && !shows(&form, 3, "kiwi"));
+}
+
+/// What any reader of menus, questions and dialogs makes of `screen`: the names of those that
+/// found one.
+pub(super) fn dialogs_read(screen: &Screen) -> Vec<&'static str> {
+    let found = [
+        ("menu", menu(screen).is_some()),
+        ("walk_menu", walk_menu(screen).is_some()),
+        ("panel", panel(screen).is_some()),
+        ("permission", permission(screen).is_some()),
+        ("permission_like", permission_like(screen)),
+        ("review", review(screen).is_some()),
+        ("plan", plan(screen).is_some()),
+        ("blocked", blocked(screen).is_some()),
+        ("rewind_list", rewind_list(screen).is_some()),
+        ("rewind_actions", rewind_actions(screen).is_some()),
+        ("live_footer", live_footer(screen).is_some()),
+        ("attention", crate::attention::screen_permission_prompt(screen)),
+        ("menu_open", crate::view::chat::submission::screen::menu(screen)),
+    ];
+    found.into_iter().filter(|(_, read)| *read).map(|(name, _)| name).collect()
+}
+
+/// A screen of `rows` with the CLI's input box (full-width rules) holding `input`, `under` it.
+fn with_input(above: &str, input: &[&str], under: &str) -> Screen {
+    let rule = "─".repeat(100);
+    let cursor = above.lines().count() + input.len();
+    let mut rows: Vec<String> = above.lines().map(str::to_owned).collect();
+    rows.push(rule.clone());
+    for (i, line) in input.iter().enumerate() {
+        rows.push(format!("{}{line}", if i == 0 { "❯ " } else { "  " }));
+    }
+    rows.push(rule);
+    rows.extend(under.lines().map(str::to_owned));
+    recorded(&format!("cursor {cursor} 10\n{}", rows.join("\n")))
+}
+
+/// Status lines Claude Code may draw under its input, some of which read like a menu's footer.
+const UNDER_INPUT: [&str; 4] = [
+    "  ⏵⏵ auto mode on (shift+tab to cycle)",
+    "  ⏵⏵ auto mode on · esc to interrupt",
+    "  Enter to select · ↑/↓ to navigate · Esc to cancel",
+    "  ↑/↓ to select · enter to view · x to stop\n  ● main\n  ◯ a\n  ◯ b\n  ◯ c\n  ◯ d\n  ◯ e\n  ◯ f\n  ◯ g\n  ◯ h",
+];
+
+#[test]
+fn a_numbered_draft_in_the_input_is_no_menu() {
+    // The owner sent a numbered list of several lines: Chat showed a card made of its lines.
+    let drafts: [&[&str]; 3] = [
+        &["1. say pong", "2. nothing else", "3. done"],
+        &["Do you want to proceed?", "1. Yes", "2. No"],
+        &["1. Submit answers", "2. Cancel"],
+    ];
+    for draft in drafts {
+        for under in UNDER_INPUT {
+            let screen = with_input("❯ earlier\n  ⎿  done\n", draft, under);
+            assert_eq!(dialogs_read(&screen), Vec::<&str>::new(), "{draft:?} over {under:?}");
+            assert!(crate::view::chat::submission::screen::shows_lines(&screen, &draft.join("\n")), "{draft:?}");
+        }
+    }
+    // With "Esc to cancel" as the last row under it.
+    let screen = with_input("", &["Do you want to proceed?", "1. Yes", "2. No"], "\n Esc to cancel");
+    assert_eq!(dialogs_read(&screen), Vec::<&str>::new());
+}
+
+#[test]
+fn the_users_numbered_message_as_sent_is_no_menu() {
+    // After Enter: the message in the conversation, the turn starting, the empty input under it.
+    let sent = "❯ 1. say pong\n  2. nothing else\n  3. done\n\n✻ Working… (1s)\n";
+    for under in UNDER_INPUT {
+        let screen = with_input(sent, &[""], under);
+        assert_eq!(dialogs_read(&screen), Vec::<&str>::new(), "under {under:?}");
+    }
+    // A numbered list in Claude's answer, over the idle input.
+    let answer = "❯ list the steps\n\n● Here they are:\n  1. Build\n  2. Test\n  3. Ship\n";
+    for under in UNDER_INPUT {
+        let screen = with_input(answer, &[""], under);
+        assert_eq!(dialogs_read(&screen), Vec::<&str>::new(), "under {under:?}");
+    }
+}
+
+#[test]
+fn a_dialog_under_the_users_numbered_message_reads_only_its_own_rows() {
+    let rule = "─".repeat(100);
+    let sent = "❯ 1. say pong\n  2. nothing else\n\n● Bash(mkdir x)\n  ⎿  Waiting…\n";
+    // A dialog with no numbered rows of its own: the message's rows are not its choices.
+    let panel_screen = recorded(&format!(
+        "cursor 0 0\n{sent}\n{rule}\n Some dialog\n\n Its text, with no choices\n\n Enter to confirm · Esc to cancel"
+    ));
+    assert!(menu(&panel_screen).is_none());
+    assert!(panel(&panel_screen).is_some_and(|p| p.menu.is_none()));
+    // A permission prompt: its own choices.
+    let prompt = recorded(&format!(
+        "cursor 0 0\n{sent}\n{rule}\n Bash command\n mkdir x\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend"
+    ));
+    assert_eq!(permission(&prompt).expect("the prompt").menu.texts(), ["Yes", "No"]);
+}
+
+#[test]
+fn the_real_menus_and_dialogs_are_still_read() {
+    let read = |fixture: &str| dialogs_read(&recorded(fixture));
+    for (name, fixture, reader) in [
+        ("perm_bash", PERM_BASH, "permission"),
+        ("plain_perm_bash", PLAIN_PERM_BASH, "attention"),
+        ("perm_two_after", PERM_TWO_AFTER, "permission"),
+        ("perm_agent_bash", PERM_AGENT_BASH, "permission"),
+        ("menu_model", MENU_MODEL, "menu"),
+        ("menu_effort", MENU_EFFORT, "panel"),
+        ("menu_config", MENU_CONFIG, "panel"),
+        ("ask_single", ASK_SINGLE, "panel"),
+        ("ask_single_other", ASK_SINGLE_OTHER, "panel"),
+        ("plain_question", PLAIN_QUESTION, "panel"),
+        ("form_multi", FORM_MULTI, "panel"),
+        ("ask_review", ASK_REVIEW, "review"),
+        ("form_review", FORM_REVIEW, "review"),
+        ("plain_trust", PLAIN_TRUST, "menu"),
+        ("plan", PLAN, "plan"),
+        ("blocked_one", BLOCKED_ONE, "blocked"),
+        ("rewind_open", REWIND_OPEN, "rewind_list"),
+        ("rewind_actions", REWIND_ACTIONS, "rewind_actions"),
+    ] {
+        assert!(read(fixture).contains(&reader), "{name}: {:?}", read(fixture));
+    }
+    assert_eq!(menu(&recorded(MENU_MODEL)).unwrap().entries.len(), 5);
+    assert_eq!(menu(&recorded(PLAIN_TRUST)).unwrap().texts(), ["No, exit", "Yes, I trust this folder"]);
+    // The idle input and the agent list under it are no dialog.
+    for fixture in [PLAIN_IDLE, PROMPT_IDLE, AGENTS_OPEN, AGENTS_IDLE, PLAIN_TYPED, PLAIN_PASTED_LINES] {
+        assert_eq!(read(fixture), Vec::<&str>::new());
+    }
+    assert!(agent_list(&recorded(AGENTS_OPEN)).is_some());
+}
+
+#[test]
+fn a_question_with_chat_about_this_highlighted_over_a_leftover_rule_is_no_input_box() {
+    // `❯ 5. Chat about this` sits right under the question's inner rule, and Claude Code may leave
+    // a plain rule under the dialog (seen at the review step): taken for the input box, no card.
+    let rule = "─".repeat(100);
+    for under in [format!("\n{rule}"), format!("\n\n\n{rule}"), rule.clone()] {
+        let screen = recorded(&format!("{ASK_SINGLE_OTHER}{under}"));
+        assert_eq!(input_box(&screen), None, "{under:?}");
+        let panel = panel(&screen).expect("the question");
+        assert!(panel.question, "{under:?}");
+        assert_eq!(panel.menu.expect("its choices").highlight(), Some(4));
+    }
+}
+
+#[test]
+fn a_quote_under_a_rule_in_the_conversation_is_no_input_box() {
+    // A `>` row of the conversation right under a rendered rule, the permission prompt's own top
+    // rule further down: taken for the input box and its closing rule, no prompt was read and no
+    // notification came.
+    let rule = "─".repeat(100);
+    let prompt = format!(
+        "{rule}\n Bash command\n mkdir x\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend"
+    );
+    for quote in ["  > a quoted line", "> a quoted line"] {
+        let screen = recorded(&format!(
+            "cursor 0 0\n● Here is the note:\n{rule}\n{quote}\n  and its second line\n\n● Bash(mkdir x)\n  ⎿  Waiting…\n\n{prompt}"
+        ));
+        assert_eq!(input_box(&screen), None, "{quote:?}");
+        assert!(crate::attention::screen_permission_prompt(&screen), "{quote:?}");
+        assert_eq!(permission(&screen).expect("the prompt").menu.texts(), ["Yes", "No"]);
+    }
+}
+
+#[test]
+fn choices_start_under_the_rule_over_the_menus_first_choice() {
+    // A full-width rule in the conversation above the user's numbered message: the message is
+    // still above the dialog's own rule, and a dialog with no numbered rows has no choices.
+    let rule = "─".repeat(100);
+    let screen = recorded(&format!(
+        "cursor 0 0\n● Done.\n{rule}\n❯ 1. say pong\n  2. nothing else\n\n● On it.\n\n{rule}\n Some dialog\n\n Its text\n\n Enter to confirm · Esc to cancel"
+    ));
+    assert_eq!(input_box(&screen), None);
+    assert!(menu(&screen).is_none());
+    assert!(panel(&screen).is_some_and(|p| p.menu.is_none()));
+    // A question's choices on both sides of its inner rule are one menu.
+    assert_eq!(menu(&recorded(ASK_SINGLE)).expect("the question").entries.len(), 5);
+    assert_eq!(menu(&recorded(ASK_SINGLE_OTHER)).expect("the question").entries.len(), 5);
 }
