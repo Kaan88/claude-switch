@@ -133,6 +133,8 @@ as the second account, Windows Terminal, the desktop hand-over.
   time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
   Cancel. Read-only on the bridge's files.
 - A real hand-over out of Desktop (make it let go of a session). No supported way is known.
+- Find a session by its id: a pasted session id (or a `claude --resume <id>` line, as handovers give
+  it) in the Sessions search matches that session, so it can be opened at once (owner, 2026-11-28).
 - When the terminal opens for a question (a card's "Open terminal", or Chat handing a question it
   cannot answer to the terminal), give the terminal keyboard focus so the answer can be typed at
   once (owner, 2026-11-28).
