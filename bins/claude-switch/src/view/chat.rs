@@ -641,6 +641,15 @@ impl Chat {
         }
     }
 
+    /// Opens the terminal drawer, if it is closed, and gives it the keyboard.
+    pub(crate) fn show_terminal(&mut self) {
+        if self.drawer == Drawer::Closed {
+            self.open_drawer();
+        } else {
+            self.drawer_focus = true;
+        }
+    }
+
     pub(super) fn open_drawer(&mut self) {
         terminal_card::keep(self);
         self.drawer = Drawer::Manual;

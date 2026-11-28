@@ -54,6 +54,17 @@
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.
+- Terminal tabs: split a tab into up to four panes, side by side or stacked, with "Split right",
+  "Split down", "Close pane" and "Next pane" in the tab's menu and the palette. A new pane starts a
+  shell in the tab's folder; a click gives a pane the keyboard (it has a thin edge), the divider
+  between two panes can be dragged, and each pane has its own size. Chat and the session view stay
+  with the tab's own Claude pane, which closes last; closing the last pane closes the tab.
+- Terminal tabs: find in the screen and the scrollback. Ctrl+Shift+F (while the terminal has the
+  keyboard, as in Windows Terminal), "Find in terminal" in the palette or "Find…" in the tab's menu
+  opens a bar at the top right of the terminal, also over Chat's terminal drawer. Matches are marked
+  as you type, the current one in its own colour, with a count ("3 of 12"); Enter or ↑ goes to the
+  match above, Shift+Enter or ↓ to the one below, Aa (Alt+C) matches case (off by default), Escape
+  closes it. A match across a wrapped line is found.
 - Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
   record and the transcripts (a `live` op records both), and whether Chat reads the screen after
   it as an idle input.

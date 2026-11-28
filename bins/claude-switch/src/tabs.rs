@@ -52,6 +52,10 @@ pub struct Tab {
     pub attention: crate::attention::TabAttention,
     /// An OpenCode tab: the folder it runs in. Not a Claude session: no account, transcript or pane.
     pub opencode: Option<PathBuf>,
+    /// The folder the tab's program was started in, whatever it is (new panes start there).
+    pub folder: Option<PathBuf>,
+    /// Further panes the tab is split into (`panes`); `term` is pane 0.
+    pub panes: crate::panes::Panes,
 }
 
 impl Tab {
@@ -182,6 +186,8 @@ impl Tabs {
             pane: None,
             opencode: None,
             attention: Default::default(),
+            folder: None,
+            panes: Default::default(),
         });
         self.active = Some(id);
         id
@@ -264,7 +270,7 @@ impl Tabs {
 
     /// How many tabs have a program that still runs.
     pub fn running(&self) -> usize {
-        self.list.iter().filter(|t| t.term.running()).count()
+        self.list.iter().filter(|t| t.any_running()).count()
     }
 }
 

@@ -120,6 +120,10 @@ pub enum Target {
     TabClose(u64),
     /// The terminal of the tab shown.
     Terminal,
+    /// A control of the find bar over the terminal shown.
+    Find(crate::termfind::FindControl),
+    /// A divider between panes of the tab shown, by its number.
+    PaneDivider(usize),
     SessionToggle,
     ChatMode(bool),
     Chat(crate::view::chat::Control),
@@ -251,6 +255,8 @@ pub struct AppState {
     pub cell_font: CellFont,
     pub metrics: Option<Metrics>,
     pub term_area: Rect,
+    /// The whole terminal of the tab shown, all its panes and their padding.
+    pub term_region: Rect,
     /// The grid that fits the terminal area, for a tab opened next.
     pub grid: (u16, u16),
     pub window_focused: bool,
@@ -369,6 +375,7 @@ impl AppState {
             cell_font: CellFont::new(),
             metrics: None,
             term_area: Rect::default(),
+            term_region: Rect::default(),
             grid: crate::term::FIRST_SIZE,
             window_focused: true,
             quit: false,

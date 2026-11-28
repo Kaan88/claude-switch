@@ -66,6 +66,8 @@ pub fn keyboard_now(keyboard: Keyboard, screen: &Screen) -> Keyboard {
 pub enum KeyAction {
     /// One of the window's commands ([`actions`]): the shortcuts that stay with the window.
     Command(u32),
+    /// Open the find bar (Ctrl+Shift+F, as in Windows Terminal).
+    Find,
     /// Copy the selection.
     Copy,
     /// Paste the clipboard.
@@ -148,6 +150,7 @@ pub fn key(
     let ctrl_shift = mods.ctrl && mods.shift && !mods.alt;
     match name {
         KeyName::Char('c') if ctrl_shift => return KeyAction::Copy,
+        KeyName::Char('f') if ctrl_shift => return KeyAction::Find,
         KeyName::Char('v') if mods.ctrl && !mods.alt => return KeyAction::Paste,
         KeyName::Char('c') if mods.ctrl && !mods.shift && !mods.alt && selected => return KeyAction::Copy,
         KeyName::PageUp if mods.shift && !mods.ctrl && !mods.alt && !modes.alt_screen => return KeyAction::Page(1),
@@ -414,6 +417,8 @@ mod tests {
         assert_eq!(k(KeyName::Char('k'), CTRL_SHIFT, None), KeyAction::Command(actions::PALETTE));
         assert_eq!(k(KeyName::Char('p'), CTRL_SHIFT, None), KeyAction::Command(actions::SWITCHER));
         assert_eq!(k(KeyName::Char('p'), CTRL, None), send(b"\x10"));
+        assert_eq!(k(KeyName::Char('f'), CTRL_SHIFT, None), KeyAction::Find);
+        assert_eq!(k(KeyName::Char('f'), CTRL, None), send(b"\x06"), "Ctrl+F stays the program's");
         assert_eq!(k(KeyName::Char('e'), CTRL_SHIFT, None), KeyAction::Command(actions::SESSION_VIEW));
         assert_eq!(k(KeyName::Char('w'), CTRL, Some("\u{17}")), send(b"\x17"), "Ctrl+W is the program's");
         assert_eq!(k(KeyName::Char('c'), CTRL_SHIFT, None), KeyAction::Copy);

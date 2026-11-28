@@ -41,6 +41,7 @@ mod list;
 mod meaning;
 mod opencode_tab;
 mod opencode_workers;
+mod panes;
 mod recent_folders;
 mod resume_tabs;
 mod run;
@@ -53,6 +54,7 @@ mod tabcontrols;
 mod tabs;
 mod term;
 mod termapp;
+mod termfind;
 mod termkeys;
 mod termtheme;
 #[cfg(test)]

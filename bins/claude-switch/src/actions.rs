@@ -52,6 +52,11 @@ const SET_TOPIC: u32 = 31;
 const MEANING_INDEX: u32 = 240;
 const MEANING_ASK: u32 = 241;
 pub const NEW_OPENCODE: u32 = 242;
+pub const FIND_TERMINAL: u32 = 243;
+pub const SPLIT_RIGHT: u32 = 244;
+pub const SPLIT_DOWN: u32 = 245;
+pub const CLOSE_PANE: u32 = 246;
+pub const NEXT_PANE: u32 = 247;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -171,6 +176,19 @@ impl AppState {
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
             NEW_OPENCODE => self.ask_new_opencode_tab(),
+            FIND_TERMINAL => self.open_find(),
+            SPLIT_RIGHT | SPLIT_DOWN => {
+                if let Some(t) = self.tabs.active {
+                    let axis = if id == SPLIT_RIGHT { crate::panes::Axis::Right } else { crate::panes::Axis::Down };
+                    self.split_pane(now, t, axis);
+                }
+            }
+            CLOSE_PANE => {
+                if let Some(t) = self.tabs.active {
+                    self.ask_close_pane(now, t);
+                }
+            }
+            NEXT_PANE => self.focus_next_pane(),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
             CLOSE_TAB => {
                 if let Some(t) = self.tabs.active {
@@ -614,6 +632,15 @@ impl AppState {
         }
         if self.terminal_shown() {
             entries.push(Entry::new(PASTE, "Paste").group(0));
+            entries.push(Entry::new(FIND_TERMINAL, "Find in terminal").hint("Ctrl+Shift+F").group(0));
+            if self.tabs.active.is_some_and(|t| self.can_split(t)) {
+                entries.push(Entry::new(SPLIT_RIGHT, "Split right").group(0));
+                entries.push(Entry::new(SPLIT_DOWN, "Split down").group(0));
+            }
+            if self.tabs.shown().is_some_and(|t| t.shows_panes()) {
+                entries.push(Entry::new(CLOSE_PANE, "Close pane").group(0));
+                entries.push(Entry::new(NEXT_PANE, "Next pane").group(0));
+            }
         }
         if self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) {
             entries.push(Entry::new(CHAT_LAYOUT, "Switch Chat / Terminal · F6 in palette").group(0));

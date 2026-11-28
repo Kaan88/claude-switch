@@ -65,6 +65,11 @@ pub(crate) fn terminal_name(launch: &mut Launch) {
     }
 }
 
+/// The grid's place in a terminal's area, inside its padding.
+pub fn inner(area: Rect) -> Rect {
+    Rect::new(area.x + PAD, area.y + PAD, (area.w - 2.0 * PAD).max(0.0), (area.h - 2.0 * PAD).max(0.0))
+}
+
 fn button_of(b: Button) -> Option<MouseButton> {
     match b {
         Button::Left => Some(MouseButton::Left),
@@ -96,10 +101,14 @@ impl AppState {
 
     /// Whether the terminal shown has the keyboard: the window has it and nothing is over it.
     pub fn terminal_focused(&self) -> bool {
-        self.window_focused && self.nothing_over() && self.terminal_shown() && !self.chat_takes_input()
+        self.window_focused
+            && self.nothing_over()
+            && self.terminal_shown()
+            && !self.chat_takes_input()
+            && !self.tabs.shown().is_some_and(|tab| tab.focused_term().find.as_ref().is_some_and(|find| find.focused))
     }
 
-    fn term_wake(&self) -> impl Fn() + Send + Sync + 'static {
+    pub(crate) fn term_wake(&self) -> impl Fn() + Send + Sync + 'static {
         let proxy = self.proxy.clone();
         move || {
             if let Some(p) = &proxy
@@ -129,6 +138,7 @@ impl AppState {
         if let Some(tab) = self.tabs.get_mut(id) {
             tab.auto.managed = managed;
             tab.cwd = pane.as_ref().and(l.cwd.clone());
+            tab.folder = l.cwd.clone();
             tab.pane = pane;
             tab.signing_in = signing_in;
         }
@@ -162,16 +172,16 @@ impl AppState {
         }
         self.clear_session_text_focus();
         if let Some(tab) = before.and_then(|id| self.tabs.get_mut(id)) {
-            tab.term.stop_pointer();
+            tab.focused_term_mut().stop_pointer();
         }
         if !self.window_focused {
             return;
         }
         for (id, on) in [(before, false), (now, true)] {
             if let Some(tab) = id.and_then(|id| self.tabs.get(id))
-                && let Some(b) = input::encode_focus(on, &tab.term.screen.modes())
+                && let Some(b) = input::encode_focus(on, &tab.focused_term().screen.modes())
             {
-                tab.term.write(&b);
+                tab.focused_term().write(&b);
             }
         }
     }
@@ -201,7 +211,7 @@ impl AppState {
     /// Closes a tab, asking first while its program runs.
     pub fn ask_close_tab(&mut self, id: u64) {
         let Some(tab) = self.tabs.get(id) else { return };
-        if tab.term.running() {
+        if tab.any_running() {
             self.dialog = Some(Dialog::Confirm {
                 title: "Close this tab?".into(),
                 text: "The session ends.".into(),
@@ -221,9 +231,9 @@ impl AppState {
             let now = self.tabs.active;
             if let Some(tab) = now.and_then(|n| self.tabs.get(n))
                 && self.window_focused
-                && let Some(b) = input::encode_focus(true, &tab.term.screen.modes())
+                && let Some(b) = input::encode_focus(true, &tab.focused_term().screen.modes())
             {
-                tab.term.write(&b);
+                tab.focused_term().write(&b);
             }
         } else {
             self.tabs.close(id);
@@ -279,6 +289,19 @@ impl AppState {
                 pane.chat.output_on(Instant::now(), r.output, bell, &tab.term.screen);
             }
             w.strip |= r.ended;
+            let mut panes_output = false;
+            for (_, t) in &mut tab.panes.extra {
+                let r = t.pump();
+                t.screen.take_dirty();
+                if r.output && shown == Some(tab.id) {
+                    t.refresh_find();
+                }
+                panes_output |= r.output;
+            }
+            if shown == Some(tab.id) && panes_output && tab.shows_panes() {
+                w.output = true;
+                w.all = true;
+            }
             if let Some(title) = r.title {
                 w.strip |= title != tab.program_title;
                 tab.program_title = title;
@@ -287,9 +310,12 @@ impl AppState {
             if shown != Some(tab.id) || !r.output {
                 continue;
             }
+            // Find marks follow the output here, at the wake, not while painting.
+            tab.term.refresh_find();
             w.output = true;
             w.cursor |= r.cursor_moved;
-            if tab.term.scroll > 0 {
+            if tab.term.scroll > 0 || tab.term.find.is_some() || tab.shows_panes() {
+                // Find marks move with the text, wherever it changed.
                 // Scrollback growth can move the overlaid thumb outside the dirty grid rows.
                 w.all = true;
                 continue;
@@ -322,37 +348,47 @@ impl AppState {
         self.flush_drop_before_input();
         let Some(tab) = self.tabs.shown() else { return };
         let id = tab.id;
-        let ended = tab.term.ended.is_some();
+        let pane = tab.focused_pane();
+        let term = tab.focused_term();
+        let ended = term.ended.is_some();
         if ended && k.name == Some(KeyName::Enter) {
-            self.close_tab_now(id);
+            if pane == crate::panes::MAIN {
+                // Running split panes end with the tab: ask about them as Close does.
+                self.ask_close_tab(id);
+            } else {
+                self.close_pane_now(id, pane);
+            }
             return;
         }
-        let modes = tab.term.screen.modes();
-        let selected = tab.term.selected_text().is_some();
-        let keyboard = termkeys::keyboard_now(tab.term.keyboard, &tab.term.screen);
+        let modes = term.screen.modes();
+        let selected = term.selected_text().is_some();
+        let keyboard = termkeys::keyboard_now(term.keyboard, &term.screen);
         let action = termkeys::key(k.name.as_ref(), k.mods, k.text.as_deref(), &modes, selected, keyboard);
         match action {
             KeyAction::Command(c) => self.command(now, c, None),
+            KeyAction::Find => self.open_find(),
             KeyAction::Copy => self.copy_selection(),
             KeyAction::Paste if !ended => self.paste(),
             KeyAction::Page(n) => {
                 if let Some(tab) = self.tabs.shown_mut() {
-                    let rows = tab.term.screen.rows() as i32;
-                    tab.term.scroll_by(n * (rows - 1).max(1));
+                    let t = tab.focused_term_mut();
+                    let rows = t.screen.rows() as i32;
+                    t.scroll_by(n * (rows - 1).max(1));
                 }
             }
             KeyAction::Send(bytes) if !ended => {
                 self.note_chat_terminal_input();
                 let demo_echo = self.source.is_demo() && self.usage.demo_echo;
                 if let Some(tab) = self.tabs.shown_mut() {
-                    tab.term.scroll = 0;
-                    tab.term.selection = None;
-                    if demo_echo && tab.term.pty.is_none() {
+                    let t = tab.focused_term_mut();
+                    t.scroll = 0;
+                    t.selection = None;
+                    if demo_echo && t.pty.is_none() {
                         #[cfg(test)]
                         self.usage.demo_keys.extend_from_slice(&bytes);
-                        tab.term.feed(if k.name == Some(KeyName::Enter) { b"\r\n" } else { &bytes });
+                        t.feed(if k.name == Some(KeyName::Enter) { b"\r\n" } else { &bytes });
                     } else {
-                        tab.term.write(&bytes);
+                        t.write(&bytes);
                     }
                 }
             }
@@ -366,18 +402,19 @@ impl AppState {
         self.note_chat_terminal_input();
         let demo_echo = self.source.is_demo() && self.usage.demo_echo;
         if let Some(tab) = self.tabs.shown_mut() {
-            tab.term.scroll = 0;
-            if demo_echo && tab.term.pty.is_none() {
-                tab.term.feed(text.as_bytes());
+            let t = tab.focused_term_mut();
+            t.scroll = 0;
+            if demo_echo && t.pty.is_none() {
+                t.feed(text.as_bytes());
             } else {
-                tab.term.write(text.as_bytes());
+                t.write(text.as_bytes());
             }
         }
     }
 
     fn copy_selection(&mut self) {
         let Some(tab) = self.tabs.shown_mut() else { return };
-        if let Some(text) = tab.term.take_selected_text(false).filter(|t| !t.is_empty()) {
+        if let Some(text) = tab.focused_term_mut().take_selected_text(false).filter(|t| !t.is_empty()) {
             platform::set_clipboard_text(&text);
         }
     }
@@ -389,23 +426,24 @@ impl AppState {
     }
 
     fn paste_terminal(&mut self, clipboard_text: impl FnOnce() -> Option<String>) {
-        if self.tabs.shown().is_none_or(|tab| tab.term.ended.is_some()) {
+        if self.tabs.shown().is_none_or(|tab| tab.focused_term().ended.is_some()) {
             return;
         }
         self.flush_drop_before_input();
         self.note_chat_terminal_input();
         let text = clipboard_text();
         if let Some(tab) = self.tabs.shown_mut() {
-            if !tab.term.screen.modes().bracketed_paste && text.as_ref().is_some_and(|s| s.contains(['\r', '\n'])) {
+            let t = tab.focused_term_mut();
+            if !t.screen.modes().bracketed_paste && text.as_ref().is_some_and(|s| s.contains(['\r', '\n'])) {
                 self.warn(
                     "Paste not sent",
                     "Use the Chat composer for multiline input when bracketed paste is off.".into(),
                 );
                 return;
             }
-            let bytes = crate::view::attach::clipboard(text.as_deref(), &tab.term.screen.modes());
-            tab.term.scroll = 0;
-            tab.term.write(&bytes);
+            let bytes = crate::view::attach::clipboard(text.as_deref(), &t.screen.modes());
+            t.scroll = 0;
+            t.write(&bytes);
         }
     }
 
@@ -428,9 +466,13 @@ impl AppState {
         clicks: u32,
         mods: Mods,
     ) -> Option<MouseClipboard> {
+        self.press_pane(x, y);
         let (area, m) = (self.term_area, self.metrics?);
         let tab = self.tabs.shown_mut()?;
-        let t = &mut tab.term;
+        let (t, mut chat_pane) = tab.focused_parts();
+        if let Some(find) = &mut t.find {
+            find.focused = false;
+        }
         let modes = t.screen.modes();
         let b = button_of(button)?;
         // Windows Terminal passes mouse input to a tracking program before trying local
@@ -440,7 +482,7 @@ impl AppState {
                 let ev =
                     MouseEvent { kind: MouseKind::Press, button: Some(b), col, row, mods: termkeys::term_mods(mods) };
                 if let Some(bytes) = input::encode_mouse(ev, &modes) {
-                    if let Some(pane) = &mut tab.pane {
+                    if let Some(pane) = &mut chat_pane {
                         pane.note_terminal_input();
                     }
                     t.write(&bytes);
@@ -471,7 +513,7 @@ impl AppState {
     pub fn term_move(&mut self, x: f32, y: f32, mods: Mods) -> bool {
         let (area, Some(m)) = (self.term_area, self.metrics) else { return false };
         let Some(tab) = self.tabs.shown_mut() else { return false };
-        let t = &mut tab.term;
+        let (t, mut chat_pane) = tab.focused_parts();
         if t.selecting {
             let at = t.view(true).point_at(&t.screen, &m, area, x, y);
             return t.extend_selection(at);
@@ -494,7 +536,7 @@ impl AppState {
                 // A drag belongs to its press, which counted as input; a hover is no input at
                 // all: it must not stop a send or a card's keys halfway.
                 if t.reported.is_some()
-                    && let Some(pane) = &mut tab.pane
+                    && let Some(pane) = &mut chat_pane
                 {
                     pane.note_terminal_input();
                 }
@@ -508,14 +550,14 @@ impl AppState {
     pub fn term_release(&mut self, x: f32, y: f32, button: Button, mods: Mods) -> bool {
         let (area, Some(m)) = (self.term_area, self.metrics) else { return false };
         let Some(tab) = self.tabs.shown_mut() else { return false };
-        let t = &mut tab.term;
+        let (t, mut chat_pane) = tab.focused_parts();
         let b = button_of(button);
         if t.reported.is_some() && t.reported == b {
             let modes = t.screen.modes();
             let (row, col) = m.cell_clamped(area, x, y, t.screen.cols(), t.screen.rows());
             let ev = MouseEvent { kind: MouseKind::Release, button: b, col, row, mods: termkeys::term_mods(mods) };
             if let Some(bytes) = input::encode_mouse(ev, &modes) {
-                if let Some(pane) = &mut tab.pane {
+                if let Some(pane) = &mut chat_pane {
                     pane.note_terminal_input();
                 }
                 t.write(&bytes);
@@ -538,7 +580,7 @@ impl AppState {
         let (area, metrics) = (self.term_area, self.metrics);
         let (x, y) = self.mouse;
         let Some(tab) = self.tabs.shown_mut() else { return };
-        let t = &mut tab.term;
+        let (t, mut chat_pane) = tab.focused_parts();
         let lines = termkeys::wheel_lines(dy, &mut t.wheel_rest);
         if lines == 0 {
             return;
@@ -551,7 +593,7 @@ impl AppState {
         match termkeys::wheel(&modes, mods.shift) {
             Wheel::Scroll => t.scroll_by(lines),
             Wheel::Arrows => {
-                if let Some(pane) = &mut tab.pane {
+                if let Some(pane) = &mut chat_pane {
                     pane.note_terminal_input();
                 }
                 let key = if lines > 0 { mdshared_term::Key::Up } else { mdshared_term::Key::Down };
@@ -561,7 +603,7 @@ impl AppState {
             Wheel::Report => {
                 let Some(m) = metrics else { return };
                 // The program scrolls; card keys go on, each checking the screen first.
-                if let Some(pane) = &mut tab.pane {
+                if let Some(pane) = &mut chat_pane {
                     pane.note_terminal_wheel();
                 }
                 let (row, col) = m.cell_clamped(area, x, y, t.screen.cols(), t.screen.rows());
@@ -585,9 +627,9 @@ impl AppState {
     pub fn term_focus(&mut self, on: bool) {
         self.window_focused = on;
         if let Some(tab) = self.tabs.shown()
-            && let Some(b) = input::encode_focus(on, &tab.term.screen.modes())
+            && let Some(b) = input::encode_focus(on, &tab.focused_term().screen.modes())
         {
-            tab.term.write(&b);
+            tab.focused_term().write(&b);
         }
     }
 
@@ -597,9 +639,6 @@ impl AppState {
 
     /// Fits each tab to its own area, so switching to a shell doesn't reflow a hidden session.
     pub fn layout_terminals(&mut self, shown: Rect, full: Rect, scale: f32) {
-        let inner = |area: Rect| {
-            Rect::new(area.x + PAD, area.y + PAD, (area.w - 2.0 * PAD).max(0.0), (area.h - 2.0 * PAD).max(0.0))
-        };
         let metrics = self.cell_font.metrics(f32::from(self.config.terminal_font_size), scale);
         let grid = |area| {
             let (cols, rows) = metrics.grid_size(inner(area));
@@ -607,22 +646,41 @@ impl AppState {
         };
         let open = self.session_width_enabled(full.w);
         let split = self.session_view.splitter.rects(full, mdshared_ui::splitter::Axis::Horizontal).0;
-        let (full_grid, pane_grid) = (grid(full), grid(split));
+        let full_grid = grid(full);
+        let mut focused_area = None;
         for tab in &mut self.tabs.list {
-            let (cols, rows) = if tab.pane.as_ref().is_some_and(|p| p.chat.enabled) {
-                if self.tabs.active != Some(tab.id) || shown.h <= 0.0 {
+            let active = self.tabs.active == Some(tab.id);
+            let area = if tab.pane.as_ref().is_some_and(|p| p.chat.enabled) {
+                if !active || shown.h <= 0.0 {
                     continue;
                 }
-                grid(shown)
+                shown
+            } else if active && shown.h > 0.0 {
+                shown
             } else if open && tab.pane.is_some() {
-                pane_grid
+                split
             } else {
-                full_grid
+                full
             };
-            tab.term.resize(cols, rows);
+            if tab.shows_panes() {
+                // Each pane its own size: a split resizes only the programs it divides.
+                for (id, r) in tab.panes.layout(area) {
+                    let (cols, rows) = grid(r);
+                    if let Some(t) = tab.term_of_mut(id) {
+                        t.resize(cols, rows);
+                    }
+                    if active && id == tab.panes.focus {
+                        focused_area = Some(inner(r));
+                    }
+                }
+            } else {
+                let (cols, rows) = grid(area);
+                tab.term.resize(cols, rows);
+            }
         }
         self.grid = (full_grid.0 as u16, full_grid.1 as u16);
-        self.term_area = inner(shown);
+        self.term_area = focused_area.unwrap_or_else(|| inner(shown));
+        self.term_region = shown;
         self.metrics = Some(metrics);
     }
 
@@ -640,7 +698,7 @@ impl AppState {
             Self::cursor_moved(cx);
         }
         if w.all || self.metrics.is_none() {
-            cx.request_redraw(self.term_area.inset(-PAD));
+            cx.request_redraw(self.term_region);
         } else {
             for r in w.rects {
                 cx.request_redraw(r);

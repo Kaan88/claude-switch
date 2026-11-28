@@ -1,6 +1,9 @@
 //! The same terminal surface draws the full tab and the Chat drawer.
 
 use super::{AppState, CURSOR, Cx, Msg, Rect, Target};
+
+/// The animator's name for the find box's caret.
+const FIND_CARET: &str = "term-find-caret";
 use crate::term::Term;
 use claude_switch_core::config::{AppearancePrefs, TerminalCursor};
 use mdshared_term::{CursorShape, Screen};
@@ -35,7 +38,17 @@ fn visible_notice(t: &Term, view: View) -> Range<usize> {
 impl AppState {
     /// Draws the shown tab, including the scrollback and the app-owned end notice.
     pub fn draw_terminal(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect) {
-        self.paint_terminal(p, area, |screen, view, blink, row| {
+        let focused = self.window_focused && self.find_focused();
+        let blink = self.blink;
+        let bar_area = self.focused_pane_rect(area);
+        let caret = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()).map(|find| {
+            let on = find.field.blink_caret(cx.anim(), FIND_CARET, blink, focused);
+            if focused && blink.is_some() && cx.anim().animates() {
+                cx.animating(crate::termfind::Bar::layout(bar_area).field);
+            }
+            on
+        });
+        self.paint_terminal(p, area, caret.unwrap_or(false), |screen, view, blink, row| {
             let shown = termview::cursor_blinks_on(cx.anim(), CURSOR, blink, screen, view);
             if blink.is_some()
                 && cx.anim().animates()
@@ -50,32 +63,73 @@ impl AppState {
     /// [`draw_terminal`](Self::draw_terminal) without a window, the cursor shown when it is.
     #[cfg(test)]
     pub fn draw_terminal_still(&mut self, p: &mut Painter, area: Rect) {
-        self.paint_terminal(p, area, |_, _, _, _| true);
+        self.paint_terminal(p, area, true, |_, _, _, _| true);
     }
 
     fn paint_terminal(
         &mut self,
         p: &mut Painter,
         area: Rect,
+        caret_on: bool,
         cursor: impl FnOnce(&Screen, View, Option<std::time::Duration>, Option<Rect>) -> bool,
     ) {
         let pal = *self.pal();
         let scheme = self.terminal_scheme();
+        if let Some(tab) = self.tabs.shown_mut() {
+            let extra = tab.panes.extra.iter_mut().map(|(_, t)| t);
+            // Already done at the wake that brought the output; this catches anything else.
+            for t in std::iter::once(&mut tab.term).chain(extra) {
+                t.refresh_find();
+            }
+        }
+        let keyboard = self.terminal_focused();
+        let bar_area = self.focused_pane_rect(area);
+        let hot = match self.hover {
+            Some(Target::PaneDivider(i)) => Some(i),
+            _ => None,
+        };
         let (Some(metrics), Some(tab)) = (self.metrics, self.tabs.shown()) else {
             p.fill(area, scheme.background);
             return;
         };
-        let inner = self.term_area;
-        let t = &tab.term;
+        let split = tab.shows_panes();
+        let focused = tab.focused_pane();
+        let rects = if split { tab.panes.rects.clone() } else { vec![(crate::panes::MAIN, area)] };
         let prefs = &self.config.appearance;
-        let view = t.view(self.terminal_focused()).cursor_preference(default_shape(prefs), prefs.cursor_blink);
-        let blink = self.blink.filter(|_| cursor_can_blink(&t.screen, view, prefs.cursor_blink));
-        let show_cursor =
-            cursor(&t.screen, view, blink, view.cursor_row(&t.screen).map(|row| metrics.row_rect(inner, row)));
-        let view = view.cursor_shown(show_cursor);
-        let surface = Surface { area, inner, metrics, scheme, pal };
-        surface.draw(p, &mut self.cell_font, t, view, prefs.terminal_opacity);
+        let mut cursor = Some(cursor);
+        for (id, r) in rects {
+            let Some(t) = tab.term_of(id) else { continue };
+            let is_focused = id == focused;
+            let inner = if split { super::inner(r) } else { self.term_area };
+            let view = t.view(keyboard && is_focused).cursor_preference(default_shape(prefs), prefs.cursor_blink);
+            let show_cursor = match cursor.take_if(|_| is_focused) {
+                Some(cursor) => {
+                    let blink = self.blink.filter(|_| cursor_can_blink(&t.screen, view, prefs.cursor_blink));
+                    cursor(&t.screen, view, blink, view.cursor_row(&t.screen).map(|row| metrics.row_rect(inner, row)))
+                }
+                None => true,
+            };
+            let view = view.cursor_shown(show_cursor);
+            let surface = Surface { area: r, inner, metrics, scheme, pal };
+            surface.draw(p, &mut self.cell_font, t, view, prefs.terminal_opacity);
+        }
         self.hits.push((area, Target::Terminal));
+        if split {
+            crate::panes::draw_frame(p, &pal, &tab.panes, Some(focused), hot);
+            for (i, d) in tab.panes.dividers.iter().enumerate() {
+                self.hits.push((d.rect.inset(-1.0), Target::PaneDivider(i)));
+            }
+        }
+        self.draw_find_bar(p, bar_area, caret_on);
+    }
+
+    /// The pane of the shown tab that has the keyboard, or the whole `area` when it is not split.
+    fn focused_pane_rect(&self, area: Rect) -> Rect {
+        self.tabs
+            .shown()
+            .filter(|tab| tab.shows_panes())
+            .and_then(|tab| tab.panes.rects.iter().find(|(id, _)| *id == tab.focused_pane()))
+            .map_or(area, |(_, r)| *r)
     }
 }
 
@@ -128,6 +182,9 @@ impl Surface {
             p.fill(area, scheme.background);
         }
         termview::draw_screen_with_background(p, font, &scheme, &metrics, grid, &t.screen, sel, view, opacity);
+        if let Some(find) = &t.find {
+            crate::termfind::draw_marks(p, &pal, find, &t.screen, view, &metrics, inner);
+        }
         // Selection, explicit backgrounds and cursor ink are already backed by termview.
         // The ended message is ordinary grid text, so repaint its bands as opaque.
         let notice = visible_notice(t, view);
@@ -206,12 +263,12 @@ mod tests {
         let mut gfx = Gfx::new();
         let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
         p.set_frost_key(Some(Key::new(DARK.page, 217)));
-        st.paint_terminal(&mut p, window, |_, _, _, _| false);
+        st.paint_terminal(&mut p, window, false, |_, _, _, _| false);
         let base = p.bmp.pixels.clone();
         let ground = pixel(p.bmp, 0, 0);
         assert!(ground[3] < 255);
         st.main_menu(Rect::new(446.0, 8.0, 24.0, 24.0));
-        st.paint_terminal(&mut p, window, |_, _, _, _| false);
+        st.paint_terminal(&mut p, window, false, |_, _, _, _| false);
         assert_eq!(p.bmp.pixels.as_slice(), base.as_slice(), "opening a menu repainted the grid differently");
         let cards = Cards::for_frame(&st, &p);
         let pal = *st.pal();

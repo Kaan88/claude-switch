@@ -94,6 +94,7 @@ impl App for AppState {
                 let (x, y) = self.mouse;
                 if !(!self.picture_overlay() && self.chat_wheel(x, y, dy))
                     && !self.session_wheel(cx.size().0, x, y, dy)
+                    && !self.wheel_other_pane(x, y, dy)
                     && self.term_area.contains(x, y)
                 {
                     self.term_wheel(dy, cx.mods());
@@ -123,6 +124,8 @@ impl App for AppState {
             Event::Text(t) => {
                 if self.dialog.is_some() {
                     dialogs::text_input(self, &t);
+                } else if self.find_focused() {
+                    self.find_text(&t);
                 } else if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
                     if !self.chat_text(cx, &t) {
                         self.term_text(&t);

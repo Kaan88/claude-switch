@@ -56,12 +56,13 @@ impl AppState {
         if let Some(tab) = self.tabs.get_mut(id) {
             let text = paths(files);
             if !text.is_empty() {
-                if let Some(pane) = &mut tab.pane {
+                let (t, pane) = tab.focused_parts();
+                if let Some(pane) = pane {
                     pane.note_terminal_input();
                 }
-                let redraw = tab.term.scroll != 0 && shown;
-                tab.term.scroll = 0;
-                tab.term.write(&termkeys::paste(&text, &tab.term.screen.modes()));
+                let redraw = t.scroll != 0 && shown;
+                t.scroll = 0;
+                t.write(&termkeys::paste(&text, &t.screen.modes()));
                 return redraw;
             }
         }

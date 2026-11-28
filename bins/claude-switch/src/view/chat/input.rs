@@ -143,11 +143,29 @@ impl AppState {
     /// alone. True when it changed.
     pub fn set_shown_tab_chat(&mut self, enabled: bool) -> bool {
         self.clear_session_text_focus();
+        let window_focused = self.window_focused;
         let Some(tab) = self.tabs.shown_mut() else { return false };
-        let Some(pane) = &mut tab.pane else { return false };
-        if pane.chat.enabled != enabled {
-            tab.term.stop_pointer();
+        if tab.pane.as_ref().is_none_or(|pane| pane.chat.enabled == enabled) {
+            return false;
+        }
+        // Chat shows only the tab's own pane: a shell pane that had the keyboard loses it, and
+        // gets it back with the terminal layout. Programs that asked are told, as on a click.
+        let before = tab.focused_pane();
+        tab.focused_term_mut().stop_pointer();
+        if let Some(pane) = &mut tab.pane {
             pane.chat.enabled = enabled;
+        }
+        let after = tab.focused_pane();
+        if window_focused && before != after {
+            for (id, on) in [(before, false), (after, true)] {
+                if let Some(t) = tab.term_of(id)
+                    && let Some(b) = mdshared_term::input::encode_focus(on, &t.screen.modes())
+                {
+                    t.write(&b);
+                }
+            }
+        }
+        if let Some(pane) = &mut tab.pane {
             pane.chat.drawer_focus = false;
             pane.chat.resizing = None;
             pane.chat.commands.open = false;
@@ -158,9 +176,8 @@ impl AppState {
             } else {
                 pane.ui.set_chat(false);
             }
-            return true;
         }
-        false
+        true
     }
 
     pub fn chat_input_tick(&mut self, cx: &mut Cx<'_, Msg>) {
@@ -361,8 +378,10 @@ impl AppState {
         true
     }
 
+    /// Input to the tab's own terminal; keys for a shell pane beside it are not Claude's.
     pub fn note_chat_terminal_input(&mut self) {
-        if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+        let shown = self.tabs.shown_mut().filter(|t| t.focused_pane() == crate::panes::MAIN);
+        if let Some(pane) = shown.and_then(|t| t.pane.as_mut()) {
             pane.note_terminal_input();
         }
     }
