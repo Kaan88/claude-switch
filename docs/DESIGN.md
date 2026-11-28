@@ -1198,7 +1198,12 @@ write only means input was handed to the terminal, and there is still a race bet
 PTY and writing it.
 While a turn runs and the CLI's input reads visibly empty, Send types the message into it as
 **Send now** does (below), and Claude Code hands it to the running turn as when typed in the
-terminal; the box is free for the next message at once. A draft that only has to wait is held, not
+terminal; the box is free for the next message once it went. Into a running turn Enter goes only
+once the input row shows the message (as for several lines), so a permission prompt or menu drawn
+between the paste and Enter never gets it; such a send leaves the turn as the transcript shows it
+(Claude Code records the message in that turn, never as a new prompt), so Stop stays available.
+While messages wait in Claude Code's queue its input reads empty ("Press up to edit queued
+messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332). A draft that only has to wait is held, not
 refused: a running turn whose input does not read empty, a prompt the CLI is still
 drawing, a command's output, a new chat's transcript, a picture while the input is not empty. It is
 locked (text and attachments) until it sends or is cancelled, and goes out by itself, also in a
@@ -1217,7 +1222,10 @@ the input reads empty the text comes back when the screen goes quiet. While outp
 (a turn starting by itself, a redraw) one empty reading may be a screen caught half way, so it
 takes two in a row, each of newer output than the last Ctrl+U's; without them by the key's
 deadline the text still comes back (no Enter went, so it was not sent), with a notice to check
-that the CLI input is empty before sending. The take-back starts only when the message box is empty, with no
+that the CLI input is empty before sending. Every message Chat sent since the last one at an idle
+input counts for the match (one sent during the turn does not hide the turn's own prompt), and
+other text resting on the input after a Stop is said in a notice rather than left to hold the next
+send silently. The take-back starts only when the message box is empty, with no
 attachments and no held draft: otherwise the message stays on the CLI input, with a notice to send
 or clear it in the terminal (which lets a held draft go, back to the box) and then send the draft.
 Text the user typed in the terminal is never cleared, and no text is cleared without a place to go.

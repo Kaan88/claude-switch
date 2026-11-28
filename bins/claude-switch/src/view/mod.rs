@@ -137,6 +137,17 @@ impl Pane {
     fn note_composer_input(&mut self) {
         self.chat.watermark_input(&self.model.chat, self.transcript_end());
     }
+
+    /// Keys of a message going into the running turn: Claude Code records it as part of that turn
+    /// (a `queued_command`), never as a new prompt, so the turn stays the one the transcript shows
+    /// (Stop, the gate); only the input's time is noted.
+    fn note_composer_input_into_turn(&mut self, into_turn: bool) {
+        if into_turn {
+            self.chat.note_input();
+        } else {
+            self.note_composer_input();
+        }
+    }
     pub fn restore_chat_layout(&mut self, chat: bool) {
         self.chat.enabled = chat;
         self.ui.set_chat(chat);

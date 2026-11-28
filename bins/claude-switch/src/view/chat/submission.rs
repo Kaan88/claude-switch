@@ -36,6 +36,8 @@ const TAKEBACK_FAILED: &str =
     "Claude Code put your last message back on its input and Chat could not clear it. Clear it in the terminal.";
 const TAKEBACK_HELD: &str = "Claude Code put your last message back on its input. Chat left it there, as the message \
      box holds a draft: send or clear it in the terminal, then send the draft.";
+const TAKEBACK_OTHER: &str = "After the stop, Claude Code's input holds text that is not a message Chat sent. Send or \
+     clear it in the terminal; a held draft goes once the input is empty.";
 const TAKEBACK_UNSURE: &str = "Stopped before Claude answered. Your message is back in the box, but Claude Code kept \
      drawing: check that its input is empty before you send.";
 const IMAGE_KEY: &[u8] = b"\x1bv";
@@ -149,7 +151,9 @@ impl Chat {
     /// send no longer knows the screen.
     pub(super) fn interrupt_staging(&mut self) {
         // Whatever the CLI's input holds now may be the user's own.
-        (self.staging.sent, self.staging.takeback, self.staging.command) = (None, None, None);
+        (self.staging.takeback, self.staging.command) = (None, None);
+        self.staging.sent.clear();
+        self.staging.stopped = false;
         if let Some(wait) = self.image_wait.take() {
             self.staging.recovery = Some(Recovery::Picture(Stamp { epoch: self.output_epoch, ..wait.stamp }));
             self.error = Some(IMAGE_INTERRUPTED);
@@ -371,7 +375,7 @@ impl AppState {
                 chat.staging.recovery = Some(Recovery::Picture(stamp));
                 chat.refused(error, None);
             }
-            tab.pane.as_mut().unwrap().note_composer_input();
+            tab.pane.as_mut().unwrap().note_composer_input_into_turn(intent == Intent::Now);
         } else {
             finish(tab, now, &bytes, Completion::Message(demo_text), None, intent == Intent::Now);
         }
@@ -394,7 +398,9 @@ impl AppState {
         chat.stopped = pane.model.chat.prompt.map(|p| (pane.model.chat.generation, p));
         match write(tab, b"\x1b", "Stopped") {
             Ok(()) => {
-                if let Some(queue) = &mut tab.pane.as_mut().unwrap().chat.queue {
+                let chat = &mut tab.pane.as_mut().unwrap().chat;
+                chat.staging.stopped = true;
+                if let Some(queue) = &mut chat.queue {
                     queue.stop = Some(stop);
                 }
             }
@@ -663,27 +669,37 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
     let chat = &pane.chat;
     let screen = &tab.term.screen;
-    let Some(sent) = &chat.staging.sent else { return false };
+    if chat.staging.sent.is_empty() {
+        return false;
+    }
     let resting = chat.screen_resting(&tab.term, now);
     let Some(step) = &chat.staging.takeback else {
-        let put_back = may_write
-            && chat.waiting().is_none()
-            && !chat.enter_only()
-            && resting
-            && !clean_prompt(screen)
-            && shown_exactly(tab, &sent.expected);
-        if !put_back {
+        let settled = may_write && chat.waiting().is_none() && !chat.enter_only() && resting && !clean_prompt(screen);
+        if !settled {
             return false;
         }
+        let Some(index) = chat.staging.sent.iter().position(|sent| shown_exactly(tab, &sent.expected)) else {
+            // Something else rests on the input after a stop: the next send would wait for it
+            // without a word.
+            if !chat.staging.stopped {
+                return false;
+            }
+            let chat = &mut tab.pane.as_mut().unwrap().chat;
+            chat.staging.sent.clear();
+            chat.staging.stopped = false;
+            chat.refused(TAKEBACK_OTHER, None);
+            return true;
+        };
         let box_free = chat.editor.text.trim().is_empty() && chat.chips.is_empty() && chat.queue.is_none();
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         if box_free {
             let epoch = chat.output_epoch.wrapping_sub(1);
-            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP, clean: None });
+            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP, clean: None, index });
         } else {
             // The message stays where the user can see it, and the box keeps its draft (a held
             // one is let go when the user types in the terminal, and stays in the box).
-            chat.staging.sent = None;
+            chat.staging.sent.clear();
+            chat.staging.stopped = false;
             chat.refused(TAKEBACK_HELD, None);
         }
         return true;
@@ -720,24 +736,26 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let input = prompt(screen).is_some() || screen::shows_some_input(screen);
     if step.presses >= TAKEBACK_KEYS || now >= step.due || screen::working(screen) || !input {
         let chat = &mut tab.pane.as_mut().unwrap().chat;
-        (chat.staging.sent, chat.staging.takeback) = (None, None);
+        chat.staging.takeback = None;
+        chat.staging.sent.clear();
         chat.refused(TAKEBACK_FAILED, None);
         return true;
     }
     if !may_write || chat.output_epoch == step.epoch {
         return false;
     }
-    let presses = step.presses + 1;
+    let (presses, index) = (step.presses + 1, step.index);
     tab.pane.as_mut().unwrap().note_composer_input();
     let written = write(tab, CLEAR_LINE, "");
     let chat = &mut tab.pane.as_mut().unwrap().chat;
     match written {
         Ok(()) => {
             chat.staging.takeback =
-                Some(Takeback { epoch: chat.output_epoch, presses, due: now + TAKEBACK_STEP, clean: None })
+                Some(Takeback { epoch: chat.output_epoch, presses, due: now + TAKEBACK_STEP, clean: None, index })
         }
         Err(error) => {
-            (chat.staging.sent, chat.staging.takeback) = (None, None);
+            chat.staging.takeback = None;
+            chat.staging.sent.clear();
             chat.refused(error, None);
         }
     }
@@ -748,8 +766,10 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
 /// the locked composer should never hold), with a word to check the terminal when the CLI input
 /// could not be read as empty for sure.
 fn give_back(chat: &mut Chat, unsure: bool) {
-    let sent = chat.staging.sent.take().unwrap();
-    chat.staging.takeback = None;
+    let index = chat.staging.takeback.take().map_or(0, |step| step.index);
+    let sent = chat.staging.sent.swap_remove(index);
+    chat.staging.sent.clear();
+    chat.staging.stopped = false;
     chat.queue = None;
     let text = match chat.editor.text.trim().is_empty() {
         true => sent.text,
@@ -869,7 +889,7 @@ fn finish(
         Some(marker) => marker,
         None => payload,
     };
-    tab.pane.as_mut().unwrap().note_composer_input();
+    tab.pane.as_mut().unwrap().note_composer_input_into_turn(allow_working);
     if !paste.is_empty()
         && let Err(error) = write(tab, paste, "")
     {
@@ -880,8 +900,11 @@ fn finish(
         return;
     }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
-    if expected.contains('\n') {
-        // Several lines: Enter only once the input line shows them (or the CLI's paste marker).
+    // Into a running turn, a permission prompt or a menu may be drawn between the paste and Enter
+    // (its default is Yes): Enter goes only once the input line shows the text. So it does for
+    // several lines (or the CLI's paste marker). The demo has no CLI to show it.
+    let into_turn = allow_working && !chat.demo;
+    if expected.contains('\n') || into_turn && matches!(completion, Completion::Message(_)) {
         let Completion::Message(text) = completion else { unreachable!("commands are one line") };
         chat.error = None;
         chat.retry = None;
@@ -898,7 +921,7 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
         Completion::Command { line, .. } => (line.as_str(), Some(line.as_str())),
     };
     let baseline = command.map(|_| local_reports(&tab.term.screen));
-    tab.pane.as_mut().unwrap().note_composer_input();
+    tab.pane.as_mut().unwrap().note_composer_input_into_turn(input.allow_working);
     if write(tab, b"\r", demo_text).is_err() {
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         chat.queue = None;
@@ -913,7 +936,12 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
         Completion::Message(_) => {
             chat.first_sent |= chat.awaiting_transcript;
             let (expected, text, picture) = (input.expected, chat.editor.text.clone(), input.picture);
-            chat.staging.sent = Some(Sent { expected, text, picture });
+            // One sent at an idle input starts a turn: those before it are done with.
+            if !input.allow_working {
+                chat.staging.sent.clear();
+            }
+            chat.staging.sent.push(Sent { expected, text, picture });
+            chat.staging.stopped = false;
             chat.submitted();
         }
         Completion::Command { line, from_editor } => {

@@ -292,6 +292,11 @@ impl Chat {
         self.watermark_input(info, end);
     }
 
+    /// A key went to the CLI that leaves the turn as it is.
+    pub(super) fn note_input(&mut self) {
+        self.last_input = Some(Instant::now());
+    }
+
     pub(super) fn watermark_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.invalidate(info);
         self.input_floor = Some(end.unwrap_or(u64::MAX));

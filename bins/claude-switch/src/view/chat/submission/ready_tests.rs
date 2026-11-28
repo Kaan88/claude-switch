@@ -244,23 +244,79 @@ fn text_on_the_cli_input_is_never_an_idle_prompt_and_a_draft_waits_until_it_is_g
     assert!(f.chat().queue.is_none());
 }
 
+/// What `PLAIN_WORKING_TYPED` shows on the input while a turn runs.
+const TYPED_WHILE_BUSY: &str = "hello while busy";
+
+fn paste(text: &str) -> Vec<Vec<u8>> {
+    vec![format!("\x1b[200~{text}\x1b[201~").into_bytes()]
+}
+
 #[test]
-fn a_send_while_a_turn_runs_goes_into_the_empty_input_at_once_and_frees_the_box() {
+fn a_send_while_a_turn_runs_goes_into_the_empty_input_and_enter_waits_for_its_echo() {
     let mut f = Live::new();
     f.turn();
     f.show(WORKING_TOOL);
     assert_eq!(f.pass(SECOND), (Gate::Running, None));
-    // As Send now: typed into Claude Code's empty input, which hands it to the running turn.
-    f.send("one");
-    assert_eq!(f.writes(), message("one"));
+    // As Send now: pasted into Claude Code's empty input, which hands it to the running turn.
+    f.send(TYPED_WHILE_BUSY);
+    assert_eq!(f.writes(), paste(TYPED_WHILE_BUSY), "no Enter before the input shows the text");
+    assert!(f.chat().locked());
+    // Nothing new on the screen: still no Enter.
+    f.pass(SECOND / 10);
+    assert!(f.writes().is_empty());
+    // The input shows it: Enter, and the box is free for the next message.
+    f.show(PLAIN_WORKING_TYPED);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
     let chat = f.chat();
     assert!(chat.queue.is_none() && chat.editor.text.is_empty() && !chat.locked() && chat.error.is_none());
-    // The box takes the next message at once, and it goes the same way.
+}
+
+#[test]
+fn enter_never_goes_into_a_permission_prompt_drawn_after_the_paste() {
+    let mut f = Live::new();
+    f.turn();
     f.show(WORKING_TOOL);
-    assert_eq!(f.pass(SECOND).0, Gate::Running);
-    f.send("two");
-    assert_eq!(f.writes(), message("two"));
-    assert!(f.chat().queue.is_none() && f.chat().editor.text.is_empty());
+    f.pass(SECOND);
+    f.send(TYPED_WHILE_BUSY);
+    assert_eq!(f.writes(), paste(TYPED_WHILE_BUSY));
+    // A permission prompt is drawn before the text shows: its default is Yes, Enter must not go.
+    f.show(crate::view::chat::question::screens::recorded::PERM_BASH);
+    for _ in 0..8 {
+        f.pass(SECOND);
+    }
+    assert!(f.writes().iter().all(|w| w.as_slice() != b"\r"), "no Enter into the prompt");
+    assert!(f.chat().error.is_some(), "it says the message was not submitted");
+}
+
+#[test]
+fn a_plain_send_during_a_turn_writes_nothing_while_something_else_is_up() {
+    use crate::view::chat::question::screens::recorded::{MENU_MODEL, PERM_BASH};
+    type Up = fn(&mut Live);
+    let cases: [(&str, Up); 4] = [
+        ("a permission question", |f| f.show(PERM_BASH)),
+        ("a menu", |f| f.show(MENU_MODEL)),
+        ("a pending tool", |f| {
+            f.show(WORKING_TOOL);
+            f.tab().pane.as_mut().unwrap().model.chat.pending = Some(25);
+        }),
+        ("the alternate screen", |f| {
+            f.show(WORKING_TOOL);
+            f.tab().term.feed(b"\x1b[?1049h");
+        }),
+    ];
+    for (what, up) in cases {
+        let mut f = Live::new();
+        f.turn();
+        up(&mut f);
+        f.pass(SECOND);
+        f.send(TYPED_WHILE_BUSY);
+        for _ in 0..3 {
+            f.pass(SECOND);
+        }
+        assert!(f.writes().is_empty(), "{what}");
+        assert_eq!(f.chat().editor.text, TYPED_WHILE_BUSY, "{what}: the draft is kept");
+    }
 }
 
 #[test]
@@ -270,7 +326,7 @@ fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
     // The CLI's input holds text while the turn runs: Send holds the draft behind the turn.
     f.show(PLAIN_WORKING_TYPED);
     assert_eq!(f.pass(SECOND).0, Gate::Running);
-    f.send("next");
+    f.send(TYPED_WHILE_BUSY);
     assert!(f.chat().queue.is_some() && f.writes().is_empty(), "queued behind the turn");
     // Send now while it still holds text: no refusal, the request is kept.
     let now = f.now;
@@ -278,10 +334,14 @@ fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
     assert!(f.chat().error.is_none() && f.chat().queue.as_ref().is_some_and(Queue::sends_now));
     assert_eq!(f.chat().notice(&Default::default()), Some("Sends as soon as Claude Code's input reads empty."));
     assert!(f.writes().is_empty());
-    // The input reads empty again while the turn still runs: the draft goes into it.
+    // The input reads empty again while the turn still runs: the draft goes into it, and Enter
+    // once the input shows it.
     f.show(WORKING_TOOL);
     assert_eq!(f.pass(SECOND).0, Gate::Running);
-    assert_eq!(f.writes(), message("next"));
+    assert_eq!(f.writes(), paste(TYPED_WHILE_BUSY));
+    f.show(PLAIN_WORKING_TYPED);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
     assert!(f.chat().queue.is_none() && f.chat().editor.text.is_empty());
 }
 
@@ -354,8 +414,77 @@ fn a_message_the_cli_puts_back_after_an_early_stop_returns_to_the_message_box() 
     let chat = f.chat();
     assert_eq!(chat.editor.text, RESTORED);
     assert_eq!(chat.error, Some(TAKEN_BACK));
-    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_none() && !chat.locked());
+    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_empty() && !chat.locked());
     assert!(f.writes().is_empty());
+}
+
+#[test]
+fn the_first_message_is_taken_back_after_a_stop_even_when_others_went_in_during_its_turn() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send(RESTORED);
+    assert_eq!(f.writes(), message(RESTORED));
+    f.turn();
+    f.show(WORKING_TOOL);
+    f.pass(SECOND);
+    // A second message goes in while the turn runs.
+    f.send(TYPED_WHILE_BUSY);
+    f.show(PLAIN_WORKING_TYPED);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), message(TYPED_WHILE_BUSY));
+    assert_eq!(f.chat().staging.sent.len(), 2);
+    // Stop before any answer: Claude Code puts the first prompt back (it sends the waiting ones
+    // as the next turn: recorded from 2.1.332). It is still taken back.
+    f.show(WORKING_TOOL);
+    assert_eq!(f.pass(SECOND), (Gate::Running, None));
+    let now = f.now;
+    AppState::chat_stop(f.tab(), now);
+    assert_eq!(f.writes(), [b"\x1b".to_vec()]);
+    f.show(PLAIN_RESTORED);
+    f.pass(SECOND);
+    assert!(f.chat().staging.takeback.is_some());
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\x15".to_vec()]);
+    f.show(PLAIN_EMPTIED);
+    f.pass(SECOND);
+    let chat = f.chat();
+    assert_eq!((chat.editor.text.as_str(), chat.error), (RESTORED, Some(TAKEN_BACK)));
+    assert!(chat.staging.sent.is_empty());
+}
+
+#[test]
+fn text_left_on_the_input_after_a_stop_that_chat_did_not_send_is_said_not_held_silently() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send(RESTORED);
+    f.writes();
+    f.turn();
+    f.show(WORKING_TOOL);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::chat_stop(f.tab(), now);
+    f.writes();
+    // After the stop the input holds something else: nothing is cleared, and it is said.
+    f.show(PLAIN_TYPED);
+    for _ in 0..3 {
+        f.pass(SECOND);
+    }
+    assert!(f.writes().is_empty(), "nothing is cleared");
+    assert_eq!(f.chat().error, Some(TAKEBACK_OTHER));
+    assert!(f.chat().staging.sent.is_empty() && f.chat().staging.takeback.is_none());
+    // Without a stop, the same screen is no business of the take-back.
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send(RESTORED);
+    f.writes();
+    f.show(PLAIN_TYPED);
+    for _ in 0..3 {
+        f.pass(SECOND);
+    }
+    assert!(f.writes().is_empty() && f.chat().error.is_none());
 }
 
 #[test]
@@ -387,7 +516,7 @@ fn a_put_back_message_stays_on_the_cli_input_while_the_message_box_holds_a_draft
     // not sent into it.
     assert!(f.writes().is_empty());
     let chat = f.chat();
-    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_none());
+    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_empty());
     assert_eq!(chat.editor.text, "and then this");
     assert_eq!(chat.error, Some(TAKEBACK_HELD));
     // The same when the user has only started typing.
@@ -405,7 +534,7 @@ fn a_put_back_message_stays_on_the_cli_input_while_the_message_box_holds_a_draft
     f.pass(SECOND);
     assert!(f.writes().is_empty());
     let chat = f.chat();
-    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_none());
+    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_empty());
     assert_eq!(chat.editor.text, "half a sen");
     assert_eq!(chat.error, Some(TAKEBACK_HELD));
 }
@@ -440,7 +569,7 @@ fn while_output_keeps_coming_an_empty_input_counts_once_two_newer_screens_read_e
     f.show(PLAIN_EMPTIED);
     f.pass(SECOND / 10);
     let chat = f.chat();
-    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_none() && !chat.locked());
+    assert!(chat.staging.takeback.is_none() && chat.staging.sent.is_empty() && !chat.locked());
     assert_eq!(chat.editor.text, RESTORED);
     assert_eq!(chat.error, Some(TAKEN_BACK));
     assert!(f.writes().is_empty());
@@ -502,7 +631,7 @@ fn an_empty_input_never_confirmed_gives_the_message_back_at_the_deadline_with_a_
     let chat = f.chat();
     assert_eq!(chat.editor.text, RESTORED, "not cleared and dropped: no Enter went, so it was not sent");
     assert_eq!(chat.error, Some(TAKEBACK_UNSURE));
-    assert!(chat.staging.sent.is_none() && !chat.locked() && f.writes().is_empty());
+    assert!(chat.staging.sent.is_empty() && !chat.locked() && f.writes().is_empty());
 }
 
 #[test]

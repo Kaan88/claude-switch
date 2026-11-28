@@ -37,7 +37,12 @@
 - Chat: Send while a turn runs types the message into Claude Code's input at once, as Send now
   does, when that input reads empty; Claude Code hands it to the running turn, and the box is free
   for the next message. When the input holds something, the message waits for the turn as before.
-  The empty box then reads "Message Claude while it works…".
+  The empty box then reads "Message Claude while it works…". Into a running turn (also with Send
+  now) Enter goes only once Claude Code's input shows the message, so a prompt drawn meanwhile
+  never gets it, and Stop stays available after such a message.
+- Chat: after a Stop before any answer, the message Claude Code puts back on its input is taken
+  back into the box also when other messages went in during that turn; other text left on the
+  input after a Stop is said in the box's notice instead of holding the next message silently.
 
 ## 0.1.5 (2026-11-28)
 

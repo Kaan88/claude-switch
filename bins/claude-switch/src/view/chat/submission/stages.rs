@@ -100,6 +100,8 @@ pub(super) struct Takeback {
     pub epoch: u64,
     pub presses: u8,
     pub due: Instant,
+    /// Which of the sent messages the input shows.
+    pub index: usize,
     /// The output epoch of a first reading of the input as empty while output still came: a
     /// second one of newer output confirms it.
     pub clean: Option<u64>,
@@ -118,7 +120,11 @@ pub(in crate::view::chat) struct Staging {
     pub(super) lines: Option<LinesWait>,
     pub(super) retry: Option<EnterOnly>,
     pub(super) recovery: Option<Recovery>,
-    pub(super) sent: Option<Sent>,
+    /// The messages Chat submitted since the last one sent at an idle input (those sent while
+    /// its turn ran follow it): any of them may be the one Claude Code puts back after a Stop.
+    pub(super) sent: Vec<Sent>,
+    /// Stop went since the last of them: text left on the input that is none of them is said.
+    pub(super) stopped: bool,
     pub(super) takeback: Option<Takeback>,
     pub(super) command: Option<CommandWait>,
 }
@@ -146,7 +152,8 @@ impl Chat {
     /// The last message's turn is over or under way for good: nothing to take back.
     pub(in crate::view::chat) fn forget_sent(&mut self) {
         if self.staging.takeback.is_none() {
-            self.staging.sent = None;
+            self.staging.sent.clear();
+            self.staging.stopped = false;
         }
     }
 
