@@ -190,7 +190,15 @@ fn a_cancel_refuses_a_pid_that_is_not_the_jobs_and_ends_one_that_is_with_its_chi
     .unwrap();
     assert_eq!(process::end_job_tree(&stale), Err(Refused::NotTheJobs(pid)));
     assert!(child.try_wait().unwrap().is_none(), "a refused cancel ends nothing");
-    let ended = cancel(&t.0, "job_a_2", |_, _| true).unwrap();
+    let ended = match cancel(&t.0, "job_a_2", |_, _| true) {
+        // An elevated test run (as on GitHub's runners) starts an elevated worker, which an
+        // elevated Switch must not end: refused by design, so nothing more to check here.
+        Err(Refused::Protected(p)) if p == pid => {
+            let _ = child.kill();
+            return;
+        }
+        other => other.unwrap(),
+    };
     assert_eq!(ended.pid, pid);
     assert!(ended.count >= 2, "the worker and the ping under it: {ended:?}");
     let deadline = Instant::now() + Duration::from_secs(5);
