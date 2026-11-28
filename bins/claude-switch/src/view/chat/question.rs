@@ -638,7 +638,7 @@ fn read(
     match subject {
         Subject::Question(question) => question_menu(screen, question, typing.is_some()),
         Subject::FormQuestion { questions, at } => {
-            form_question(screen, questions, *at).map(|shown| (shown.menu, Some(shown.other), Some(shown.chat)))
+            form_question(screen, questions, *at).map(|shown| (shown.menu, shown.other, Some(shown.chat)))
         }
         Subject::Form(_) => None,
         Subject::Tool { needles, choices } => {
@@ -740,7 +740,9 @@ fn question_menu(
 #[derive(Clone, Debug)]
 struct FormShown {
     menu: screens::Menu,
-    other: usize,
+    /// The "Type something" row; `None` on a page without one (a question whose options have
+    /// previews, Claude Code 2.1.332).
+    other: Option<usize>,
     submit: Option<usize>,
     chat: usize,
     /// The options' boxes (multi-select only), in order.
@@ -762,7 +764,11 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
     let screen = &*view;
     let mut menu = screens::menu(screen)?;
     let n = question.options.len();
-    (menu.entries.len() == n + 2).then_some(())?;
+    let multi = question.multi_select;
+    // A single choice whose options have previews has no "Type something" row: "Chat about this"
+    // follows the options.
+    let bare = !multi && menu.entries.len() == n + 1;
+    (menu.entries.len() == n + 2 || bare).then_some(())?;
     let above = menu.above_box(FORM_ROWS);
     let (tabs, asks) = above.split_first()?;
     (screens::tab_bar(tabs) && squash(&asks.join(" ")) == squash(&question.question)).then_some(())?;
@@ -771,7 +777,6 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
     for header in questions.iter().map(|q| squash(&q.header)).filter(|h| !h.is_empty()) {
         from += tabs.get(from..)?.find(&header)? + header.len();
     }
-    let multi = question.multi_select;
     let mut marks = Vec::new();
     for (entry, option) in menu.entries.iter().zip(&question.options) {
         let label = if multi {
@@ -782,6 +787,10 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
             entry.text.as_str()
         };
         label_matches(label, &collapse(&option.label)).then_some(())?;
+    }
+    if bare {
+        (menu.entries[n].text == screens::CHAT_ABOUT).then_some(())?;
+        return Some(FormShown { menu, other: None, submit: None, chat: n, marks, typed: String::new() });
     }
     menu.entries[n + 1].text.starts_with(screens::CHAT_ABOUT).then_some(())?;
     let submit = if multi { Some(screens::submit_row(screen, &menu, n)?) } else { None };
@@ -794,7 +803,7 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
         menu.entries.insert(n + 1, submit);
     }
     let chat = menu.entries.len() - 1;
-    Some(FormShown { menu, other: n, submit: multi.then_some(n + 1), chat, marks, typed })
+    Some(FormShown { menu, other: Some(n), submit: multi.then_some(n + 1), chat, marks, typed })
 }
 
 /// The "Type something" row as it opens, holding no text.
@@ -930,22 +939,25 @@ fn question_next(
             }
         }
     }
-    match &answer.text {
-        Some(text) if typed_shows(multi, &shown.typed, text) => {}
-        Some(text) if pristine(multi, &shown.typed) => {
-            if cursor != shown.other {
-                return Ok(to(shown.other));
+    match (&answer.text, shown.other) {
+        // A page without "Type something" takes no typed answer.
+        (Some(_), None) => return Err(NO_FIELD),
+        (None, None) => {}
+        (Some(text), Some(_)) if typed_shows(multi, &shown.typed, text) => {}
+        (Some(text), Some(other)) if pristine(multi, &shown.typed) => {
+            if cursor != other {
+                return Ok(to(other));
             }
             let expect = Expect::Typed { at, cursor, marks: shown.marks.clone(), text: text.clone() };
             return Ok((text.as_bytes().to_vec(), expect, NOT_TYPED));
         }
-        None if pristine(multi, &shown.typed) => {}
+        (None, Some(_)) if pristine(multi, &shown.typed) => {}
         _ => return Err(OTHER_TAKEN),
     }
     let target = match (multi, answer.picks.first()) {
         (true, _) => shown.submit.ok_or(CHANGED)?,
         (false, Some(&i)) => i,
-        (false, None) => shown.other,
+        (false, None) => shown.other.ok_or(NO_FIELD)?,
     };
     if cursor != target {
         return Ok(to(target));

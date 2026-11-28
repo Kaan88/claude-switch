@@ -427,11 +427,23 @@ fn question(chat: &Chat, questions: Option<&[Question]>, width: f32, scale: f32)
         })
         .collect();
     parts.push(Part::Choices { rows, enabled: can_answer, side: None });
-    if question.options.iter().any(|o| !o.preview.is_empty()) {
+    let previews = question.options.iter().any(|o| !o.preview.is_empty());
+    if previews {
         // Sized and placed (beside the list or under it) by `preview::lay`.
         parts.push(Part::Preview(preview::Size { w: width, rows: 0, cell: 0.0 }));
     }
-    if can_answer {
+    if can_answer && previews {
+        // Claude Code offers no "Type something" with previews (2.1.332): no field, and a
+        // form's page turns with buttons of their own.
+        if is_form {
+            let mut buttons = Vec::new();
+            if page > 0 {
+                buttons.push(("Back", Hit::Back, false));
+            }
+            buttons.push(("Next", Hit::Next, false));
+            parts.push(Part::Buttons(buttons));
+        }
+    } else if can_answer {
         let send = if is_form {
             let mut buttons = Vec::new();
             if page > 0 {
@@ -620,7 +632,8 @@ fn menu(chat: &Chat, menu: &MenuShown, width: f32, scale: f32) -> Vec<Part> {
             Choice {
                 // A question's rows are not all numbered on the screen (Next, Submit): only its
                 // options, which come before the row for another answer.
-                number: (!menu.question || other.is_some_and(|at| i < at)).then_some(i + 1),
+                // Without that row (previews), the options are the rows before "Chat about this".
+                number: (!menu.question || other.or(about).is_some_and(|at| i < at)).then_some(i + 1),
                 note: if note.trim() == label { String::new() } else { note },
                 label: label.to_owned(),
                 hit: Hit::Option(i),

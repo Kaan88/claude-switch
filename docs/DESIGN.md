@@ -1784,12 +1784,21 @@ preview, as plain text (a wrapped line as one line). The pane only looks. When C
 question from the screen (the menu card, and every check before a key), a box beside the choices
 is left out first (`screens::side_box`, `question_view`): a top-left corner and rule at column 12
 or further right, its side down to its bottom corner on every row, text left of it, and a menu
-footer under it; the cells right of its column on its rows are blanked in a copy of the screen
-(cursor and key modes kept), so its rows no longer run into the choices and the question. Not
-recorded yet: the layout was described, not seen (fixture `made_preview.txt` is made up), and
-Claude Code 2.1.332 wrote a question's call to the transcript only once answered, in which case the
-card built from the call, and so the preview, does not show while the question waits.
-`recorder compat` scripts `preview` and `preview-form` record both (`side`, `asked`).
+footer under it; the cells right of its column on its rows, and on the "Notes: press n to add
+notes" row under it, are blanked in a copy of the screen (cursor and key modes kept), so its rows
+no longer run into the choices and the question.
+Recorded from Claude Code 2.1.332 (`recorder compat` scripts `preview` and `preview-form`,
+fixtures `preview_*`): the box starts at column 34 of 100, on the first option's row, as tall as
+the preview; an option without one shows "No preview available"; the footer adds "n to add
+notes". Such a question has no "Type something" row, and its "Chat about this" (under the rule)
+has no number: the menu reader passes that rule when only that row is under it and reads the row
+as the menu's last entry, walked to like any other. So a card for such a question has no field
+(a form's page turns with Back and Next of its own), and a typed answer for it stops before any
+key. Notes (`n`) are left to the terminal. Whether the transcript holds the call while the
+question waits differs from run to run (two tries of the same recording: once it did, once not):
+Chat shows the card built from the call, with its previews, whenever the call is there, and the
+menu card read from the screen (choices, "Chat about this", no preview) otherwise; the check's
+`asked` key accepts either.
 
 **Forms.** Several questions, or a multi-select one, are a form (decided 2026-11-27: it was the main
 reason to open the terminal). The card shows one question at a time under a row of tabs, as the

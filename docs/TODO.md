@@ -143,13 +143,13 @@ as the second account, Windows Terminal, the desktop hand-over.
   be answered in Chat, with the Submit step. Check with a compat script that asks a question with
   previews and one with several questions.
   - Previews built 2026-11-28 on `feature/question-previews` (DESIGN.md, "Previews"). Seen only in
-    the picture test (`chat_shots` states `preview` and `preview-hover`: wide and narrow, 100 % and
-    150 %, both themes) and unit tests over a made-up screen (`fixtures/made_preview.txt`). To do
-    first: run `recorder compat` scripts `preview` and `preview-form` (never run) and look at their
-    snapshots: how the preview box really sits beside the choices (replace the made-up fixture with
-    the recording), and whether the transcript holds the call while the question waits (`asked`):
-    2.1.332 did not, and then the card built from the call (and its preview) never shows while the
-    question waits, only the menu card read from the screen (now without the box's rows).
+    the picture test (`chat_shots` states `preview`, `preview-hover`, `preview-screen`: wide and
+    narrow, 100 % and 150 %, both themes) and unit tests over screens recorded from 2.1.332 on
+    2026-11-28 (`fixtures/preview_*`; the first recording found the reader did not see such a
+    question at all, fixed the same day, 18 of 18 states read as expected offline). Whether the
+    transcript holds the call while the question waits is racy (once yes, once no): to record
+    again with `preview` and `preview-form`, several times, and to try in the running app both
+    ways (the card with its previews, and the screen's card). Not built: notes (`n`).
   - Form tabs and the Submit step built 2026-11-28 on the same branch (DESIGN.md, "Forms"), for
     the card built from the transcript's call. Seen in `chat_shots` states `form-tabs` and
     `form-submit` (same sizes and themes) and unit tests; the keys to Claude Code's form are the

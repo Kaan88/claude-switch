@@ -4,7 +4,9 @@
 //!
 //! An expectation file has a `[state]` section per snapshot of its script and `key = value` lines
 //! under it; `#` starts a comment. Only the keys a section names are compared. In a value `*`
-//! stands for any text, runs of blanks count as one, and `\n` is a line break. The keys:
+//! stands for any text, runs of blanks count as one, and `\n` is a line break; ` || ` between
+//! values accepts any of them (for what Claude Code does one way or the other from run to run,
+//! said in a comment beside it). The keys:
 //!
 //! - `kind`: what the screen is to Chat, the first that fits of `full-screen`, `blocked` (the
 //!   list of calls auto mode blocked), `plan`,
@@ -239,8 +241,13 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
     }
 }
 
-/// `text` matches `pattern`, where `*` is any text; blanks are collapsed on both sides.
+/// `text` matches one of the patterns ` || ` separates (see [`matches_one`]).
 fn matches(pattern: &str, text: &str) -> bool {
+    pattern.split(" || ").any(|one| matches_one(one, text))
+}
+
+/// `text` matches `pattern`, where `*` is any text; blanks are collapsed on both sides.
+fn matches_one(pattern: &str, text: &str) -> bool {
     let (pattern, text) = (collapse(pattern), collapse(text));
     let parts: Vec<&str> = pattern.split('*').collect();
     let Some((first, rest)) = parts.split_first() else { return false };
@@ -742,6 +749,9 @@ fn a_pattern_matches_whole_texts_with_stars_for_any_text() {
     assert!(matches("a  b", "a b") && matches("*", "") && matches("*b*", "abc") && matches("a*", "a"));
     assert!(!matches("a", "ab") && !matches("a*c", "ab") && !matches("*b", "abc") && !matches("", "a"));
     assert!(matches("ab*ab", "abab") && !matches("ab*ab", "ab"));
+    // Either of two values; a single bar is part of a value.
+    assert!(matches("- || A (1 previews, running)", "-") && matches("- || A*", "A (1 previews, running)"));
+    assert!(!matches("- || A", "B") && !matches("a | b", "a"));
 }
 
 #[test]

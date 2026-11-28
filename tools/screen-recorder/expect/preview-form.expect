@@ -1,23 +1,25 @@
-# Not recorded yet (written 2026-11-28 with no recording): what Chat is built to read. `side`
-# says whether the preview box was found beside the choices; every other screen key is read
-# without it, as Chat reads the question.
+# Recorded from Claude Code 2.1.332 (Haiku) on 2026-11-28. `side` says whether the preview box
+# was found beside the choices; every other screen key is read without it, as Chat reads the
+# question. A page with previews has no "Type something" row, and its "Chat about this" no
+# number; the other pages are drawn as in `form`.
 
 [page1]
 kind = question
 title = Which layout do you prefer?
-choices = Boxed | Tree | Type something. | Chat about this
+choices = Boxed | Tree | Chat about this
 highlight = Boxed
 side = yes
 send = no
 
 [waiting_transcript]
-# Claude Code 2.1.332 wrote a question's call only once it was answered: Chat's form card from
-# the call (its tabs and preview pane) shows only where this reads the call as running.
-asked = -
+# Whether the transcript holds the call while the form waits differs from run to run (see
+# `preview.expect`): Chat uses the call's card whenever it is there, the screen's otherwise.
+asked = - || Layout · Extras · Name (2 previews, 1 multi-select, running)
 
 [page1_tree]
 kind = question
 highlight = Tree
+side = yes
 
 [page2]
 kind = question

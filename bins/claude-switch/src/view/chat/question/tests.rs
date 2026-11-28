@@ -1566,7 +1566,7 @@ fn recorded_form_screens_lead_to_the_expected_keys() {
     };
 
     let shown = form_question(&screen(FORM_MULTI), &qs, 0).expect("the first question");
-    assert_eq!((shown.other, shown.submit, shown.chat, shown.marks.as_slice()), (3, Some(4), 5, &[false; 3][..]));
+    assert_eq!((shown.other, shown.submit, shown.chat, shown.marks.as_slice()), (Some(3), Some(4), 5, &[false; 3][..]));
     assert!(form_question(&screen(FORM_MULTI), &qs, 1).is_none());
     assert!(form_question(&screen(FORM_SECOND), &qs, 0).is_none(), "the second question shows");
     assert!(form_question(&screen(FORM_SECOND), &qs, 1).is_some());
@@ -2471,8 +2471,8 @@ fn a_read_outside_the_project_is_a_card_with_or_without_its_call_in_the_transcri
     }
 }
 
-/// The made-up question with previews (`fixtures/made_preview.txt`), as the transcript would
-/// hold it.
+/// The question of the recorded `preview_*` screens (Claude Code 2.1.332, `recorder compat`
+/// script `preview`), as the transcript holds it.
 fn layout_question() -> Question {
     let option = |label: &str, preview: &str| QuestionOption {
         label: label.into(),
@@ -2481,49 +2481,126 @@ fn layout_question() -> Question {
     };
     Question {
         header: "Layout".into(),
-        question: "Which folder layout should the tile cache use?".into(),
+        question: "Which layout do you prefer?".into(),
         options: vec![
-            option("Flat folder", "cache/\n  z12_x2154_y1430.png\n  z12_x2155_y1430.png\n  z13_x4308_y2860.png"),
-            option("Nested by zoom", "cache/\n├── 12/\n│   └── 2154_1430.png\n└── 13/\n    └── 4308_2860.png"),
-            option("One packed file", ""),
+            option("Boxed", "+-----+\n| Map |\n+-----+"),
+            option("Tree", "cache/\n  12/\n  13/"),
+            option("Plain", ""),
         ],
         multi_select: false,
     }
 }
 
+/// The form of the recorded `preview_form*` screens (script `preview-form`).
+fn preview_form() -> Vec<Question> {
+    let option = |label: &str| QuestionOption { label: label.into(), ..Default::default() };
+    let mut layout = layout_question();
+    layout.options.truncate(2);
+    vec![
+        layout,
+        Question {
+            header: "Extras".into(),
+            question: "Which extras should it keep?".into(),
+            options: vec![option("Logs"), option("Metrics"), option("Traces")],
+            multi_select: true,
+        },
+        Question {
+            header: "Name".into(),
+            question: "How long a name?".into(),
+            options: vec![option("Short"), option("Long")],
+            multi_select: false,
+        },
+    ]
+}
+
 #[test]
-fn a_preview_box_beside_the_choices_is_left_out_when_the_question_is_read() {
-    use screens::recorded::{MADE_PREVIEW, recorded};
-    let screen = recorded(MADE_PREVIEW);
-    // Read as it is, the box's rows run into the choices.
-    let raw = screens::menu(&screen).expect("a menu");
-    assert!(raw.entries[1].text.contains('│'), "{:?}", raw.entries[1].text);
+fn a_question_with_previews_reads_from_the_recorded_screen_without_its_box() {
+    use screens::recorded::{PREVIEW_ASKED, PREVIEW_NONE, recorded};
+    let screen = recorded(PREVIEW_ASKED);
     let (col, rows) = screens::side_box(&screen).expect("the box beside the choices");
-    assert_eq!((col, rows.len()), (37, 6));
-    let (menu, other, chat) = question_menu(&screen, &layout_question(), false).expect("the question");
-    assert_eq!(
-        menu.texts(),
-        ["Flat folder", "Nested by zoom", "One packed file", "Type something.", "Chat about this"]
-    );
-    assert_eq!((menu.highlight(), other, chat), (Some(0), Some(3), Some(4)));
-    // The cut keeps the modes the arrow keys are written for and the cursor.
+    assert_eq!(col, 34);
     let view = screens::question_view(&screen);
+    let notes = (0..view.rows()).any(|r| view.row_text(r).contains("Notes:"));
+    assert!(!notes && rows.len() >= 5, "the notes row goes with the box");
+    // The cut keeps the modes the arrow keys are written for and the cursor.
     assert_eq!(view.modes(), screen.modes());
     assert_eq!((view.cursor().row, view.cursor().col), (screen.cursor().row, screen.cursor().col));
-    // The screen menu card lists the choices without the box.
+    // No "Type something" with previews; "Chat about this" carries no number but is walked to.
+    let (menu, other, chat) = question_menu(&screen, &layout_question(), false).expect("the question");
+    assert_eq!(menu.texts(), ["Boxed", "Tree", "Plain", "Chat about this"]);
+    assert_eq!((menu.highlight(), other, chat), (Some(0), None, Some(3)));
+    // The menu card read from the screen alone: the question, its choices, no field.
     let shown = menu_shown(&screen).expect("the menu card");
-    assert!(shown.question && shown.choices.iter().all(|c| !c.contains('│')), "{:?}", shown.choices);
-
-    // A box that starts near the left edge, or with no menu footer under it, is no preview box.
-    let near = MADE_PREVIEW.replace(&" ".repeat(30), "");
-    assert!(screens::side_box(&recorded(&near)).is_none());
-    let no_footer = MADE_PREVIEW.replace("Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel", "");
-    assert!(screens::side_box(&recorded(&no_footer)).is_none());
-    // Without the cut the question would not be answered: one more check that it fails closed
-    // when a label differs.
+    assert!(shown.question && shown.other.is_none());
+    assert_eq!((shown.title.as_str(), shown.header.as_str()), ("Which layout do you prefer?", "Layout"));
+    assert_eq!(shown.choices, ["Boxed", "Tree", "Plain", "Chat about this"]);
+    assert!(shown.notes.iter().all(String::is_empty), "{:?}", shown.notes);
+    // The option without a preview: "No preview available" in a shorter box.
+    let none = recorded(PREVIEW_NONE);
+    let (menu, ..) = question_menu(&none, &layout_question(), false).expect("the question");
+    assert_eq!(menu.highlight(), Some(2));
+    // A label that differs fails closed.
     let mut other = layout_question();
-    other.options[1].label = "Deep folders".into();
+    other.options[1].label = "Trees".into();
     assert!(question_menu(&screen, &other, false).is_none());
+}
+
+#[test]
+fn a_box_near_the_left_edge_or_without_a_menu_footer_is_no_preview_box() {
+    let footer = "Enter to select · ↑/↓ to navigate · Esc to cancel";
+    let draw = |indent: &str, footer: &str| {
+        let mut screen = Screen::new(80, 12, 0);
+        let rows = [
+            format!("  1. A     {indent}┌──────────┐"),
+            format!("  2. B     {indent}│ text     │"),
+            format!("           {indent}└──────────┘"),
+            String::new(),
+            footer.to_owned(),
+        ];
+        screen.feed(rows.join("\r\n").as_bytes());
+        screen
+    };
+    assert!(screens::side_box(&draw("    ", footer)).is_some());
+    let mut near = Screen::new(80, 12, 0);
+    near.feed(format!("┌──────────┐\r\n│ text     │\r\n└──────────┘\r\n{footer}").as_bytes());
+    assert!(screens::side_box(&near).is_none());
+    assert!(screens::side_box(&draw("    ", "")).is_none());
+}
+
+#[test]
+fn a_form_with_previews_is_driven_over_the_recorded_pages_and_review() {
+    use screens::recorded::{PREVIEW_FORM, PREVIEW_FORM_EXTRAS, PREVIEW_FORM_REVIEW, PREVIEW_FORM_TREE, recorded};
+    let qs = preview_form();
+    let first = recorded(PREVIEW_FORM);
+    let shown = form_question(&first, &qs, 0).expect("the first page, without its box");
+    assert_eq!((shown.other, shown.chat, shown.menu.highlight()), (None, 2, Some(0)));
+    assert!(form_question(&first, &qs, 1).is_none());
+    let tree = recorded(PREVIEW_FORM_TREE);
+    assert_eq!(form_question(&tree, &qs, 0).and_then(|s| s.menu.highlight()), Some(1));
+    let extras = recorded(PREVIEW_FORM_EXTRAS);
+    let shown = form_question(&extras, &qs, 1).expect("the multi-select page");
+    assert_eq!((shown.other, shown.submit, shown.marks.as_slice()), (Some(3), Some(4), &[false, false, false][..]));
+    // Tree, then Logs with "alerts", then Short: the first key moves to Tree, then Enter.
+    let answers = vec![
+        Answer { picks: vec![1], text: None },
+        Answer { picks: vec![0], text: Some("alerts".into()) },
+        Answer { picks: vec![0], text: None },
+    ];
+    let mut run = FormRun { questions: qs.clone(), answers, expect: Expect::Opened(0), why: NOT_SHOWN };
+    let (key, expect, _) = form_next(&run, &first).expect("a key");
+    assert_eq!(key, down(1));
+    run.expect = expect;
+    let (key, expect, _) = form_next(&run, &tree).expect("Enter on Tree");
+    assert_eq!((key, expect), (b"\r".to_vec(), Expect::Opened(1)));
+    // A typed answer on a page without "Type something" stops before any key.
+    let mut typed = run.clone();
+    typed.answers[0] = Answer { picks: vec![], text: Some("mine".into()) };
+    typed.expect = Expect::Opened(0);
+    assert_eq!(form_next(&typed, &first).err(), Some(NO_FIELD));
+    // The review shows every answer as the card holds them: Enter on "Submit answers".
+    run.expect = Expect::Review(None);
+    let (key, expect, _) = form_next(&run, &recorded(PREVIEW_FORM_REVIEW)).expect("Submit answers");
+    assert_eq!((key, expect), (b"\r".to_vec(), Expect::Submitted));
 }
 
 #[test]
@@ -2548,11 +2625,11 @@ fn a_question_with_previews_shows_the_one_under_the_pointer_or_the_keys_and_copi
         _ => None,
     });
     let size = side.flatten().expect("the preview beside the list");
-    assert_eq!(size.rows, 5);
+    assert_eq!(size.rows, 3);
     assert!(!parts.iter().any(|p| matches!(p, cards::Part::Preview(_))));
     // Narrow: under them.
     let parts = lay(&mut f, 420.0);
-    assert!(parts.iter().any(|p| matches!(p, cards::Part::Preview(s) if s.w == 420.0 && s.rows == 5)));
+    assert!(parts.iter().any(|p| matches!(p, cards::Part::Preview(s) if s.w == 420.0 && s.rows == 3)));
     let previews = &mut f.chat().question.previews;
     assert_eq!(previews.copy_text(false).as_deref(), Some(layout_question().options[0].preview.as_str()));
     // ↓ shows the next option's (while the card is in view); the pointer over the third shows

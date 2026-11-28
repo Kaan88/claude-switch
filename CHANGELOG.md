@@ -6,9 +6,11 @@
   under the pointer, or the one ↑ and ↓ move to, in the terminal's font, cell grid and colours:
   beside the choices in a wide card, under them in a narrow one, as tall as the tallest preview up
   to 16 rows, scrolling with the wheel when longer. A drag selects in it; Ctrl+C or Copy copies
-  plain text. The previews come from the question's call in the transcript; a preview box the
-  terminal draws beside the choices is left out when Chat reads the question from the screen, so
-  it no longer runs into the choices. Not yet seen with a real Claude Code question.
+  plain text. The previews come from the question's call in the transcript when Claude Code has
+  written it there (it does not always while the question waits); otherwise the card is read from
+  the screen, now including a question with previews (the box beside the choices is left out), and
+  shows its choices without previews. Such a question offers no typed answer in Claude Code, so
+  its card has no text field.
 - Chat: a form of several questions (or a multi-select one) built from the question's call shows
   its tabs, as the terminal does ("Layout · Extras · Names · Submit"): a tick on each answered
   question, a dot on the one the terminal shows, and a click turns the page. After the last

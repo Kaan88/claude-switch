@@ -301,11 +301,18 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
         text.chars().count() >= screen.cols() && solid_rule(text.trim_start())
     };
     let first_number = |from: usize| (from..footer).find_map(|row| numbered(&rows[row].1).map(|(n, _)| n));
+    // Under the rule of a question whose options have previews there is only an unnumbered
+    // "Chat about this" (Claude Code 2.1.332, recorded `preview_*`): the choices are above it.
+    let only_chat = |from: usize| {
+        let mut texts = (from..footer).map(|row| rows[row].1.as_str()).filter(|t| !t.is_empty());
+        texts.next() == Some(CHAT_ABOUT) && texts.next().is_none()
+    };
     let mut first = window;
     let mut below = footer;
     while let Some(top) = (window..below).rev().find(|&row| full(row)) {
         first = top + 1;
-        if first_number(first).is_none_or(|n| n == 1) {
+        let passed = first_number(first).is_none() && only_chat(first);
+        if !passed && first_number(first).is_none_or(|n| n == 1) {
             break;
         }
         first = window;
@@ -321,6 +328,13 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
         } else {
             entries.clear();
         }
+    }
+    // That unnumbered "Chat about this" is the menu's last row the arrow keys reach.
+    if let Some(last) = entries.last().map(|e| e.row)
+        && let Some(row) = (last + 1..footer).find(|&row| rows[row].1 == CHAT_ABOUT)
+        && only_chat(row)
+    {
+        entries.push(Entry { row, highlighted: rows[row].0, text: CHAT_ABOUT.to_owned() });
     }
     if entries.is_empty() {
         entries = trust_choices(&rows, footer);
@@ -1126,16 +1140,19 @@ pub(super) fn review(screen: &Screen) -> Option<Review> {
     Some(Review { answers, highlight })
 }
 
+/// The row under a question's preview box about notes (Claude Code 2.1.332).
+const NOTES: &str = "Notes:";
+
 /// How far right a box beside a question's choices starts at least: the choices' own column
 /// (`❯ 1. `) and a short label come first.
 const SIDE_BOX_LEFT: usize = 12;
 
 /// A box Claude Code draws beside a question's choices: the highlighted option's `preview`
-/// (not recorded yet; `recorder compat` scripts `preview` and `preview-form` record it). Its
-/// column and its rows, top and bottom edges included: a top-left corner (`┌` or `╭`) followed
-/// by a rule at column [`SIDE_BOX_LEFT`] or further right, the same column's side (`│`) on every
-/// row down to a bottom-left corner (`└` or `╰`), text left of it on one of those rows, and a
-/// menu footer under it. The lowest such box counts.
+/// (recorded from 2.1.332, fixtures `preview_*`: column 34 of 100). Its column and its rows, top
+/// and bottom edges included, and the "Notes: press n to add notes" row under it when there is
+/// one: a top-left corner (`┌` or `╭`) followed by a rule at column [`SIDE_BOX_LEFT`] or further
+/// right, the same column's side (`│`) on every row down to a bottom-left corner (`└` or `╰`),
+/// text left of it on one of those rows, and a menu footer under it. The lowest such box counts.
 pub(super) fn side_box(screen: &Screen) -> Option<(usize, std::ops::Range<usize>)> {
     let footer = (0..screen.rows()).rposition(|r| menu_footer(&screen.row_text(r)))?;
     let ch = |r: usize, c: usize| screen.cell(r, c).ch;
@@ -1158,8 +1175,14 @@ pub(super) fn side_box(screen: &Screen) -> Option<(usize, std::ops::Range<usize>
             }
             let Some(bottom) = bottom.filter(|&b| b > top + 1) else { continue };
             let beside = (top..=bottom).any(|r| (0..col).any(|c| !ch(r, c).is_whitespace()));
+            // Under the box, in its column, a row about the notes the terminal takes with the
+            // answer ("Notes: press n to add notes"): the box's too.
+            let from_col = |r: usize| (col..screen.cols()).map(|c| ch(r, c)).collect::<String>();
+            let notes = (bottom + 1..(bottom + 3).min(footer))
+                .find(|&r| !screen.row_text(r).trim().is_empty())
+                .filter(|&r| from_col(r).trim_start().starts_with(NOTES) && (0..col).all(|c| ch(r, c) == ' '));
             if beside {
-                found = Some((col, top..bottom + 1));
+                found = Some((col, top..notes.unwrap_or(bottom) + 1));
             }
             break;
         }

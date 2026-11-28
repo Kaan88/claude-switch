@@ -281,7 +281,7 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             .unwrap();
             let (mut st, id) = shots::chat_window(dark, &demo);
             shots::running(&mut st, id, "Waiting for your answer");
-            let later = shots::show(&mut st, id, crate::view::chat::question::screens::recorded::MADE_PREVIEW, now);
+            let later = shots::show(&mut st, id, crate::view::chat::question::screens::recorded::PREVIEW_ASKED, now);
             if state == "preview-hover" {
                 let mut anim = mdshared_ui::anim::Animator::new();
                 shots::frame_at(&mut st, &mut anim, later, size);
@@ -372,10 +372,14 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
         }
         // A card read from the screen alone over the showcase: a form's question, a plain menu, a
         // read-only panel, the list of blocked calls.
-        "form" | "menu" | "panel" | "blocked" => {
-            use crate::view::chat::question::screens::recorded::{BLOCKED_TWO, MENU_MODEL, PANEL_USAGE, PLAIN_FORM};
+        "form" | "menu" | "panel" | "blocked" | "preview-screen" => {
+            use crate::view::chat::question::screens::recorded::{
+                BLOCKED_TWO, MENU_MODEL, PANEL_USAGE, PLAIN_FORM, PREVIEW_ASKED,
+            };
             let screen = match state {
                 "form" => PLAIN_FORM,
+                // A question with previews whose call the transcript does not hold (yet).
+                "preview-screen" => PREVIEW_ASKED,
                 "menu" => MENU_MODEL,
                 "panel" => PANEL_USAGE,
                 _ => BLOCKED_TWO,
@@ -551,6 +555,7 @@ fn chat_shots() {
         "question",
         "preview",
         "preview-hover",
+        "preview-screen",
         "form-tabs",
         "form-submit",
         "permission",
