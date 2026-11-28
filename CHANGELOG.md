@@ -5,6 +5,8 @@
 - Chat: a question with previews that shows on the card read from the screen (Claude Code had not
   written its call to the transcript yet) can be answered from that card: a click no longer
   stops at "The prompt changed in the terminal".
+- Chat: "Chat about this" on a question with previews is chosen from Chat as well: Claude Code
+  keeps the last option marked while it is highlighted, which Chat read as no highlight at all.
 - Chat: a question whose option has `"preview": null` gets its card (it was left to the terminal).
 - Chat: Ctrl+C no longer copies an old selection in a question's preview after you clicked
   elsewhere; Enter on a form's Submit step submits, as its button does.

@@ -1847,7 +1847,9 @@ fixtures `preview_*`): the box starts at column 34 of 100, on the first option's
 the preview; an option without one shows "No preview available"; the footer adds "n to add
 notes". Such a question has no "Type something" row, and its "Chat about this" (under the rule)
 has no number: the menu reader passes that rule when only that row is under it and reads the row
-as the menu's last entry, walked to like any other. So a card for such a question has no field
+as the menu's last entry, walked to like any other (one Down below the last option). While it is
+current the last option keeps its own `❯` in the same colours and weight; that row shows a `❯`
+only while current, so its mark wins (recorded, fixture `preview_chat`). So a card for such a question has no field
 (a form's page turns with Back and Next of its own), and a typed answer for it stops before any
 key. Notes (`n`) are left to the terminal. Whether the transcript holds the call while the
 question waits differs from run to run (two tries of the same recording: once it did, once not):

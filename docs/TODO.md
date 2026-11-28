@@ -154,9 +154,8 @@ as the second account, Windows Terminal, the desktop hand-over.
     question at all, fixed the same day, 18 of 18 states read as expected offline). Whether the
     transcript holds the call while the question waits is racy (once yes, once no): to record
     again with `preview` and `preview-form`, several times, and to try in the running app both
-    ways (the card with its previews, and the screen's card). Not built: notes (`n`). Not recorded yet: the highlight
-    on "Chat about this" one Down below the last option (`preview` state `chat_about`, added
-    2026-11-28; Chat's Enter there waits for the screen to show it).
+    ways (the card with its previews, and the screen's card). Not built: notes (`n`). "Chat about this" one Down below
+    the last option recorded 2026-11-28 (`preview` state `chat_about`, fixture `preview_chat`).
   - Form tabs and the Submit step built 2026-11-28 on the same branch (DESIGN.md, "Forms"), for
     the card built from the transcript's call. Seen in `chat_shots` states `form-tabs` and
     `form-submit` (same sizes and themes) and unit tests; the keys to Claude Code's form are the

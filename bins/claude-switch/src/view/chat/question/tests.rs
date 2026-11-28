@@ -2911,3 +2911,46 @@ fn a_preview_question_on_the_screens_menu_card_is_answered_from_the_same_reading
     assert!(press(f.tab(), now, Hit::Escape));
     assert_eq!(f.writes(), [ESC.to_vec()]);
 }
+
+#[test]
+fn chat_about_this_under_its_rule_is_the_highlight_when_the_last_option_keeps_its_mark() {
+    use screens::recorded::{PREVIEW_ASKED, PREVIEW_CHAT, PREVIEW_NONE, recorded};
+    // One Down below "3. Plain": both rows carry `❯`, in the same colours (recorded).
+    let screen = recorded(PREVIEW_CHAT);
+    let marked = (0..screen.rows()).filter(|&r| screen.row_text(r).trim_start().starts_with('❯')).count();
+    assert!(marked >= 2, "the recording has both marks");
+    let (menu, _, chat) = question_menu(&screen, &layout_question(), false).expect("the question");
+    assert_eq!((menu.highlight(), chat), (Some(3), Some(3)));
+    assert_eq!(menu_shown(&screen).and_then(|m| m.choices.get(3).cloned()).as_deref(), Some("Chat about this"));
+    // Without the mark on "Chat about this" the option's mark is the highlight, as before.
+    let (menu, ..) = question_menu(&recorded(PREVIEW_NONE), &layout_question(), false).unwrap();
+    assert_eq!(menu.highlight(), Some(2));
+
+    // The screen's card: its "Chat about this" (Option 3) moves one Down from Plain, sees the
+    // move on this screen, and only then presses Enter.
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.tab().term.screen = recorded(PREVIEW_NONE);
+    f.chat().output(now, true, false);
+    f.sync();
+    assert!(press(f.tab(), now, Hit::Option(3)));
+    assert_eq!(f.writes(), [down(1)]);
+    f.tab().term.screen = recorded(PREVIEW_CHAT);
+    f.chat().output(now, true, false);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "the move was seen");
+    assert_eq!(f.chat().question.error, None);
+
+    // The card built from the call: "Chat about this" walks three rows down from Boxed.
+    let mut f = Fixture::new(vec![layout_question()]);
+    f.tab().term.screen = recorded(PREVIEW_ASKED);
+    f.chat().output(now, true, false);
+    f.sync();
+    assert!(press(f.tab(), now, Hit::ChatAbout));
+    assert_eq!(f.writes(), [down(3)]);
+    f.tab().term.screen = recorded(PREVIEW_CHAT);
+    f.chat().output(now, true, false);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    assert_eq!(f.chat().question.error, None);
+}

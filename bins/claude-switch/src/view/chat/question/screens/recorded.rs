@@ -108,6 +108,8 @@ pub(in crate::view::chat) const REWIND_ACTIONS: &str = include_str!("../fixtures
 /// without one shows "No preview available".
 pub(in crate::view::chat) const PREVIEW_ASKED: &str = include_str!("../fixtures/preview_asked.ansi");
 pub(in crate::view::chat) const PREVIEW_NONE: &str = include_str!("../fixtures/preview_none.ansi");
+/// One Down below the last option: "Chat about this" and "3. Plain" both carry `❯`.
+pub(in crate::view::chat) const PREVIEW_CHAT: &str = include_str!("../fixtures/preview_chat.ansi");
 pub(in crate::view::chat) const PREVIEW_FORM: &str = include_str!("../fixtures/preview_form.ansi");
 pub(in crate::view::chat) const PREVIEW_FORM_TREE: &str = include_str!("../fixtures/preview_form_tree.ansi");
 pub(in crate::view::chat) const PREVIEW_FORM_EXTRAS: &str = include_str!("../fixtures/preview_form_extras.ansi");

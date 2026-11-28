@@ -336,6 +336,12 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
         && let Some(row) = (last + 1..footer).find(|&row| rows[row].1 == CHAT_ABOUT)
         && only_chat(row)
     {
+        // With the highlight on it, Claude Code 2.1.332 leaves the option last highlighted marked
+        // too, in the same colours and weight (recorded `preview_chat`); the mark on this row is
+        // only drawn while it is current, so it is the highlight.
+        if rows[row].0 {
+            entries.iter_mut().for_each(|e| e.highlighted = false);
+        }
         entries.push(Entry { row, highlighted: rows[row].0, text: CHAT_ABOUT.to_owned() });
     }
     if entries.is_empty() {

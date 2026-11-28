@@ -29,8 +29,8 @@ highlight = Plain
 side = yes
 
 [chat_about]
-# Not recorded yet (added 2026-11-28): one Down below the last option should highlight
-# "Chat about this". Chat writes Enter there only once the screen shows that highlight.
+# Recorded 2026-11-28: one Down below the last option highlights "Chat about this", and the
+# last option keeps its own mark in the same colours; the mark on "Chat about this" wins.
 kind = question
 highlight = Chat about this
 
