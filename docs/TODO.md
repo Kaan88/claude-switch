@@ -133,6 +133,13 @@ as the second account, Windows Terminal, the desktop hand-over.
   time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
   Cancel. Read-only on the bridge's files.
 - A real hand-over out of Desktop (make it let go of a session). No supported way is known.
+- Buttons under each message, as in the desktop app (owner, 2026-11-28): under the user's bubble and
+  under Claude's answer, shown on pointing (and under the newest answer always), at least Copy and
+  Branch (continue a copy of the conversation from that message), plus Rewind to here under the
+  user's own message. Today these are only in the right-click menu (Copy message, Copy as Markdown,
+  Rewind to here…) and Branch does not exist per message (Open a copy forks the whole session with
+  `--fork-session`). Item 12 of the redesign study (`docs/chat-redesign.md` on `design/chat-redesign`)
+  drew the row; how Branch cuts the transcript at a message must be tried against Claude Code first.
 - Find a session by its id: a pasted session id (or a `claude --resume <id>` line, as handovers give
   it) in the Sessions search matches that session, so it can be opened at once (owner, 2026-11-28).
 - When the terminal opens for a question (a card's "Open terminal", or Chat handing a question it
