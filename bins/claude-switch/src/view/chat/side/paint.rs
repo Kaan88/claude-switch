@@ -455,11 +455,17 @@ impl Details {
                     let key = task_key(index, &task.content);
                     let expanded = self.expanded.contains(&key);
                     let (mark, status) = task_status(task.status);
+                    // Claude Code keeps a replaced turn's tasks after a rewind: listed, marked.
+                    let title = if task.rewound {
+                        format!("{} · {}", first_line(&task.content), super::REWOUND)
+                    } else {
+                        first_line(&task.content).to_owned()
+                    };
                     if f.sections {
-                        let label = first_line(&task.content).to_owned();
+                        let label = title.clone();
                         out.push(ITEM, Line::Task { label, status: task.status, index, expanded });
                     } else {
-                        let label = format!("{mark}  {}", first_line(&task.content));
+                        let label = format!("{mark}  {title}");
                         out.push(
                             ROW,
                             Line::Header {
@@ -474,7 +480,8 @@ impl Details {
                     }
                     if expanded {
                         let top = out.height;
-                        out.detail(p, width, format!("{status}\n{}", task.content));
+                        let from = if task.rewound { format!(" · {}", super::REWOUND) } else { String::new() };
+                        out.detail(p, width, format!("{status}{from}\n{}", task.content));
                         if opens {
                             out.push(
                                 ROW,
@@ -544,12 +551,17 @@ impl Details {
                     let key = Key::File(file.key.clone());
                     let expanded = self.expanded.contains(&key);
                     let name = Path::new(&file.path).file_name().and_then(|s| s.to_str()).unwrap_or(&file.path);
+                    let name = if file.rewound {
+                        format!("{} · {}", first_line(name), super::REWOUND)
+                    } else {
+                        first_line(name).to_owned()
+                    };
                     let opens = file.file.as_ref().is_some_and(|f| f.supports_default_app());
                     if f.sections {
                         out.push(
                             ITEM,
                             Line::File {
-                                name: first_line(name).to_owned(),
+                                name: name.clone(),
                                 added: file.added,
                                 removed: file.removed,
                                 index,
@@ -560,14 +572,7 @@ impl Details {
                     } else {
                         out.push(
                             ROW,
-                            Line::Header {
-                                label: first_line(name).to_owned(),
-                                index,
-                                expanded,
-                                active: false,
-                                split: true,
-                                opens,
-                            },
+                            Line::Header { label: name.clone(), index, expanded, active: false, split: true, opens },
                         );
                     }
                     if expanded {
@@ -581,7 +586,12 @@ impl Details {
                         };
                         out.detail(p, width, format!("{}{suffix}", file.path));
                         for (j, edit) in file.edits.iter().enumerate() {
-                            out.push(ROW, Line::Button { label: edit.label.clone(), index, part: Part::Edit(j) });
+                            if edit.rewound {
+                                // Not in the conversation: nothing to go to.
+                                out.detail(p, width, edit.label.clone());
+                            } else {
+                                out.push(ROW, Line::Button { label: edit.label.clone(), index, part: Part::Edit(j) });
+                            }
                         }
                         self.reveal(out, &key, top);
                     }

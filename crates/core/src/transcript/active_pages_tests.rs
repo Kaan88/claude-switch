@@ -93,7 +93,11 @@ fn append(path: &Path, text: &str) {
 }
 
 fn tasks(reader: &Reader) -> Vec<String> {
-    reader.tasks().iter().map(|t| t.content.clone()).collect()
+    reader
+        .tasks()
+        .iter()
+        .map(|t| if t.rewound { format!("{} (rewound)", t.content) } else { t.content.clone() })
+        .collect()
 }
 
 fn shells(reader: &Reader) -> Vec<String> {
@@ -136,7 +140,7 @@ fn session(folder: &Folder) -> PathBuf {
 }
 
 #[test]
-fn after_a_rewind_the_pages_drop_what_the_replaced_turn_did_unless_it_still_runs() {
+fn after_a_rewind_the_pages_keep_its_tasks_marked_and_drop_its_ended_work() {
     let folder = Folder::new("rewind");
     let path = session(&folder);
     let mut reader = Reader::open(&path, 1 << 20).unwrap();
@@ -148,7 +152,9 @@ fn after_a_rewind_the_pages_drop_what_the_replaced_turn_did_unless_it_still_runs
     append(&path, &prompt("u3", Some("a1"), "two again"));
     let changes = reader.poll().unwrap();
     assert!(changes.branch_changed && changes.tasks_changed && changes.subagents_changed && changes.background_changed);
-    assert_eq!(tasks(&reader), ["first plan"], "the plan the active branch made");
+    // Claude Code keeps a replaced turn's tasks (its task files, recorded with 2.1.332): so does the
+    // page, marked.
+    assert_eq!(tasks(&reader), ["replaced plan (rewound)"]);
     // A rewind stops no process: the running shell and agent stay, the ended ones go.
     assert_eq!(shells(&reader), ["run2"]);
     assert_eq!(agents(&reader), ["live"]);
@@ -223,13 +229,13 @@ fn a_compaction_keeps_the_plan_made_before_it() {
         + &answer("a2", "p2-r", "second");
     fs::write(&path, &text).unwrap();
     assert_eq!(tasks(&Reader::open(&path, 1 << 20).unwrap()), ["plan after"]);
-    // A rewind to the first prompt after the compaction: the plan from before it is the plan again.
+    // A rewind to the first prompt after the compaction: the replaced turn's plan stays, marked.
     append(&path, &prompt("u3", Some("c1"), "two again"));
-    assert_eq!(tasks(&Reader::open(&path, 1 << 20).unwrap()), ["plan before"]);
+    assert_eq!(tasks(&Reader::open(&path, 1 << 20).unwrap()), ["plan after (rewound)"]);
 }
 
 #[test]
-fn the_bounded_slice_drops_a_replaced_turns_plan_once_history_proves_it() {
+fn the_bounded_slice_marks_a_replaced_turns_plan_once_history_proves_it() {
     let folder = Folder::new("slice");
     let path = folder.0.join("s.jsonl");
     let head = prompt("u1", None, &"long ".repeat(20_000)) + &answer("a1", "u1", "first");
@@ -237,9 +243,94 @@ fn the_bounded_slice_drops_a_replaced_turns_plan_once_history_proves_it() {
     let tail = plan("p2", "u2", "todo2", "replaced plan") + &prompt("u3", Some("a1"), "two again");
     fs::write(&path, head + &replaced + &tail).unwrap();
     let mut reader = Reader::open(&path, tail.len() + 5).unwrap();
-    // The replaced prompt is not loaded: the plan cannot be placed and stays.
+    // The replaced prompt is not loaded: the plan cannot be placed and is not marked.
     assert_eq!(tasks(&reader), ["replaced plan"]);
     let changes = reader.earlier().unwrap();
     assert!(changes.branch_changed && changes.tasks_changed);
-    assert_eq!(tasks(&reader), Vec::<String>::new());
+    assert_eq!(tasks(&reader), ["replaced plan (rewound)"]);
+}
+
+#[test]
+fn a_replaced_turns_writes_are_kept_apart_for_the_files_page() {
+    let folder = Folder::new("writes");
+    let path = folder.0.join("s.jsonl");
+    let write = |uuid: &str, parent: &str, id: &str, file: &str| {
+        tool(uuid, parent, id, "Write", json!({"file_path":file,"content":"x"}))
+            + &result(&format!("{uuid}-r"), uuid, id, "ok")
+    };
+    let failed = tool(
+        "f2",
+        "w2-r",
+        "fail2",
+        "Edit",
+        json!({"file_path":"failed.md","old_string":"a","new_string":"b"}),
+    ) + &link(
+        json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"fail2","is_error":true,"content":"no"}]}}),
+        "f2-r",
+        Some("f2"),
+    );
+    let text = prompt("u1", None, "one")
+        + &write("w1", "u1", "write1", "kept.md")
+        + &answer("a1", "w1-r", "first")
+        + &prompt("u2", Some("a1"), "two")
+        + &write("w2", "u2", "write2", "replaced.md")
+        + &failed
+        + &answer("a2", "f2-r", "second");
+    fs::write(&path, text).unwrap();
+    let mut reader = Reader::open(&path, 1 << 20).unwrap();
+    assert!(reader.replaced_writes().is_empty(), "nothing is replaced before the next prompt");
+    append(&path, &prompt("u3", Some("a1"), "two again"));
+    reader.poll().unwrap();
+    let replaced: Vec<_> = reader
+        .replaced_writes()
+        .into_iter()
+        .map(|(id, item)| {
+            assert!(reader.item(id).is_none(), "not a shown item");
+            match item.kind {
+                ItemKind::Tool { file_path, .. } => file_path.unwrap(),
+                _ => unreachable!(),
+            }
+        })
+        .collect();
+    assert_eq!(replaced, ["replaced.md"], "a failed edit changed nothing");
+}
+
+/// Native tasks (TaskCreate, TaskUpdate) of a replaced turn stay, as in Claude Code's own task
+/// files after a rewind (recorded with 2.1.332, `recorder compat` `rewind-task`), marked; a later
+/// change on the active branch makes the task the branch's again.
+#[test]
+fn a_native_task_made_in_a_replaced_turn_stays_marked_until_the_branch_changes_it() {
+    let folder = Folder::new("native");
+    let path = folder.0.join("s.jsonl");
+    let created = |uuid: &str, parent: &str, id: &str, subject: &str, task: u32| {
+        tool(uuid, parent, id, "TaskCreate", json!({"subject":subject,"description":"d"}))
+            + &link(
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":id,
+                    "content":format!("Task #{task} created successfully: {subject}")}]},
+                    "toolUseResult":{"task":{"id":task.to_string(),"subject":subject}}}),
+                &format!("{uuid}-r"),
+                Some(uuid),
+            )
+    };
+    let text = prompt("u1", None, "one")
+        + &created("c1", "u1", "create1", "kept task", 1)
+        + &answer("a1", "c1-r", "first")
+        + &prompt("u2", Some("a1"), "two")
+        + &created("c2", "u2", "create2", "rewound task", 2)
+        + &answer("a2", "c2-r", "second");
+    fs::write(&path, text).unwrap();
+    let mut reader = Reader::open(&path, 1 << 20).unwrap();
+    assert_eq!(tasks(&reader), ["kept task", "rewound task"]);
+    append(&path, &prompt("u3", Some("a1"), "two again"));
+    reader.poll().unwrap();
+    assert_eq!(tasks(&reader), ["kept task", "rewound task (rewound)"]);
+    // Updated on the branch: the branch's task again.
+    append(
+        &path,
+        &(tool("t3", "u3", "update3", "TaskUpdate", json!({"taskId":"2","status":"in_progress"}))
+            + &result("t3-r", "t3", "update3", "Updated task #2 status")),
+    );
+    reader.poll().unwrap();
+    assert_eq!(tasks(&reader), ["kept task", "rewound task"]);
+    assert_eq!(reader.tasks()[1].status, TaskStatus::InProgress);
 }

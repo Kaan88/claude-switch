@@ -1,0 +1,60 @@
+# A task in a rewound turn (Claude Switch item 49, review): the second turn creates a task with
+# TaskCreate, then a rewind to that turn's prompt ("Restore conversation") and a new prompt. The
+# transcript copies show what Chat's Tasks page reads; `taskfiles` copies what Claude Code keeps for
+# the session's tasks (its `tasks` and `todos` entries) before the rewind, right after it and after
+# the next prompt. Recorded 2026-11-28 (2.1.332): Claude Code keeps the task after the rewind, and
+# Chat's Tasks page keeps it too, marked "from a rewound turn" (DESIGN.md, "Rewind"). Three model
+# requests; the model may not call the tool (look at `before-transcript`'s `tasks` first).
+#: args --permission-mode default
+# Claude Code 2.1.332 offers TaskCreate in an interactive session only to some models or with
+# CLAUDE_CODE_ENABLE_TODO_TOOLS set (recorded 2026-11-28 with Haiku: "No such tool available").
+# The second prompt fits on one input row: Ctrl+U clears only the row the cursor is on, so a
+# restored prompt that wraps would be sent with the next one (recorded the same day).
+#: env CLAUDE_CODE_ENABLE_TODO_TOOLS=1
+#: seconds 80
+start
+send Reply with just the word: alpha
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+send Use TaskCreate once, subject rewound-task-bravo. Then reply with just the word: bravo
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap idle
+tscopy before-transcript
+taskfiles before-tasks
+send \e
+sleep 150
+send \e
+wait (current) 5000
+quiet 500 5000
+send \e[A
+sleep 500
+quiet 500 5000
+snap up
+send \r
+wait Restore conversation 5000
+quiet 500 5000
+send \r
+gone Restore conversation 5000
+quiet 1000 10000
+snap restored
+taskfiles restored-tasks
+send \x15
+sleep 500
+quiet 500 5000
+snap cleared
+send Reply with just the word: charlie
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap after
+tscopy after-transcript
+taskfiles after-tasks

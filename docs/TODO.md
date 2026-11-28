@@ -748,6 +748,26 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     unit tests: a rewind (plan, ended and running shells, finished and running agents, a new plan after
     it), a fork's copy, a compaction (and a rewind after it), the bounded slice with history paged in, and
     the panel's sections through the worker (the written file, the plan and the ended shell go).
+    Review (2026-11-28): whether Claude Code's own task list also drops a replaced turn's tasks on a
+    rewind is not recorded; Chat drops them, as the conversation drops the turn, and DESIGN.md says
+    so. `recorder compat` script `rewind-task` (not run yet) creates a task with TaskCreate in the
+    turn it then rewinds and copies Claude Code's task files (`taskfiles`) before, right after and
+    after the next prompt; its expectations are that assumption.
+    First recording (2026-11-28, 2.1.332, Haiku), 6 of 9: no task was made, as Claude Code offers
+    TaskCreate in an interactive session only to some models or with `CLAUDE_CODE_ENABLE_TODO_TOOLS`
+    (the model searched for it and got "No such tool available"); and the restored prompt wrapped onto
+    two input rows, Ctrl+U cleared only the row under the cursor, and the rest went out with the next
+    prompt. The script now sets that variable (a new `#: env` header of `recorder compat`), uses a
+    prompt that fits on one row, and checks the input read back after the restore and empty before
+    the next prompt. To be recorded again.
+    Second recording (2026-11-28, 8 of 10): the task was made, and Claude Code keeps it in its own task
+    files right after the rewind and after the next prompt, so Chat's assumption was wrong. The Tasks
+    page now keeps a replaced turn's native tasks, marked "from a rewound turn" while their state comes
+    from there; a TodoWrite plan likewise (that recording made no todo list, so Claude Code's is not
+    known). Expectations updated to the recording; 10 of 10 on it offline.
+    Review (2026-11-28): a file written or edited in a replaced turn now stays in the Files list, marked
+    "from a rewound turn" (its edit rows are text, with nothing to go to), since a conversation-only
+    rewind leaves the change on disk and the transcript does not say whether the code was restored.
     Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
     its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
     the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown

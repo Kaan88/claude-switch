@@ -144,6 +144,37 @@ fn update(
     }
 }
 
+/// The files of writes a rewind replaced (`Reader::replaced_writes`), for the Files page only: each
+/// write's own path counts as written so that it can be opened, but nothing is granted to the
+/// conversation's links (these writes are not in it).
+pub(super) fn replaced(items: Vec<(ItemId, Item)>, cwd: &Path) -> Vec<(ItemId, Item, Files)> {
+    let path = |item: &Item| match &item.kind {
+        ItemKind::Tool { file_path: Some(path), .. } => Some(path.clone()),
+        _ => None,
+    };
+    let touched: BTreeSet<PathBuf> = items
+        .iter()
+        .filter_map(|(_, item)| links::transcript_path(&path(item)?, cwd).filter(|p| !links::inside(p, cwd)))
+        .collect();
+    let mut recent: Vec<PathBuf> = Vec::new();
+    for (_, item) in items.iter().rev() {
+        if let Some(p) = path(item).and_then(|p| links::transcript_path(&p, cwd)).filter(|p| touched.contains(p))
+            && !recent.contains(&p)
+        {
+            recent.push(p);
+        }
+    }
+    let scope = Scope { cwd, touched: &touched, recent: &recent };
+    let mut checked = BTreeMap::new();
+    items
+        .into_iter()
+        .map(|(id, item)| {
+            let files = check(&mut checked, &scope, &path(&item).into_iter().collect::<Vec<_>>());
+            (id, item, files)
+        })
+        .collect()
+}
+
 fn check(checked: &mut BTreeMap<String, Option<NamedFile>>, scope: &Scope<'_>, names: &[String]) -> Files {
     names
         .iter()
@@ -160,6 +191,41 @@ fn check(checked: &mut BTreeMap<String, Option<NamedFile>>, scope: &Scope<'_>, n
 mod tests {
     use super::*;
     use claude_switch_core::transcript::ItemKind;
+
+    #[test]
+    fn a_rewound_write_outside_the_folder_opens_from_the_files_page_but_grants_no_link() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let session = demo.cwd().join("session");
+        std::fs::create_dir(&session).unwrap();
+        let outside = demo.cwd().join("notes.md");
+        std::fs::write(&outside, "# Notes").unwrap();
+        let path = outside.to_str().unwrap().to_owned();
+        let write = Item {
+            timestamp: None,
+            kind: ItemKind::Tool {
+                id: "w".into(),
+                name: "Write".into(),
+                summary: String::new(),
+                file_path: Some(path.clone()),
+                state: ToolState::Ok,
+                duration_ms: None,
+                pictures: vec![],
+                subagent: None,
+                denial: None,
+                card: None,
+            },
+        };
+        let id = ItemId { offset: 5, block: 0 };
+        let [(got, _, files)] = replaced(vec![(id, write)], &session).try_into().ok().unwrap();
+        assert_eq!(got, id);
+        assert!(files.contains_key(&path), "its own path, outside the folder, can be opened");
+        // The conversation's links are not granted that path.
+        let mut refs = FileRefs::default();
+        let link = ItemId { offset: 9, block: 0 };
+        let answer = Item { kind: ItemKind::Assistant { markdown: format!("See `{path}`.") }, timestamp: None };
+        refs.update(true, &[(link, answer)], &session, |_| Vec::new());
+        assert!(refs.get(link).is_none_or(|files| files.is_empty()));
+    }
 
     #[test]
     fn saved_output_labels_do_not_grant_outside_access() {

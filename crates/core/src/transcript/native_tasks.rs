@@ -69,13 +69,14 @@ impl Tasks {
     pub fn results(&mut self, content: &Value, structured: &Value) -> bool {
         let mut changed = false;
         for outcome in outcomes(content, structured) {
-            changed |= self.outcome(outcome);
+            changed |= self.outcome(outcome, false);
         }
         changed
     }
 
-    /// Applies a result to the call it answers; true when the list changed.
-    pub fn outcome(&mut self, outcome: Outcome) -> bool {
+    /// Applies a result to the call it answers, `rewound` when that call is in a turn a rewind
+    /// replaced (the task's state then comes from there); true when the list changed.
+    pub fn outcome(&mut self, outcome: Outcome, rewound: bool) -> bool {
         let Some(call) = self.pending.remove(&outcome.tool) else { return false };
         if !outcome.ok {
             return false;
@@ -85,7 +86,7 @@ impl Tasks {
                 if let Some(id) = outcome.created
                     && self.tasks.iter().all(|(key, _)| key != &id)
                 {
-                    self.tasks.push((id, Task { content, status: TaskStatus::Pending }));
+                    self.tasks.push((id, Task { content, status: TaskStatus::Pending, rewound }));
                     return true;
                 }
                 false
@@ -96,6 +97,7 @@ impl Tasks {
                     self.tasks.remove(index);
                 } else {
                     let task = &mut self.tasks[index].1;
+                    task.rewound = rewound;
                     if let Some(title) = title {
                         task.content = title;
                     }

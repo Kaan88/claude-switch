@@ -120,8 +120,9 @@ fn task_and_agent_hits_expand_detail_and_refuse_reassigned_rows() {
         Task {
             content: "A task with a short title\nThe second line only appears inside the expanded row.".into(),
             status: TaskStatus::InProgress,
+            rewound: false,
         },
-        Task { content: "Next task".into(), status: TaskStatus::Pending },
+        Task { content: "Next task".into(), status: TaskStatus::Pending, rewound: false },
     ];
     model.agents = vec![Subagent { id: "scout".into(), model: Some("demo".into()), ..Default::default() }];
     let area = Rect::new(0.0, 0.0, 260.0, 400.0);
@@ -270,7 +271,7 @@ fn an_mcp_tasks_running_time_and_missing_last_step_are_said_plainly() {
 fn a_task_opens_the_newest_plan_update_and_only_when_there_is_one() {
     let demo = crate::demo::Transcript::new_chat().unwrap();
     let mut model = Model::new(Source::File(demo.path().into()), demo.cwd().into(), || {});
-    model.tasks = vec![Task { content: "Plan".into(), status: TaskStatus::Pending }];
+    model.tasks = vec![Task { content: "Plan".into(), status: TaskStatus::Pending, rewound: false }];
     let mut details = Details::default();
     details.refresh(&model, demo.cwd(), Side::Tasks);
     let open = |model: &Model| details.action(model, TAB, Side::Tasks, hit(model, Side::Tasks, 0, Part::Open));
@@ -295,6 +296,7 @@ fn the_panel_scans_for_changed_files_only_while_nothing_else_opens_it() {
     model.tasks.push(claude_switch_core::transcript::Task {
         content: "Fix the order".into(),
         status: claude_switch_core::transcript::TaskStatus::InProgress,
+        rewound: false,
     });
     assert!(details.wants_panel(&model, cwd));
     assert_eq!(details.files_revision, Some(model.revision - 1), "not scanned again for this revision");
@@ -329,8 +331,8 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
 
     std::fs::write(cwd.join("notes.md"), "# Notes").unwrap();
     model.tasks = vec![
-        Task { content: "Done".into(), status: TaskStatus::Completed },
-        Task { content: "Doing".into(), status: TaskStatus::InProgress },
+        Task { content: "Done".into(), status: TaskStatus::Completed, rewound: false },
+        Task { content: "Doing".into(), status: TaskStatus::InProgress, rewound: false },
     ];
     model.agents = vec![
         Subagent { id: "done".into(), end: Some((AgentEnd::Finished, EndSource::Sidecar)), ..Default::default() },
@@ -372,9 +374,9 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
 }
 
 /// Item 49: after a rewind's next prompt, the panel's sections drop what the replaced turn did
-/// (its written file, its plan, an ended shell), through the worker as Chat reads it.
+/// (an ended shell) and keep its written file and its plan marked, through the worker as Chat reads it.
 #[test]
-fn the_panel_drops_what_a_rewound_turn_did_once_the_next_prompt_is_written() {
+fn the_panel_drops_a_rewound_turns_ended_work_but_keeps_its_file_and_plan_marked() {
     use serde_json::json;
     let dir = crate::testing::unique("cs-side-rewind");
     std::fs::create_dir_all(&dir).unwrap();
@@ -451,9 +453,18 @@ fn the_panel_drops_what_a_rewound_turn_did_once_the_next_prompt_is_written() {
 
     let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
     std::io::Write::write_all(&mut file, prompt("u3", Some("a1"), "two again").as_bytes()).unwrap();
-    settle(&mut model, &|m| m.tasks.iter().any(|t| t.content == "first plan"));
-    assert_eq!(model.tasks.iter().map(|t| t.content.as_str()).collect::<Vec<_>>(), ["first plan"]);
-    assert_eq!(names(&model), ["kept.md"], "the replaced turn's file is not a changed file");
+    settle(&mut model, &|m| m.tasks.iter().any(|t| t.rewound));
+    // Claude Code keeps a replaced turn's tasks: the page does too, marked.
+    assert_eq!(
+        model.tasks.iter().map(|t| (t.content.as_str(), t.rewound)).collect::<Vec<_>>(),
+        [("replaced plan", true)]
+    );
+    // The replaced turn's file stays, marked: a conversation-only rewind keeps the change on disk.
+    let files = changed_files(&model, &dir);
+    assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["replaced.md", "kept.md"]);
+    assert!(files[0].rewound && !files[1].rewound);
+    assert!(files[0].edits[0].rewound && files[0].edits[0].label.ends_with(" · from a rewound turn"));
+    assert!(model.items.keys().all(|id| *id != files[0].edits[0].id), "not a conversation row");
     assert!(model.shells.is_empty(), "its ended shell is gone");
     drop(model);
     let _ = std::fs::remove_dir_all(&dir);

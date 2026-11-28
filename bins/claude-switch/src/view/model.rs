@@ -206,6 +206,8 @@ struct Update {
     outputs: Vec<(ItemId, Vec<Output>)>,
     shells: Option<Vec<BackgroundShell>>,
     mcp_tasks: Option<Vec<McpTask>>,
+    /// The writes of turns a rewind replaced, with their files, whenever the items are shown afresh.
+    replaced: Option<Vec<(ItemId, Item, Files)>>,
 }
 
 enum Event {
@@ -234,6 +236,9 @@ pub struct Model {
     pub generation: u64,
     pub chat: claude_switch_core::transcript::ChatInfo,
     pub files: BTreeMap<ItemId, Files>,
+    /// Writes and edits of turns a rewind replaced, with their files: the Files page keeps them,
+    /// marked, as their changes may still be on disk.
+    pub replaced: Vec<(ItemId, Item, Files)>,
     pub(super) outputs: BTreeMap<ItemId, Vec<Output>>,
     pub(super) output_list: Vec<Output>,
     pub(super) shells: Vec<BackgroundShell>,
@@ -323,6 +328,7 @@ impl Model {
             generation,
             chat: Default::default(),
             files: Default::default(),
+            replaced: Default::default(),
             outputs: Default::default(),
             output_list: Vec::new(),
             shells: Vec::new(),
@@ -375,6 +381,9 @@ impl Model {
                     }
                     if let Some(tasks) = u.mcp_tasks {
                         self.mcp_tasks = tasks;
+                    }
+                    if let Some(replaced) = u.replaced {
+                        self.replaced = replaced;
                     }
                     if let Some(shells) = u.shells {
                         self.shells = shells;
@@ -700,6 +709,9 @@ impl Worker {
             u.agents = Some(root.subagents().cloned().collect());
         }
         if rebuild {
+            // A subagent's view lists its own files; the session's replaced writes are the root's.
+            let replaced = if self.child.is_none() { root.replaced_writes() } else { Vec::new() };
+            u.replaced = Some(file_refs::replaced(replaced, &self.cwd));
             u.items = reader.items().map(|(id, item)| (id, item.clone())).collect();
         } else {
             u.items =

@@ -5,10 +5,10 @@ mod paint;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use claude_switch_core::transcript::{ItemId, ItemKind, TaskStatus, ToolCard, ToolState};
+use claude_switch_core::transcript::{Item, ItemId, ItemKind, TaskStatus, ToolCard, ToolState};
 
 use super::super::Pane;
-use super::super::links::{self, NamedFile};
+use super::super::links::{self, Files, NamedFile};
 use super::super::model::Model;
 use super::Side;
 
@@ -67,6 +67,8 @@ enum FileKey {
 struct Change {
     id: ItemId,
     label: String,
+    /// From a turn a rewind replaced: not in the conversation, so there is no row to go to.
+    rewound: bool,
 }
 
 struct ChangedFile {
@@ -74,6 +76,8 @@ struct ChangedFile {
     path: String,
     file: Option<NamedFile>,
     edits: Vec<Change>,
+    /// Every edit is from a turn a rewind replaced.
+    rewound: bool,
     /// Lines added and removed by its edits, as the calls counted them.
     added: usize,
     removed: usize,
@@ -208,7 +212,7 @@ impl Details {
                     Part::Expand => Some(Action::Expand(Key::File(file.key.clone()))),
                     Part::Open => open_action(file.file.as_ref()?),
                     Part::Edit(j) if self.expanded.contains(&Key::File(file.key.clone())) => {
-                        Some(Action::Jump(file.edits.get(j)?.id))
+                        Some(Action::Jump(file.edits.get(j).filter(|edit| !edit.rewound)?.id))
                     }
                     _ => None,
                 }
@@ -322,10 +326,17 @@ fn task_status(status: TaskStatus) -> (&'static str, &'static str) {
     }
 }
 
+/// The files the session wrote or edited, newest first. Writes of turns a rewind replaced stay
+/// (their changes may still be on disk: "Restore conversation" keeps the code, and the transcript
+/// does not say whether the code was restored), marked "from a rewound turn".
 fn changed_files(model: &Model, cwd: &Path) -> Vec<ChangedFile> {
+    let mut writes: Vec<(ItemId, &Item, Option<&Files>, bool)> =
+        model.items.iter().map(|(&id, item)| (id, item, model.files.get(&id), false)).collect();
+    writes.extend(model.replaced.iter().map(|(id, item, files)| (*id, item, Some(files), true)));
+    writes.sort_by_key(|(id, ..)| std::cmp::Reverse(*id));
     let mut indices = BTreeMap::new();
     let mut files: Vec<ChangedFile> = Vec::new();
-    for (&id, item) in model.items.iter().rev() {
+    for (id, item, named, rewound) in writes {
         let ItemKind::Tool { name, file_path: Some(path), state: ToolState::Ok, card, .. } = &item.kind else {
             continue;
         };
@@ -334,12 +345,20 @@ fn changed_files(model: &Model, cwd: &Path) -> Vec<ChangedFile> {
         }
         let key = links::transcript_path(path, cwd).map_or_else(|| FileKey::Unavailable(path.clone()), FileKey::Local);
         let index = *indices.entry(key.clone()).or_insert_with(|| {
-            files.push(ChangedFile { key, path: path.clone(), file: None, edits: vec![], added: 0, removed: 0 });
+            files.push(ChangedFile {
+                key,
+                path: path.clone(),
+                file: None,
+                edits: vec![],
+                rewound: true,
+                added: 0,
+                removed: 0,
+            });
             files.len() - 1
         });
         let entry = &mut files[index];
         if entry.file.is_none() {
-            entry.file = model.files.get(&id).and_then(|paths| paths.get(path)).cloned();
+            entry.file = named.and_then(|paths| paths.get(path)).cloned();
         }
         let mut label = name.to_string();
         if let Some(time) = item.timestamp.as_deref().and_then(|s| s.get(11..19)) {
@@ -350,10 +369,17 @@ fn changed_files(model: &Model, cwd: &Path) -> Vec<ChangedFile> {
             entry.added += added;
             entry.removed += removed;
         }
-        entry.edits.push(Change { id, label });
+        if rewound {
+            label.push_str(&format!(" · {REWOUND}"));
+        }
+        entry.rewound &= rewound;
+        entry.edits.push(Change { id, label, rewound });
     }
     files
 }
+
+/// The mark of a write from a turn a rewind replaced.
+const REWOUND: &str = "from a rewound turn";
 
 #[cfg(test)]
 mod tests;

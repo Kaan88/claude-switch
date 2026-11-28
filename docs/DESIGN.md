@@ -86,6 +86,8 @@ that pid is alive.
   account" (`--user-data-dir=<dir>`) with the link after `--`, which the app opens from its command
   line at start (as it does for its own `ccd` alias) and in that profile's running window
   (`second-instance`). Read from desktop app 7.37095.0 (`app.asar`, `AppxManifest.xml`), not run.
+  That launch does not use the account's CLI, so its CLI sign-in is not required (only the desktop
+  app's own sign-in in that window, which Switch cannot see).
 - The same session open in two places at once loses messages. Never start a session that is running.
 - Resuming under another account works on the same transcript, but the prompt cache belongs to the
   account: the first request re-reads the whole conversation at full price.
@@ -203,10 +205,13 @@ The only Claude variable Switch sets back is `CLAUDE_CONFIG_DIR` for a secondary
 primary and direct Desktop launches do not receive it. `--shell` and `--type` are debug-build
 switches; delayed input belongs only to the tab that switch opened.
 
-Desktop resume runs out of sight on a worker. The window shows pending until the CLI returns,
-then its diagnostic on failure or a timeout after 30 seconds. Success only reports that the session
-was handed to the desktop app. A profile may exist outside the current account list, so Switch
-does not claim to know which profile received it.
+Desktop resume runs out of sight on a worker. The window shows pending until the CLI returns (or,
+for a further account, the desktop app's process has started), then its diagnostic on failure or a
+timeout after 30 seconds. The desktop app gives no answer once it has the link, so success only says
+that it was asked to open the session ("Asked the desktop app to open … as <account>"), never that
+it did; the session stays reserved as just launched (20 seconds) either way, so a second open does
+not race a window that may still be opening it. A profile may exist outside the current account
+list, so Switch does not claim to know which profile received it.
 
 ## What a launch is
 
@@ -2167,8 +2172,19 @@ start): a recap or notice parented to the previous turn and written after a new 
 newest record without hiding that prompt. Records whose parents lead out of the loaded slice stay until history pages in,
 and records without a `uuid`, sidechains, a subagent's transcript, and records hanging off the chain
 that do not start with a prompt (tool results recorded against their call, progress, notices) are
-never left out. The Details pages follow the same branch: the plan is made from the branch's plan
-updates and task calls only, the changed files from the shown items, and an agent, background
+never left out. The Details pages follow the same branch, with two exceptions for what a rewind
+does not undo. Tasks: Claude Code keeps the tasks a replaced turn made (recorded with 2.1.332 by
+`recorder compat`'s `rewind-task`: a TaskCreate in the rewound turn is still in Claude Code's own
+task files right after the rewind and after the next prompt), so the Tasks page keeps native tasks
+(TaskCreate, TaskUpdate) from every branch, each marked "from a rewound turn" while its current
+state was set in a replaced turn; a later change on the active branch makes it the branch's again.
+A TodoWrite plan is treated the same way (the plan in force, marked when it came from a replaced
+turn): the recording made no todo list, so whether Claude Code's goes back is not known. The
+changed files are the shown items' writes and edits, and also those of replaced turns, marked "from a
+rewound turn" with no row to go to: "Restore conversation" leaves the code as it is, and neither the
+transcript nor the file history says which choice a rewind took (Claude Code appends nothing to the
+transcript on a rewind), so such a change may still be on disk. A replaced write outside the session
+folder can be opened from the list but is not granted to the conversation's links. An agent, background
 shell or MCP task started in a replaced turn is left out once it is known to have ended (a rewind
 stops no process, so a running one stays, with Stop). Recorded from
 Claude Code 2.1.332 (`rewind_*`).

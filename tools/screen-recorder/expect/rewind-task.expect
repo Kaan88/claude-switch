@@ -1,0 +1,39 @@
+# A task in a rewound turn (scripts/rewind-task.txt). The keys are explained in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+
+[idle]
+kind = idle
+
+# The second turn made the task: Chat's Tasks page and Claude Code's own task files have it.
+[before-transcript]
+tasks = rewound-task-bravo (Pending)
+
+[before-tasks]
+holds = rewound-task-bravo
+
+[up]
+kind = rewind
+highlight = *rewound-task-bravo*
+
+[restored]
+kind = input
+input = Use TaskCreate once, subject rewound-task-bravo. Then reply with just the word: bravo
+
+# The restored prompt is cleared before the next one is typed.
+[cleared]
+kind = idle
+
+# Recorded 2026-11-28 (2.1.332, Haiku): Claude Code keeps the task the replaced turn made in its own
+# task files, right after the rewind and after the next prompt; Chat's Tasks page keeps it, marked.
+[restored-tasks]
+holds = rewound-task-bravo
+
+[after]
+kind = idle
+
+[after-transcript]
+prompts = Reply with just the word: alpha | Reply with just the word: charlie
+tasks = rewound-task-bravo (Pending, from a rewound turn)
+
+[after-tasks]
+holds = rewound-task-bravo

@@ -83,6 +83,10 @@
 - Chat and the Session view: after a rewind, the Tasks, Agents, Shells and Files pages leave out
   what the replaced turns did once the next message is written, as the conversation does; an agent
   or background shell started there that is still running stays listed.
+- Chat and the Session view: tasks made in a turn a rewind replaced stay on the Tasks page, marked
+  "from a rewound turn", as Claude Code keeps them in its own task list.
+- Chat and the Session view: a file changed in a turn a rewind replaced stays in the Files list,
+  marked "from a rewound turn": restoring only the conversation leaves the change on disk.
 - Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
   just before a permission prompt took the screen) and every later message waited behind it
   without a word. The rename now goes only once Chat has read the new session's first prompt, and
@@ -211,11 +215,18 @@
 - Resume in the desktop app as a further account opens that account's desktop app (its own data
   folder) with the session; it used to go through Claude Code's `--desktop`, whose link Windows
   hands to the first account's desktop app.
+- Resume in the desktop app as a further account is no longer refused when that account's CLI is
+  not signed in: it opens the account's desktop app, which has its own sign-in.
+- Resume in the desktop app says "Asked the desktop app to open … as <account>": the desktop app
+  does not answer, so Switch no longer words it as done.
 - Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
   record and the transcripts (a `live` op records both), and whether Chat reads the screen after
   it as an idle input.
 - Tools: `recorder compat` has a `rewind-send` script: a rewind, then a prompt, checked against
   what Chat shows of the transcript.
+- Tools: `recorder compat` has a `rewind-task` script (a task made in a turn that is then rewound)
+  and a `taskfiles` op that copies what Claude Code keeps for a session's tasks; a script can set
+  a variable for `claude` with `#: env NAME=value` (the task tools need one with some models).
 
 ## 0.1.6 (2026-11-28)
 

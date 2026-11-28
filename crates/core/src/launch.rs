@@ -125,7 +125,10 @@ pub fn resume(
         return Err(Refusal::Invalid("This session was opened a moment ago. Give it a few seconds to start.".into()));
     }
     let account = find_account(config, account)?;
-    if !crate::accounts::status(roots, account).cli_logged_in {
+    // A further account's desktop app does not run its CLI (see `desktop_resume`): only its own
+    // sign-in in that window counts, which Switch cannot see.
+    let uses_cli = app == App::Cli || account.primary;
+    if uses_cli && !crate::accounts::status(roots, account).cli_logged_in {
         return Err(Refusal::NotLoggedIn(account.name.clone()));
     }
     crate::share::prepare_cli(roots, account, Some(session))?;

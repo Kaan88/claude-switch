@@ -45,7 +45,7 @@ fn terminal_palette_uses_the_visible_verified_tab_not_the_identically_named_sele
 
 #[test]
 fn ambiguous_desktop_delivery_does_not_claim_an_account() {
-    assert_eq!(resume_status(App::Desktop, "Session", "Work"), "“Session” handed to the desktop app");
+    assert_eq!(resume_status(App::Desktop, "Session", "Work"), "Asked the desktop app to open “Session” as Work");
 }
 
 #[test]

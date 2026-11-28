@@ -130,6 +130,10 @@ pub enum TaskStatus {
 pub struct Task {
     pub content: String,
     pub status: TaskStatus,
+    /// Its current state was set in a turn a rewind replaced. Claude Code keeps such a task (its
+    /// own task files still hold it after the rewind, recorded with 2.1.332), so Chat lists it too,
+    /// marked.
+    pub rewound: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -264,6 +268,23 @@ impl Reader {
 
     pub fn item(&self, id: ItemId) -> Option<&Item> {
         self.view.items.get(&id).filter(|_| !self.view.active.hides(id.offset))
+    }
+
+    /// The successful writes and edits of turns a rewind replaced (off the active branch, so not in
+    /// [`items`](Self::items)). A rewind may leave their changes on disk ("Restore conversation"
+    /// keeps the code, and the transcript does not say which was chosen), so the Files page still
+    /// lists them, marked.
+    pub fn replaced_writes(&self) -> Vec<(ItemId, Item)> {
+        self.view
+            .items
+            .iter()
+            .filter(|(id, item)| {
+                self.view.active.hides(id.offset)
+                    && matches!(&item.kind, ItemKind::Tool { name, state: ToolState::Ok, file_path: Some(_), .. }
+                        if matches!(name.as_str(), "Write" | "Edit"))
+            })
+            .map(|(&id, item)| (id, item.clone()))
+            .collect()
     }
 
     pub fn tasks(&self) -> &[Task] {
@@ -959,14 +980,18 @@ impl View {
             return;
         }
         // A later snapshot supersedes all earlier snapshots and actions, including paged-in history.
-        // Only the active branch's plan updates and task calls count (a rewind's replaced turns do not).
+        // A rewind's replaced turns count too: Claude Code keeps the tasks they made (recorded for
+        // native tasks; assumed for a TodoWrite plan, not recorded), marked as from a rewound turn.
         let active = &self.active;
-        let mut plans = self.plans.iter().filter(|(id, _)| !active.hides(id.offset)).map(|(_, plan)| plan).rev();
+        let mut plans = self.plans.iter().rev();
         let mut actions = Vec::new();
         let mut tasks = loop {
             match plans.next() {
-                Some(Plan::Snapshot(tasks)) => break tasks.clone(),
-                Some(action) => actions.push(action),
+                Some((at, Plan::Snapshot(tasks))) => {
+                    let rewound = active.hides(at.offset);
+                    break tasks.iter().cloned().map(|task| Task { rewound, ..task }).collect();
+                }
+                Some((_, action)) => actions.push(action),
                 None => break Vec::new(),
             }
         };
@@ -976,7 +1001,7 @@ impl View {
         // Native tasks replace the plan's list when they changed after its last update, as in a
         // handover.
         if let Some((native, at)) = self.native_tasks()
-            && self.plans.keys().rfind(|id| !self.active.hides(id.offset)).is_none_or(|plan| *plan < at)
+            && self.plans.keys().next_back().is_none_or(|plan| *plan < at)
         {
             tasks = native;
         }
@@ -992,25 +1017,25 @@ impl View {
     fn native_tasks(&self) -> Option<(Vec<Task>, ItemId)> {
         enum Event<'a> {
             Call(&'a str, &'a native_tasks::Call),
-            Outcome(&'a native_tasks::Outcome),
+            /// A result, and whether its call is in a turn a rewind replaced.
+            Outcome(&'a native_tasks::Outcome, bool),
         }
+        // Every branch's calls: Claude Code's task list keeps what a replaced turn did.
         let mut events = Vec::new();
-        for (at, (tool, call)) in self.native_calls.iter().filter(|(at, _)| !self.active.hides(at.offset)) {
+        for (at, (tool, call)) in &self.native_calls {
             events.push((*at, Event::Call(tool, call)));
-            if let Some((when, outcome)) =
-                self.native_results.get(tool).filter(|(when, _)| !self.active.hides(when.offset))
-            {
-                events.push((*when, Event::Outcome(outcome)));
+            if let Some((when, outcome)) = self.native_results.get(tool) {
+                events.push((*when, Event::Outcome(outcome, self.active.hides(at.offset))));
             }
         }
-        events.sort_by_key(|(at, event)| (*at, matches!(event, Event::Outcome(_))));
+        events.sort_by_key(|(at, event)| (*at, matches!(event, Event::Outcome(..))));
         let mut tasks = native_tasks::Tasks::default();
         let mut latest = None;
         for (at, event) in events {
             match event {
                 Event::Call(tool, call) => tasks.pend(tool, call.clone()),
-                Event::Outcome(outcome) => {
-                    if tasks.outcome(outcome.clone()) {
+                Event::Outcome(outcome, rewound) => {
+                    if tasks.outcome(outcome.clone(), rewound) {
                         latest = Some(at);
                     }
                 }
