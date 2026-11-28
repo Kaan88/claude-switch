@@ -754,7 +754,7 @@ impl Ui {
         self.hits.push((frame, Action::Close));
         self.button(p, pal, open, "Open in system viewer", Action::Open, false);
         self.button(p, pal, close, "Close", Action::Close, false);
-        self.draw_steps(p, pal, frame, close);
+        self.draw_steps(p, pal, frame, open, close);
     }
 
     pub fn overlay_open(&self) -> bool {

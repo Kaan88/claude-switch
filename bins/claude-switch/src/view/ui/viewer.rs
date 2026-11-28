@@ -19,6 +19,8 @@ pub(super) struct Overlay {
 /// The side buttons' size, and their distance from the picture frame's edges.
 const STEP: f32 = 36.0;
 const STEP_INSET: f32 = 10.0;
+/// The room between the counter and the buttons either side of it.
+const COUNTER_GAP: f32 = 14.0;
 
 impl Overlay {
     pub fn open(m: &mut Model, id: ItemId, index: usize) -> Self {
@@ -64,14 +66,17 @@ impl Overlay {
 
 impl Ui {
     /// The side buttons, where there is a picture that way, quiet until pointed at; and the
-    /// counter, left of `close`.
-    pub(super) fn draw_steps(&mut self, p: &mut Painter, pal: &Palette, frame: Rect, close: Rect) {
+    /// counter, left of `close`, only where it clears `open` (a narrow window has no room for it).
+    pub(super) fn draw_steps(&mut self, p: &mut Painter, pal: &Palette, frame: Rect, open: Rect, close: Rect) {
         let Some(overlay) = &self.overlay else { return };
         let counter = overlay.counter();
         let steps = [(false, overlay.neighbour(false)), (true, overlay.neighbour(true))];
         if let Some(counter) = counter {
             let w = p.measure(Face::Ui, 12.0, &counter) + 2.0;
-            p.text(Face::Ui, 12.0, close.x - 14.0 - w, close.cy(), &counter, pal.muted, w);
+            let x = close.x - COUNTER_GAP - w;
+            if x >= open.right() + COUNTER_GAP {
+                p.text(Face::Ui, 12.0, x, close.cy(), &counter, pal.muted, w);
+            }
         }
         if frame.w < STEP * 3.0 || frame.h < STEP {
             return;
@@ -307,6 +312,44 @@ mod tests {
         assert!(alone.counter().is_none() && alone.neighbour(false).is_none() && alone.neighbour(true).is_none());
         alone.sequence.clear();
         assert!(alone.counter().is_none() && !alone.step(true), "a picture no longer listed stays put");
+    }
+
+    /// The viewer's bottom row (Open in system viewer, the counter, Close) drawn in a window
+    /// `width` wide, with every picture listed or only the shown one (no counter): BGRA rows.
+    fn bottom_row(c: &mut Conversation, spot: Spot, width: f32, alone: bool) -> Vec<u8> {
+        let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new(width as u32, 640));
+        let pal = &mdshared_ui::theme::DARK;
+        let window = Rect::new(0.0, 0.0, width, 640.0);
+        let mut ui = Ui::default();
+        ui.set_chat(true);
+        let mut overlay = Overlay::open(&mut c.model, spot.0, spot.1);
+        if alone {
+            overlay.sequence = vec![spot];
+        }
+        ui.overlay = Some(overlay);
+        {
+            let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+            p.fill(window, pal.page);
+            ui.draw_overlay(&mut p, pal, window, &c.model, (-1.0, -1.0), 10.0);
+        }
+        let open = hit(&ui, &Action::Open).unwrap();
+        let close = hit(&ui, &Action::Close).unwrap();
+        assert!(open.right() < close.x, "Open and Close themselves fit at {width}");
+        let stride = bmp.width as usize * 4;
+        bmp.pixels[open.y as usize * stride..(open.bottom().ceil() as usize + 1) * stride].to_vec()
+    }
+
+    #[test]
+    fn the_counter_never_overlaps_open_in_system_viewer() {
+        let mut c = Conversation::new("narrow");
+        let all: Vec<_> = c.model.pictures().collect();
+        // Wide: the counter shows between the buttons.
+        assert_ne!(bottom_row(&mut c, all[1], 900.0, false), bottom_row(&mut c, all[1], 900.0, true));
+        // Narrow, where "2 of 4" would have reached into Open in system viewer: no counter, so
+        // the row is drawn exactly as for a single picture.
+        for width in [340.0, 310.0] {
+            assert_eq!(bottom_row(&mut c, all[1], width, false), bottom_row(&mut c, all[1], width, true), "at {width}");
+        }
     }
 
     /// `CS_SHOT=<dir>`: the viewer on the conversation's second picture, dark and light, with
