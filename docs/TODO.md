@@ -44,8 +44,13 @@ with queued messages and Send now (Claude Code's Ctrl+X Ctrl+S). Still to do:
   patch on real edits (diff line numbers), "Run in background" on the working line, queued
   messages and their Send now (recorded only through `recorder compat`), a card scrolled under
   its pinned foot.
-- Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind card;
-  scales other than 100 % and 150 %; the new cards and panel in custom themes.
+- Drawn and looked at (2026-11-28, `chat_shots` states 13 to 21): a form's question read from the
+  screen, a plain CLI menu, a read-only panel, the blocked-calls and rewind cards, a card in a
+  400 px window, 125 % and 200 %, a theme of the user's own. Fixed from them: a form's tick boxes
+  showed as text and each label twice, the blocked list's highlight showed as a pick, a rewind on
+  its way said "Sending your answer", and a card scrolled under its foot did not say where its
+  choices were. Not drawn: a form built from the transcript's pending call (its card is laid out
+  the same), the rewind card's choices (the picture shows a rewind on its way).
 - Decided, to confirm by the owner: typing while a card is docked still goes nowhere (the card
   says so once); Stop is a small square in its own slot beside Send whenever a turn runs; Chat's
   side padding is 28 px, 12 px under a 560 px column; code blocks sit about 40 px lower (header

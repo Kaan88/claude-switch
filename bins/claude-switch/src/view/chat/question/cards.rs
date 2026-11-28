@@ -34,6 +34,8 @@ const TEXT_ROW: f32 = 20.0;
 /// The note under a question cut short.
 const CUT_ROW: f32 = 18.0;
 const CUT_NOTE: &str = "The rest of the question is in the terminal.";
+/// The pinned foot's word while the choices are below what shows.
+pub(super) const SCROLL_HINT: &str = "Scroll for the choices ▾";
 /// The most lines a question shows, and the fewest it is cut to when the card must be short.
 const ASK_LINES: usize = 8;
 const ASK_LEAST: usize = 2;
@@ -255,6 +257,26 @@ fn squash(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
+/// A multi-select row's tick box as the CLI draws it (`[ ]`, `[√]`, `[✔]`, `[×]`, `☐`, `☒`,
+/// with or without Unicode): whether it is ticked, and the label after it.
+fn tick_box(row: &str) -> (bool, &str) {
+    for (mark, ticked) in [
+        ("[ ] ", false),
+        ("[√] ", true),
+        ("[✔] ", true),
+        ("[×] ", true),
+        ("[x] ", true),
+        ("☐ ", false),
+        ("☒ ", true),
+        ("✔ ", true),
+    ] {
+        if let Some(label) = row.strip_prefix(mark) {
+            return (ticked, label.trim_start());
+        }
+    }
+    (false, row)
+}
+
 /// A question's "Chat about this" row: a button of the foot, not a choice of the list.
 fn chat_about(label: &str) -> bool {
     label.trim().eq_ignore_ascii_case("Chat about this")
@@ -474,14 +496,19 @@ fn menu(chat: &Chat, menu: &MenuShown, width: f32, scale: f32) -> Vec<Part> {
         .iter()
         .enumerate()
         .filter(|(i, _)| Some(*i) != other && Some(*i) != about)
-        .map(|(i, choice)| Choice {
-            // A question's rows are not all numbered on the screen (Next, Submit): only its
-            // options, which come before the row for another answer.
-            number: (!menu.question || other.is_some_and(|at| i < at)).then_some(i + 1),
-            label: choice.clone(),
-            note: menu.notes.get(i).cloned().unwrap_or_default(),
-            hit: Hit::Option(i),
-            on: false,
+        .map(|(i, choice)| {
+            let (ticked, label) = tick_box(choice);
+            let note = menu.notes.get(i).cloned().unwrap_or_default();
+            Choice {
+                // A question's rows are not all numbered on the screen (Next, Submit): only its
+                // options, which come before the row for another answer.
+                number: (!menu.question || other.is_some_and(|at| i < at)).then_some(i + 1),
+                note: if note.trim() == label { String::new() } else { note },
+                label: label.to_owned(),
+                hit: Hit::Option(i),
+                // A box the terminal shows ticked, drawn as the card's own tick.
+                on: ticked,
+            }
         })
         .collect();
     parts.push(Part::Choices { rows, enabled: true });
@@ -773,8 +800,12 @@ impl Draw<'_> {
         let first = hits.len();
         let mut y = r.y + INSET - scroll;
         let shown = if pinned { &parts[..parts.len() - 1] } else { parts };
+        let mut below = false;
         for part in shown {
             let h = part.height(density);
+            if matches!(part, Part::Choices { .. }) && y + h > body.bottom() + 0.5 {
+                below = true;
+            }
             if y < body.bottom() && y + h > body.y {
                 self.part(p, chat, hits, Rect::new(x, y, w, h), part, density, colours);
             }
@@ -793,6 +824,14 @@ impl Draw<'_> {
             p.rbox(Rect::new(track.x, thumb_y, track.w, thumb_h), 1.5, pal.thumb);
             if let Some(part) = parts.last() {
                 let foot = Rect::new(x, foot_y, w, FOOT);
+                let hint;
+                let part = match part {
+                    Part::Foot { left, text, right } if below && text.is_empty() => {
+                        hint = Part::Foot { left: left.clone(), text: SCROLL_HINT, right: right.clone() };
+                        &hint
+                    }
+                    part => part,
+                };
                 self.part(p, chat, hits, foot, part, density, colours);
             }
         }
@@ -1261,5 +1300,28 @@ mod tests {
         let idle = shots::show(&mut st, id, shots::IDLE, later + Duration::from_secs(1));
         shots::frame_at(&mut st, &mut anim, idle, WINDOW);
         assert!(chat(&mut st, id).question.typed_hint().is_none());
+    }
+
+    /// A form's multi-select read from the screen: the terminal's tick boxes are the card's own
+    /// ticks, not text of the label, and a description that only repeats the label is left out.
+    #[test]
+    fn a_forms_tick_boxes_are_the_cards_ticks_and_repeated_descriptions_go() {
+        assert_eq!(tick_box("[√] Apple"), (true, "Apple"));
+        assert_eq!(tick_box("[ ] Pear"), (false, "Pear"));
+        assert_eq!(tick_box("☒ Plum"), (true, "Plum"));
+        assert_eq!(tick_box("Default (recommended)"), (false, "Default (recommended)"));
+        use crate::view::chat::question::screens::recorded::PLAIN_FORM;
+        let (_demo, mut st, id, _) = window(BENCH, PLAIN_FORM);
+        let pane = shots::tab(&mut st, id).pane.as_ref().unwrap();
+        let parts = parts(&pane.chat, &pane.model, 700.0).expect("the form's card");
+        let rows = parts
+            .iter()
+            .find_map(|part| match part {
+                Part::Choices { rows, .. } => Some(rows.clone()),
+                _ => None,
+            })
+            .unwrap();
+        let shown: Vec<_> = rows.iter().take(3).map(|c| (c.label.as_str(), c.on, c.note.as_str())).collect();
+        assert_eq!(shown, [("Apple", true, ""), ("Pear", false, ""), ("Plum", false, "")]);
     }
 }

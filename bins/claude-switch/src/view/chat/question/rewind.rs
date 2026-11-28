@@ -21,6 +21,8 @@ use super::*;
 /// How long after the first Esc the second one goes; the CLI takes two within about a second, so
 /// a second Esc that cannot go within `ESC_LATEST` of the first stops the rewind instead.
 const ESC_GAP: Duration = Duration::from_millis(150);
+/// What the card says while a rewind's keys are on their way.
+const REWINDING: &str = "Rewinding in Claude Code…";
 const ESC_LATEST: Duration = Duration::from_millis(600);
 
 /// The menu was opened over a subagent's transcript: its prompts are not the session's.
@@ -502,7 +504,8 @@ impl Draw<'_> {
             p.text(Face::Ui, 12.0, inner.x, y + LINE / 2.0, note, pal.muted, inner.w);
             y += LINE;
         }
-        let status = rewind.error.or_else(|| rewind.in_flight().then_some(WAITING)).or(self.typed(chat)).unwrap_or("");
+        let status =
+            rewind.error.or_else(|| rewind.in_flight().then_some(REWINDING)).or(self.typed(chat)).unwrap_or("");
         let mut right = Vec::new();
         if rewind.failed() {
             right.extend([("Open terminal", Hit::Open), ("Close", Hit::Close)]);

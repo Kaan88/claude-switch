@@ -196,11 +196,17 @@ impl Draw<'_> {
                 label: entry.clone(),
                 note: String::new(),
                 hit: Hit::Option(i),
-                on: i == shown.highlight,
+                on: false,
             })
             .collect();
         let before = hits.len();
+        let list_y = y;
         y += self.choices(p, hits, inner.x, y, inner.w, &rows, true, cards::Density::Plain) + 10.0;
+        if let Some(at) = shown.highlight.checked_sub(first).filter(|at| *at < rows.len()) {
+            // The call the buttons below act on, as the CLI highlights it.
+            let top = list_y + at as f32 * cards::CHOICE_ROW;
+            p.rbox(Rect::new(inner.x + 3.0, top + 7.0, 3.0, cards::CHOICE_ROW - 14.0), 1.5, pal.accent);
+        }
         let highlighted = Target::Chat(Control::Question(Hit::Option(shown.highlight)));
         let drawn: Vec<_> = hits.drain(before..).filter(|(_, t)| *t != highlighted).collect();
         hits.extend(drawn);

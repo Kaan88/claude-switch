@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Chat: a multi-select question read from the screen shows Claude Code's ticked boxes as the
+  card's own ticks instead of "[√]" in the label, and no longer repeats each label under it; the
+  list of blocked calls marks the call its buttons act on with a bar, not a tick; a rewind on its
+  way says "Rewinding in Claude Code…"; a card too tall for a short window says "Scroll for the
+  choices" while they are below.
 - Chat: the count of permissions denied in the current turn stays in view, on a line over another
   card that holds the card's place (a question or a permission prompt), instead of disappearing
   until that card is gone.

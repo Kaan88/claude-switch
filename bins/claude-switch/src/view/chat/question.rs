@@ -2064,6 +2064,11 @@ mod tests;
 
 #[cfg(test)]
 impl Card {
+    /// For pictures: a rewind from a prompt bubble whose first keys went.
+    pub(in crate::view::chat) fn rewinding(&mut self, prompt: &str) {
+        self.rewind = Some(rewind::Rewind::entering(prompt));
+    }
+
     /// For tests outside this module: whether a step is in flight, and the card's notice.
     pub(in crate::view::chat) fn probe(&self) -> (bool, Option<&'static str>) {
         (self.step.is_some(), self.error)
