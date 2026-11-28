@@ -5,6 +5,7 @@ mod paint;
 mod rows;
 mod scroll;
 mod select;
+mod viewer;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use super::working::{Footer, Turn};
 pub use markdown::{Panel, Reading};
 use rows::{HEAD, Id, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface, Visibility};
+use viewer::Overlay;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Page {
@@ -53,19 +55,15 @@ enum Action {
     CloseMarkdown,
     Open,
     Close,
+    /// The picture viewer's side buttons: the conversation's picture before or after this one.
+    Previous,
+    Next,
     /// A code block's Copy button, with the code.
     CopyCode(String),
     /// Under a message: Copy (its text as shown), Rewind to here, Branch.
     CopyMessage(ItemId),
     Rewind(ItemId),
     Branch(ItemId),
-}
-
-struct Overlay {
-    id: ItemId,
-    index: usize,
-    image: Option<Arc<Image>>,
-    bounds: Rect,
 }
 
 #[derive(Default)]
@@ -506,10 +504,8 @@ impl Ui {
                 width,
             );
         }
-        if let Some(overlay) = &mut self.overlay
-            && let Some(image) = m.picture(overlay.id, overlay.index, true)
-        {
-            overlay.image = Some(image);
+        if let Some(overlay) = &mut self.overlay {
+            overlay.refresh(m);
         }
         p.restore(clip);
     }
@@ -758,6 +754,7 @@ impl Ui {
         self.hits.push((frame, Action::Close));
         self.button(p, pal, open, "Open in system viewer", Action::Open, false);
         self.button(p, pal, close, "Close", Action::Close, false);
+        self.draw_steps(p, pal, frame, close);
     }
 
     pub fn overlay_open(&self) -> bool {
