@@ -99,6 +99,13 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Later (the owner's list)
 
+- **What Chat cannot read, shown in Chat** (owner, 2026-11-28; next after the command-output
+  renderer, which it reuses). When Chat says Claude Code may be waiting in the terminal, it shows the
+  relevant part of the terminal screen (the rows around the prompt) as a card in the conversation,
+  drawn with the terminal's font and colours, with **Answer in terminal** (opens the drawer with the
+  keyboard, as 0.1.6 does for questions). Chat still never types into a screen it cannot read. Not on
+  Tab: Tab completes in the message box. The screen reports (`%APPDATA%\claude-switch\screen-reports`)
+  show which prompts come up; frequent ones can become real cards, as the trust question did.
 - **Command output in Chat drawn like the terminal** (owner, 2026-11-28; doable). Output of commands such
   as `/context`, `/mcp` or `/cost` shows in Chat as plain grey text: no colours, and the cell glyphs
   (⛁ ⛀ ⛶) come from a fallback font with other widths, so the grid and the columns beside it go out of
