@@ -18,6 +18,7 @@ mod decode;
 mod denial;
 pub use denial::{Denial, DenialKind};
 mod local;
+pub use local::escape_len;
 mod native_tasks;
 mod notices;
 pub use chat::{ChatInfo, Hunk, Patch, Phase as ChatPhase, Question, QuestionOption, ToolCard};
@@ -712,21 +713,21 @@ impl View {
             found = true;
             let key = format!("local:{offset}:{block}");
             match record {
-                local::Local::Output { text, failed } => {
+                local::Local::Output { text, ansi, failed } => {
                     let name = self.last_command.take().unwrap_or_else(|| "Command output".to_owned());
-                    let item = local::item(key, &name, String::new(), text, failed);
+                    let item = local::item(key, &name, String::new(), text, ansi, failed);
                     self.add(id, timestamp, item, changes);
                 }
                 local::Local::Shell(input) => {
-                    let item = local::item(key, "Shell", format!("! {input}"), String::new(), false);
+                    let item = local::item(key, "Shell", format!("! {input}"), String::new(), None, false);
                     self.add(id, timestamp, item, changes);
                     self.last_shell = Some(id);
                 }
-                local::Local::ShellOutput { text, failed } => match self.last_shell.take() {
+                local::Local::ShellOutput { text, ansi, failed } => match self.last_shell.take() {
                     Some(shell) if self.items.contains_key(&shell) => {
                         if let Some(Item { kind: ItemKind::Tool { card, state, .. }, .. }) = self.items.get_mut(&shell)
                         {
-                            *card = Some(ToolCard::Output(text));
+                            *card = Some(ToolCard::Output { text, ansi });
                             *state = if failed { ToolState::Failed } else { ToolState::Ok };
                         }
                         if !changes.added.contains(&shell) {
@@ -734,7 +735,7 @@ impl View {
                         }
                     }
                     _ => {
-                        let item = local::item(key, "Shell", String::new(), text, failed);
+                        let item = local::item(key, "Shell", String::new(), text, ansi, failed);
                         self.add(id, timestamp, item, changes);
                     }
                 },

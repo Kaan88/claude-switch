@@ -190,17 +190,23 @@ fn mode_shortcut_is_scoped_to_the_palette_and_f6_still_has_terminal_bytes() {
 #[test]
 fn drawer_only_closes_automatically_if_it_opened_automatically() {
     let mut chat = Chat::default();
-    assert!(chat.react(Some(Reason::Tool)));
-    assert_eq!(chat.drawer, Drawer::Auto(Reason::Tool));
+    assert!(chat.react(Some(Reason::Permission)));
+    assert_eq!(chat.drawer, Drawer::Auto(Reason::Permission));
     assert!(chat.react(None));
     assert_eq!(chat.drawer, Drawer::Closed);
+    // Claude Code may be waiting, or the bell rang: the screen shows as a card instead.
+    for reason in [Reason::Tool, Reason::Bell] {
+        assert!(chat.react(Some(reason)));
+        assert_eq!(chat.drawer, Drawer::Closed);
+        chat.react(None);
+    }
     chat.open_drawer();
     chat.react(Some(Reason::Bell));
     chat.react(None);
     assert_eq!(chat.drawer, Drawer::Manual);
-    chat.react(Some(Reason::Tool));
+    chat.react(Some(Reason::Permission));
     chat.toggle_drawer();
-    chat.react(Some(Reason::Tool));
+    chat.react(Some(Reason::Permission));
     assert_eq!(chat.drawer, Drawer::Closed);
     chat.react(Some(Reason::Ended));
     assert_eq!(chat.drawer, Drawer::Auto(Reason::Ended));
@@ -911,11 +917,9 @@ fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answ
     let typed = |ago: u64| Some(now - Duration::from_millis(ago));
     for (reason, typed_at, focus) in [
         (Reason::Permission, None, true),
-        (Reason::Tool, None, true),
-        (Reason::Tool, typed(3000), true),
+        (Reason::Permission, typed(3000), true),
         // Someone typing in the box keeps it: the next key would land on Claude Code's prompt.
         (Reason::Permission, typed(300), false),
-        (Reason::Bell, None, false),
         (Reason::Identity, None, false),
     ] {
         let mut chat = Chat { typed_at, ..Chat::default() };
@@ -925,6 +929,13 @@ fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answ
         // Gone again, the drawer closes and the box has the keyboard.
         chat.react_at(None, now);
         assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus);
+    }
+    // Claude Code may be waiting, or the bell rang: the terminal stays closed and the keyboard
+    // here; its card in the conversation opens it, with the keyboard, on a click.
+    for reason in [Reason::Tool, Reason::Bell] {
+        let mut chat = Chat::default();
+        chat.react_at(Some(reason), now);
+        assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus, "{reason:?}");
     }
     // Nor while the keyboard is in use here: text in the box, an attachment, text in a card's
     // field, or a selection in the conversation (Ctrl+C is meant for it, never for the CLI).

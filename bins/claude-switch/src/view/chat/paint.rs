@@ -27,6 +27,8 @@ pub fn strip_button(
 impl AppState {
     pub fn layout_chat(&mut self, area: Rect) -> Rect {
         let reading = crate::view::Reading::from_key(&self.win_file.chat_reading);
+        // The display scale, as the terminal's cells were last measured for it.
+        let scale = self.metrics.map_or(1.0, |m| m.scale());
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return Rect::default() };
         let chat = &mut pane.chat;
         chat.shell_count = pane.model.running_shells();
@@ -66,6 +68,7 @@ impl AppState {
             welcome,
         );
         super::question::place(chat, &pane.model);
+        super::terminal_card::place(chat, scale);
         self.session_view.pane_area = chat.layout.conversation;
         chat.layout.drawer
     }
@@ -98,6 +101,7 @@ impl AppState {
         let hover = self.hover;
         let mouse = self.background_pointer();
         let diff = crate::view::look::Diff::from_ansi(&self.term_colours.0.ansi);
+        let scheme = self.term_colours.0;
         let focused = window_focused && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
@@ -146,6 +150,7 @@ impl AppState {
         let own = asking && chat.question.answerable.is_some() && chat.question.answerable == info.pending;
         pane.ui.set_awaiting(super::question::pending(&pane.model).filter(|_| own).map(|p| p.item));
         pane.ui.set_diff_colours(diff);
+        pane.ui.set_terminal_colours(scheme);
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
         if welcome {
             super::welcome::Welcome::read(chat, &pane.cwd, banner.as_ref(), &self.win_file.chat_pins).draw(
@@ -219,6 +224,7 @@ impl AppState {
                 self.hits.push((r, target));
             }
         } else if chat.reason == Some(Reason::Tool)
+            && !chat.terminal_card.shown()
             && (!chat.question.visible() || chat.question.only_denials())
             && l.conversation.h > 25.0
         {
@@ -236,6 +242,7 @@ impl AppState {
         }
         chat.question.colours = Some(diff);
         super::question::Draw { pal, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
+        super::terminal_card::draw(chat, p, pal, scheme, hover, &mut self.hits);
         if details_active {
             self.hits.extend(detail_hits);
         }

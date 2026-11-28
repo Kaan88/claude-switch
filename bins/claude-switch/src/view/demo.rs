@@ -52,6 +52,24 @@ impl Transcript {
         Ok(demo)
     }
 
+    /// A conversation that ran commands: `/context`, which printed `stdout` (colour codes and
+    /// all), and a shell-mode `git status` with coloured output.
+    #[cfg(test)]
+    pub fn new_command(stdout: &str) -> io::Result<Self> {
+        let cwd = Self::folder()?;
+        let path = cwd.join("command-output.jsonl");
+        let demo = Self { cwd, path, stop: None, writer: None };
+        let mut file = File::create(&demo.path)?;
+        let command = "<command-name>/context</command-name>\n<command-message>context</command-message>\n<command-args></command-args>";
+        record(&mut file, 1, "user", json!(command))?;
+        record(&mut file, 2, "user", json!(format!("<local-command-stdout>{stdout}</local-command-stdout>")))?;
+        record(&mut file, 3, "user", json!("<bash-input>git status --short</bash-input>"))?;
+        let status =
+            " \u{1b}[31mM\u{1b}[m docs/notes.md\n\u{1b}[32mA\u{1b}[m  src/tiles.rs\n\u{1b}[31m??\u{1b}[m sketch.txt";
+        record(&mut file, 4, "user", json!(format!("<bash-stdout>{status}</bash-stdout><bash-stderr></bash-stderr>")))?;
+        Ok(demo)
+    }
+
     /// A new session: its transcript holds nothing yet.
     #[cfg(test)]
     pub fn new_empty() -> io::Result<Self> {

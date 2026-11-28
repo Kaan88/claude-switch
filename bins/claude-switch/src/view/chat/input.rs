@@ -57,6 +57,8 @@ pub enum Control {
     Question(super::question::Hit),
     /// A start under a new session's message box: it fills the box and sends nothing.
     Start(super::welcome::Start),
+    /// A button of the card that shows the terminal screen Chat cannot read.
+    Screen(super::terminal_card::Hit),
 }
 
 /// The slash command a chip sends as a direct command (with its checks and confirmation).
@@ -249,6 +251,7 @@ impl AppState {
             chat.set_selection(pane.ui.has_selection());
             let changed =
                 card | chat.react_at(decision.1, now) | (chat.last_gate.replace(decision.0) != Some(decision.0));
+            let changed = changed | super::terminal_card::observe(chat, &tab.term.screen);
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
@@ -394,6 +397,7 @@ impl AppState {
             Some(Target::Chat(Control::Grip)) => {
                 chat.resizing = Some((y, chat.layout.drawer.h));
                 chat.drawer_focus = true;
+                super::terminal_card::keep(chat);
                 true
             }
             Some(Target::Chat(Control::Editor)) => {
@@ -555,6 +559,7 @@ impl AppState {
             Control::Drawer => chat.toggle_drawer(),
             Control::Open if chat.drawer == Drawer::Closed => chat.open_drawer(),
             Control::Open => chat.drawer_focus = true,
+            Control::Screen(hit) => super::terminal_card::press(chat, hit, cx.now()),
             Control::Panel => {
                 // The user's own choice: it holds whatever the panel has to show.
                 chat.side_choice = Some(chat.side_hidden);

@@ -69,6 +69,25 @@ const BENCH: (&str, &str, &str) = (
     "cargo bench -p tiles --bench eviction",
 );
 
+/// A made-up terminal screen `cols` wide: the benchmark's command waits at a question of its
+/// own, in colour, over Claude Code's input box.
+fn waiting_screen(cols: usize) -> String {
+    let rule = format!("\x1b[38;5;244m{}\x1b[0m", "─".repeat(cols));
+    [
+        "\x1b[2m  ⎿  Read tiles/src/cache.rs (212 lines)\x1b[0m".to_owned(),
+        String::new(),
+        "\x1b[32m●\x1b[0m \x1b[1mBash\x1b[0m(cargo bench -p tiles --bench eviction)".to_owned(),
+        "  ⎿  \x1b[33mwarning\x1b[0m: the baseline \x1b[1mmain\x1b[0m is 3 days old".to_owned(),
+        "     Overwrite the saved baseline? \x1b[36m[y/N]\x1b[0m ".to_owned(),
+        String::new(),
+        rule.clone(),
+        "\x1b[1m❯\x1b[0m ".to_owned(),
+        rule,
+        "  \x1b[2m? for shortcuts\x1b[0m".to_owned(),
+    ]
+    .join("\r\n")
+}
+
 /// One frame of the window in `state`.
 fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
     let now = Instant::now() + Duration::from_secs(1);
@@ -177,6 +196,34 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             let later = shots::show(&mut st, id, shots::IDLE, now);
             (demo, st, later)
         }
+        "command" | "command-custom" => {
+            // `/context` and a shell-mode command, their colour codes as recorded. The custom
+            // picture takes a terminal theme against the window's: a light one beside a dark
+            // window, a dark one beside a light window.
+            let demo = Transcript::new_command(&crate::view::ui::grid::tests::context_fixture()).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            if state == "command-custom" {
+                st.config.terminal_scheme = if dark { "tango-light" } else { "campbell" }.into();
+                st.retheme();
+            }
+            let later = shots::show(&mut st, id, shots::IDLE, now);
+            (demo, st, later)
+        }
+        "terminal-card" => {
+            // The benchmark's command waits at a question of its own, which Chat cannot read:
+            // after the silence, the screen shows as a card above the message box.
+            let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            let later = shots::show(&mut st, id, shots::IDLE, now);
+            let tab = shots::tab(&mut st, id);
+            let (cols, rows) = (tab.term.screen.cols(), tab.term.screen.rows());
+            tab.term.screen = mdshared_term::Screen::new(cols, rows, 0);
+            tab.term.screen.feed(waiting_screen(cols).as_bytes());
+            tab.pane.as_mut().unwrap().chat.output(later, true, false);
+            let later = later + Duration::from_secs(6);
+            st.progress_chat_tabs(later, true);
+            (demo, st, later)
+        }
         other => panic!("no such state: {other}"),
     };
     let bmp = shots::settled_at(&mut st, later, size);
@@ -196,7 +243,19 @@ fn chat_shots() {
     std::fs::create_dir_all(dir).unwrap();
     let only = std::env::var("CS_CHAT_ONLY").ok();
     let want = |name: &str| only.as_deref().is_none_or(|only| only.split(',').any(|n| n.trim() == name));
-    let states = ["conversation", "steps", "question", "permission", "running", "scrolled", "empty", "pointing"];
+    let states = [
+        "conversation",
+        "steps",
+        "question",
+        "permission",
+        "running",
+        "scrolled",
+        "empty",
+        "pointing",
+        "command",
+        "command-custom",
+        "terminal-card",
+    ];
     for (n, state) in states.into_iter().enumerate().filter(|(_, state)| want(state)) {
         for (size, width) in [(WIDE, "wide"), (NARROW, "narrow")] {
             for (dark, theme) in [(true, "dark"), (false, "light")] {
@@ -204,7 +263,39 @@ fn chat_shots() {
                 shot(state, dark, size).write_png(&dir.join(name)).unwrap();
             }
         }
+        if state.starts_with("command") {
+            for (dark, theme) in [(true, "dark"), (false, "light")] {
+                let name = format!("{}-{state}-terminal-{theme}.png", n + 1);
+                terminal_shot(state, dark).write_png(&dir.join(name)).unwrap();
+            }
+        }
     }
+}
+
+/// The `/context` output of the "command" pictures as the terminal draws it, with the same
+/// window's terminal theme and font: to set beside Chat's.
+fn terminal_shot(state: &str, dark: bool) -> Bitmap {
+    use mdshared_ui::gfx::{Gfx, Painter, Rect};
+    use mdshared_ui::termview::{self, CellFont, View};
+    let mut st = shots::window(dark);
+    if state == "command-custom" {
+        st.config.terminal_scheme = if dark { "tango-light" } else { "campbell" }.into();
+        st.retheme();
+    }
+    let scheme = st.terminal_scheme();
+    let scale = WIDE.scale;
+    let mut font = CellFont::new();
+    let metrics = font.metrics(f32::from(st.config.terminal_font_size), scale);
+    let (cols, rows) = (90, 16);
+    let mut screen = mdshared_term::Screen::new(cols, rows, 0);
+    screen.feed(crate::view::ui::grid::tests::context_fixture().replace('\n', "\r\n").as_bytes());
+    let (w, h) = (cols as f32 * metrics.cell_w() + 24.0, rows as f32 * metrics.cell_h() + 24.0);
+    let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new((w * scale) as u32, (h * scale) as u32));
+    let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+    p.fill(Rect::new(0.0, 0.0, w, h), scheme.background);
+    let area = Rect::new(12.0, 12.0, w - 24.0, h - 24.0);
+    termview::draw_screen(&mut p, &mut font, &scheme, &metrics, area, &screen, None, View::new().cursor_shown(false));
+    bmp
 }
 
 /// The Session view (the panel beside a terminal) draws the conversation with the same code at
@@ -246,5 +337,23 @@ fn session_view_shots() {
         let mut p = Painter::new(&mut bmp, &mut gfx, scale);
         ui.draw(&mut p, &pal, Rect::new(0.0, 0.0, w, h), &mut model, (-1.0, -1.0), Instant::now(), false);
         bmp.write_png(&dir.join(format!("8-session-view-{theme}.png"))).unwrap();
+    }
+    // Command output in the panel's narrow column.
+    let demo = Transcript::new_command(&crate::view::ui::grid::tests::context_fixture()).unwrap();
+    for (pal, theme) in [(mdshared_ui::theme::DARK, "dark"), (mdshared_ui::theme::LIGHT, "light")] {
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = crate::view::model::Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(Duration::from_secs(5)).expect("the transcript was read");
+        assert!(model.collect());
+        let mut ui = crate::view::ui::Ui::default();
+        let (w, h, scale) = (380.0, 900.0, 1.5);
+        let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new((w * scale) as u32, (h * scale) as u32));
+        let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+        ui.draw(&mut p, &pal, Rect::new(0.0, 0.0, w, h), &mut model, (-1.0, -1.0), Instant::now(), false);
+        bmp.write_png(&dir.join(format!("8-session-view-command-{theme}.png"))).unwrap();
     }
 }

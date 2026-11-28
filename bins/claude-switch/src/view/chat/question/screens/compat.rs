@@ -36,6 +36,11 @@
 //! - `activity`: the name of another snapshot of the script whose rows down to the input box's
 //!   bottom rule are the same ([`screen::activity_digest`]): what redraws under it (the list of
 //!   background agents and their timers) is no activity, and keeps no screen from going quiet.
+//! - `card`: the first row the terminal card would show (`view/chat/terminal_card.rs`):
+//!   `call: ` and the call's text (`Bash(…)`) when it starts at a tool call, whether its bullet
+//!   (`●` or `⏺` at column 0, which blinks while the call runs) is lit or not; `bullet: ` and
+//!   the text after it for a message's bullet; `top: ` and its text when the card falls back to
+//!   the bottom rows; `-` for an empty screen.
 //!
 //! A state can also be a file the script wrote instead of a snapshot, and its keys are about that:
 //!
@@ -46,7 +51,9 @@
 //!   `answers` (Claude's answers), `thinking` (the `thinkingDisplay` values of records with
 //!   thinking, `-` for none), `phase` (the newest record's phase as the app reads it: `active`,
 //!   `end-turn`, `unknown`, `-` for none; after a local command such as `/cost` typed at rest,
-//!   `end-turn` when its output ended it).
+//!   `end-turn` when its output ended it), `outputs` (each command output row as `name: colours`
+//!   when the reader kept colour codes (SGR) beside its text, which Chat draws as the terminal
+//!   does, or `name: plain`; `-` for none).
 //! - A branch (`branch`, `<state>.json` and `<state>.id`): `resumed` (`yes` when Claude Code
 //!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
@@ -195,6 +202,7 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
             if read.is_empty() { "none".to_owned() } else { read.join(", ") }
         }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
+        "card" => card_first(s),
         "sent" => {
             let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
             shown(typed || screen::shows_lines(s, want), "the input's rows do not read it")
@@ -232,9 +240,39 @@ fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
     out
 }
 
+/// The first row the terminal card shows, and whether it starts at a bullet (see the module).
+fn card_first(s: &Screen) -> String {
+    use crate::view::chat::terminal_card;
+    let rows = terminal_card::rows(s);
+    if rows.is_empty() {
+        return NONE.to_owned();
+    }
+    let text = s.row_text(rows.start);
+    let rest = text.strip_prefix(|c| terminal_card::BULLETS.contains(&c)).unwrap_or(&text).trim();
+    if !terminal_card::starts(s, rows.start) {
+        format!("top: {}", text.trim())
+    } else if terminal_card::call_shape(rest) {
+        format!("call: {rest}")
+    } else {
+        format!("bullet: {rest}")
+    }
+}
+
+/// The output has a colour code: an SGR sequence that sets a foreground or background colour.
+fn coloured(ansi: &str) -> bool {
+    ansi.split('\u{1b}').skip(1).filter_map(|rest| rest.strip_prefix('[')).any(|rest| {
+        let end = rest.find(|c: char| !(c.is_ascii_digit() || c == ';' || c == ':')).unwrap_or(rest.len());
+        rest[end..].starts_with('m')
+            && rest[..end]
+                .split([';', ':'])
+                .filter_map(|p| p.parse::<u16>().ok())
+                .any(|p| matches!(p, 30..=38 | 40..=48 | 90..=97 | 100..=107))
+    })
+}
+
 /// What the app's transcript reader makes of a transcript copy.
 fn transcript_fact(path: &Path, key: &str) -> String {
-    use claude_switch_core::transcript::{ChatPhase, ItemKind, Reader};
+    use claude_switch_core::transcript::{ChatPhase, ItemKind, Reader, ToolCard};
     let Ok(mut reader) = Reader::open(path, 64 << 20) else { return "the transcript does not read".to_owned() };
     let items: Vec<_> = reader.items().map(|(id, item)| (id, item.clone())).collect();
     let joined = |parts: Vec<String>| if parts.is_empty() { NONE.to_owned() } else { parts.join(" | ") };
@@ -297,6 +335,18 @@ fn transcript_fact(path: &Path, key: &str) -> String {
             None => NONE,
         }
         .to_owned(),
+        "outputs" => joined(
+            items
+                .iter()
+                .filter_map(|(_, item)| match &item.kind {
+                    ItemKind::Tool { name, card: Some(ToolCard::Output { ansi, .. }), .. } => {
+                        let colours = ansi.as_deref().is_some_and(coloured);
+                        Some(format!("{name}: {}", if colours { "colours" } else { "plain" }))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        ),
         "thinking" => {
             let mut seen: Vec<String> = Vec::new();
             for line in std::fs::read_to_string(path).unwrap_or_default().lines() {
@@ -614,6 +664,25 @@ fn the_fixtures_read_as_the_states_the_check_names() {
     assert_eq!(fact(&idle, "hides", "no such words here"), "no such words here");
     assert_eq!(fact(&idle, "hides", &some), format!("shown: {some}"));
     assert_eq!(fact(&idle, "shows", "no such words here"), "not shown: no such words here");
+    // The terminal card starts at the call, its bullet lit or not.
+    assert_eq!(
+        fact(&recorded(WORKING_TOOL), "card", ""),
+        "call: Bash(python -c \"import time; time.sleep(25); print('done25')\")"
+    );
+    let first = |bytes: &str| {
+        let mut t = crate::term::Term::empty((40, 6));
+        t.feed(bytes.as_bytes());
+        card_first(&t.screen)
+    };
+    assert_eq!(first("one\r\n  two"), "top: one");
+    assert_eq!(first("one\r\n\u{23fa} message\r\n  two"), "bullet: message");
+    assert_eq!(first("one\r\n x \u{25cf} not at column 0"), "top: one");
+    // The bullet off: the call's shape, with its ⎿ row or the working line under it.
+    assert_eq!(first("one\r\n  Bash(ls)\r\n  \u{23bf}  a.txt"), "call: Bash(ls)");
+    assert_eq!(first("one\r\n  Read(a.rs)\r\n\r\n\u{2722} Working\u{2026} (3s)"), "call: Read(a.rs)");
+    assert_eq!(first("one\r\n  Bash(ls)\r\n  more text"), "top: one", "nothing of a call under it");
+    assert_eq!(first("one\r\n  see f(x)\r\n  \u{23bf}  a"), "top: one", "not a call's name");
+    assert_eq!(first(""), NONE);
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
 }
@@ -655,6 +724,22 @@ fn transcripts_branches_and_help_read_as_the_check_names_them() {
     let text: String = lines.iter().chain(&command[..1]).map(|l| format!("{l}\n")).collect();
     std::fs::write(&without_output, text).unwrap();
     assert_eq!(transcript_fact(&without_output, "phase"), "active");
+    assert_eq!(read("outputs"), NONE);
+    // Command output: kept with its colour codes, or plain (bold alone is no colour).
+    let local = |text: &str| json!({"type":"user","message":{"role":"user","content":text}});
+    let lines = [
+        local("<command-name>/context</command-name>\n<command-args></command-args>"),
+        local(
+            "<local-command-stdout>\u{1b}[1mContext Usage\u{1b}[22m\n\u{1b}[38;2;153;153;153m⛁ ⛀\u{1b}[39m 12k</local-command-stdout>",
+        ),
+        local("<command-name>/cost</command-name>"),
+        local("<local-command-stdout>\u{1b}[1mTotal cost\u{1b}[22m: $0.01</local-command-stdout>"),
+        local("<command-name>/mcp</command-name>"),
+        local("<local-command-stdout>No MCP servers configured</local-command-stdout>"),
+    ];
+    let commands = dir.join("commands.jsonl");
+    std::fs::write(&commands, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    assert_eq!(transcript_fact(&commands, "outputs"), "/context: colours | /cost: plain | /mcp: plain");
     let branch = dir.join("branched.json");
     std::fs::write(dir.join("branched.id"), "0a1b2c3d-1111-4222-8333-444455556666\n").unwrap();
     let answer = json!({"is_error":false,"session_id":"0a1b2c3d-1111-4222-8333-444455556666","result":"Alpha"});

@@ -12,6 +12,8 @@ use super::super::model::{Group, Model};
 use super::super::outputs::{Destination, Output};
 use super::super::preview::Preview;
 use super::super::text::TextLayout;
+use super::grid::{Grid, Look};
+use mdshared_ui::termview::Metrics;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Id {
@@ -191,14 +193,14 @@ fn solo(item: &Item) -> bool {
         ItemKind::Tool { card: Some(ToolCard::Edit { .. }), state, denial, .. } => {
             *state != ToolState::Failed && denial.is_none()
         }
-        ItemKind::Tool { card: Some(ToolCard::Plan(_) | ToolCard::Output(_)), .. } => true,
+        ItemKind::Tool { card: Some(ToolCard::Plan(_) | ToolCard::Output { .. }), .. } => true,
         _ => false,
     }
 }
 
 /// The row starts open and a click folds it: longer output of a slash or shell-mode command.
 pub(super) fn starts_open(item: &Item) -> bool {
-    matches!(&item.kind, ItemKind::Tool { card: Some(ToolCard::Output(text)), summary, file_path, .. }
+    matches!(&item.kind, ItemKind::Tool { card: Some(ToolCard::Output { text, .. }), summary, file_path, .. }
         if !text.trim().is_empty() && !(file_path.is_none() && summary.is_empty() && one_liner(text)))
 }
 
@@ -489,15 +491,20 @@ enum BodyKind {
     Shell,
     /// A diff's lines: mono, in the text colour, never wrapped (its row clips them).
     Diff,
+    /// What a slash or shell-mode command printed, with its colour codes: drawn as the terminal
+    /// draws it ([`Grid`]).
+    Grid,
 }
 
 enum Layout {
     Plain(Box<TextLayout>),
     Markdown(Box<Preview>),
+    Grid(Box<Grid>),
 }
 
 impl Body {
-    /// The source: Markdown for an answer, the literal text otherwise.
+    /// The source: Markdown for an answer, the literal text otherwise (with its escape
+    /// sequences, for command output: [`text`](Self::text) is what it shows).
     pub fn raw(&self) -> &str {
         &self.raw
     }
@@ -506,13 +513,14 @@ impl Body {
         match &self.layout {
             Layout::Plain(_) => &self.raw,
             Layout::Markdown(t) => t.text(),
+            Layout::Grid(g) => g.text(),
         }
     }
 
     /// An answer's code blocks, relative to the text's top.
     pub fn code_blocks(&self) -> Vec<crate::view::preview::CodeBlock<'_>> {
         match &self.layout {
-            Layout::Plain(_) => Vec::new(),
+            Layout::Plain(_) | Layout::Grid(_) => Vec::new(),
             Layout::Markdown(t) => t.code_blocks(),
         }
     }
@@ -521,6 +529,7 @@ impl Body {
         match &self.layout {
             Layout::Plain(t) => t.height(),
             Layout::Markdown(t) => t.height(),
+            Layout::Grid(g) => g.height(),
         }
     }
 
@@ -528,6 +537,7 @@ impl Body {
         match &self.layout {
             Layout::Plain(t) => t.width(),
             Layout::Markdown(_) => self.width,
+            Layout::Grid(g) => g.width(),
         }
     }
 
@@ -535,7 +545,14 @@ impl Body {
         match &self.layout {
             Layout::Plain(t) => (t.at(x, y), t.link(x, y)),
             Layout::Markdown(t) => t.point(x, y),
+            Layout::Grid(g) => (g.at(x, y), None),
         }
+    }
+
+    /// The colour of the box behind command output drawn as the terminal draws it: the
+    /// terminal's background. `None` for any other body.
+    pub fn grid_background(&self, look: &Look, pal: &Palette) -> Option<mdshared_ui::gfx::Rgb> {
+        matches!(self.layout, Layout::Grid(_)).then(|| look.scheme(pal).background)
     }
 
     pub fn draw(
@@ -545,10 +562,12 @@ impl Body {
         clip: Rect,
         selection: Option<std::ops::Range<usize>>,
         pal: &Palette,
+        look: &mut Look,
     ) {
         match &self.layout {
             Layout::Plain(t) => t.draw(p, area.x, area.y, selection, pal),
             Layout::Markdown(t) => t.draw(p, area, clip, selection, pal),
+            Layout::Grid(g) => g.draw(p, (area.x, area.y), clip, selection, pal, look),
         }
     }
 }
@@ -588,6 +607,8 @@ pub(super) struct Rows<'a> {
     pub awaiting: Option<ItemId>,
     /// Which messages carry buttons (Chat only).
     pub actions: MessageActions,
+    /// The cells command output is drawn in ([`Grid`]).
+    pub cells: Metrics,
 }
 
 /// The answers that carry the buttons in Chat: the last answer before each prompt and the last of
@@ -610,7 +631,8 @@ impl Rows<'_> {
     fn shape(&mut self, id: &Id, raw: &str, width: f32, kind: BodyKind, files: Option<&Files>) -> Body {
         if let Some(body) = self.previous.remove(id)
             && body.kind == kind
-            && body.width == width
+            // Command output is laid out by whole cells: a width with as many keeps it.
+            && (body.width == width || kind == BodyKind::Grid && same_cols(&body, self.cells, width))
             && body.raw == raw
             && files.map_or_else(|| body.files.is_empty(), |f| *f == body.files)
         {
@@ -624,6 +646,10 @@ impl Rows<'_> {
         let empty = Files::new();
         // Tool details (diffs, command output) are read on demand: muted, like their row.
         let quiet = Palette { text: self.pal.muted, ..*self.pal };
+        if kind == BodyKind::Grid {
+            let layout = Layout::Grid(Box::new(Grid::new(raw, self.cells, width)));
+            return Body { raw: raw.to_owned(), kind, width, layout, files: Files::new() };
+        }
         let layout = if kind == BodyKind::Markdown {
             // In the conversation a fenced block has a header: the language and Copy.
             Layout::Markdown(Box::new(Preview::with_code_headers(
@@ -958,7 +984,7 @@ impl Rows<'_> {
                 // A command's one-line reply ("Set model to …", "Settings dialog dismissed") reads on
                 // its row like a note; longer output is a mono card under it.
                 let reply = match card {
-                    Some(ToolCard::Output(text)) if target.is_empty() && one_liner(text) => Some(text),
+                    Some(ToolCard::Output { text, .. }) if target.is_empty() && one_liner(text) => Some(text),
                     _ => None,
                 };
                 if let Some(text) = reply {
@@ -989,7 +1015,7 @@ impl Rows<'_> {
                 // click folds it; everything else starts folded.
                 row.open = match card {
                     Some(ToolCard::Plan(_)) => true,
-                    Some(ToolCard::Output(text)) if reply.is_none() && !text.trim().is_empty() => !open,
+                    Some(ToolCard::Output { text, .. }) if reply.is_none() && !text.trim().is_empty() => !open,
                     _ => open,
                 };
                 row.background = line.background;
@@ -1002,7 +1028,7 @@ impl Rows<'_> {
                         let why = crate::view::chat::question::denials::why(denial);
                         detail = format!("{}\n\n{why}", detail.trim_end()).trim_start().to_owned();
                     }
-                    row.boxed = matches!(kind, BodyKind::Mono | BodyKind::Shell);
+                    row.boxed = matches!(kind, BodyKind::Mono | BodyKind::Shell | BodyKind::Grid);
                     self.place_detail(&mut row);
                     row.body = (!detail.is_empty()).then(|| self.shape(&row.id, &detail, row.geo.tw, kind, files));
                     row.agent.clone_from(subagent);
@@ -1191,6 +1217,11 @@ fn one_line(s: &str, cap: usize) -> String {
     out
 }
 
+/// Command output laid out at `width` would take the columns it takes in `body`.
+fn same_cols(body: &Body, cells: Metrics, width: f32) -> bool {
+    matches!(&body.layout, Layout::Grid(g) if g.cols() == Grid::cols_for(cells, width))
+}
+
 /// An opened call's detail. `shown` says the row already shows the whole command.
 fn tool_detail(card: Option<&ToolCard>, summary: &str, shown: bool) -> (String, BodyKind) {
     match card {
@@ -1206,7 +1237,8 @@ fn tool_detail(card: Option<&ToolCard>, summary: &str, shown: bool) -> (String, 
             (if shown { result } else { format!("{command}\n\n{result}") }, BodyKind::Shell)
         }
         Some(ToolCard::Plan(plan)) => (plan.clone(), BodyKind::Markdown),
-        Some(ToolCard::Output(text)) => (text.clone(), BodyKind::Mono),
+        // Drawn from what the CLI recorded, colour codes and all; plain when it had none.
+        Some(ToolCard::Output { text, ansi }) => (ansi.as_ref().unwrap_or(text).clone(), BodyKind::Grid),
         Some(ToolCard::Questions(_)) | None => (summary.into(), BodyKind::Mono),
     }
 }

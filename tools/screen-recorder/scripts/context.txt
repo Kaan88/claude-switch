@@ -1,0 +1,27 @@
+# What Chat draws as the terminal draws it, and where the terminal card starts. After one short
+# turn the answer's row starts with Claude Code's bullet at column 0 (the card's first row);
+# then /context, whose output the transcript must still record with its colour codes inside
+# <local-command-stdout> (Chat feeds them to its grid renderer). One model request.
+#: args --permission-mode default
+#: seconds 25
+start
+send Reply with just the word: pong
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap answered
+send /context
+sleep 800
+send \r
+sleep 3000
+quiet 1500 15000
+snap context
+# Closes the panel if this version shows one (the output is recorded as it closes); nothing on
+# an idle, empty input.
+send \e
+sleep 1500
+quiet 1000 15000
+snap context_closed
+tscopy transcript

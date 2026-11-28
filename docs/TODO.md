@@ -99,13 +99,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Later (the owner's list)
 
-- **What Chat cannot read, shown in Chat** (owner, 2026-11-28; next after the command-output
-  renderer, which it reuses). When Chat says Claude Code may be waiting in the terminal, it shows the
-  relevant part of the terminal screen (the rows around the prompt) as a card in the conversation,
-  drawn with the terminal's font and colours, with **Answer in terminal** (opens the drawer with the
-  keyboard, as 0.1.6 does for questions). Chat still never types into a screen it cannot read. Not on
-  Tab: Tab completes in the message box. The screen reports (`%APPDATA%\claude-switch\screen-reports`)
-  show which prompts come up; frequent ones can become real cards, as the trust question did.
 - **The message box talks to the subagent Chat shows** (owner, 2026-11-28). With a subagent's
   conversation open in Chat ("‹ Back · <agent's task>"), the box still sends to the main session.
   It should send to that agent, the way Claude Code does when an agent is picked in the list under its
@@ -126,15 +119,6 @@ as the second account, Windows Terminal, the desktop hand-over.
   currently falls back to "Choose in Claude Code's menu above"; show its tabs in the card so it can
   be answered in Chat, with the Submit step. Check with a compat script that asks a question with
   previews and one with several questions.
-- **Command output in Chat drawn like the terminal** (owner, 2026-11-28; doable). Output of commands such
-  as `/context`, `/mcp` or `/cost` shows in Chat as plain grey text: no colours, and the cell glyphs
-  (⛁ ⛀ ⛶) come from a fallback font with other widths, so the grid and the columns beside it go out of
-  line. The terminal drawer shows the same output correctly. The transcript keeps the colour codes
-  (the `<local-command-stdout>` record of `/context` has its SGR sequences), so Chat can draw it: feed
-  the text into an off-screen terminal of the block's width (the app's own emulator, `mdshared_term`)
-  and paint its cells with the terminal's font, cell grid and the theme's ANSI colours, as the drawer
-  does; keep selection and Copy working as plain text. Check wide lines (wrap or scroll sideways) and
-  output recorded with no colour codes.
 - **Workers tab**, after a usable first version: the bridge's jobs live (worker, model, folder, running
   time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
   Cancel. Read-only on the bridge's files.

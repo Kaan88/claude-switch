@@ -1277,27 +1277,59 @@ transcript byte watermark before writing so a buffered earlier prompt cannot rea
 seconds ago plus 750 ms of terminal silence, or a running turn whose terminal has been silent for
 four seconds, with no working line on the screen, no text on the input and no card for what shows:
 the CLI may be waiting for an answer ("Claude Code may be waiting for your answer in the
-terminal."). Under the working line the same silence is a slow tool and opens nothing. A BEL opens
-it only while the screen shows neither the working line nor an idle input (an idle input clears the
-bell), and a process exit does. When it opens for a question Chat cannot answer (that wait, or a
-permission prompt Chat cannot read whole), or a card's answer could not go, or "Open terminal" on a
-card is clicked, the terminal takes the keyboard, so the answer can be typed at once; an automatic
-opening, or a card's answer that could not go, leaves it with Chat while a key went to the message
-box within the last second, the box or a card's field holds text, or the conversation has a
-selection (Ctrl+C is meant for it and never reaches the CLI that way). Only an automatically
-opened drawer closes on observable turn progress; a manually opened one stays open. Chat
-never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
-Permission prompts). Stop sends Escape at most once per freshly
+terminal."). Under the working line the same silence is a slow tool. A BEL counts only while the
+screen shows neither the working line nor an idle input (an idle input clears the bell). Neither
+that wait nor the bell opens the drawer by itself any more: the terminal card shows the screen
+instead (below). A permission prompt Chat cannot read whole and a process exit still open it.
+When it opens for a permission prompt Chat cannot read whole, or a card's answer could not go, or
+"Open terminal" on a card or **Answer in terminal** on the terminal card is clicked, the terminal
+takes the keyboard, so the answer can be typed at once; an automatic opening, or a card's answer
+that could not go, leaves it with Chat while a key went to the message box within the last second,
+the box or a card's field holds text, or the conversation has a selection (Ctrl+C is meant for it
+and never reaches the CLI that way). An automatically opened drawer closes on observable turn
+progress; a manually opened one stays open, except the one **Answer in terminal** opened (below).
+Chat never answers a dialog by itself; the only dialog keys are a card's, after a click (see
+Questions and Permission prompts).
+
+**The terminal card** (`view/chat/terminal_card.rs`). While Claude Code may be waiting, the bell
+rang, a permission prompt Chat cannot read whole is shown with the drawer closed, or a send is
+refused because the screen cannot be read (the check, prompt, input, menu and full-screen
+refusals, while the gate is not Ready), and the drawer is closed and no question card shows the
+prompt, a card above the message box shows the part of the live screen that matters, with the
+cause as its title. Its rows: from the last row within the bottom 14 rows with text whose column 0
+is Claude Code's bullet (`●`, or `⏺` on renderers that use it) down to the screen's last row with
+text; without such a row, those 14 rows. A running call's bullet blinks, so its row also counts
+while the bullet is off: columns 0 and 1 blank, `Name(` from column 2, and under it the call's
+`⎿` row or the working line (a 2.1.332 recording caught it off). They are read from the screen's cells each tick (colours
+and attributes re-encoded as SGR) and laid out with the same grid renderer as command output,
+in the terminal theme's colours at full strength; one terminal row stays one card row, the text
+shrinking to fit the width down to 9 px, past that cut on the right. The card takes at most 60%
+of the conversation's height and follows the screen while it stays. It only looks: it never
+writes to the terminal and takes no key. **Dismiss** hides it until its cause is gone.
+**Answer in terminal** opens the drawer with the keyboard; that drawer closes by itself, and the
+keyboard comes back, once the cause is gone by the automatic drawer's rule (no reason left, or
+one a card in Chat answers: a question, a request, a menu, a slash command; for a refusal, the
+screen readable again), unless the user resized, closed or reopened the drawer, or typed in Chat,
+since the click. The card goes once Chat can read the screen again or the terminal is in view. Stop sends Escape at most once per freshly
 verified active turn.
 **Command results and shell mode.** A `<local-command-stdout>` (or `-stderr`) record becomes a finished
 row named after the slash command before it, and `<bash-input>` with its `<bash-stdout>`/`<bash-stderr>`
 becomes a "Shell" row (`! command`). Both are quiet tool rows (see the conversation look above). A
 one-line reply of at most 140 characters ("Set model to …", "Settings dialog dismissed") sits on the
-row as its target and opens on a click like any tool. Longer output and shell output are a mono card
-under the row in the muted text colour, open at first and folded by a click (no output, one line); a shell
+row as its target and opens on a click like any tool. Longer output and shell output are a card
+under the row, open at first and folded by a click (no output, one line); a shell
 command whose output is only stderr is a failed row. Output is cut at 60 lines or 6,000 characters,
 escape sequences and surrounding blank lines removed, the first line's indent kept
-(`transcript/local.rs`). They never count as pending calls. Interactive panels that print their
+(`transcript/local.rs`); beside that plain text the core keeps the output with its escapes, up to
+64 KiB (`/context` colours each cell of its grid). The card draws that copy as the terminal draws
+it (`view/ui/grid.rs`, cmd-output): fed into an off-screen `mdshared_term` screen as wide as the
+box and painted with `termview` in the terminal's font, cell grid and theme colours, so
+`/context`'s grid and the legend beside it line up and keep their colours. Text the program gave
+no colour is drawn part way to the background, as other tool output is muted. Only text, line
+ends, tabs and SGR reach the emulator (other escapes and control characters are dropped, so
+output that moves the cursor or clears the screen still reads top to bottom); lines wider than
+the box wrap; selection and Copy give the grid's plain text. The Session view draws it the same
+way. Without the escaped copy (older records) the plain text is drawn in the same grid. They never count as pending calls. Interactive panels that print their
 result the same way (`/context`, `/usage`, `/config`, `/mcp`) get the same row; a command that
 printed nothing shows no row and does not lend its name to the next output. The composer has no `!`
 toggle: whether a pasted `!` enters the CLI's shell mode is unverified.
@@ -1678,8 +1710,8 @@ typed on the CLI's input (Chat will not delete it; the composer says so); a perm
 cannot show whole (its top is above the terminal's screen, or a row does not fit the card), and a
 decline with text for a prompt the pending call does not cover; changing a permission rule (the
 /permissions tabs are read-only in Chat), and a blocked call whose row or command Chat cannot show
-whole; a dialog with no footer Chat knows (the drawer opens by itself after
-four silent seconds); Claude Code's full-screen renderer or another full-screen program; a session
+whole; a dialog with no footer Chat knows (after four silent seconds the terminal card shows it
+and **Answer in terminal** opens the drawer); Claude Code's full-screen renderer or another full-screen program; a session
 whose identity could not be verified; a card step whose screen did not follow within its deadline
 (the card says which, and Open terminal).
 

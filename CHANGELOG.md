@@ -12,6 +12,19 @@
   and Right arrow keys, and says where you are ("2 of 5"; left out in a window too narrow for it
   beside the buttons). Each picture still loads only when shown, and one that cannot be shown
   says why while the arrows go on.
+- Chat: when Claude Code may be waiting in the terminal, the bell rang, a permission prompt Chat
+  cannot read whole is left with its drawer closed, or a send is refused because Chat cannot read
+  the screen, the part of the terminal screen that matters shows as a card above the message box:
+  from the call that waits down to the input, in the terminal's font and colours, following the
+  screen while it stays. **Answer in terminal** opens the drawer with the keyboard, and the
+  drawer closes again by itself once the wait is over, unless you resized it or typed in Chat
+  meanwhile; **Dismiss** hides it until the next time. It goes once Chat can read the screen again. Chat still types
+  nothing into such a screen, and the drawer no longer opens by itself for these waits.
+- Chat and the Session view: what a command printed (`/context`, `/mcp`, `/cost`, shell mode) is
+  drawn as the terminal draws it, from the colour codes Claude Code recorded: the terminal's font,
+  cell grid and theme colours, so `/context`'s grid and the columns beside it line up and keep
+  their colours. Lines wider than the box wrap; selection and Copy give plain text. Other escape
+  sequences in the output are dropped, so it cannot move or clear what is shown.
 - Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
   just before a permission prompt took the screen) and every later message waited behind it
   without a word. The rename now goes only once Chat has read the new session's first prompt, and

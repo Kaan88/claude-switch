@@ -484,8 +484,10 @@ impl AppState {
         let details_active = self.nothing_over() && !self.picture_overlay() && !self.usage.popup.open;
         let mut hits = Vec::new();
         let diff = look::Diff::from_ansi(&self.term_colours.0.ansi);
+        let scheme = self.term_colours.0;
         if let Some(pane) = self.shown_pane(area.w) {
             pane.ui.set_diff_colours(diff);
+            pane.ui.set_terminal_colours(scheme);
             pane.ui.draw(p, pal, rects.2, &mut pane.model, mouse, cx.now(), motion);
             if let Some(deadline) = pane.ui.scroll_deadline() {
                 cx.wake_at(deadline);
