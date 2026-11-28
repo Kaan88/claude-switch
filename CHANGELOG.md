@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Chat: a message with a picture that Claude Code put back on its input after an early Stop is
+  recognised (and Press Enter's check finds it): Claude Code shows the text right after the
+  picture's marker, without the space Chat looked for.
 - Chat: the round "jump to latest" button no longer covers the last line of text while you are
   scrolled back; the text ends above it.
 - Chat: buttons under your messages and under Claude's answer to each turn, shown while you point
@@ -22,9 +25,7 @@
 - Chat: Ctrl+C copies the text selected in the conversation when the message box has no
   selection of its own; it used to do nothing there.
 - Chat: a message typed while Claude works (in Chat or in the terminal) is shown as your message
-  where Claude Code handed it in; it used to be missing, with its picture. Such a message is not
-  offered for "Rewind to here…": Claude Code records it only as a queued message, which its rewind
-  list is not expected to show.
+  where Claude Code handed it in; it used to be missing, with its picture.
 - Chat: with thinking shown as updates, the text Claude writes there is shown as its answer, as
   the terminal shows it; it used to be folded away among the steps as a thought.
 - Chat: Send while a turn runs types the message into Claude Code's input at once, as Send now

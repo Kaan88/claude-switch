@@ -79,7 +79,7 @@ pub enum ItemKind {
         pictures: Vec<Picture>,
         synthetic: bool,
         /// Sent while a turn ran (a `queued_command` record): Claude Code hands it to the running
-        /// turn, so it starts no turn and its rewind list does not show it.
+        /// turn, so it starts no turn (its rewind list shows it all the same).
         queued: bool,
     },
     Assistant {

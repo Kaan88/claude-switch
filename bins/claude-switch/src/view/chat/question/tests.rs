@@ -1754,22 +1754,21 @@ fn rewind_walks_the_list_to_the_prompt_and_chooses_only_on_a_click() {
 }
 
 #[test]
-fn a_message_sent_while_a_turn_ran_is_not_in_the_rewind_list() {
+fn a_message_sent_while_a_turn_ran_is_in_the_rewind_list_as_any_prompt() {
     use screens::recorded::*;
     let now = Instant::now();
     let mut f = Fixture::idle();
     let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
-    // Claude Code records it only as a queued_command, which its rewind list does not show.
-    let queued = ItemId { offset: 25, block: 0 };
-    let kind = ItemKind::Prompt { text: "Also say delta.".into(), pictures: vec![], synthetic: false, queued: true };
-    f.tab().pane.as_mut().unwrap().model.items.insert(queued, Item { kind, timestamp: None });
+    // Charlie went in while bravo's turn ran: Claude Code's rewind list shows it all the same
+    // (recorded from 2.1.332, `recorder compat`'s `queued` script).
+    let kind = ItemKind::Prompt { text: CHARLIE.into(), pictures: vec![], synthetic: false, queued: true };
+    f.tab().pane.as_mut().unwrap().model.items.insert(ids[2], Item { kind, timestamp: None });
     f.show(REWIND_IDLE, now);
     let now = now + QUIET;
-    rewind::start(f.tab(), now, queued);
-    assert!(f.writes().is_empty());
-    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_PROMPT));
+    rewind::start(f.tab(), now, ids[2]);
+    assert_eq!(f.writes(), [ESC.to_vec()], "it can be rewound to");
     f.chat().question.rewind = None;
-    // An earlier prompt is still found: the list's rows under it are the later typed prompts.
+    // An earlier prompt is found with it under it in the list.
     rewind::start(f.tab(), now, ids[1]);
     assert_eq!(f.writes(), [ESC.to_vec()]);
     let now = now + STEP / 10;

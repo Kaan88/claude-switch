@@ -84,11 +84,9 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 - Try Branch in a real interactive session (built 2026-11-28; the cut copy was resumed only in print
   mode): the branch tab opens with the conversation up to the message and continues under its new id.
-- Try in a real session (built 2026-11-28 from recorded screens only): Send while a turn runs goes
-  into Claude Code's empty input and is handed in mid-turn; a message sent so is shown where the
-  transcript has it; Claude Code's rewind list leaves it out (Chat assumes so and offers no Rewind
-  for it; were it listed, a rewind to an earlier prompt would stop with "does not show the prompts
-  after this one").
+- Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
+  script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
+  mid-turn, and the message shows where the transcript has it.
 - Recheck the historical Claude Code white selection bar in a real session. The app now sets both
   selection colours. If Claude Code enables mouse reporting, use Shift+drag to test the terminal's own
   selection; a plain drag goes to the program. In the 760×480 `cmd.exe` demo, the same selection tint

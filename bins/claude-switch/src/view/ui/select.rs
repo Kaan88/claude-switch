@@ -243,7 +243,7 @@ impl AppState {
         // Rewind goes through the tab's own CLI, from a prompt the user typed.
         let prompt = pane.ui.menu_item().and_then(|id| pane.model.items.get(&id)).is_some_and(|item| {
             // Only what the CLI's rewind list shows: never a slash command.
-            matches!(&item.kind, claude_switch_core::transcript::ItemKind::Prompt { synthetic: false, queued: false, text, .. }
+            matches!(&item.kind, claude_switch_core::transcript::ItemKind::Prompt { synthetic: false, text, .. }
                 if crate::view::chat::question::rewind::listed(text))
         });
         if prompt && pane.chat.enabled {

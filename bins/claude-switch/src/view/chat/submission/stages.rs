@@ -198,5 +198,26 @@ pub(super) fn shown_exactly(tab: &Tab, expected: &str) -> bool {
         return screen::shows_lines(&tab.term.screen, expected);
     }
     // A command line longer than the terminal is wide wraps onto more rows.
-    prompt(&tab.term.screen).as_deref() == Some(expected) || screen::shows_wrapped(&tab.term.screen, expected)
+    let shows = |expected: &str| {
+        prompt(&tab.term.screen).as_deref() == Some(expected) || screen::shows_wrapped(&tab.term.screen, expected)
+    };
+    // Text pasted after a picture's marker follows it without a space (recorded from Claude Code
+    // 2.1.332, `recorder compat`'s `queued` script); a space there is taken too.
+    shows(expected) || without_marker_space(expected).is_some_and(|joined| shows(&joined))
+}
+
+/// `[Image #1] text` as `[Image #1]text`; `None` when it does not start with a picture's marker.
+fn without_marker_space(text: &str) -> Option<String> {
+    let (marker, rest) = text.split_once("] ")?;
+    let marker = format!("{marker}]");
+    screen::is_image_marker(&marker).then(|| format!("{marker}{rest}"))
+}
+
+#[cfg(test)]
+#[test]
+fn a_pictures_marker_may_be_followed_by_its_text_without_a_space() {
+    assert_eq!(without_marker_space("[Image #1] look at this").as_deref(), Some("[Image #1]look at this"));
+    assert_eq!(without_marker_space("[Image #12] a] b").as_deref(), Some("[Image #12]a] b"));
+    assert_eq!(without_marker_space("[Pasted text #1] a"), None);
+    assert_eq!(without_marker_space("no marker"), None);
 }

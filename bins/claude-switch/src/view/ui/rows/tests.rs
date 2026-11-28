@@ -525,10 +525,10 @@ fn chat_keeps_room_for_buttons_under_each_prompt_and_each_turns_last_answer() {
             assert!(rows.list.iter().all(|r| r.actions.is_none()));
             continue;
         }
-        // Rewind only where the CLI's rewind list has the prompt: not a slash command, not a
-        // message sent while a turn ran.
+        // Rewind only where the CLI's rewind list has the prompt: not a slash command. A message
+        // sent while a turn ran is listed there too.
         assert_eq!(actions(0), Some(Actions { rewind: true, newest: false }));
-        assert_eq!(actions(4), Some(Actions { rewind: false, newest: false }));
+        assert_eq!(actions(4), Some(Actions { rewind: true, newest: false }));
         assert_eq!(actions(6), Some(Actions { rewind: false, newest: false }));
         // An answer that goes on into tool calls has none; each turn's last has them.
         assert_eq!(actions(1), None);

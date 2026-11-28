@@ -850,9 +850,9 @@ impl Rows<'_> {
     fn item(&mut self, id: ItemId, item: &Item, line: Line, files: Option<&Files>) {
         let open = line.open;
         let row = match &item.kind {
-            ItemKind::Prompt { text, pictures, synthetic, queued } => {
+            ItemKind::Prompt { text, pictures, synthetic, .. } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
-                let rewind = !queued && crate::view::chat::question::rewind::listed(text);
+                let rewind = crate::view::chat::question::rewind::listed(text);
                 row.actions = (self.chat && !synthetic).then_some(Actions { rewind, newest: false });
                 row.body = (!text.is_empty()).then(|| self.shape(&row.id, text, row.geo.tw, BodyKind::Prompt, files));
                 let count = pictures.len();

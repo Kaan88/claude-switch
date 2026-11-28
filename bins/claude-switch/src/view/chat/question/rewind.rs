@@ -128,12 +128,6 @@ pub(in crate::view) fn listed(prompt: &str) -> bool {
     !prompt.is_empty() && !prompt.starts_with(['/', '<'])
 }
 
-/// A message sent while a turn ran is recorded only as a `queued_command` attachment, never as a
-/// user record, which is what the CLI's rewind list shows.
-fn listed_item(item: &claude_switch_core::transcript::Item) -> bool {
-    !matches!(item.kind, ItemKind::Prompt { queued: true, .. })
-}
-
 /// "Rewind to here…" on the prompt at `item`: the first Esc, at a verified idle prompt.
 pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
     let pane = tab.pane.as_ref().expect("Chat pane");
@@ -142,11 +136,12 @@ pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
         return;
     }
     let items = &pane.model.items;
-    let prompt = items.get(&item).filter(|i| listed_item(i)).and_then(crate::view::chat::recall::prompt_text);
-    let prompt = prompt.filter(|p| listed(p)).map(str::to_owned);
+    // A message sent while a turn ran is listed too (recorded from 2.1.332, `recorder compat`'s
+    // `queued` script), where the transcript has it.
+    let prompt =
+        items.get(&item).and_then(crate::view::chat::recall::prompt_text).filter(|p| listed(p)).map(str::to_owned);
     let later: Vec<String> = items
         .range(ItemId { offset: item.offset.saturating_add(1), block: 0 }..)
-        .filter(|(_, item)| listed_item(item))
         .filter_map(|(_, item)| crate::view::chat::recall::prompt_text(item))
         .filter(|text| listed(text))
         .map(str::to_owned)
