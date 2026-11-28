@@ -27,6 +27,17 @@ const SHELL_VARS: [&str; 12] = [
 /// First-run screens `start` must never answer: Enter on them changes the account's look or
 /// starts a sign-in in the browser.
 const SIGN_IN_SCREENS: [&str; 3] = ["Select login method", "Choose the text style", "Paste code here if prompted"];
+/// An 8 x 8 PNG of one colour, for `clipimage`.
+const DOT_PNG: [u8; 74] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+    0x08, 0x00, 0x00, 0x00, 0x08, 0x08, 0x02, 0x00, 0x00, 0x00, 0x4b, 0x6d, 0x29, 0xdc, 0x00, 0x00, 0x00, 0x11, 0x49,
+    0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xb8, 0x59, 0x1e, 0x8e, 0x15, 0x31, 0x0c, 0x2d, 0x09, 0x00, 0x72, 0xaf, 0x69,
+    0xc1, 0xf8, 0x50, 0x95, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+/// The question a `branch` asks the resumed copy: which of the words the script's turns asked for
+/// it remembers.
+const BRANCH_QUESTION: &str = "Which of the words alpha, bravo and charlie have you replied with so far in this \
+    conversation? Answer with just those words, separated by commas.";
 /// The dialog about an API key from the environment; its first row, above the highlighted "No",
 /// is "Yes".
 const KEY_DIALOG: &str = "Do you want to use this API key?";
@@ -90,6 +101,14 @@ pub struct Launch<'a> {
     pub plain: bool,
 }
 
+/// The app's test program (`recorder compat` builds it), for what only the app's own code can do:
+/// `branch` writes its copy of a transcript with `core::branch`, as the app does.
+pub struct Helper {
+    pub program: PathBuf,
+    /// Variables it must not see (the API key).
+    pub remove: Vec<String>,
+}
+
 /// Why a script ended before its last line.
 #[derive(Debug)]
 pub enum Abort {
@@ -135,6 +154,17 @@ pub struct Recorder {
     /// The screen's rows, for whoever watches the recording.
     pub live: Option<Arc<Mutex<Vec<String>>>>,
     last_live: Instant,
+    /// The work folder, the variables and arguments `claude` was started with: `clipimage` writes
+    /// into the folder, `help` and `branch` start `claude` again with the same account.
+    cwd: PathBuf,
+    env: Vec<(String, String)>,
+    args: Vec<String>,
+    /// The work folder's transcripts (`REC_PROJECT` when not set).
+    pub project: Option<PathBuf>,
+    pub helper: Option<Helper>,
+    /// What the clipboard held before `clipimage` (its text, `None` for none): put back when the
+    /// script ends.
+    clipboard: Option<Option<String>>,
 }
 
 impl Recorder {
@@ -143,12 +173,8 @@ impl Recorder {
         // CLAUDE_* or ANTHROPIC_* variable reaches the child except the account's config folder;
         // the classic renderer; TERM=xterm-256color unless a Start-menu environment is asked for.
         let mut cmd = Command::new(launch.program).cwd(launch.cwd);
-        for (name, _) in std::env::vars() {
-            let upper = name.to_ascii_uppercase();
-            let claude = upper.starts_with("CLAUDE_") && upper != "CLAUDE_CONFIG_DIR";
-            if claude || upper.starts_with("ANTHROPIC_") || upper == "CLAUDECODE" {
-                cmd = cmd.env_remove(name);
-            }
+        for name in removed_vars() {
+            cmd = cmd.env_remove(name);
         }
         cmd = cmd.env("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1");
         if launch.plain {
@@ -179,6 +205,12 @@ impl Recorder {
             stop: None,
             live: None,
             last_live: now,
+            cwd: launch.cwd.to_owned(),
+            env: launch.env.to_vec(),
+            args: launch.args.to_vec(),
+            project: None,
+            helper: None,
+            clipboard: None,
         })
     }
 
@@ -210,6 +242,12 @@ impl Recorder {
             }
         }
         let _ = self.pty.kill();
+        if let Some(before) = self.clipboard.take() {
+            match clipboard_put_back(before) {
+                Ok(()) => self.note("the clipboard is as it was (its text)"),
+                Err(why) => self.note(&format!("the clipboard could not be put back: {why}")),
+            }
+        }
         self.publish(true);
         if let Err(e) = std::fs::write(self.out.join("log.txt"), &self.log)
             && result.is_ok()
@@ -432,6 +470,71 @@ impl Recorder {
         self.run_for(Duration::from_millis(1500))
     }
 
+    /// The newest transcript in the work folder's transcript folder.
+    fn newest_transcript(&self) -> Result<Option<PathBuf>, Abort> {
+        let dir = match &self.project {
+            Some(dir) => dir.clone(),
+            None => PathBuf::from(
+                std::env::var("REC_PROJECT").map_err(|_| Abort::Script("this op needs REC_PROJECT".into()))?,
+            ),
+        };
+        Ok(std::fs::read_dir(&dir)
+            .map_err(|e| Abort::Io(format!("{}: {e}", dir.display())))?
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+            .map(|e| e.path()))
+    }
+
+    /// `claude` once more, outside the terminal, with the account and model of the recording;
+    /// at most two minutes.
+    fn claude(&mut self, args: &[&str]) -> Result<std::process::Output, Abort> {
+        let mut command = std::process::Command::new("claude");
+        command.current_dir(&self.cwd).stdin(std::process::Stdio::null());
+        for name in removed_vars() {
+            command.env_remove(name);
+        }
+        command.envs(self.env.iter().map(|(n, v)| (n, v)));
+        if let Some(at) = self.args.iter().position(|a| a == "--model")
+            && let Some(model) = self.args.get(at + 1)
+            && args.first() != Some(&"--help")
+        {
+            command.args(["--model", model]);
+        }
+        command.args(args);
+        self.note(&format!("claude {}", args.join(" ")));
+        run_for_output(command, Duration::from_secs(120), self.stop.clone())
+    }
+
+    /// A branch as the app makes one: the newest transcript copied up to the answer that contains
+    /// `after`, under a new id (the app's own `core::branch`, through its test program), then
+    /// that id resumed in print mode with a question. `NAME.id` holds the id, `NAME.json` the
+    /// answer.
+    fn branch(&mut self, name: &str, after: &str) -> Result<(), Abort> {
+        let helper = self.helper.as_ref().ok_or_else(|| Abort::Script("branch needs `recorder compat`".into()))?;
+        let source = self.newest_transcript()?.ok_or_else(|| Abort::Io("branch: no transcript".into()))?;
+        let id_file = self.out.join(format!("{name}.id"));
+        let mut command = std::process::Command::new(&helper.program);
+        for var in &helper.remove {
+            command.env_remove(var);
+        }
+        command.args(["cli_branch_write", "--ignored", "--nocapture"]).stdin(std::process::Stdio::null());
+        command.env("CS_BRANCH_SOURCE", &source).env("CS_BRANCH_AFTER", after).env("CS_BRANCH_OUT", &id_file);
+        let written = run_for_output(command, Duration::from_secs(60), self.stop.clone())?;
+        let id = std::fs::read_to_string(&id_file).unwrap_or_default().trim().to_owned();
+        if !written.status.success() || id.len() != 36 {
+            let why = String::from_utf8_lossy(&written.stdout);
+            self.note(&format!("branch {name}: the copy was not written\n{why}"));
+            return Ok(());
+        }
+        self.note(&format!("branch {name}: copy {id}"));
+        let output = self.claude(&["-p", "--resume", &id, "--output-format", "json", BRANCH_QUESTION])?;
+        let to = self.out.join(format!("{name}.json"));
+        std::fs::write(&to, &output.stdout).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+        self.note(&format!("branch {name}: {}", String::from_utf8_lossy(&output.stdout).trim()));
+        Ok(())
+    }
+
     fn step(&mut self, step: Step) -> Result<(), Abort> {
         match step {
             Step::Sleep(time) => self.run_for(time)?,
@@ -482,24 +585,39 @@ impl Recorder {
                 self.pump();
                 self.snap(&name)?;
             }
-            // The newest transcript in REC_PROJECT, as it is on disk now.
-            Step::TsCopy(name) => {
-                let dir = std::env::var("REC_PROJECT").map_err(|_| Abort::Script("tscopy needs REC_PROJECT".into()))?;
-                let newest = std::fs::read_dir(&dir)
-                    .map_err(|e| Abort::Io(format!("{dir}: {e}")))?
-                    .filter_map(Result::ok)
-                    .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
-                    .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
-                match newest {
-                    Some(e) => {
-                        let to = self.out.join(format!("{name}.jsonl"));
-                        let len =
-                            std::fs::copy(e.path(), &to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
-                        self.note(&format!("tscopy {name} {len} bytes"));
-                    }
-                    None => self.note("tscopy: no transcript"),
+            // The newest transcript of the work folder, as it is on disk now.
+            Step::TsCopy(name) => match self.newest_transcript()? {
+                Some(path) => {
+                    let to = self.out.join(format!("{name}.jsonl"));
+                    let len = std::fs::copy(&path, &to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+                    self.note(&format!("tscopy {name} {len} bytes"));
                 }
+                None => self.note("tscopy: no transcript"),
+            },
+            // A picture on the clipboard, for Alt+V (as Chat sends a pasted picture). The text the
+            // clipboard held is kept and put back when the script ends.
+            Step::ClipImage(file) => {
+                let path = self.cwd.join(&file);
+                std::fs::write(&path, DOT_PNG).map_err(|e| Abort::Io(format!("{}: {e}", path.display())))?;
+                if self.clipboard.is_none() {
+                    self.clipboard = Some(clipboard_text()?);
+                }
+                powershell(
+                    "Add-Type -AssemblyName System.Windows.Forms, System.Drawing; \
+                    $image = [System.Drawing.Image]::FromFile($env:CS_CLIP_FILE); \
+                    [System.Windows.Forms.Clipboard]::SetImage($image); $image.Dispose()",
+                    &[("CS_CLIP_FILE", &path)],
+                    None,
+                )?;
+                self.note(&format!("clipimage {file}"));
             }
+            Step::Help(name) => {
+                let output = self.claude(&["--help"])?;
+                let to = self.out.join(format!("{name}.help.txt"));
+                std::fs::write(&to, &output.stdout).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+                self.note(&format!("help {name}: {} bytes", output.stdout.len()));
+            }
+            Step::Branch { name, after } => self.branch(&name, &after)?,
             Step::Start => self.start()?,
         }
         Ok(())
@@ -543,7 +661,111 @@ enum Step {
     },
     Snap(String),
     TsCopy(String),
+    /// A picture file in the work folder, put on the clipboard.
+    ClipImage(String),
+    /// `claude --help` into `NAME.help.txt`.
+    Help(String),
+    Branch {
+        name: String,
+        after: String,
+    },
     Start,
+}
+
+/// What no `claude` started from here may see: a session's or a login's variables, except the
+/// account's config folder (as `core::launch::child_removals`).
+fn removed_vars() -> Vec<String> {
+    std::env::vars()
+        .map(|(name, _)| name)
+        .filter(|name| {
+            let upper = name.to_ascii_uppercase();
+            let claude = upper.starts_with("CLAUDE_") && upper != "CLAUDE_CONFIG_DIR";
+            claude || upper.starts_with("ANTHROPIC_") || upper == "CLAUDECODE"
+        })
+        .collect()
+}
+
+/// Windows PowerShell (it has the clipboard's picture calls) with a script, in a single-threaded
+/// apartment as the clipboard needs; its standard output.
+fn powershell(script: &str, env: &[(&str, &Path)], input: Option<&str>) -> Result<String, Abort> {
+    use std::io::Write as _;
+    let mut command = std::process::Command::new("powershell.exe");
+    command.args(["-NoProfile", "-NonInteractive", "-STA", "-Command"]);
+    command.arg(format!("[Console]::InputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8; {script}"));
+    command.envs(env.iter().copied());
+    command.stdin(if input.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() });
+    command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().map_err(|e| Abort::Io(format!("powershell: {e}")))?;
+    if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+        stdin.write_all(text.as_bytes()).map_err(|e| Abort::Io(format!("powershell: {e}")))?;
+    }
+    let output = child.wait_with_output().map_err(|e| Abort::Io(format!("powershell: {e}")))?;
+    if !output.status.success() {
+        return Err(Abort::Io(format!("powershell: {}", String::from_utf8_lossy(&output.stderr).trim())));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The clipboard's text, `None` when it holds none.
+fn clipboard_text() -> Result<Option<String>, Abort> {
+    let text = powershell(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         if ([System.Windows.Forms.Clipboard]::ContainsText()) { \
+         [Console]::Out.Write('T' + [System.Windows.Forms.Clipboard]::GetText()) }",
+        &[],
+        None,
+    )?;
+    Ok(text.strip_prefix('T').map(str::to_owned))
+}
+
+/// Puts the clipboard's text back, or empties it when it held none.
+fn clipboard_put_back(before: Option<String>) -> Result<(), Abort> {
+    let script = match before {
+        Some(_) => {
+            "Add-Type -AssemblyName System.Windows.Forms; \
+            [System.Windows.Forms.Clipboard]::SetText([Console]::In.ReadToEnd())"
+        }
+        None => "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::Clear()",
+    };
+    powershell(script, &[], Some(before.as_deref().unwrap_or(""))).map(|_| ())
+}
+
+/// Runs a program to its end, at most `max`, and gives its output; stops it when asked.
+fn run_for_output(
+    mut command: std::process::Command,
+    max: Duration,
+    stop: Option<Arc<AtomicBool>>,
+) -> Result<std::process::Output, Abort> {
+    let name = command.get_program().to_string_lossy().into_owned();
+    let child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| Abort::Io(format!("{name}: {e}")))?;
+    let id = child.id();
+    let done = Arc::new(AtomicBool::new(false));
+    let watch = {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            let end = Instant::now() + max;
+            while !done.load(Ordering::Relaxed) {
+                let stopped = stop.as_ref().is_some_and(|s| s.load(Ordering::Relaxed));
+                if stopped || Instant::now() > end {
+                    // The child's own handle is with `wait_with_output`: end it by its id.
+                    let _ = std::process::Command::new("taskkill").args(["/F", "/T", "/PID", &id.to_string()]).output();
+                    return stopped;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            false
+        })
+    };
+    let output = child.wait_with_output().map_err(|e| Abort::Io(format!("{name}: {e}")));
+    done.store(true, Ordering::Relaxed);
+    if watch.join().unwrap_or(false) {
+        return Err(Abort::Stopped);
+    }
+    output
 }
 
 fn number<T: std::str::FromStr>(text: &str, what: &str) -> Result<T, String> {
@@ -577,6 +799,13 @@ impl Step {
             }
             "snap" => Step::Snap(rest.to_owned()),
             "tscopy" => Step::TsCopy(rest.to_owned()),
+            "clipimage" if !rest.is_empty() => Step::ClipImage(rest.to_owned()),
+            "clipimage" => return Err("clipimage needs FILE".to_owned()),
+            "help" => Step::Help(rest.to_owned()),
+            "branch" => {
+                let (name, after) = two("NAME TEXT")?;
+                Step::Branch { name: name.to_owned(), after: after.to_owned() }
+            }
             "start" => Step::Start,
             _ => return Err(format!("unknown op {op}")),
         })
@@ -649,6 +878,9 @@ mod tests {
         );
         assert_eq!(Step::read("resize 80 24"), Ok(Step::Resize { cols: 80, rows: 24 }));
         assert_eq!(Step::read("send hi\\r"), Ok(Step::Send(b"hi\r".to_vec())));
+        assert_eq!(Step::read("clipimage dot.png"), Ok(Step::ClipImage("dot.png".into())));
+        assert_eq!(Step::read("help cli"), Ok(Step::Help("cli".into())));
+        assert_eq!(Step::read("branch cut alpha"), Ok(Step::Branch { name: "cut".into(), after: "alpha".into() }));
         for bad in [
             "jump 3",
             "sleep soon",
@@ -659,6 +891,8 @@ mod tests {
             "resize 80",
             "resize 80 lots",
             "send \\x4",
+            "clipimage",
+            "branch cut",
         ] {
             assert!(Step::read(bad).is_err(), "{bad}");
         }

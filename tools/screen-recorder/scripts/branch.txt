@@ -1,0 +1,22 @@
+# Branch (`core::branch`): two turns, then a copy of the transcript cut right after the first
+# answer, written by the app's own code under a new id and resumed in print mode with a question
+# about what it remembers. Also that `claude --help` still lists the flags Open a copy and Branch
+# use. Three model requests.
+#: args --permission-mode default
+#: seconds 45
+start
+send Reply with just the word: alpha
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+send Reply with just the word: bravo
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap idle
+help cli
+branch branched alpha

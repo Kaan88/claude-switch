@@ -58,7 +58,10 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `idle MS NAME` | Logs every burst of output for MS (is the screen quiet?), then snaps. |
 | `watch MS NAME` | Snaps `NAME-001`, `NAME-002`, … once a second while the screen changes. |
 | `resize COLS ROWS` | |
-| `tscopy NAME` | Copies the newest transcript of `REC_PROJECT` as it is on disk now. |
+| `tscopy NAME` | Copies the newest transcript of the work folder (`REC_PROJECT`; in `recorder compat` the run's own) to `NAME.jsonl`, as it is on disk now. |
+| `clipimage FILE` | Writes a small PNG as `FILE` in the work folder and puts it on the clipboard, for `send \ev` (Alt+V, as Chat sends a pasted picture). The clipboard's text is kept and put back when the script ends (anything else on it is lost; it is emptied when it held no text). Uses Windows PowerShell. |
+| `help NAME` | `claude --help`, with the same account, into `NAME.help.txt`. |
+| `branch NAME TEXT` | Only in `recorder compat`: a branch as the app makes one. The newest transcript is copied up to the first answer that contains TEXT, under a new id, by the app's own code (`core::branch`, through the check's test program `cli_branch_write`, which never sees the API key); then `claude -p --resume <id> --output-format json` asks which of the words alpha, bravo and charlie it has replied with. `NAME.id` holds the id, `NAME.json` the answer. |
 
 Lines that start with `#:` are for `recorder compat` (comments to a plain run): `#: args …` (more
 arguments for `claude`; `{scripts}` is this folder's `scripts`), `#: size COLS ROWS` (100 x 40
@@ -98,6 +101,22 @@ prompts (Bash, Write, a subagent's, two calls of one message), a prompt answered
 deny rule refuses, a call auto mode blocks and the list of blocked calls with a call marked and
 unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`.
 
+Some of what Chat relies on is in Claude Code's files, not on its screen, and two scripts check
+those too:
+
+- `queued`: a message sent while a turn runs, as Chat's Send does it then (a picture from the
+  clipboard with Alt+V, the text pasted after its marker, Enter). The input holds it, then reads
+  empty again while the turn goes on; the transcript records it as a `queued_command`
+  (`commandMode: "prompt"`, `origin.kind: "human"`) with the picture under `attachment.prompt`,
+  read as a prompt during the turn that starts none and whose picture loads; the records carry
+  `thinkingDisplay: "updates"`; and the rewind list after the turn shows the message (Chat offers
+  Rewind to it). Thinking shown as updates cannot be asked for from a script (Claude Code chooses
+  it; `--thinking-display` takes only `summarized`, `omitted` and `highlights`), and Haiku leaves
+  that thinking's text empty: the check sees the mode, not text shown as an answer.
+- `branch`: two turns, then a branch cut after the first answer (`branch`) that resumes in print
+  mode under its new id and remembers that answer only; and `claude --help` still lists
+  `--resume` and `--fork-session` (Open a copy and Branch use them).
+
 ### On this desktop
 
     pwsh tools\cli-compat.ps1 -ConfigDir $env:USERPROFILE\.claude-accounts\<name>\cli
@@ -124,7 +143,9 @@ does not match (Up, Down, PgUp, PgDn scroll; Enter or Esc go back), `r` records 
 again, `q` or Ctrl+C stops. The screen also ends when the worker stopped unexpectedly (a panic),
 and gives the terminal back. However it ends, the scratch folder (`%TEMP%\cs-compat`) is removed,
 and from the account's folder the scratch transcripts (`projects\…-cs-compat-work`, only that
-folder) and the files named after those sessions (`plans`, `session-env`, `file-history`). What
+folder) and the files named after those sessions (`plans`, `session-env`, `file-history`). `queued` puts a
+small picture on the clipboard and puts its text back at the end (a picture or files on it
+before are lost). What
 stays in the account is Claude Code's own bookkeeping: the scratch folder's entry in `.claude.json`,
 its lines in the prompt history, and a small file in `shell-snapshots` per session that used Bash
 (they carry no session name, so they cannot be told from those of other sessions).
@@ -168,11 +189,12 @@ from what cargo and the check's test program see, so no build script or proc mac
 
 ### What a run costs
 
-The scripts make about 22 model requests (10 of the 12 scripts talk to the model; a failed script
+The scripts make about 26 model requests (12 of the 14 scripts talk to the model; a failed script
 is recorded once more before it counts). A full run with Haiku 5.5 on Claude Code 2.1.332 takes
-three to five minutes and comes to about $0.11 at API prices (measured: 24 requests, two scripts
-recorded twice): nearly all of it is Claude Code's own system prompt, sent with each request. On a
-subscription account it counts against the plan's usage instead. The estimate on the screen is what the transcripts hold, so requests Claude
+three to five minutes and comes to about $0.12 at API prices (measured: 26 requests in 3:33, no
+script recorded twice; `queued` and `branch` are about $0.02 of it): nearly all of it is Claude
+Code's own system prompt, sent with each request. On a subscription account it counts against the
+plan's usage instead. The estimate on the screen is what the transcripts hold, so requests Claude
 Code makes on the side (titles, auto mode's checks) are not in it.
 
 ### Reading a failure
@@ -220,6 +242,15 @@ runs of blanks count as one and `\n` is a line break.
 | `tell`, `keep` | The declining row of a permission prompt and of the plan approval |
 | `notes`, `rows`, `answers` | A question's descriptions, a panel's rows, a review's `question = answer` pairs |
 | `answer`, `lines`, `wrapped` | This text reads back exactly on the highlighted row; the input shows this text of several lines; this long line |
+
+A section can also name a file the script wrote instead of a snapshot (the check looks for
+`<state>.ansi`, then these):
+
+| File | Keys |
+| --- | --- |
+| `<state>.jsonl` (`tscopy`), read by the app's transcript reader | `prompts` (each prompt joined with ` \| `, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`), `pictures` (`yes` when every picture of such a message loads, `none` for none), `turn` (the prompt that started the newest turn), `answers`, `thinking` (the `thinkingDisplay` values of records with thinking) |
+| `<state>.json` and `.id` (`branch`) | `resumed` (`yes`: answered under the copy's id), `words` (which of alpha, bravo, charlie the answer names) |
+| `<state>.help.txt` (`help`) | `flags` (the value itself when `claude --help` lists every flag of it) |
 
 To write or renew expectations, look at what the readers make of a run's recordings, printed in
 this form:

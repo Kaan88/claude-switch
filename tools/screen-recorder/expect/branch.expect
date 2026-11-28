@@ -1,0 +1,14 @@
+# What Chat reads from scripts/branch.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+[idle]
+kind = idle
+send = yes
+
+# Open a copy uses --resume with --fork-session; Branch uses --resume.
+[cli]
+flags = --resume --fork-session
+
+# The copy cut after "alpha" resumes under its own id and remembers alpha only.
+[branched]
+resumed = yes
+words = alpha

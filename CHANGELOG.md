@@ -5,6 +5,10 @@
 - Chat: a message with a picture that Claude Code put back on its input after an early Stop is
   recognised (and Press Enter's check finds it): Claude Code shows the text right after the
   picture's marker, without the space Chat looked for.
+- Tools: the Claude Code compatibility check (`tools/cli-compat.ps1`) also checks what Chat now
+  relies on in Claude Code's files: a message sent while a turn runs (with a picture) and how the
+  transcript and the rewind list show it, thinking shown as updates, and that a branch's cut copy
+  resumes under its new id.
 - Chat: the round "jump to latest" button no longer covers the last line of text while you are
   scrolled back; the text ends above it.
 - Chat: buttons under your messages and under Claude's answer to each turn, shown while you point

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::record::{Abort, Launch, Recorder};
+use crate::record::{Abort, Helper, Launch, Recorder};
 
 const USAGE: &str = "\
 recorder compat [options]     (see README.md)
@@ -607,6 +607,10 @@ fn run_script(setup: &Setup, run: &Run, i: usize) {
     recorder.strict = true;
     recorder.stop = Some(run.stop.clone());
     recorder.live = Some(run.live.clone());
+    recorder.project = Some(setup.project.clone());
+    // The app's own code for a branch: its test program, which never sees the key.
+    let remove = std::iter::once("ANTHROPIC_API_KEY".to_owned()).chain(setup.options.api_key_env.clone()).collect();
+    recorder.helper = lock(&run.shared).check.clone().map(|program| Helper { program, remove });
     let note = match recorder.run(&script.body) {
         Ok(()) => String::new(),
         Err(Abort::Stopped) => return finish(Status::Skipped("stopped".to_owned()), Vec::new(), String::new()),

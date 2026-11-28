@@ -1,0 +1,36 @@
+# A message sent while a turn runs, as Chat's Send does it then: a picture from the clipboard
+# (Alt+V), the text pasted after its marker, then Enter. Before Enter the input holds it; after it the input
+# reads empty again while the turn goes on (Chat's box is free for the next one). The transcript
+# copy shows how Claude Code recorded it (a queued_command with the picture in its prompt), and
+# the rewind list after the turn shows whether that list offers it. Two or three model requests.
+#: args --permission-mode default --settings {scripts}/allow-ping.json
+#: seconds 60
+start
+send Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1
+sleep 800
+send \r
+wait ctrl+b to run in background 60000
+sleep 1500
+snap running
+clipimage dot.png
+send \ev
+wait [Image #1] 20000
+sleep 500
+send \e[200~Also reply with the word delta.\e[201~
+sleep 1500
+snap typed
+send \r
+sleep 1500
+snap sent
+gone esc to interrupt 90000
+quiet 1500 30000
+snap after
+tscopy transcript
+send \e
+sleep 150
+send \e
+wait Enter to continue 10000
+sleep 1000
+snap rewind
+send \e
+sleep 1500
