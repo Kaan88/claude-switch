@@ -513,12 +513,12 @@ impl View {
                 let mut texts = Vec::new();
                 let mut pictures = Vec::new();
                 let mut results = Vec::new();
-                if let Some(text) = content.as_str().and_then(prompt_text) {
+                if let Some(text) = content.as_str().and_then(prompt_value) {
                     texts.push(text);
                 }
                 for (i, block) in blocks(content).enumerate() {
                     match block["type"].as_str() {
-                        Some("text") => texts.extend(block["text"].as_str().and_then(prompt_text)),
+                        Some("text") => texts.extend(block["text"].as_str().and_then(prompt_value)),
                         Some("image") => pictures.extend(picture(i, None, block)),
                         Some("tool_result") => {
                             if let Some(tool) = block["tool_use_id"].as_str() {
@@ -665,10 +665,10 @@ impl View {
                     // hands it to Claude inside the running turn, so it starts no turn of its own.
                     let mut texts = Vec::new();
                     let mut pictures = Vec::new();
-                    texts.extend(prompt.as_str().and_then(prompt_text));
+                    texts.extend(prompt.as_str().and_then(prompt_value));
                     for (i, block) in blocks(prompt).enumerate() {
                         match block["type"].as_str() {
-                            Some("text") => texts.extend(block["text"].as_str().and_then(prompt_text)),
+                            Some("text") => texts.extend(block["text"].as_str().and_then(prompt_value)),
                             Some("image") => pictures.extend(picture(i, None, block)),
                             _ => (),
                         }
@@ -904,6 +904,41 @@ fn queued_prompt(attachment: &Value) -> Option<&Value> {
         && attachment["commandMode"] == "prompt"
         && attachment["origin"]["kind"] == "human")
         .then(|| &attachment["prompt"])
+}
+
+/// A prompt's text as Claude Code showed it: a long paste is recorded wrapped as
+/// `<pasted_content id="N">\n…\n</pasted_content id="N">` (2.1.332, `recorder compat`'s
+/// `queued-text`); the tags go, the text stays. `None` for what is no prompt (see `prompt_text`).
+fn prompt_value(text: &str) -> Option<std::borrow::Cow<'_, str>> {
+    use std::borrow::Cow;
+    match unwrap_pastes(text) {
+        Cow::Borrowed(text) => prompt_text(text).map(Cow::Borrowed),
+        Cow::Owned(text) => prompt_text(&text).is_some().then_some(Cow::Owned(text)),
+    }
+}
+
+/// The text with every `<pasted_content …>` tag pair taken out around what it holds.
+fn unwrap_pastes(text: &str) -> std::borrow::Cow<'_, str> {
+    const OPEN: &str = "<pasted_content";
+    const CLOSE: &str = "</pasted_content";
+    if !text.contains(OPEN) {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at..];
+        let Some(open_end) = after.find('>') else { break };
+        let inner = &after[open_end + 1..];
+        let Some(close) = inner.find(CLOSE) else { break };
+        let Some(close_end) = inner[close..].find('>') else { break };
+        out.push_str(&rest[..at]);
+        let body = inner[..close].strip_prefix('\n').unwrap_or(&inner[..close]);
+        out.push_str(body.strip_suffix('\n').unwrap_or(body));
+        rest = &inner[close + close_end + 1..];
+    }
+    out.push_str(rest);
+    out.into()
 }
 
 /// Claude Code's record of an Esc: `[Request interrupted by user]`, `… for tool use]`.

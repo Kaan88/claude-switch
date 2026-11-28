@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Chat: a long message (pasted or typed) is shown as its text; Claude Code records it inside
+  `<pasted_content>` tags, and Chat used to leave it out.
+- Chat: a message into a running turn is no longer stopped when the turn records a tool call
+  while Chat waits to see it on the input, and a long one-line message (which Claude Code shows
+  as "[Pasted text #1]") goes too instead of waiting five seconds and staying on the input. Send
+  now into an idle input (the turn ended while the message waited) is an ordinary send.
 - Chat: "Rewind to here…" in the right-click menu is not offered over a subagent's transcript, and
   is refused there with a word; it would have rewound to a prompt of the agent's.
 - Chat and the Session view: Claude Code's "[Request interrupted by user]" after an Esc is shown

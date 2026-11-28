@@ -27,6 +27,8 @@
 //!   row saying what Esc will do (`-` for none) and `esc-does` the footer's words for it.
 //! - `answer`: this text reads back exactly on the highlighted row ("Type something");
 //!   `lines` and `wrapped`: the input shows this text of several lines, or this long line.
+//! - `sent`: the input shows this message as Chat's echo check before Enter takes it into a
+//!   running turn (as typed, wrapped, or as Claude Code's paste marker).
 //! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
 //!   or none is (a resumed branch shows the turns before its cut and none after).
 //!
@@ -182,6 +184,10 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
             }
         }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
+        "sent" => {
+            let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
+            shown(typed || screen::shows_lines(s, want), "the input's rows do not read it")
+        }
         _ => format!("unknown key {key}"),
     }
 }

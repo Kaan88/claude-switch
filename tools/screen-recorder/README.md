@@ -114,9 +114,11 @@ those too:
   Rewind to it). Thinking shown as updates cannot be asked for from a script (Claude Code chooses
   it; `--thinking-display` takes only `summarized`, `omitted` and `highlights`), and Haiku leaves
   that thinking's text empty: the check sees the mode, not text shown as an answer.
-- `queued-text`: two messages sent during a turn as Chat sends them, a one-line text and two lines,
-  each entered once the input shows it. Between them the input reads empty again while the turn
-  goes on, and the transcript records both as messages during the turn, which starts no other.
+- `queued-text`: three messages sent during a turn as Chat sends them, a one-line text, two lines
+  and a long line, each entered once the input shows it (the long one as `[Pasted text #1]`).
+  Between them the input reads empty again while the turn goes on, and the transcript records all
+  as messages during the turn, which starts no other (the long one inside `<pasted_content>` tags,
+  which the reader takes out).
 - `queued-esc`: two messages waiting in Claude Code's queue, then Esc (Chat's Stop). Claude Code
   does not put them back on its input: it sends them as the next turn (ordinary prompts), and the
   input reads empty, so Chat's take-back has nothing to do. Its
@@ -253,6 +255,7 @@ runs of blanks count as one and `\n` is a line break.
 | `tell`, `keep` | The declining row of a permission prompt and of the plan approval |
 | `notes`, `rows`, `answers` | A question's descriptions, a panel's rows, a review's `question = answer` pairs |
 | `answer`, `lines`, `wrapped` | This text reads back exactly on the highlighted row; the input shows this text of several lines; this long line |
+| `sent` | The input shows this message as Chat's echo check before Enter takes it (as typed, wrapped, or as the paste marker) |
 | `shows`, `hides` | Every text of the value (` \| ` between them) is somewhere on the screen, or none is |
 
 A section can also name a file the script wrote instead of a snapshot (the check looks for

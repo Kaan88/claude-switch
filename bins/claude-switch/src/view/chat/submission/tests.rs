@@ -192,6 +192,10 @@ fn several_lines_show_as_typed_or_as_the_paste_marker() {
     assert!(screen::shows_lines(&marker, "a\nb"));
     let mut picture = Screen::new(60, 10, 0);
     picture.feed("❯ [Image #1] [Pasted text #1 +4 lines]".as_bytes());
+    // A long single line (2.1.332): no line count.
+    let mut single = Screen::new(60, 6, 0);
+    single.feed("❯ [Pasted text #1]".as_bytes());
+    assert!(screen::shows_lines(&single, "a long line that Claude Code collapsed"));
     assert!(screen::shows_lines(&picture, "[Image #1] a\nb"));
     let mut other = Screen::new(60, 10, 0);
     other.feed("❯ [Pasted text #x +4 lines]".as_bytes());

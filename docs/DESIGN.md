@@ -425,7 +425,7 @@ hidden rather than shown wrongly:
 | Shown as | Record |
 | --- | --- |
 | Thought | an assistant `thinking` block `{thinking, signature}` with text; about half have none (omitted thinking) and are not shown; thoughts sit inside a tool group without counting as calls. With `"thinkingDisplay":"updates"` on the record, the terminal shows the block's text as an answer line ("· …"), so Chat shows it as answer text |
-| Prompt | also an `attachment` `queued_command` with `commandMode: "prompt"` and `origin.kind: "human"`: a message typed while a turn ran, which Claude Code records only there (its `prompt` a string, or text and image blocks). It starts no turn and splits no turn's changed files; Claude Code's rewind list shows it where the transcript has it, so Rewind offers it as any prompt (recorded from 2.1.332 by `recorder compat`, script `queued`); the same record from a task notification or another session is not shown |
+| Prompt | a long paste is recorded inside `<pasted_content id="N">` tags, which are taken out (2.1.332); also an `attachment` `queued_command` with `commandMode: "prompt"` and `origin.kind: "human"`: a message typed while a turn ran, which Claude Code records only there (its `prompt` a string, or text and image blocks). It starts no turn and splits no turn's changed files; Claude Code's rewind list shows it where the transcript has it, so Rewind offers it as any prompt (recorded from 2.1.332 by `recorder compat`, script `queued`); the same record from a task notification or another session is not shown |
 | Hook error | `system` `stop_hook_summary` with `hookErrors` (strings); an `attachment` `hook_non_blocking_error` (`hookName`, `stderr`) except for Stop hooks, whose summary already lists it |
 | Hook | an `attachment` `hook_system_message` (`hookName`, `content`), the hook's `systemMessage` |
 | Stop hook feedback | Claude Code's own user record starting "Stop hook feedback:"; a summary with `preventedContinuation` |
@@ -1205,8 +1205,12 @@ While a turn runs and the CLI's input reads visibly empty, Send types the messag
 **Send now** does (below), and Claude Code hands it to the running turn as when typed in the
 terminal; the box is free for the next message once it went. Into a running turn Enter goes only
 once the input row shows the message (as for several lines), so a permission prompt or menu drawn
-between the paste and Enter never gets it; such a send leaves the turn as the transcript shows it
-(Claude Code records the message in that turn, never as a new prompt), so Stop stays available.
+between the paste and Enter never gets it; the input may show the text or Claude Code's paste
+marker (`[Pasted text #1]` for a long single line), and a call the turn records meanwhile does not
+stop it. Such a send leaves the turn as the transcript shows it (Claude Code records the message in
+that turn, never as a new prompt), so Stop stays available. Whether a send goes into a running turn
+is read from the gate when its first key is written, not from the button: Send now into an idle
+input (no turn, or one that ended while the draft waited) is an ordinary send.
 While messages wait in Claude Code's queue its input reads empty ("Press up to edit queued
 messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332). A draft that only has to wait is held, not
 refused: a running turn whose input does not read empty, a prompt the CLI is still

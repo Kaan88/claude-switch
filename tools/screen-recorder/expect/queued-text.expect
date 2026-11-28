@@ -20,11 +20,23 @@ kind = working
 input =
 working = yes
 
+# A long line shows as Claude Code's paste marker ("[Pasted text #1]"); Chat's echo check
+# takes it.
+[long_typed]
+kind = working
+sent = Finally reply with the word golf. These words are here only to make the message long: one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, one two three four five six seven eight nine ten, the end.
+
+[long_sent]
+kind = working
+input =
+working = yes
+
 [after]
 kind = idle
 send = yes
 
-# Both are recorded as messages during the turn, which starts no other.
+# All are recorded as messages during the turn, which starts no other. The long one is
+# recorded inside <pasted_content> tags, which the reader takes out.
 [transcript]
-prompts = Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1 | Also reply with the word echo. (during a turn) | Then reply with the word foxtrot. On one line. (during a turn)
-turn = Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1
+prompts = Run exactly this with the Bash tool and nothing else: ping -n 26 127.0.0.1 | Also reply with the word echo. (during a turn) | Then reply with the word foxtrot. On one line. (during a turn) | Finally reply with the word golf. * the end. (during a turn)
+turn = Run exactly this with the Bash tool and nothing else: ping -n 26 127.0.0.1

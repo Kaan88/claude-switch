@@ -657,3 +657,35 @@ fn claude_codes_record_of_an_esc_is_a_notice_and_no_prompt_of_the_users() {
     // No new turn: the newest prompt is still the one typed.
     assert_eq!(reader.chat().prompt, Some(0));
 }
+
+#[test]
+fn a_long_paste_is_shown_as_its_text_without_claude_codes_tags() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let wrapped = "<pasted_content id=\"3589\">\nFinally reply with golf.\n</pasted_content id=\"3589\">";
+    let lines = [
+        prompt(&format!("look: {wrapped} please")),
+        record(json!({"type":"attachment","attachment":{"type":"queued_command","prompt":wrapped,
+            "commandMode":"prompt","origin":{"kind":"human"}}})),
+        prompt("<command-name>/clear</command-name>"),
+    ];
+    fs::write(&path, lines.concat()).unwrap();
+    let reader = Reader::open(&path, 4096).unwrap();
+    let texts: Vec<_> = reader
+        .items()
+        .filter_map(|(_, item)| match &item.kind {
+            ItemKind::Prompt { text, queued, .. } => Some((text.clone(), *queued)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            ("look: Finally reply with golf. please".to_owned(), false),
+            ("Finally reply with golf.".to_owned(), true),
+            ("/clear".to_owned(), false),
+        ]
+    );
+    // A tag without its end stays as it is.
+    assert_eq!(super::unwrap_pastes("a <pasted_content id=\"1\">b"), "a <pasted_content id=\"1\">b");
+}

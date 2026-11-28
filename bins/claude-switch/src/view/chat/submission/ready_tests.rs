@@ -320,6 +320,71 @@ fn a_plain_send_during_a_turn_writes_nothing_while_something_else_is_up() {
 }
 
 #[test]
+fn a_call_the_turn_records_during_the_echo_wait_does_not_stop_the_message() {
+    let mut f = Live::new();
+    f.turn();
+    f.show(WORKING_TOOL);
+    f.pass(SECOND);
+    f.send(TYPED_WHILE_BUSY);
+    assert_eq!(f.writes(), paste(TYPED_WHILE_BUSY));
+    // The running turn records a call meanwhile: still its turn, and the message still goes.
+    f.tab().pane.as_mut().unwrap().model.chat.pending = Some(990);
+    f.show(PLAIN_WORKING_TYPED);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    assert!(f.chat().error.is_none() && f.chat().staging.recovery.is_none());
+    // It went into the turn: the turn stays the transcript's (Stop is still offered).
+    assert!(f.chat().fresh);
+}
+
+#[test]
+fn a_long_line_into_a_running_turn_is_entered_once_claude_code_shows_its_paste_marker() {
+    use crate::view::chat::question::screens::recorded::PLAIN_PASTED_MARKER;
+    let mut f = Live::new();
+    f.turn();
+    f.show(WORKING_TOOL);
+    f.pass(SECOND);
+    let long = "word ".repeat(300).trim_end().to_owned();
+    f.send(&long);
+    assert_eq!(f.writes(), paste(&long));
+    // Claude Code shows a long paste as its marker, not as the text.
+    f.show(PLAIN_PASTED_MARKER);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    assert!(f.chat().error.is_none());
+}
+
+#[test]
+fn send_now_released_after_the_turn_ended_is_an_ordinary_send() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send(RESTORED);
+    assert_eq!(f.writes(), message(RESTORED));
+    f.turn();
+    // Held behind the turn (the input holds text), then Send now.
+    f.show(PLAIN_WORKING_TYPED);
+    f.pass(SECOND);
+    f.send(TYPED_WHILE_BUSY);
+    let now = f.now;
+    AppState::chat_send(f.tab(), now, true);
+    assert!(f.chat().queue.as_ref().is_some_and(Queue::sends_now));
+    // The turn ends before the input reads empty: the draft goes into an idle input, which is no
+    // running turn. Enter at once, as any send, and it starts a turn of its own: the one before
+    // is done with (nothing of it to take back) and the old completion is not taken for its.
+    let pane = f.tab().pane.as_mut().unwrap();
+    let at = pane.model.chat.latest.unwrap().0 + 10;
+    pane.model.chat.latest = Some((at, ChatPhase::EndTurn));
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.pass(SECOND);
+    assert_eq!(f.writes(), message(TYPED_WHILE_BUSY));
+    let chat = f.chat();
+    assert_eq!(chat.staging.sent.len(), 1);
+    assert!(!chat.fresh, "the old end_turn is not read as this message's");
+}
+
+#[test]
 fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
     let mut f = Live::new();
     f.turn();
