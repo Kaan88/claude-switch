@@ -21,7 +21,8 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
         && st.focus == Focus::Search
         && st.dialog.is_none()
         && st.palette.is_none()
-        && !st.terminal_shown();
+        && !st.terminal_shown()
+        && !st.tabs.workers_shown();
     let caret_on = st.search.blink_caret(cx.anim(), "search", st.blink, search_focus);
     if search_focus && st.blink.is_some() && cx.anim().animates() {
         cx.animating(Bar::layout(w).search);
@@ -48,6 +49,10 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
             st.draw_terminal(cx, p, term_area);
             st.draw_session_view(cx, p, area, &pal);
         }
+    } else if st.tabs.workers_shown() {
+        crate::workers_tab::draw(st, p, area);
+        let at = *st.feed_poll.get_or_insert(cx.now() + crate::workers_tab::POLL);
+        cx.wake_at(at);
     } else {
         let rects = st.splitter.rects(area, Axis::Horizontal);
         list::draw(st, cx, p, rects.0);

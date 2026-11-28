@@ -25,6 +25,7 @@ pub struct Options {
     pub demo_search: Option<String>,
     pub demo_offscreen: bool,
     pub demo_workers: bool,
+    pub demo_jobs: bool,
     pub shell: Option<String>,
     pub typed: Vec<String>,
     pub list_tab: bool,
@@ -76,6 +77,7 @@ Hidden, for testing (meant to be combined with --demo):
   --demo-compact-preview     Open the handover dialog's preview
   --demo-compact-long        The preview with a long transcript
   --demo-workers             Open Settings -> OpenCode
+  --demo-jobs                Show the Workers tab with made-up bridge jobs
   --demo-offscreen           Start with the window placed off screen
   --shell PROGRAM            Open a terminal tab running PROGRAM (debug builds only)
   --type TEXT                Type TEXT into that tab, one per two seconds (debug builds only)
@@ -125,6 +127,7 @@ pub fn parse(args: impl IntoIterator<Item = String>, debug_build: bool) -> Resul
                 o.demo_compact_long = true;
             }
             "--demo-workers" => o.demo_workers = true,
+            "--demo-jobs" => o.demo_jobs = true,
             "--demo-offscreen" => o.demo_offscreen = true,
             // Takes every remaining argument and checks their number itself.
             "--compact-open-window" => {

@@ -1,7 +1,8 @@
-//! The tab strip under the top bar: the fixed "Sessions" tab, then one tab a terminal. The model
-//! ([`Tabs`]: open, close, switch, which tab holds a session, titles) and the strip's drawing,
-//! with the toolkit's `chrome::draw_tab` moved down under the title row. The strip is hidden
-//! while there is no terminal tab.
+//! The tab strip under the top bar: the fixed "Sessions" tab, the fixed "Workers" tab while the
+//! OpenCode bridge's state folder exists, then one tab a terminal. The model ([`Tabs`]: open,
+//! close, switch, which tab holds a session, titles) and the strip's drawing, with the toolkit's
+//! `chrome::draw_tab` moved down under the title row. The strip is hidden while there is neither
+//! a terminal tab nor the Workers tab.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -19,6 +20,8 @@ use crate::term::Term;
 pub const STRIP_H: f32 = TITLE_H;
 /// The Sessions tab's id in [`Target::Tab`]; terminal tabs count from 1.
 pub const SESSIONS: u64 = 0;
+/// The Workers tab's id in [`Target::Tab`]: the bridge's jobs (`workers_tab`).
+pub const WORKERS: u64 = u64::MAX;
 const LEFT: f32 = 12.0;
 const ENDED_SUFFIX: &str = " (ended)";
 const HANDED_OVER: &str = " · handed over";
@@ -98,8 +101,12 @@ pub struct NewTab {
 #[derive(Default)]
 pub struct Tabs {
     pub list: Vec<Tab>,
-    /// The tab shown: `None` is the Sessions tab.
+    /// The terminal tab shown: `None` is the Sessions tab, or the Workers tab with `workers`.
     pub active: Option<u64>,
+    /// The Workers tab is shown (while `active` is `None`).
+    pub workers: bool,
+    /// The Workers tab is in the strip: the bridge's state folder exists.
+    pub workers_tab: bool,
     next: u64,
     pub drag: Option<crate::tabcontrols::Drag>,
 }
@@ -107,6 +114,38 @@ pub struct Tabs {
 impl Tabs {
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
+    }
+
+    /// The strip shows: there is a terminal tab or the Workers tab.
+    pub fn strip_shown(&self) -> bool {
+        !self.list.is_empty() || self.workers_tab
+    }
+
+    /// The Workers tab is the one shown.
+    pub fn workers_shown(&self) -> bool {
+        self.active.is_none() && self.workers
+    }
+
+    /// Puts the Workers tab in the strip or takes it out (showing Sessions if it was shown).
+    pub fn set_workers_tab(&mut self, there: bool) {
+        self.workers_tab = there;
+        if !there {
+            self.workers = false;
+        }
+    }
+
+    /// The fixed tabs in strip order.
+    fn fixed(&self) -> Vec<u64> {
+        if self.workers_tab { vec![SESSIONS, WORKERS] } else { vec![SESSIONS] }
+    }
+
+    /// The id of the tab shown, fixed tabs included.
+    pub fn shown_id(&self) -> u64 {
+        match self.active {
+            Some(id) => id,
+            None if self.workers => WORKERS,
+            None => SESSIONS,
+        }
     }
 
     /// Opens a tab and shows it. Its id.
@@ -134,6 +173,7 @@ impl Tabs {
             attention: Default::default(),
         });
         self.active = Some(id);
+        self.workers = false;
         id
     }
 
@@ -166,34 +206,43 @@ impl Tabs {
         let tab = self.list.remove(i);
         if self.active == Some(id) {
             self.active = if i == 0 { None } else { Some(self.list[i - 1].id) };
+            if i == 0 {
+                self.workers = self.workers_tab;
+            }
         }
         Some(tab)
     }
 
-    /// Shows a tab ([`SESSIONS`] for the Sessions tab). False for an id that is not there.
+    /// Shows a tab ([`SESSIONS`] or [`WORKERS`] for the fixed ones). False for an id that is
+    /// not there.
     pub fn activate(&mut self, id: u64) -> bool {
-        if id == SESSIONS {
+        if id == SESSIONS || (id == WORKERS && self.workers_tab) {
             self.active = None;
+            self.workers = id == WORKERS;
             return true;
         }
         let there = self.index(id).is_some();
         if there {
             self.active = Some(id);
+            self.workers = false;
         }
         there
     }
 
     /// Shows the next tab to the right (`forward`) or to the left, round past the ends; the
-    /// Sessions tab is one of them.
+    /// fixed tabs are among them.
     pub fn step(&mut self, forward: bool) {
-        let n = self.list.len() + 1;
-        let at = self.active.and_then(|id| self.index(id)).map_or(0, |i| i + 1);
+        let order: Vec<u64> = self.fixed().into_iter().chain(self.list.iter().map(|t| t.id)).collect();
+        let n = order.len();
+        let at = order.iter().position(|&id| id == self.shown_id()).unwrap_or(0);
         let to = if forward { (at + 1) % n } else { (at + n - 1) % n };
-        self.active = if to == 0 { None } else { Some(self.list[to - 1].id) };
+        self.activate(order[to]);
     }
 
     pub fn numbered(&self, number: usize) -> Option<u64> {
-        if number == 1 { Some(SESSIONS) } else { self.list.get(number.checked_sub(2)?).map(|tab| tab.id) }
+        let fixed = self.fixed();
+        let i = number.checked_sub(1)?;
+        fixed.get(i).copied().or_else(|| self.list.get(i - fixed.len()).map(|tab| tab.id))
     }
 
     pub fn by_session(&self, session: &str, eligible: impl Fn(&Tab) -> bool) -> Option<&Tab> {
@@ -232,6 +281,11 @@ pub struct Look {
     pub chat: Option<bool>,
 }
 
+/// The Sessions and Workers tabs: always in their place, never closed.
+pub fn fixed(id: u64) -> bool {
+    id == SESSIONS || id == WORKERS
+}
+
 /// Elide the launch label, not its ended marker, when the tab's text area is narrow.
 fn fit_ended_title(title: &str, width: f32, mut measure: impl FnMut(&str) -> f32) -> Cow<'_, str> {
     if measure(title) <= width {
@@ -265,6 +319,9 @@ pub fn draw(
     p.fill(strip, pal.title);
     p.fill(Rect::new(0.0, strip.bottom() - p.px(), w, p.px()), pal.line);
     let mut labels: Vec<_> = vec![(SESSIONS, Cow::Borrowed("Sessions"), None, false)];
+    if tabs.workers_tab {
+        labels.push((WORKERS, Cow::Borrowed("Workers"), None, false));
+    }
     labels.extend(tabs.list.iter().map(|t| {
         let ended = t.term.ended.is_some();
         let title = match t.rename.as_deref().or_else(|| t.session.as_deref().and_then(|id| marks.name(id))) {
@@ -280,7 +337,7 @@ pub fn draw(
     let chat_reserve = if look.chat.is_some() { crate::view::chat::STRIP_RESERVE } else { 0.0 };
     let avail = (w - 2.0 * LEFT - chat_reserve - if look.session_view.is_some() { 112.0 } else { 0.0 }).max(0.0);
     let widths = chrome::tab_widths(&natural, avail);
-    let active = tabs.active.unwrap_or(SESSIONS);
+    let active = tabs.shown_id();
     let hovered = |id: u64| matches!(look.hover, Some(Target::Tab(t) | Target::TabClose(t)) if t == id);
     let origin = p.offset(0.0, top);
     let clip = p.clip(Rect::new(0.0, 0.0, w, STRIP_H));
@@ -294,13 +351,13 @@ pub fn draw(
             dragging: tabs.drag.is_some_and(|drag| drag.id == *id && drag.started),
             missing: false,
             next_quiet: next_quiet && *id != active && !hovered(*id),
-            close_hovered: *id != SESSIONS && look.hover == Some(Target::TabClose(*id)),
-            close_pressed: *id != SESSIONS && look.pressed == Some(Target::TabClose(*id)),
+            close_hovered: !fixed(*id) && look.hover == Some(Target::TabClose(*id)),
+            close_pressed: !fixed(*id) && look.pressed == Some(Target::TabClose(*id)),
             pinned: false,
         };
         let active_pal = look
             .terminal
-            .filter(|_| s.active && *id != SESSIONS)
+            .filter(|_| s.active && !fixed(*id))
             .map(|colors| crate::termtheme::active_tab_palette(pal, colors));
         let pal = active_pal.as_ref().unwrap_or(pal);
         let fitted;
@@ -323,6 +380,9 @@ pub fn draw(
             let (gx, gy) = (x + 19.0, 23.0);
             p.fill(Rect::new(gx - 8.0, gy - 8.0, 16.0, 16.0), under);
             match color {
+                None if *id == WORKERS => {
+                    p.icon(crate::opencode_tab::GLYPH, 13.0, gx, gy, if s.active { pal.accent } else { pal.muted });
+                }
                 None => p.icon(glyph::OUTLINE, 13.0, gx, gy, if s.active { pal.accent } else { pal.muted }),
                 Some(_) if tabs.get(*id).is_some_and(|t| t.opencode.is_some()) => {
                     p.icon(crate::opencode_tab::GLYPH, 13.0, gx, gy, if s.active { pal.accent } else { pal.muted });
@@ -343,8 +403,8 @@ pub fn draw(
         let tab = Rect::new(drawn.tab.x, drawn.tab.y + top, drawn.tab.w, drawn.tab.h);
         hits.push((tab, Target::Tab(*id)));
         match drawn.close {
-            // The Sessions tab cannot be closed: its close button is covered again.
-            Some(c) if *id == SESSIONS => p.fill(c, under),
+            // The fixed tabs cannot be closed: their close button is covered again.
+            Some(c) if fixed(*id) => p.fill(c, under),
             Some(c) => hits.push((Rect::new(c.x, c.y + top, c.w, c.h), Target::TabClose(*id))),
             None => {}
         }

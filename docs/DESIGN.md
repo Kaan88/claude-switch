@@ -256,6 +256,46 @@ which account they use; it is written to `%USERPROFILE%\.config\opencode-bridge\
 top-level keys `claudeAccounts` (the CLI folders) and `claudeWorkersUse` (`"same"`, `"other"`, or one of
 the folders). The bridge reads them.
 
+### The Workers tab
+
+The bridge's server instances share a state folder, `%TEMP%\opencode-agent` (Node's `os.tmpdir()`:
+`TEMP`, then `TMP`). While that folder exists a fixed **Workers** tab sits beside Sessions (the
+strip then shows even without a terminal tab); it is checked at start and with the five-second
+running-session poll, and the tab goes (Sessions shows) when the folder does. `crates/core`'s
+`bridge` module reads it; the window never writes, renames or deletes a file there.
+
+- **The jobs.** Each job is `<id>.json` (`job_<base36>_<n>[-label]`, the bridge's own name check),
+  which the bridge replaces whole, and `<id>.jsonl`, the worker's raw events, which only grow. A
+  state file is read whole up to 1 MiB and parsed again only when its size or modification time
+  changed (`bridge::Scanner`); its fields are listed in the module. The list shows queued and
+  running jobs first, then the 150 most recently ended, each newest first: the label (else the id),
+  worker and model, folder, running time and last tool (the call in flight while one runs). A job
+  whose file says queued or running but whose `owner` pid has exited, or now belongs to a process
+  created after the job, is **Owner gone** (the bridge's "lost"); its time stops at its last save.
+  The folder and the shown output are read off the window's thread once a second while the tab
+  shows, on the same feed timer as the Sessions details' conversation.
+- **The output** of the selected job is the tail of its `<id>.jsonl` (`bridge::log::Tail`): the
+  first read starts at most 256 KiB before the end, later reads take what was appended, at most
+  1 MiB at a time; a line over 4 MiB is skipped, an entry keeps at most 8 KiB of text and at most
+  2 000 entries are kept. A file that shrank or was replaced is read again from its tail. OpenCode's
+  `run --format json` events (`text`, `reasoning`, `tool_use` with `part.state`, `error`) and Claude
+  Code's `stream-json` messages (`system` init and retries, `assistant` text, thinking and tool
+  calls, failed `tool_result`s, `result`) are shown as answer text, quiet tool lines and warnings.
+  The output follows its end until scrolled back; the details around it scroll when the window is
+  too short for both.
+- **Cancel** (after a confirm whose Enter is Cancel): reads the job's file again, and refuses
+  plainly unless it says running and names a `childPid`. The bridge records no start time for its
+  worker, so the pid is taken for the job's only while Windows knows it as a child of the job's
+  `owner` (Windows keeps a process's parent pid after the parent exits) created between the job's
+  start and its last save (2 s of slack each way); the snapshot is taken while a handle to it is
+  held, so the pid cannot change hands between the check and the end. Then its tree ends, the
+  deepest first, each process checked to be no older than its parent (a stale parent pid is not a
+  child) and held open from that check to its end. A queued job has no process: only the bridge
+  (`opencode_cancel`) can take it out of its queue, and the tab says so. With its owner there, the
+  bridge sees the worker end and marks the job; with the owner gone the file keeps saying running.
+  The demo (`--demo --demo-jobs`) shows made-up jobs from a temporary folder of its own and ends
+  nothing.
+
 ## Terminal tabs
 
 With the setting "Open CLI sessions in a tab of this window" on (the default), a launch that needs a

@@ -67,6 +67,7 @@ mod usage_warnings;
 mod view;
 mod windowlook;
 mod winfile;
+mod workers_tab;
 
 use claude_switch_core::Roots;
 use mdshared_ui::host::{self, Config};
@@ -104,6 +105,7 @@ fn main() {
         demo_search,
         demo_offscreen,
         demo_workers,
+        demo_jobs,
         shell,
         typed,
         list_tab,
@@ -178,6 +180,9 @@ fn main() {
     state.compact.demo_long = demo && demo_compact_long;
     if demo && demo_workers {
         state.opencode_settings(true);
+    }
+    if demo && demo_jobs {
+        state.start_demo_workers();
     }
     state.debug_shell = shell;
     state.notifications.demo = demo && demo_notifications;

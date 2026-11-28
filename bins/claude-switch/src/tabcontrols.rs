@@ -8,7 +8,6 @@ use mdshared_ui::menu::{Item, Menu};
 
 use crate::dialogs::{self, Dialog, NameFor, Pending};
 use crate::state::{AppState, MenuKind, Target};
-use crate::tabs::SESSIONS;
 
 const RENAME: u32 = 0;
 const CLOSE: u32 = 1;
@@ -42,7 +41,7 @@ pub fn number(name: &KeyName, mods: Mods, terminal: bool) -> Option<usize> {
 
 impl AppState {
     pub fn begin_tab_drag(&mut self, id: u64, x: f32, y: f32) {
-        self.tabs.drag = (id != SESSIONS).then_some(Drag { id, from: (x, y), started: false });
+        self.tabs.drag = (!crate::tabs::fixed(id)).then_some(Drag { id, from: (x, y), started: false });
     }
 
     pub fn move_tab_drag(&mut self, x: f32, y: f32) -> bool {
@@ -264,7 +263,7 @@ mod tests {
         assert!(app.move_tab_drag(144.0, 60.0));
         assert_eq!(app.tabs.numbered(2), Some(a));
         assert!(app.move_tab_drag(245.0, 60.0));
-        assert_eq!(app.tabs.numbered(1), Some(SESSIONS));
+        assert_eq!(app.tabs.numbered(1), Some(crate::tabs::SESSIONS));
         assert_eq!(app.tabs.numbered(2), Some(b));
         assert_eq!(app.tabs.numbered(4), Some(a));
         assert_eq!(app.tabs.active, Some(a));

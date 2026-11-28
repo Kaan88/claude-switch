@@ -185,6 +185,7 @@ impl AppState {
             if !self.terminal_shown() {
                 self.rebuild_view();
             }
+            self.poll_workers();
         }
     }
 
@@ -196,6 +197,7 @@ impl AppState {
         if !self.terminal_shown() {
             self.rebuild_view();
         }
+        self.poll_workers();
     }
 
     /// Closes a tab, asking first while its program runs.

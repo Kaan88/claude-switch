@@ -114,6 +114,9 @@ pub enum Target {
     Dialog(u32),
     /// A tab of the strip, by its id ([`crate::tabs::SESSIONS`] for the list), and its close button.
     Tab(u64),
+    /// A job in the Workers tab's list, by its place, and the selected job's Cancel.
+    Worker(usize),
+    WorkerCancel,
     TabClose(u64),
     /// The terminal of the tab shown.
     Terminal,
@@ -213,6 +216,8 @@ pub struct AppState {
     pub details_reader: Option<crate::view::reader::Reader>,
     /// When the shown details conversation and the Workers tab are read again.
     pub feed_poll: Option<Instant>,
+    /// The OpenCode bridge's jobs (the Workers tab).
+    pub workers: crate::workers_tab::WorkersTab,
     pub last_account: Option<(String, String)>,
     pub scan_job: Option<Job<Scan>>,
     pub running_job: Option<Job<crate::source::ActivityScan>>,
@@ -332,6 +337,7 @@ impl AppState {
             splitter,
             details_reader: None,
             feed_poll: None,
+            workers: Default::default(),
             last_account: None,
             scan_job: None,
             running_job: None,

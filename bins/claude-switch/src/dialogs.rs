@@ -68,6 +68,8 @@ pub enum Pending {
     },
     /// Close a terminal tab whose program runs.
     CloseTab(u64),
+    /// End a bridge job's worker process tree (the Workers tab).
+    CancelWorker(String),
     CloseOtherTabs(u64),
     RestoreTab,
     ChatSlash {
@@ -601,6 +603,7 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::Copy { id, account, delete }) => st.copy_now_then(now, &id, &account, delete),
             (OK, Pending::Delete { id }) => st.delete_confirmed(now, &id),
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
+            (OK, Pending::CancelWorker(id)) => st.cancel_worker(&id),
             (OK, Pending::CloseOtherTabs(tab)) => st.close_other_tabs(tab),
             (OK | CANCEL, Pending::RestoreTab) => st.confirm_restore_tab(now, id == OK),
             (OK, Pending::ChatSlash { tab, session, line, from_editor }) => {

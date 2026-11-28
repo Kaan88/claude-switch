@@ -535,6 +535,7 @@ impl AppState {
 
     pub fn picture_overlay(&self) -> bool {
         let details = !self.terminal_shown()
+            && !self.tabs.workers_shown()
             && self.details_reader.as_ref().is_some_and(|r| r.overlay_open() && self.selected.as_ref() == Some(&r.id));
         details
             || self.session_visible(self.session_view.area.w)
@@ -695,6 +696,9 @@ impl AppState {
     }
 
     pub fn session_pointer_cursor(&self, x: f32, y: f32) -> Option<Cursor> {
+        if self.tabs.workers_shown() {
+            return None;
+        }
         if !self.terminal_shown() {
             let reader = self.details_reader.as_ref().filter(|r| self.selected.as_ref() == Some(&r.id))?;
             return reader.pointer_cursor(x, y);

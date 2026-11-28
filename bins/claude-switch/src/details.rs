@@ -172,7 +172,7 @@ fn conversation_height(h: f32) -> f32 {
 impl AppState {
     /// The selected session's conversation, while the Sessions page shows it.
     pub(crate) fn shown_reader(&mut self) -> Option<&mut crate::view::reader::Reader> {
-        if self.terminal_shown() {
+        if self.terminal_shown() || self.tabs.workers_shown() {
             return None;
         }
         let selected = self.selected.as_deref()?;
