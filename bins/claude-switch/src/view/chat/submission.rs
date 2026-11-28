@@ -248,7 +248,12 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
             return Some(CHECK);
         }
     }
+    // The transcript's pending call runs where the screen shows the turn working over an empty
+    // input: Claude Code waits for no answer (a permission question has no input box and is read
+    // above), so the refusal says a turn runs, not that Claude Code may wait in the terminal.
+    let call_running = gate == Gate::Running && chat.call_running(&tab.term, now);
     match intent {
+        Intent::Slash if pane.model.chat.pending.is_some() && call_running => Some(BUSY_CMD),
         Intent::Interrupted if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
         Intent::Interrupted if !idle_slash_prompt(&tab.term.screen, chat.quiet(now)) => Some(CHECK),
         Intent::Draft if gate != Gate::Ready => Some(CHECK),
@@ -259,7 +264,7 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
         Intent::Now if pane.model.chat.pending.is_some() && !chat.call_running(&tab.term, now) => {
             Some(Reason::Tool.label())
         }
-        Intent::Override if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
+        Intent::Override if pane.model.chat.pending.is_some() && !call_running => Some(Reason::Tool.label()),
         Intent::Override if gate == Gate::Running => Some("A turn is running. Use Queue to send after it ends."),
         Intent::Now if !chat.demo && !clean_prompt(&tab.term.screen) => Some(NOT_EMPTY),
         Intent::Slash if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
@@ -1042,5 +1047,7 @@ pub(super) fn stage_deadline(chat: &Chat, now: Instant) -> Option<Instant> {
 mod identity_tests;
 #[cfg(test)]
 pub(in crate::view::chat) mod ready_tests;
+#[cfg(test)]
+mod running_call_tests;
 #[cfg(test)]
 mod tests;

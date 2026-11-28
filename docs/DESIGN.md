@@ -1215,7 +1215,8 @@ A call the turn runs does not hold the message back once the screen shows the CL
 and the call has been pending for 750 ms (a permission prompt is drawn as soon as its call is
 written): Claude Code queues a message typed during a running command as at any other moment of
 the turn (decided 2026-11-28 with queued messages, below). Within that moment the draft is held as
-before.
+before. A command or the override is then refused as during any running turn, not as an answer
+Claude Code may wait for: a permission question has no input box and is read first.
 While messages wait in Claude Code's queue its input reads empty ("Press up to edit queued
 messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332).
 **Queued messages.** A message whose Enter went into a running turn waits in Claude Code's queue

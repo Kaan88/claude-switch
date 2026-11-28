@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Chat: while a command runs, a slash command or "Send anyway" is refused with "a turn is
+  running" instead of "Claude Code may be waiting for your answer in the terminal", which it was
+  not: the screen shows the turn working over an empty input.
 - Chat: messages sent while Claude works wait in Claude Code's queue, and Chat now shows each as a
   quiet bubble at the end of the conversation ("Queued — waiting for its turn"), in the order sent,
   until Claude Code hands it in. **Send now** under them uses Claude Code's own key for its queue
