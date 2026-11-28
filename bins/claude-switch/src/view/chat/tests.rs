@@ -567,6 +567,52 @@ fn compact_and_clear_only_write_after_confirmation() {
 
 mod review;
 
+/// Settings › Chat: the Compact chip runs Switch's handover by default, through the same command
+/// as "Compact and open…" (the handover dialog for the shown tab); with "Claude Code /compact" it
+/// is the CLI's `/compact` with its confirmation, as before.
+#[test]
+fn the_compact_chip_runs_the_handover_or_claude_codes_compact() {
+    use crate::dialogs::{Dialog, Pending};
+    use crate::state::AppState;
+    use crate::view::chat::composer::chips_of;
+    use crate::view::chat::input::chip_slash;
+    let mut app = demo();
+    assert!(app.config.chat.compact_handover);
+    let chips = chips_of(&app.config.chat);
+    assert!(chips.contains(&Control::Handover) && !chips.contains(&Control::Compact), "{chips:?}");
+    assert_eq!(chip_slash(Control::Handover), None, "the handover chip types nothing into the CLI");
+    // The handover's own checks: a session the list has not indexed gets no dialog.
+    app.handover_chip(Instant::now());
+    assert_eq!(app.compact_source(), None);
+    app.dialog = None;
+    app.apply_scan(crate::demo::scan(&app.config));
+    let session = app.sessions[0].id.clone();
+    let tab = app.tabs.shown_mut().unwrap();
+    (tab.session, tab.resume_id) = (Some(session.clone()), Some(session.clone()));
+    let id = tab.id;
+    app.handover_chip(Instant::now());
+    assert_eq!(app.compact_source(), Some((session.as_str(), Some(id))), "the handover dialog for this tab");
+    assert!(app.tabs.shown().unwrap().pane.as_ref().unwrap().chat.writes.is_empty());
+    app.dialog = None;
+
+    app.config.chat.compact_handover = false;
+    let chips = chips_of(&app.config.chat);
+    assert!(chips.contains(&Control::Compact) && !chips.contains(&Control::Handover), "{chips:?}");
+    let line = chip_slash(Control::Compact).unwrap();
+    assert_eq!(line, "/compact");
+    app.dialog = AppState::prepare_slash(app.tabs.shown_mut().unwrap(), Instant::now(), line, false);
+    assert!(
+        matches!(&app.dialog, Some(Dialog::Confirm { then: Pending::ChatSlash { line, .. }, .. }) if line == "/compact")
+    );
+    // A hidden Compact chip stays hidden whichever it runs.
+    app.config.chat.set_slot(4, None);
+    for handover in [false, true] {
+        app.config.chat.compact_handover = handover;
+        let chips = chips_of(&app.config.chat);
+        assert!(!chips.iter().any(|c| matches!(c, Control::Compact | Control::Handover)), "{chips:?}");
+    }
+}
+
 #[test]
 fn cut_removes_the_selection_once_the_clipboard_took_it() {
     let mut app = demo();

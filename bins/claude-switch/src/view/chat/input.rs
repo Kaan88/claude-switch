@@ -35,7 +35,10 @@ pub enum Control {
     Effort,
     Context,
     Mode,
+    /// The Compact chip running Claude Code's `/compact`.
     Compact,
+    /// The Compact chip running Switch's handover, as "Compact and open…" does.
+    Handover,
     Clear,
     Commands,
     /// Own command `n` from Settings › Chat.
@@ -54,6 +57,16 @@ pub enum Control {
     Question(super::question::Hit),
     /// A start under a new session's message box: it fills the box and sends nothing.
     Start(super::welcome::Start),
+}
+
+/// The slash command a chip sends as a direct command (with its checks and confirmation).
+pub(super) fn chip_slash(control: Control) -> Option<&'static str> {
+    match control {
+        Control::Context => Some("/context"),
+        Control::Compact => Some("/compact"),
+        Control::Clear => Some("/clear"),
+        _ => None,
+    }
 }
 
 impl AppState {
@@ -451,6 +464,13 @@ impl AppState {
         true
     }
 
+    /// The Compact chip as Switch's handover (Settings › Chat): started as "Compact and open…" in
+    /// the menus and the palette starts it, the handover dialog for the shown tab with its checks
+    /// (it continues in place where it can).
+    pub(in crate::view) fn handover_chip(&mut self, now: Instant) {
+        self.command(now, crate::compact_dialog::COMMAND, None);
+    }
+
     pub fn chat_control(&mut self, cx: &mut Cx<'_, Msg>, control: Control) {
         match control {
             Control::Stop => return self.stop_conversation(cx, None),
@@ -469,7 +489,6 @@ impl AppState {
                 }
                 return self.arm_chat_tick(cx);
             }
-            Control::Context => return self.chat_run_slash(cx, "/context".into(), false),
             Control::Mode => {
                 // As Send: read the newest screen before the checks.
                 self.term_woke(cx);
@@ -479,8 +498,13 @@ impl AppState {
                 }
                 return self.arm_chat_tick(cx);
             }
-            Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
-            Control::Clear => return self.chat_run_slash(cx, "/clear".into(), false),
+            // The same path as the menu and palette entry: the handover dialog for this tab, with
+            // its checks, which continues in place where it can.
+            Control::Handover => return self.handover_chip(cx.now()),
+            Control::Context | Control::Compact | Control::Clear => {
+                let line = chip_slash(control).unwrap_or_default();
+                return self.chat_run_slash(cx, line.into(), false);
+            }
             Control::Own(n) => {
                 let Some(line) = self.config.chat.commands.get(n).filter(|c| !c.is_empty()).cloned() else { return };
                 return self.chat_run_slash(cx, line, false);

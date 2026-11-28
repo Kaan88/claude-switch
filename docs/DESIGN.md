@@ -1537,7 +1537,13 @@ by slot) are text rows, saved as typed whenever the text is a command line (a CL
 after the others, labelled with its line (or only "/name" when the line is wider than 150 px), drawn
 only when it fits whole before the right group; a click runs it as a direct slash command, with the
 same checks and the Compact/Clear confirmation. Typing "/" still opens the list with every chip
-hidden. Restore defaults resets chips and commands, not the switch below. "Answer menus from the
+hidden. "Compact chip runs" (`chat.compactChip`): "Switch handover" (`"handover"`, the default)
+labels the chip "Handover" and a click starts the handover exactly as "Compact and open…" in the
+menus and the palette does (the dialog for the shown tab, with its identity and one-at-a-time
+checks, continuing in place where it can); "Claude Code /compact" (`"cli"`) labels it "/compact"
+and sends the CLI's `/compact` as before, with its confirmation. Both labels fit the chip's one
+width, so the choice never moves the toolbar. Restore defaults resets chips and commands, not this
+choice or the switch below. "Answer menus from the
 chat" (`chat.answerMenus`, on by default) off: no card for the CLI's menus, pickers, plan approval
 or permission prompts; the gate leaves them to the terminal and opens the drawer as before those
 cards. Claude's questions (`AskUserQuestion`) and the Ctrl+B background offer keep their cards.
