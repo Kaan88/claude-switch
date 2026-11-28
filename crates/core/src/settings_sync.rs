@@ -250,7 +250,7 @@ pub fn sync(roots: &Roots, config: &Config, share: &Share) -> Result<Report, Ref
 }
 
 /// Keeps a copy of `path` before it is replaced; the newest [`BACKUPS`] are kept.
-fn backup(roots: &Roots, account: &Account, path: &Path) -> Result<(), Refusal> {
+pub(crate) fn backup(roots: &Roots, account: &Account, path: &Path) -> Result<(), Refusal> {
     let Ok(bytes) = std::fs::read(path) else { return Ok(()) };
     let dir = backup_dir(roots);
     std::fs::create_dir_all(&dir).map_err(|e| io_refusal("create the folder", &dir, &e))?;

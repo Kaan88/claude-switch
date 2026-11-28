@@ -921,6 +921,121 @@ ends it: the left button anywhere (the press captured the mouse, so a release ou
 arrives too), or Space's key release, which the host does not reduce and the app reads in its raw
 winit hook. Losing the keyboard (Alt+Tab, a click in another window) ends any peek.
 
+## Claude Code's /config
+
+Claude Code keeps the choices of its `/config` panel (Settings › Config) in two files of the
+account's CLI folder: the user `settings.json` and the global `.claude.json` (for the first account
+`%USERPROFILE%\.claude.json`, beside the folder). Settings › Claude Code edits a few of them and
+Settings › Claude Code › Advanced the rest (below).
+
+**Where the list comes from.** Taken from Claude Code **2.1.332** (`claude --version`) on
+2026-11-28, read only: the `/config` panel's entry list in the bundled JavaScript of
+`%USERPROFILE%\.local\bin\claude.exe` (each entry's `id`, `label`, `value` expression, `options`
+and the writer its `onChange` calls: the user-settings writer for `settings.json`, the
+global-config writer for `.claude.json`), the global config's defaults (the function that builds
+a fresh `.claude.json`, which also drops keys that equal their default when it saves) and the
+settings schema's descriptions. Many entries only show when a feature flag, the plan or the
+terminal allows; "shown when" says so. `tools/screen-recorder/scripts/config-list.txt` searches
+`/config` for each label Switch writes, so a recording shows which ones an account sees.
+`crates/core/src/cc_config.rs` holds the same table for the page, and `tools/cli-compat.ps1`
+checks that an installed Claude Code still has each of its keys and labels.
+
+Store: **S** `settings.json` (user scope), **G** `.claude.json`. Page: **CC** Settings › Claude
+Code, **Adv** Settings › Claude Code › Advanced, **—** left out (why, after the table). The default
+is in bold, or named.
+
+| # | Label in /config | Key | Store | Values | Shown when | Page |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Auto-compact | `autoCompactEnabled` | G | **true**, false | always | CC |
+| 2 | Idle compaction | `idleCompaction` | S | **true**, false | feature flag | Adv |
+| 3 | Continue automatically at usage limit | `autoContinueAtUsageLimit` | S | **true**, false | claude.ai plans | Adv |
+| 4 | Use this machine's settings in cloud sessions | `remoteHomeSettingsMode` | G | `forward` or not | remote sessions available | — |
+| 5 | Unattended commands from cloud sessions on this computer | (Claude Code's consent store) | — | Allowed, Not allowed | remote tools available | — |
+| 6 | Switch models when a message is flagged | `switchModelsOnFlag` | S | absent (not asked yet), true (switch automatically), false (ask each time) | flagged-message fallback available | Adv |
+| 7 | Show tips | `spinnerTipsEnabled` | S | **true**, false | always | Adv |
+| 8 | Claude-drafted feedback | `feedbackDrafts` | S | **notify**, quiet, off | feature flag | Adv |
+| 9 | Reduce motion | `prefersReducedMotion` | S | **false**, true | always | Adv |
+| 10 | Show Clawd carrying files | `clawdFileProgressEnabled` | S | **false**, true | internal flag, connectors | — |
+| 11 | Thinking mode | `alwaysThinkingEnabled` | S | **absent or true** (on), false | always (locked on for some models) | Adv |
+| 12 | Fast mode (model) | `fastMode` | S | **absent**, true | fast mode available | — |
+| 13 | Prompt suggestions | `promptSuggestionEnabled` | S | **absent or true** (on), false | feature flag | Adv |
+| 14 | Session recap | `awaySummaryEnabled` | S | **absent or true** (on), false | always | Adv |
+| 15 | Rewind code (checkpoints) | `fileCheckpointingEnabled` | G | **true**, false | checkpointing available | Adv |
+| 16 | Synced project memory (this directory; applies next session) | (per-folder memory state) | — | on, off | org memory available | — |
+| 17 | Synced project memory writes | (per-folder memory state) | — | on, off | org memory writes allowed | — |
+| 18 | Dynamic workflows | `enableWorkflows` (also removes `disableWorkflows`) | S | **absent** (by plan), true, false | workflows available | Adv |
+| 19 | Ultracode keyword trigger | `workflowKeywordTriggerEnabled` | S | **true**, false | workflows available | Adv |
+| 20 | Dynamic workflow size | `workflowSizeGuideline` | G | **absent** (small on Pro, else medium), small, medium, large, unrestricted | workflows available | Adv |
+| 21 | Artifacts | `enableArtifact` (also removes `disableArtifact`) | S | **absent** (on once available), true, false | artifacts available | Adv |
+| 22 | Verbose output | `verbose` | G | **false**, true | always | CC |
+| 23 | Terminal progress bar | `terminalProgressBarEnabled` | G | **true**, false | always | Adv |
+| 24 | Show status in terminal tab | `showStatusInTerminalTab` | G | **false**, true | feature flag | Adv |
+| 25 | Show turn duration | `showTurnDuration` | G | **true**, false | always | Adv |
+| 26 | Precompute compaction | `precomputeCompactionEnabled` | S | **true**, false | feature flag | Adv |
+| 27 | Show message timestamps | `showMessageTimestamps` | G | **false**, true | feature flag | Adv |
+| 28 | Time format | `timeFormat` | S | **auto**, 12-hour, 24-hour, 24-hour-utc | always | Adv |
+| 29 | Default permission mode | `permissions.defaultMode` | S | **absent**, default, plan, acceptEdits, auto, … | always | CC |
+| 30 | Worktree base ref | `worktree.baseRef` | S | **fresh**, head | always | Adv |
+| 31 | Use auto mode during plan | `useAutoModeDuringPlan` | S | **true**, false | always | Adv |
+| 32 | Respect .gitignore in file picker | `respectGitignore` | G | **true**, false | always | Adv |
+| 33 | Skip the /copy picker | `copyFullResponse` | G | **false**, true | always | Adv |
+| 34 | Copy on select | `copyOnSelect` | G | **true**, false | fullscreen renderer | Adv |
+| 35 | Auto-scroll | `autoScrollEnabled` | G | **true**, false | fullscreen renderer | Adv |
+| 36 | Agents view | `leftArrowOpensAgents`, `defaultToAgentsView` | G | shown, not changed there | agents view available | — |
+| 37 | Auto-update channel | `autoUpdatesChannel` | S | shown, not changed there | always | — |
+| 38 | Theme | `theme` | S | dark, light, … | always | CC |
+| 39 | Local notifications (Notifications) | `preferredNotifChannel` | G | **auto**, terminal_bell, iterm2, iterm2_with_bell, kitty, ghostty, notifications_disabled | always | Adv |
+| 40 | Push when actions required | `inputNeededNotifEnabled` | G | **false**, true | push notifications available | Adv |
+| 41 | Push when Claude decides | `agentPushNotifEnabled` | G | **false**, true | push notifications available | Adv |
+| 42 | Output style | `outputStyle` | the folder's `.claude/settings.local.json` | default, explanatory, learning, … | always | — |
+| 43 | Default view | `defaultView` | the folder's `.claude/settings.local.json` | **default**, transcript, chat | feature flag | — |
+| 44 | Language | `language` | S | **absent** (English), any language name | always | Adv |
+| 45 | Editor mode | `editorMode` | G | **normal**, vim (emacs reads as normal) | always | Adv |
+| 46 | Question auto-continue timeout | `askUserQuestionTimeout` | S | **never**, 60s, 5m, 10m | not set by policy | Adv |
+| 47 | Claude-proposed goals | `modelProposedGoals` | S | **auto**, alwaysAsk, disabled | feature flag | Adv |
+| 48 | Show last response in external editor | `externalEditorContext` | G | **false**, true | always | Adv |
+| 49 | Show PR status footer | `prStatusFooterEnabled` | G | **true**, false | always | Adv |
+| 50 | Model | `model` | S | **absent** (default), opus, sonnet, … | always | CC |
+| 51 | Diff tool | `diffTool` | G | **auto**, terminal | an IDE is connected | Adv |
+| 52 | Auto-connect to IDE (external terminal) | `autoConnectIde` | G | **false**, true | outside an IDE terminal | Adv |
+| 53 | Auto-install IDE extension | `autoInstallIdeExtension` | G | **true**, false | in an IDE terminal | Adv |
+| 54 | Claude in Chrome enabled by default | `claudeInChromeDefaultEnabled` | G | **false**, true | always | CC |
+| 55 | Teammate mode | `teammateMode` | G | auto, tmux, iterm2, **in-process** | agent teams on | Adv |
+| 56 | Enable Remote Control for all sessions | `remoteControlAtStartup` | G | **absent** (default), true, false | Remote Control available | Adv |
+| 57 | Dialog expiry | `dialogExpiry` | S | **absent** (default), 60s, 5m, 10m, never | not set by policy | Adv |
+| 58 | Messages from your other sessions | `crossSessionInbound` | S | **absent** (default), accept, hold, refuse | cross-session messages on | Adv |
+| 59 | Always deliver in this session | (this session only) | — | off, mine, anyone | cross-session messages on | — |
+| 60 | Delivery notices to and from cloud and Remote Control sessions | `remoteMessageReceipts` | S | **on**, always, off | cross-session messages on | Adv |
+| 61 | Show external CLAUDE.md includes dialog | (the folder's project entry in `.claude.json`) | G | true, false | a project with external includes | — |
+| 62 | Use custom API key | `customApiKeyResponses` | G | approved or not | `ANTHROPIC_API_KEY` set | — |
+
+The 46 entries an account saw in 2.1.332 begin with Auto-compact, Idle compaction, Continue
+automatically at usage limit, Switch models when a message is flagged, Show tips, Claude-drafted
+feedback, Reduce motion, Thinking mode, Fast mode, Prompt suggestions, Session recap, Rewind code,
+Dynamic workflows, Ultracode keyword trigger, Dynamic workflow size, Artifacts, Verbose output,
+Terminal progress bar, Show turn duration and Precompute compaction: the order above, less the
+entries its flags hide.
+
+Left out of Switch, and why:
+
+- Fast mode: it changes the session's model and price and is only saved when the account may keep
+  it; `/fast` in a session decides.
+- Remote home settings, unattended commands and synced project memory: consent and identity
+  checks Claude Code makes itself, and memory state per folder.
+- Show Clawd carrying files: an internal flag.
+- Output style, Default view and the external includes dialog: per folder (the folder's
+  `.claude/settings.local.json` or its project entry), not per account.
+- Agents view and Auto-update channel: `/config` shows them but does not change them there.
+- Always deliver in this session: that session only. Custom API key: the approval of a key in the
+  environment, which Switch removes from what it starts.
+- Model, Effort, Permission mode, Theme, Chrome, Auto-compact, Verbose: on the Claude Code page.
+
+Claude Code 2.1.332 also has a newer storage for user settings behind a flag (`storageV5`); the
+page writes `settings.json` as the user-settings writer does without it. Eight of the G keys are
+in `settings_sync::PREFS` (Rewind code, Terminal progress bar, Show turn duration, Local
+notifications, Editor mode, Diff tool and the two IDE switches): they go to the sharing accounts
+at the next sync, as Chrome and Auto-compact do; the other G keys stay with their account.
+
 ## Recent sessions and local marks
 
 Recent is the default. It sorts sessions across folders by activity, newest first, with local

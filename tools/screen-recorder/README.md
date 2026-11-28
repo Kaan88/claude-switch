@@ -102,6 +102,15 @@ prompts (Bash, Write, a subagent's, two calls of one message), a prompt answered
 deny rule refuses, a call auto mode blocks and the list of blocked calls with a call marked and
 unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`.
 
+`config-list` is not about Chat: it searches `/config` for the label of every entry Settings ›
+Claude Code › Advanced writes (`crates/core/src/cc_config.rs`; regenerate the script and its
+`expect` file when that table changes) and checks that each still shows. It makes no model request
+and changes nothing, but Claude Code still writes its bookkeeping into the config folder, so run
+it with a scratch one that is signed in for this alone (`claude auth login` with
+`CLAUDE_CONFIG_DIR` set to an empty folder):
+`pwsh tools\cli-compat.ps1 -Only config-list -ConfigDir <scratch folder>`. An entry the account's
+plan or flags hide shows as not shown; `docs/DESIGN.md` ("Claude Code's /config") says which can.
+
 Some of what Chat relies on is in Claude Code's files, not on its screen, and two scripts check
 those too:
 

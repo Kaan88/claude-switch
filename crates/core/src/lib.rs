@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 pub mod accounts;
 pub mod archive;
 pub mod branch;
+pub mod cc_config;
 pub mod clock;
 pub mod compact;
 pub mod config;
