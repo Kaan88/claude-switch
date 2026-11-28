@@ -1527,7 +1527,9 @@ ago, and while the screen still shows that list; Esc that only closes needs no w
 longer than eight rows or wider than the card is shown cut, with no button to mark that call. A
 list Chat cannot read (a call's row that wraps, a mark it does not know) shows as rows only, with
 Close while Esc just closes and Open terminal otherwise. The dialog's other tabs (Allow, Ask,
-Deny, Auto mode, Workspace) are read-only panels in Chat: changing a rule is the terminal's.
+Deny, Auto mode, Workspace) are read-only panels in Chat: changing a rule is the terminal's. While another card has the card's place (a question, a permission prompt, a menu), the
+count stays in view on a line of that card over what it asks, in the warning colour; the list comes
+back with the strip once that card is gone.
 
 A card answers ahead of a queued draft: the queue waits for the turn to end, which waits for the
 answer, and the queued send keeps its own checks. Only an answer whose text goes to the composer

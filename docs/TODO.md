@@ -1062,8 +1062,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     footer's words are shown as they are); `ruleSource` values other than `flagSettings` (the names
     of the other settings files are Claude Code's documented ones); a No given with text; a denial
     inside a subagent (not counted: it is in the subagent's transcript, and only the CLI's passing
-    notice under the input says so). Open: the count is hidden while another card has the card's
-    place; a rule can only be changed in the terminal.
+    notice under the input says so). The count stays on a line over another card that has the card's
+    place (2026-11-28, `feature/redesign-fixes`). Open: a rule can only be changed in the terminal.
 
 80. **Later: `/fork` breaks Chat's continuation** (owner, 2026-11-27: "fork broke chat continuation, I
     think. not a big deal right now. note it."; screenshot). After `/fork` typed in a Claude tab,

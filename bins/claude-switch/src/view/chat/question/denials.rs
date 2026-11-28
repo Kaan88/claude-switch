@@ -176,6 +176,9 @@ impl Card {
     }
 }
 
+/// The line that keeps the count over another card.
+pub(super) const ROW: f32 = 26.0;
+
 /// The card's whole height: a one-line strip, or the list.
 pub(super) fn height(card: &Card) -> Option<f32> {
     if card.denials.is_empty() {
@@ -212,6 +215,14 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
 }
 
 impl Draw<'_> {
+    /// The count of the current turn's denials over another card, which holds the card's place:
+    /// the list waits for that card to go (the conversation marks each denied call meanwhile).
+    pub(super) fn denied_line(&self, p: &mut Painter, chat: &Chat, card: Rect) {
+        let (x, w) = (card.x + cards::INSET, (card.w - 2.0 * cards::INSET).max(1.0));
+        let cy = card.y + ROW / 2.0 + 4.0;
+        p.text(Face::Semibold, 12.0, x, cy, &count_line(chat.question.denials.len()), self.pal.warn, w);
+    }
+
     /// The current turn's denied permissions: the count, and the list when open.
     pub(super) fn denials(&self, p: &mut Painter, chat: &mut Chat, card: Rect, hits: &mut Vec<(Rect, Target)>) {
         let pal = self.pal;

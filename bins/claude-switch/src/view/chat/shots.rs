@@ -170,6 +170,36 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             let later = shots::show(&mut st, id, shots::PERMISSION, now);
             (demo, st, later)
         }
+        "denied-under-card" => {
+            // A call denied earlier in the turn, and now a permission card holds the card's place.
+            use claude_switch_core::transcript::{Denial, DenialKind, Item, ItemId};
+            let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            shots::running(&mut st, id, "Waiting for your approval");
+            let pane = pane(&mut st, id);
+            let at = pane.model.chat.prompt.unwrap() + 1;
+            let denial = Denial {
+                kind: DenialKind::AutoMode,
+                before_run: None,
+                reason: "The server-side auto mode classifier judged this action dangerous.".into(),
+                rule_source: None,
+            };
+            let kind = ItemKind::Tool {
+                id: "toolu_denied".into(),
+                name: "Bash".into(),
+                summary: "rm -rf target/bench-old".into(),
+                file_path: None,
+                state: ToolState::Failed,
+                duration_ms: None,
+                pictures: vec![],
+                subagent: None,
+                denial: Some(Box::new(denial)),
+                card: Some(ToolCard::Shell { command: "rm -rf target/bench-old".into(), result: vec![] }),
+            };
+            pane.model.items.insert(ItemId { offset: at, block: 0 }, Item { kind, timestamp: None });
+            let later = shots::show(&mut st, id, shots::PERMISSION, now);
+            (demo, st, later)
+        }
         "tall-permission" => {
             let demo = Transcript::new_showcase(Some((BENCH.0, BENCH.1, LONG_COMMAND))).unwrap();
             let (mut st, id) = shots::chat_window(dark, &demo);
@@ -281,6 +311,7 @@ fn chat_shots() {
         "tall-permission",
         "new-session-card",
         "queued",
+        "denied-under-card",
     ];
     for (n, state) in states.into_iter().enumerate().filter(|(_, state)| want(state)) {
         let short = state == "tall-permission";

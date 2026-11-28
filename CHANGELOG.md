@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Chat: the count of permissions denied in the current turn stays in view, on a line over another
+  card that holds the card's place (a question or a permission prompt), instead of disappearing
+  until that card is gone.
 - Chat: `!` typed into the empty message box turns it to Claude Code's shell mode, as in the
   terminal: the command goes as `!command` and runs in Claude Code's shell (Backspace in the empty
   box leaves the mode). Enter goes only once Claude Code's input shows the command in shell mode,

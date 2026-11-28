@@ -454,6 +454,8 @@ pub(super) struct Card {
     /// the question is measured at it.
     painted_scale: f32,
     pub(super) relayout: bool,
+    /// The line over another card that keeps the current turn's denials counted (0 without).
+    denied_row: f32,
     /// The conversation drew "Run in background" on the command's own line in the last frame.
     pub(super) offer_inline: bool,
     /// A Ctrl+B in flight: for which call, until when, and the output it was written after.
@@ -1941,6 +1943,10 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     // With no other card, the current turn's denied permissions: a strip with their count, or
     // their list. Its height is its own.
     chat.question.denials_only = wanted.is_none();
+    // Under another card the count stays in view, on a line of that card's own over what it asks.
+    let denied_row = if wanted.is_some() && !chat.question.denials.is_empty() { denials::ROW } else { 0.0 };
+    chat.question.denied_row = denied_row;
+    let wanted = wanted.map(|h| h + denied_row);
     let Some(wanted) = wanted.or_else(|| denials::height(&chat.question)) else {
         chat.question.rect = Rect::default();
         chat.question.docked = false;
@@ -1961,8 +1967,8 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         let mut h = wanted.min(room);
         if let Some(parts) = &mut parts {
             // Denser, then shorter where it can be read elsewhere; what still does not fit scrolls.
-            chat.question.density = cards::fit(parts, room);
-            chat.question.natural = cards::height(parts, chat.question.density);
+            chat.question.density = cards::fit(parts, room - denied_row);
+            chat.question.natural = cards::height(parts, chat.question.density) + denied_row;
             h = chat.question.natural.min(room);
         }
         chat.question.rect = Rect::new(frame.x, frame.bottom() - h, frame.w, h);
@@ -2006,6 +2012,13 @@ impl Draw<'_> {
         }
         let clip = p.clip(r);
         let first = hits.len();
+        let whole = r;
+        let r = if chat.question.denied_row > 0.0 {
+            self.denied_line(p, chat, r);
+            Rect::new(r.x, r.y + chat.question.denied_row, r.w, (r.h - chat.question.denied_row).max(0.0))
+        } else {
+            r
+        };
         // A question is measured at the window's scale: a new one lays the card out again.
         if chat.question.painted_scale != p.scale {
             chat.question.painted_scale = p.scale;
@@ -2014,7 +2027,7 @@ impl Draw<'_> {
         // The cards drawn from the top scroll as a whole when taller than their room (the wheel
         // over them); the parts' card keeps its foot in view (`Draw::parts`), and a prompt read
         // from the screen scrolls its own rows.
-        let over = (chat.question.natural - r.h).max(0.0).floor();
+        let over = (chat.question.natural - whole.h).max(0.0).floor();
         let lift = if chat.question.laid.is_some() || chat.question.prompt.is_some() {
             0.0
         } else {
@@ -2042,7 +2055,7 @@ impl Draw<'_> {
         }
         p.restore(clip);
         // Nothing outside the card takes a click meant for it.
-        cards::clip_hits(hits, first, r);
+        cards::clip_hits(hits, first, whole);
     }
 }
 

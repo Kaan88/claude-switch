@@ -225,3 +225,30 @@ fn review_runs_permissions_as_a_slash_command_and_the_clis_list_takes_the_card()
     f.pass(SECOND * 4);
     assert!(f.writes().is_empty() && f.chat().error.is_some());
 }
+
+/// TODO item 77's remainder: while another card holds the card's place (here Claude Code's
+/// question, read from the screen), the turn's denials keep their count on a line of that card
+/// instead of disappearing; the list comes back once the card is gone.
+#[test]
+fn the_denials_count_stays_on_the_card_that_holds_the_place() {
+    use crate::view::chat::question::screens::recorded::PLAIN_QUESTION;
+    let mut f = Live::new();
+    f.turn();
+    // In the running turn (its prompt is at 110).
+    f.denied(120, "Bash", "mkdir probe_blocked_two", DenialKind::AutoMode);
+    f.show(PLAIN_QUESTION);
+    f.pass(QUIET);
+    f.app.layout_chat(mdshared_ui::gfx::Rect::new(0.0, 0.0, 1100.0, 820.0));
+    let card = &f.chat().question;
+    assert!(card.menu.is_some() && !card.denials.is_empty(), "a question card, and a denial");
+    assert!(!card.only_denials());
+    assert_eq!(card.denied_row, ROW, "the count's line over the question");
+    // The question goes: the denials' own strip takes the place again, without the extra line.
+    f.show(BLOCKED_IDLE);
+    f.pass(QUIET);
+    f.app.layout_chat(mdshared_ui::gfx::Rect::new(0.0, 0.0, 1100.0, 820.0));
+    let card = &f.chat().question;
+    if card.menu.is_none() && card.blocked.is_none() {
+        assert!(card.only_denials() && card.denied_row == 0.0);
+    }
+}

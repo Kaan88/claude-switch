@@ -189,8 +189,9 @@ pub(super) fn height(card: &mut Card, width: f32) -> f32 {
 /// that every choice and the foot keep their place in it while the rows scroll.
 pub(super) fn fit(card: &mut Card) {
     let Some(prompt) = &card.prompt else { return };
-    let tight = card.rect.h < chrome(prompt, false) + 3.0 * LINE;
-    let room = (card.rect.h - chrome(prompt, tight)) / LINE;
+    let h = card.rect.h - card.denied_row;
+    let tight = h < chrome(prompt, false) + 3.0 * LINE;
+    let room = (h - chrome(prompt, tight)) / LINE;
     card.prompt_view.tight = tight;
     card.prompt_view.room = room.floor().max(0.0) as usize;
 }
