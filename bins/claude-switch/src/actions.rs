@@ -855,10 +855,13 @@ impl AppState {
     }
 }
 
+/// What a resume says once started. The desktop app gives no answer once it has its link (Claude
+/// Code's hand-over or Switch's own start of it), so the status says it was asked, not that it
+/// opened the session; the session stays reserved for a moment either way.
 fn resume_status(app: App, title: &str, account: &str) -> String {
     match app {
         App::Cli => format!("Opened “{title}” in a terminal as {account}"),
-        App::Desktop => format!("“{title}” handed to the desktop app"),
+        App::Desktop => format!("Asked the desktop app to open “{title}” as {account}"),
     }
 }
 

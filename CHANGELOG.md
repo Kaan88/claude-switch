@@ -4,6 +4,8 @@
 
 - Resume in the desktop app as a further account is no longer refused when that account's CLI is
   not signed in: it opens the account's desktop app, which has its own sign-in.
+- Resume in the desktop app says "Asked the desktop app to open … as <account>": the desktop app
+  does not answer, so Switch no longer words it as done.
 
 ## 0.1.7 (2026-11-28)
 

@@ -205,10 +205,13 @@ The only Claude variable Switch sets back is `CLAUDE_CONFIG_DIR` for a secondary
 primary and direct Desktop launches do not receive it. `--shell` and `--type` are debug-build
 switches; delayed input belongs only to the tab that switch opened.
 
-Desktop resume runs out of sight on a worker. The window shows pending until the CLI returns,
-then its diagnostic on failure or a timeout after 30 seconds. Success only reports that the session
-was handed to the desktop app. A profile may exist outside the current account list, so Switch
-does not claim to know which profile received it.
+Desktop resume runs out of sight on a worker. The window shows pending until the CLI returns (or,
+for a further account, the desktop app's process has started), then its diagnostic on failure or a
+timeout after 30 seconds. The desktop app gives no answer once it has the link, so success only says
+that it was asked to open the session ("Asked the desktop app to open … as <account>"), never that
+it did; the session stays reserved as just launched (20 seconds) either way, so a second open does
+not race a window that may still be opening it. A profile may exist outside the current account
+list, so Switch does not claim to know which profile received it.
 
 ## What a launch is
 
