@@ -83,6 +83,8 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Defects noticed
 
+- Try Branch in a real interactive session (built 2026-11-28; the cut copy was resumed only in print
+  mode): the branch tab opens with the conversation up to the message and continues under its new id.
 - Try in a real session (built 2026-11-28 from recorded screens only): Send while a turn runs goes
   into Claude Code's empty input and is handed in mid-turn; a message sent so is shown where the
   transcript has it; Claude Code's rewind list leaves it out (Chat assumes so and offers no Rewind
@@ -107,13 +109,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 - The account selector's drop-down shows each account's colour dot before its name, as the selector
   itself does (owner, 2026-11-28). Blocked on the toolkit: drop-down items cannot carry a colour
   swatch ("For the toolkit", item 1).
-- Buttons under each message, as in the desktop app (owner, 2026-11-28): under the user's bubble and
-  under Claude's answer, shown on pointing (and under the newest answer always), at least Copy and
-  Branch (continue a copy of the conversation from that message), plus Rewind to here under the
-  user's own message. Today these are only in the right-click menu (Copy message, Copy as Markdown,
-  Rewind to here…) and Branch does not exist per message (Open a copy forks the whole session with
-  `--fork-session`). Item 12 of the redesign study (`docs/chat-redesign.md` on `design/chat-redesign`)
-  drew the row; how Branch cuts the transcript at a message must be tried against Claude Code first.
 - Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
 - Reuse Conversation in Sessions details later. That view is currently a short read-only preview
   and has no independently scrollable transcript region.

@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use claude_switch_core::Launch;
+use claude_switch_core::transcript::{ItemId, ItemKind};
 use mdshared_ui::cursor::Cursor;
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::host::Cx;
@@ -96,6 +97,23 @@ pub struct Pane {
 }
 
 impl Pane {
+    /// Where a branch at the message `item` cuts the transcript: after a prompt's whole turn (before
+    /// the next prompt that starts one), or right after an answer. `None` for anything else.
+    pub(crate) fn branch_cut(&self, item: ItemId) -> Option<claude_switch_core::branch::Cut> {
+        use claude_switch_core::branch::Cut;
+        let items = &self.model.items;
+        match &items.get(&item)?.kind {
+            ItemKind::Prompt { synthetic: false, .. } => Some(
+                items
+                    .range(ItemId { offset: item.offset + 1, block: 0 }..)
+                    .find(|(_, i)| matches!(i.kind, ItemKind::Prompt { synthetic: false, queued: false, .. }))
+                    .map_or(Cut::Whole, |(next, _)| Cut::Before(next.offset)),
+            ),
+            ItemKind::Assistant { .. } => Some(Cut::After(item.offset)),
+            _ => None,
+        }
+    }
+
     fn transcript_end(&self) -> Option<u64> {
         if self.chat.awaiting_transcript {
             // No file yet: everything the CLI writes to it later is newer than this input.
@@ -591,6 +609,21 @@ impl AppState {
             }
             ui::Release::ShellList => {
                 self.select_shell(None);
+                true
+            }
+            ui::Release::Rewind(item) => {
+                // The right-click menu's "Rewind to here…": the same start and checks.
+                if let Some(tab) = self.tabs.active {
+                    self.term_woke(cx);
+                    self.rewind_from_menu(tab, item, cx.now());
+                    self.arm_chat_tick(cx);
+                }
+                true
+            }
+            ui::Release::Branch(item) => {
+                if let Some(tab) = self.tabs.active {
+                    self.branch_at(cx.now(), tab, item);
+                }
                 true
             }
         }

@@ -15,6 +15,8 @@ pub(super) const ARROW_UP: &str = "M8 13V3.5M3.8 7.7L8 3.5l4.2 4.2";
 /// A terminal window: a command.
 pub(super) const TERMINAL: &str =
     "M2 3h12a.5 .5 0 0 1 .5 .5v9a.5 .5 0 0 1-.5 .5H2a.5 .5 0 0 1-.5-.5v-9A.5 .5 0 0 1 2 3zM4.5 6.5l2 1.5-2 1.5M8 10h3";
+/// A fork in a line: a branch of the conversation.
+pub(super) const BRANCH: &str = "M5 2.5v8M5 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3zM11 3a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3zM11 6c0 2.6-6 2-6 4.5";
 /// A person: an agent.
 pub(super) const AGENT: &str =
     "M5.5 5.5a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM3 13.5c.6-2.4 2.5-3.7 5-3.7s4.400 1.3 5 3.7";

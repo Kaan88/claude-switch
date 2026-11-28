@@ -160,6 +160,27 @@ impl Source {
         }
     }
 
+    /// A branch of `s` cut at a message: the copy of its transcript is written (except in the
+    /// demo, which has no transcripts to copy) and resumed under `new_id`.
+    pub fn branch(
+        &self,
+        c: &Config,
+        s: &Session,
+        account: &str,
+        new_id: &str,
+        cut: claude_switch_core::branch::Cut,
+    ) -> Result<Launch, Refusal> {
+        match self {
+            Source::Real(roots) => {
+                let launch = launch::branch(roots, c, s, account, new_id)?;
+                claude_switch_core::branch::write(&s.file, &s.id, new_id, cut)
+                    .map_err(|e| Refusal::Invalid(format!("Could not write the branch's transcript: {e}")))?;
+                Ok(launch)
+            }
+            Source::Demo => Ok(demo::branch(new_id, account)),
+        }
+    }
+
     pub fn new_session(&self, c: &Config, account: &str, app: App, cwd: &std::path::Path) -> Result<Launch, Refusal> {
         match self {
             Source::Real(roots) => launch::new_session(roots, c, account, app, cwd),

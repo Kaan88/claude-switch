@@ -305,6 +305,43 @@ impl AppState {
         }
     }
 
+    /// Branch at a message of the conversation in tab `tab`: a new session, as the tab's account,
+    /// that continues from a copy of the transcript cut there (`claude_switch_core::branch`). At
+    /// a prompt the copy keeps that prompt's whole turn; at an answer it ends with the answer.
+    pub fn branch_at(&mut self, now: Instant, tab: u64, item: claude_switch_core::transcript::ItemId) {
+        let Some(t) = self.tabs.get(tab) else { return };
+        let Some(pane) = t.pane.as_ref() else { return };
+        let account = t.account.clone().unwrap_or_else(|| self.current().slug.clone());
+        let Some(session) = t.session.as_ref().and_then(|id| self.by_id.get(id)).map(|&i| self.sessions[i].clone())
+        else {
+            return self
+                .error("Not branched", "The session is not in the Sessions list yet. Try again in a moment.".into());
+        };
+        let Some(cut) = pane.branch_cut(item) else { return };
+        let new_id = match crate::compact_open::session_id() {
+            Ok(id) => id,
+            Err(e) => return self.error("Not branched", e),
+        };
+        match self.source.branch(&self.config, &session, &account, &new_id, cut) {
+            Err(r) => self.error("Not branched", r.to_string()),
+            Ok(l) => {
+                if !self.source.is_demo() && !self.record_copy(&new_id, &session.id) {
+                    let _ = std::fs::remove_file(session.file.with_file_name(format!("{new_id}.jsonl")));
+                    return;
+                }
+                let name = self.account_name(&account);
+                let done = format!("Opened a branch of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
+                if self.start_with_result(now, &l, None, Some(&account), done, Some((&session.cwd, App::Cli))) {
+                    self.remember_folder_open(&session.cwd, &account, App::Cli);
+                } else if !self.source.is_demo() {
+                    self.marks.clear_parent(&new_id);
+                    self.save_marks();
+                    let _ = std::fs::remove_file(session.file.with_file_name(format!("{new_id}.jsonl")));
+                }
+            }
+        }
+    }
+
     /// Reads the running sessions again, then resumes and starts.
     pub fn open_now(&mut self, now: Instant, id: &str, account: &str, app: App) {
         let Some(&i) = self.by_id.get(id) else { return };

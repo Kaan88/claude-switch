@@ -73,7 +73,7 @@ const BENCH: (&str, &str, &str) = (
 fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
     let now = Instant::now() + Duration::from_secs(1);
     let (demo, mut st, later) = match state {
-        "conversation" | "steps" | "scrolled" => {
+        "conversation" | "steps" | "scrolled" | "pointing" => {
             // Scrolled back needs a conversation longer than the window: a second, short turn.
             let more = (state == "scrolled").then_some((
                 "Does the counter survive a restart?",
@@ -106,6 +106,18 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
                 for id in ids.into_iter().rev() {
                     pane.ui.jump_to_tool(&pane.model, id);
                 }
+            }
+            if state == "pointing" {
+                // The pointer over your message: its buttons show under it.
+                let mut anim = mdshared_ui::anim::Animator::new();
+                shots::frame_at(&mut st, &mut anim, later, size);
+                // Scrolled to the top, where the message is.
+                let area = pane(&mut st, id).chat.layout.conversation;
+                pane(&mut st, id).ui.wheel(area.cx(), area.cy(), 5000.0);
+                shots::frame_at(&mut st, &mut anim, later, size);
+                let (x, y) = pane(&mut st, id).ui.prompt_point().expect("a prompt on screen");
+                st.mouse = (x, y);
+                pane(&mut st, id).ui.moved(x, y);
             }
             if state == "scrolled" {
                 let mut anim = mdshared_ui::anim::Animator::new();
@@ -184,7 +196,7 @@ fn chat_shots() {
     std::fs::create_dir_all(dir).unwrap();
     let only = std::env::var("CS_CHAT_ONLY").ok();
     let want = |name: &str| only.as_deref().is_none_or(|only| only.split(',').any(|n| n.trim() == name));
-    let states = ["conversation", "steps", "question", "permission", "running", "scrolled", "empty"];
+    let states = ["conversation", "steps", "question", "permission", "running", "scrolled", "empty", "pointing"];
     for (n, state) in states.into_iter().enumerate().filter(|(_, state)| want(state)) {
         for (size, width) in [(WIDE, "wide"), (NARROW, "narrow")] {
             for (dark, theme) in [(true, "dark"), (false, "light")] {

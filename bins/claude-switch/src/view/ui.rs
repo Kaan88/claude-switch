@@ -55,6 +55,10 @@ enum Action {
     Close,
     /// A code block's Copy button, with the code.
     CopyCode(String),
+    /// Under a message: Copy (its text as shown), Rewind to here, Branch.
+    CopyMessage(ItemId),
+    Rewind(ItemId),
+    Branch(ItemId),
 }
 
 struct Overlay {
@@ -93,6 +97,8 @@ pub struct Ui {
     selection: Option<select::Selection>,
     /// The message a right-click menu was opened on.
     menu_row: Option<Id>,
+    /// The message with buttons the pointer is over (or over its buttons): they show.
+    pointed: Option<ItemId>,
     dragging: bool,
     /// What a double click (a word) or a triple click (a whole row) took: a drag from it goes
     /// by whole words (`false`) or whole rows (`true`).
@@ -145,6 +151,10 @@ pub(super) enum Release {
     Stop(Turn),
     Shell(ItemId),
     ShellList,
+    /// Rewind to the prompt, as the right-click menu's "Rewind to here…".
+    Rewind(ItemId),
+    /// A new session from a copy of the conversation cut at the message.
+    Branch(ItemId),
 }
 
 const PAD: f32 = 12.0;
@@ -521,6 +531,7 @@ impl Ui {
                 chat: self.chat,
                 offer: self.offer.map(|(id, _)| id),
                 awaiting: self.awaiting,
+                answers: if self.chat { rows::answer_actions(&m.items) } else { Default::default() },
             };
             match self.page {
                 Page::Conversation => {

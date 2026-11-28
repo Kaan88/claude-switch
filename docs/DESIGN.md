@@ -387,7 +387,20 @@ word, a triple click the message; a drag after either goes on by whole words or 
 the first one in either direction (the message box's drag after a double click goes by words too). Ctrl+C copies the selection, the rows' parts joined by a blank
 line (in Chat, where keys go to the message box, when the box has no selection of its own); Ctrl+A selects the whole loaded conversation. The right-click menu has Copy and Select all,
 and over a message Copy message (its text as shown) and Copy as Markdown (its source). Each
-top-level code block of an answer has a **Copy** button for its code alone. The toolkit's
+top-level code block of an answer has a **Copy** button for its code alone.
+In Chat a row of buttons sits under each of your messages and under each turn's last answer,
+shown while the pointer is over the message (or the buttons) and always under the newest answer;
+its room is kept whether it shows or not, so pointing moves nothing. **Copy** copies the message
+as shown (as Copy message does). **Rewind** is "Rewind to here…" of the menu, through the same
+start and checks, under a prompt the CLI's rewind list shows. **Branch** starts a new session,
+as the tab's account, that continues from a copy of the conversation cut at that message: at your
+message the copy keeps its whole turn (up to the next prompt that starts one), at an answer it
+ends with that answer. Claude Code 2.1.332 cannot resume a session up to a message interactively
+(its hidden `--resume-session-at` is for print mode), so `core::branch` writes the copy: the
+transcript's lines up to the cut, as `<new id>.jsonl` beside the original, each record's own
+`sessionId` set to the new id, then `claude --resume <new id>` (`launch::branch`). The original is
+not touched; the branch is marked as a copy of it, as Open a copy's is. Tried in print mode against
+2.1.332: a copy cut after the second of three answers resumed with the first two turns only. The toolkit's
 `richtext` manages no selection, so this is the app's (`view/ui/select.rs`) over the renderer's
 selection rectangles and block boxes.
 Notices are rows like a tool row (their kind and the first line) that expand to the whole text,

@@ -85,6 +85,7 @@ impl Ui {
     }
 
     pub fn pointer_left(&mut self) {
+        self.pointed = None;
         self.hot = None;
         self.scroll_hot = None;
         self.scroll_drag = None;
@@ -171,7 +172,9 @@ impl Ui {
         }
         let track = self.scroll_surface(x, y);
         let hot = self.hit(x, y);
-        let mut changed = self.hot != hot || self.scroll_hot != track;
+        let pointed = self.pointed_message(x, y);
+        let mut changed = self.hot != hot || self.scroll_hot != track || self.pointed != pointed;
+        self.pointed = pointed;
         self.hot = hot;
         self.scroll_hot = track;
         if self.dragging {
@@ -200,6 +203,19 @@ impl Ui {
             }
         }
         changed
+    }
+
+    /// The message with buttons under it that `(x, y)` is over, with the room for its buttons.
+    fn pointed_message(&self, x: f32, y: f32) -> Option<ItemId> {
+        if self.overlay_open() || !self.body.contains(x, y) {
+            return None;
+        }
+        let yy = y - self.body.y + self.offset;
+        let row = self.rows.iter().find(|r| yy >= r.top && yy < r.top + r.h + super::rows::ACTIONS_ROOM)?;
+        match (row.actions, &row.id) {
+            (Some(_), Id::Message(id)) => Some(*id),
+            _ => None,
+        }
     }
 
     /// The selection a drag to `end` makes: from the anchor to `end`, or after a double or triple
@@ -345,6 +361,17 @@ impl Ui {
                     self.copied = Some(code);
                 }
             }
+            Action::CopyMessage(id) => {
+                // As the right-click menu's Copy message: the text as shown.
+                let text = self.rows.iter().find(|r| r.id == Id::Message(id)).and_then(|r| r.body.as_ref());
+                if let Some(text) = text.map(|b| b.text().to_owned())
+                    && platform::set_clipboard_text(&text)
+                {
+                    self.copied = Some(text);
+                }
+            }
+            Action::Rewind(id) => return Release::Rewind(id),
+            Action::Branch(id) => return Release::Branch(id),
         }
         Release::Handled
     }
@@ -862,6 +889,55 @@ mod tests {
             let s = ui.selection.clone().unwrap();
             assert!(s.anchor == at && s.focus.0 == row2);
             ui.release(x, y2, plain, &mut model);
+        }
+    }
+
+    #[test]
+    fn the_buttons_under_a_message_show_on_pointing_and_rewind_and_branch_go_to_the_app() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(model.collect());
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(800, 2400);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        let area = Rect::new(0.0, 0.0, 800.0, 2400.0);
+        let pal = &mdshared_ui::theme::DARK;
+        for chat in [true, false] {
+            let mut ui = Ui::default();
+            ui.set_chat(chat);
+            ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+            let rewinds = |ui: &Ui| ui.hits.iter().filter(|(_, a)| matches!(a, Action::Rewind(_))).count();
+            let branches = |ui: &Ui| ui.hits.iter().filter(|(_, a)| matches!(a, Action::Branch(_))).count();
+            if !chat {
+                assert_eq!((rewinds(&ui), branches(&ui)), (0, 0), "not in the Session view");
+                continue;
+            }
+            // Away from every message: only the newest answer's buttons.
+            assert_eq!((rewinds(&ui), branches(&ui)), (0, 1));
+            let (x, y) = ui.prompt_point().unwrap();
+            ui.moved(x, y);
+            ui.draw(&mut p, pal, area, &mut model, (x, y), Instant::now(), false);
+            assert_eq!((rewinds(&ui), branches(&ui)), (1, 2), "the pointed prompt's too");
+            let (r, action) = ui.hits.iter().find(|(_, a)| matches!(a, Action::Rewind(_))).cloned().unwrap();
+            let Action::Rewind(prompt) = action else { unreachable!() };
+            assert!(matches!(model.items[&prompt].kind, claude_switch_core::transcript::ItemKind::Prompt { .. }));
+            // Moving onto the button keeps it: it is under the pointed message.
+            let (bx, by) = (r.cx(), r.cy());
+            assert_eq!(ui.pointed_message(bx, by), Some(prompt));
+            ui.draw(&mut p, pal, area, &mut model, (bx, by), Instant::now(), false);
+            ui.press(bx, by, 1, Mods::default(), &mut model);
+            assert_eq!(ui.release(bx, by, Mods::default(), &mut model), Release::Rewind(prompt));
+            let (r, action) =
+                ui.hits.iter().find(|(_, a)| matches!(a, Action::Branch(id) if *id == prompt)).cloned().unwrap();
+            ui.press(r.cx(), r.cy(), 1, Mods::default(), &mut model);
+            assert_eq!(ui.release(r.cx(), r.cy(), Mods::default(), &mut model), Release::Branch(prompt));
+            assert!(action == Action::Branch(prompt));
         }
     }
 }

@@ -124,6 +124,13 @@ impl Ui {
         self.selected_text().is_some_and(|text| set_clipboard(&text))
     }
 
+    /// A point over the first prompt shown, for pictures of pointing at it.
+    #[cfg(test)]
+    pub(in crate::view) fn prompt_point(&self) -> Option<(f32, f32)> {
+        let row = self.rows.iter().find(|r| r.style == super::rows::Style::Prompt && r.top + r.h > self.offset)?;
+        Some((self.body.x + row.geo.x + 20.0, self.body.y + row.top - self.offset + row.h / 2.0))
+    }
+
     #[cfg(test)]
     pub(in crate::view) fn select_everything(&mut self) -> bool {
         self.select_all()

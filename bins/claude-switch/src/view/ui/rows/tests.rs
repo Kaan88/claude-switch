@@ -120,6 +120,7 @@ fn both_views_say_runs_in_words_show_edits_as_rows_and_put_only_successful_named
             chat,
             offer: None,
             awaiting: None,
+            answers: Default::default(),
         };
         rows.conversation(
             &model,
@@ -267,6 +268,7 @@ fn a_run_reads_in_words_by_kind_and_a_call_a_card_asks_about_waits() {
             chat: true,
             offer: None,
             awaiting,
+            answers: Default::default(),
         };
         rows.conversation(&model, &BTreeSet::new(), &if open { [id(1)].into() } else { BTreeSet::new() });
         rows.list
@@ -324,6 +326,7 @@ fn notices_are_compact_rows_that_expand_and_thoughts_are_steps_that_do_not_split
             chat: true,
             offer: None,
             awaiting: None,
+            answers: Default::default(),
         };
         rows.conversation(&model, &open, &tools);
         rows.list
@@ -394,6 +397,7 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
             chat: true,
             offer: None,
             awaiting: None,
+            answers: Default::default(),
         };
         rows.conversation(&model, &BTreeSet::new(), &tools);
         rows.list
@@ -459,6 +463,7 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         chat: true,
         offer: None,
         awaiting: None,
+        answers: Default::default(),
     };
     rows.conversation(&model, &[id(1)].into(), &[id(1)].into());
     let row = |i| rows.list.iter().find(|r| r.id == Id::Tool(id(i))).unwrap();
@@ -475,4 +480,65 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         body.starts_with("mkdir probe") && body.ends_with("Auto mode's classifier blocked it: Too risky."),
         "{body}"
     );
+}
+
+#[test]
+fn chat_keeps_room_for_buttons_under_each_prompt_and_each_turns_last_answer() {
+    let demo = crate::demo::Transcript::new().unwrap();
+    let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let prompt =
+        |text: &str, queued| item(ItemKind::Prompt { text: text.into(), pictures: vec![], synthetic: false, queued });
+    let answer = |text: &str| item(ItemKind::Assistant { markdown: text.into() });
+    model.items = [
+        prompt("first", false),
+        answer("looking"),
+        tool("Read", ToolState::Ok, None),
+        answer("done with the first"),
+        prompt("also this", true),
+        answer("done with that too"),
+        prompt("/context", false),
+        answer("the newest"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, item)| (id(i as u64), item))
+    .collect();
+    model.groups = super::super::super::model::group(&model.items);
+    let pal = &mdshared_ui::theme::DARK;
+    for chat in [true, false] {
+        let mut rows = Rows {
+            list: vec![],
+            previous: BTreeMap::new(),
+            end: 0.0,
+            width: 700.0,
+            scale: 1.0,
+            pal,
+            chat,
+            offer: None,
+            awaiting: None,
+            answers: if chat { answer_actions(&model.items) } else { Default::default() },
+        };
+        rows.conversation(&model, &BTreeSet::new(), &BTreeSet::new());
+        let actions = |i| rows.list.iter().find(|r| r.id == Id::Message(id(i))).unwrap().actions;
+        if !chat {
+            // The Session view is as it was.
+            assert!(rows.list.iter().all(|r| r.actions.is_none()));
+            continue;
+        }
+        // Rewind only where the CLI's rewind list has the prompt: not a slash command, not a
+        // message sent while a turn ran.
+        assert_eq!(actions(0), Some(Actions { rewind: true, newest: false }));
+        assert_eq!(actions(4), Some(Actions { rewind: false, newest: false }));
+        assert_eq!(actions(6), Some(Actions { rewind: false, newest: false }));
+        // An answer that goes on into tool calls has none; each turn's last has them.
+        assert_eq!(actions(1), None);
+        assert_eq!(actions(3), Some(Actions { rewind: false, newest: false }));
+        assert_eq!(actions(5), Some(Actions { rewind: false, newest: false }));
+        assert_eq!(actions(7), Some(Actions { rewind: false, newest: true }));
+        // Their room is kept under the message, shown or not.
+        let row = |i| rows.list.iter().find(|r| r.id == Id::Message(id(i))).unwrap();
+        let next = |i: u64| rows.list.iter().find(|r| r.id == Id::Message(id(i + 1))).unwrap();
+        assert!(next(0).top - (row(0).top + row(0).h) >= ACTIONS_ROOM);
+        assert!(next(4).top - (row(4).top + row(4).h) >= ACTIONS_ROOM);
+    }
 }

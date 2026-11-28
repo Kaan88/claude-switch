@@ -885,3 +885,38 @@ fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answ
     chat.react_at(Some(Reason::Permission), now);
     assert!(!chat.drawer_focus);
 }
+
+#[test]
+fn a_branch_cuts_after_a_prompts_whole_turn_or_right_after_an_answer() {
+    use claude_switch_core::branch::Cut;
+    use claude_switch_core::transcript::{Item, ItemId, ItemKind};
+    let mut app = demo();
+    let pane = app.tabs.shown_mut().unwrap().pane.as_mut().unwrap();
+    let at = |offset| ItemId { offset, block: 0 };
+    let prompt =
+        |text: &str, queued| ItemKind::Prompt { text: text.into(), pictures: vec![], synthetic: false, queued };
+    pane.model.items = [
+        (at(10), prompt("first", false)),
+        (at(20), ItemKind::Assistant { markdown: "working".into() }),
+        (at(30), prompt("also this", true)),
+        (at(40), ItemKind::Assistant { markdown: "done".into() }),
+        (at(50), prompt("second", false)),
+        (at(60), ItemKind::Assistant { markdown: "the newest".into() }),
+        (at(70), ItemKind::Notice { kind: claude_switch_core::transcript::NoticeKind::Info, text: "x".into() }),
+    ]
+    .into_iter()
+    .map(|(id, kind)| (id, Item { timestamp: None, kind }))
+    .collect();
+    // A prompt keeps its turn, also past a message sent while it ran, up to the next prompt.
+    assert_eq!(pane.branch_cut(at(10)), Some(Cut::Before(50)));
+    assert_eq!(pane.branch_cut(at(30)), Some(Cut::Before(50)));
+    assert_eq!(pane.branch_cut(at(50)), Some(Cut::Whole));
+    assert_eq!(pane.branch_cut(at(40)), Some(Cut::After(40)));
+    assert_eq!(pane.branch_cut(at(70)), None);
+    // In the demo the branch opens (with the demo's launch) and writes nothing.
+    let tab = app.tabs.shown().unwrap().id;
+    app.apply_scan(crate::demo::scan(&crate::demo::config()));
+    app.tabs.get_mut(tab).unwrap().session = Some(app.sessions[0].id.clone());
+    app.branch_at(Instant::now(), tab, at(40));
+    assert!(app.info.is_none(), "no refusal");
+}

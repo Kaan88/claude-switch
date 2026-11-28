@@ -298,6 +298,19 @@ const BUBBLE_TOP: f32 = 10.0;
 const AFTER_TOOLS: f32 = 8.0;
 /// A little more air between an answer and the tool lines under it.
 const UNDER_ANSWER: f32 = 3.0;
+/// The row of buttons under a message in Chat (Copy, Rewind, Branch): its buttons' height, and
+/// the room kept for it under the message, shown or not, so pointing moves nothing.
+pub(super) const ACTION_H: f32 = 24.0;
+pub(super) const ACTIONS_ROOM: f32 = ACTION_H + 8.0;
+
+/// The buttons under a message in Chat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Actions {
+    /// "Rewind to here", as the right-click menu offers it: a prompt the CLI's rewind list shows.
+    pub rewind: bool,
+    /// The newest answer: its buttons always show; the others' while the pointer is over them.
+    pub newest: bool,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Geometry {
@@ -419,6 +432,8 @@ pub(super) struct Row {
     /// An edit's lines added and removed, and its diff when open.
     pub counts: (usize, usize),
     pub diff: Diff,
+    /// The buttons under a message (Chat only).
+    pub actions: Option<Actions>,
 }
 
 /// Reuse unchanged shaping across appends and prepended history.
@@ -537,6 +552,24 @@ pub(super) struct Rows<'a> {
     pub offer: Option<ItemId>,
     /// The pending call a card asks about: it has not started, it waits for the answer.
     pub awaiting: Option<ItemId>,
+    /// The answers with buttons under them (each turn's last), and the newest of them.
+    pub answers: (BTreeSet<ItemId>, Option<ItemId>),
+}
+
+/// The answers that carry the buttons in Chat: the last answer before each prompt and the last of
+/// all, which is the newest.
+pub(super) fn answer_actions(items: &BTreeMap<ItemId, Item>) -> (BTreeSet<ItemId>, Option<ItemId>) {
+    let mut set = BTreeSet::new();
+    let mut last = None;
+    for (&id, item) in items {
+        match item.kind {
+            ItemKind::Prompt { synthetic: false, .. } => set.extend(last.take()),
+            ItemKind::Assistant { .. } => last = Some(id),
+            _ => {}
+        }
+    }
+    set.extend(last);
+    (set, last)
 }
 
 impl Rows<'_> {
@@ -619,6 +652,7 @@ impl Rows<'_> {
             head: 0.0,
             counts: (0, 0),
             diff: Diff::default(),
+            actions: None,
         }
     }
 
@@ -655,6 +689,8 @@ impl Rows<'_> {
             Style::Card => (HEAD + content + 12.0, 7.0),
         };
         row.h = h;
+        // The buttons under a message keep their room, so that pointing at it moves nothing.
+        let gap = if row.actions.is_some() { f32::min(gap, 10.0) + ACTIONS_ROOM } else { gap };
         self.end += h + gap;
         self.list.push(row);
     }
@@ -814,8 +850,10 @@ impl Rows<'_> {
     fn item(&mut self, id: ItemId, item: &Item, line: Line, files: Option<&Files>) {
         let open = line.open;
         let row = match &item.kind {
-            ItemKind::Prompt { text, pictures, .. } => {
+            ItemKind::Prompt { text, pictures, synthetic, queued } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
+                let rewind = !queued && crate::view::chat::question::rewind::listed(text);
+                row.actions = (self.chat && !synthetic).then_some(Actions { rewind, newest: false });
                 row.body = (!text.is_empty()).then(|| self.shape(&row.id, text, row.geo.tw, BodyKind::Prompt, files));
                 let count = pictures.len();
                 row.pictures.extend(thumbs(id, count, move |i| {
@@ -825,6 +863,8 @@ impl Rows<'_> {
             }
             ItemKind::Assistant { markdown } => {
                 let mut row = self.row(Id::Message(id), Style::Answer);
+                let newest = self.answers.1 == Some(id);
+                row.actions = (self.chat && self.answers.0.contains(&id)).then_some(Actions { rewind: false, newest });
                 row.body = Some(self.shape(&row.id, markdown, row.geo.tw, BodyKind::Markdown, files));
                 row
             }
