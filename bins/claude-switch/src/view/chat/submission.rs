@@ -167,9 +167,14 @@ impl Chat {
         (self.staging.takeback, self.staging.command) = (None, None);
         // A command Chat typed on its own is no longer followed (and never cleared): the input
         // may hold the user's own text now, or belong to another session.
-        if self.staging.owned.take().is_some() {
-            self.staging.result = Some(CommandResult::Left);
+        // After its Enter it most likely went; before (being withdrawn), it did not.
+        if let Some(owned) = self.staging.owned.take() {
+            self.staging.result = Some(match owned.step {
+                OwnedStep::Entered => CommandResult::Unknown,
+                OwnedStep::Withdraw { .. } => CommandResult::Left,
+            });
         }
+        self.staging.unseen = None;
         self.staging.sent.clear();
         self.staging.stopped = false;
         if let Some(wait) = self.image_wait.take() {
@@ -524,7 +529,8 @@ impl AppState {
                         let step = OwnedStep::Withdraw { presses: 0 };
                         let (due, last) = (now, now + OWNED_LIMIT);
                         let stamp = wait.stamp;
-                        chat.staging.owned = Some(Owned { line: wait.line, stamp, step, epoch, due, last });
+                        let seen = now;
+                        chat.staging.owned = Some(Owned { line: wait.line, stamp, step, epoch, due, last, seen });
                         chat.error = None;
                         chat.retry = None;
                     }
@@ -560,7 +566,8 @@ impl AppState {
                             // Enter went: the input must let go of the line.
                             let (epoch, due, last) = (chat.output_epoch, now + ENTER_CONFIRM, now + OWNED_LIMIT);
                             let step = OwnedStep::Entered;
-                            chat.staging.owned = Some(Owned { line, stamp, step, epoch, due, last });
+                            let seen = now;
+                            chat.staging.owned = Some(Owned { line, stamp, step, epoch, due, last, seen });
                         }
                     }
                 }
@@ -593,7 +600,7 @@ impl AppState {
                 return true;
             }
         }
-        if follow_owned(tab, now, may_write) {
+        if follow_owned(tab, now, may_write) || watch_unseen(tab, now) {
             return true;
         }
         if take_back(tab, now, may_write) {
@@ -705,6 +712,7 @@ impl AppState {
         chat.commands.open = false;
         chat.error = None;
         chat.retry = None;
+        chat.staging.unseen = None;
         chat.staging.echo = Some(EchoWait { stamp, due: now + ECHO_TIMEOUT, line: line.to_owned(), from_editor });
     }
 
@@ -828,10 +836,12 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
 /// (another text at rest, or an empty input); still exactly on the input after `ENTER_CONFIRM`,
 /// Enter was lost and the line is withdrawn. An input Chat cannot read (a panel the command
 /// opened, a prompt a card answers) is waited for until `OWNED_LIMIT`: the line still read there
-/// is left (said), else the command ran and following ends without a word.
+/// is left (said), else the command ran and following ends without a word (said after all should
+/// the input later show exactly the line at rest: `watch_unseen`).
 /// Withdrawn: Ctrl+U, one press at a time, only while the input shows exactly the line at rest and
-/// the gate would let a key go (`can_withdraw`), until it reads empty. Text of anyone else's on
-/// the input is never cleared; terminal input ends the following (`interrupt_staging`). A command
+/// the gate would let a key go (`can_withdraw`), until it reads empty; time a turn runs does not
+/// count against the limit. Text of anyone else's on the input is never cleared; terminal input
+/// ends the following (`interrupt_staging`; after Enter the result is unknown). A command
 /// that does not run ends Claude Code's command tracking with it, and the box says what happened.
 fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
@@ -869,8 +879,12 @@ fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
                     return end(tab, CommandResult::Left, Some(COMMAND_LEFT));
                 }
                 // The line was not read on the input: a command that opens a panel (`/config`,
-                // `/mcp`, a bare `/model`) hides it, and ran. Following ends without a word.
-                return end(tab, CommandResult::Taken, None);
+                // `/mcp`, a bare `/model`) hides it, and ran. Following ends without a word,
+                // unless the input later shows exactly the line at rest (`watch_unseen`).
+                let line = owned.line.clone();
+                end(tab, CommandResult::Taken, None);
+                tab.pane.as_mut().unwrap().chat.staging.unseen = Some(line);
+                return true;
             }
             if now < owned.due || !(exactly && resting) {
                 return false;
@@ -880,9 +894,24 @@ fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             let owned = chat.staging.owned.as_mut().unwrap();
             owned.step = OwnedStep::Withdraw { presses: 0 };
             owned.epoch = chat.output_epoch.wrapping_sub(1);
+            owned.seen = now;
             true
         }
         OwnedStep::Withdraw { presses } => {
+            // A turn that runs holds the Ctrl+U back (`can_withdraw`): its time does not count
+            // against the limit, so the line still comes off once the turn is over.
+            let running =
+                screen::working(screen) || busy_title(&tab.program_title) || pane.model.chat.pending.is_some();
+            if running {
+                let chat = &mut tab.pane.as_mut().unwrap().chat;
+                let owned = chat.staging.owned.as_mut().unwrap();
+                owned.last += now.saturating_duration_since(owned.seen);
+                owned.seen = owned.seen.max(now);
+                return false;
+            }
+            tab.pane.as_mut().unwrap().chat.staging.owned.as_mut().unwrap().seen = now;
+            let chat = &tab.pane.as_ref().unwrap().chat;
+            let Some(owned) = &chat.staging.owned else { return false };
             if clean_prompt(screen) && (presses == 0 || fresh) {
                 return end(tab, CommandResult::Withdrawn, Some(COMMAND_WITHDRAWN));
             }
@@ -910,6 +939,26 @@ fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             }
         }
     }
+}
+
+/// A command taken for run while the input could not be read: once the input can be read at
+/// rest, it showing exactly the line means the command never ran. Said, and its tracking ends.
+fn watch_unseen(tab: &mut Tab, now: Instant) -> bool {
+    let chat = &tab.pane.as_ref().unwrap().chat;
+    let Some(line) = &chat.staging.unseen else { return false };
+    if chat.staging.owned.is_some() || prompt(&tab.term.screen).is_none() || !chat.screen_resting(&tab.term, now) {
+        return false;
+    }
+    let left = shown_exactly(tab, line);
+    let chat = &mut tab.pane.as_mut().unwrap().chat;
+    chat.staging.unseen = None;
+    if left {
+        chat.staging.result = Some(CommandResult::Left);
+        chat.slash = false;
+        chat.cli_report.tracking = false;
+        chat.refused(COMMAND_LEFT, None);
+    }
+    left
 }
 
 /// The take-back is over: the message goes back to the box (in front of anything there, which

@@ -999,6 +999,64 @@ fn a_command_that_opens_a_panel_ends_without_a_word_when_its_line_is_never_read_
 }
 
 #[test]
+fn a_line_read_at_rest_after_following_ended_unseen_is_said() {
+    use crate::view::chat::question::screens::recorded::MENU_CONFIG;
+    let mut f = Live::new();
+    entered(&mut f, "/config");
+    f.show(MENU_CONFIG);
+    f.pass(SECOND * 61);
+    assert_eq!(f.chat().staging.result, Some(CommandResult::Taken));
+    // The panel closes and the input still holds the line: the command never ran.
+    input_holds(&mut f, "/config");
+    f.pass(SECOND);
+    let chat = f.chat();
+    assert_eq!(chat.error, Some(COMMAND_LEFT));
+    assert_eq!(chat.staging.result, Some(CommandResult::Left));
+    assert!(!chat.slash && chat.staging.unseen.is_none());
+    assert!(f.writes().is_empty(), "never cleared: it is said");
+}
+
+#[test]
+fn an_empty_input_after_following_ended_unseen_says_nothing() {
+    use crate::view::chat::question::screens::recorded::MENU_CONFIG;
+    let mut f = Live::new();
+    entered(&mut f, "/config");
+    f.show(MENU_CONFIG);
+    f.pass(SECOND * 61);
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    let chat = f.chat();
+    assert!(chat.error.is_none() && chat.staging.unseen.is_none());
+    assert_eq!(chat.staging.result, Some(CommandResult::Taken));
+}
+
+#[test]
+fn a_running_turn_does_not_use_up_the_time_to_take_a_line_off() {
+    let mut f = Live::new();
+    entered(&mut f, "/rename Notes");
+    // Enter did not take: the line is to come off.
+    f.pass(SECOND * 4);
+    assert!(matches!(f.chat().staging.owned.as_ref().unwrap().step, OwnedStep::Withdraw { .. }));
+    // A turn runs for longer than the limit with the line on the input: no Ctrl+U meanwhile.
+    f.tab().program_title = "Claude Code — Working".into();
+    for _ in 0..80 {
+        input_holds(&mut f, "/rename Notes");
+        f.pass(SECOND);
+    }
+    assert!(f.writes().is_empty(), "no Ctrl+U into a running turn");
+    assert!(f.chat().staging.owned.is_some(), "still followed");
+    assert_ne!(f.chat().error, Some(COMMAND_LEFT));
+    // The turn ends: the line comes off.
+    f.tab().program_title = String::new();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [CLEAR_LINE.to_vec()]);
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    assert_eq!(f.chat().staging.result, Some(CommandResult::Withdrawn));
+}
+
+#[test]
 fn a_command_still_read_on_the_input_at_the_limit_is_said_to_be_left() {
     let mut f = Live::new();
     entered(&mut f, "/rename Notes");
@@ -1021,7 +1079,7 @@ fn terminal_input_ends_the_following_of_a_command_without_a_key() {
     f.chat().interrupt_staging();
     let chat = f.chat();
     assert!(chat.staging.owned.is_none(), "the input may hold the user's own text now");
-    assert_eq!(chat.staging.result, Some(CommandResult::Left));
+    assert_eq!(chat.staging.result, Some(CommandResult::Unknown), "after its Enter: most likely taken");
     input_holds(&mut f, "/rename Notes");
     f.pass(SECOND * 5);
     assert!(f.writes().is_empty(), "no Ctrl+U after terminal input");

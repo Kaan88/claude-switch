@@ -1048,10 +1048,13 @@ way is not enough); a line that was not entered (its echo never came, a prompt w
 or Enter did not take) comes off again with Ctrl+U, one press at a time and only while the input
 shows exactly that line at rest and the gate would let a key go (no running turn, menu, pending
 call or other session; once the input can be read again: a prompt over it is answered from its
-card meanwhile); text of anyone else's is never cleared, and terminal input or another session
-ends the following without a key. An input Chat cannot read for a minute after Enter (a panel the
-command opened, as `/config` or a bare `/model` do) means the command ran: following ends without
-a word. The `/rename` is then typed again, at most three times, after which the box says to rename
+card meanwhile; time a turn runs, which holds the Ctrl+U back, does not count against the
+minute); text of anyone else's is never cleared, and terminal input or another session ends the
+following without a key (after Enter, a rename so ended is dropped without a word: most likely
+Claude Code took it). An input Chat cannot read for a minute after Enter (a panel the command
+opened, as `/config` or a bare `/model` do) means the command ran: following ends without a word,
+unless the input, once readable at rest again, shows exactly the line, which the box then says. A
+`/rename` that was not entered is then typed again, at most three times, after which the box says to rename
 in the terminal. A command that did not run ends its tracking with it, so no line left on the
 input holds every later message without a word. A handover's `/rename` waits for the new
 session's first prompt at most two minutes; then the box says to rename in the terminal. The demo has no CLI to follow. A tab that starts running another session drops the waiting rename. A blank

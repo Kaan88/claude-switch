@@ -54,6 +54,9 @@ impl AppState {
             let next = match result {
                 _ if following => return false,
                 Some(CommandResult::Taken) => None,
+                // Following stopped after its Enter (terminal input): most likely taken; nothing
+                // is claimed either way, and it is not typed again over what the user did.
+                Some(CommandResult::Unknown) => None,
                 // Refused before a key went (the gate's notice says why): it goes again.
                 None => Some(rename.clone()),
                 Some(CommandResult::Withdrawn) if rename.tries + 1 < TRIES => {
@@ -215,6 +218,23 @@ mod tests {
         f.tab().cli_rename = Some(CliRename::new("s-1", "Notes"));
         assert!(tick(&mut f, SECOND));
         assert_eq!(f.writes(), [b"/rename Notes".to_vec()]);
+    }
+
+    #[test]
+    fn terminal_input_after_the_renames_enter_drops_it_without_claiming_it_failed() {
+        let mut f = live();
+        f.tab().cli_rename = Some(CliRename::new("s-1", "Notes"));
+        assert!(tick(&mut f, SECOND));
+        assert_eq!(f.writes(), [b"/rename Notes".to_vec()]);
+        input_holds(&mut f, "/rename Notes");
+        tick(&mut f, SECOND / 10);
+        assert_eq!(f.writes(), [vec![13u8]], "Enter");
+        // A wheel or a key in the terminal right after Enter.
+        f.chat().interrupt_staging();
+        assert!(!tick(&mut f, SECOND / 10));
+        assert!(f.tab().cli_rename.is_none(), "not typed again over what the user did");
+        assert!(f.chat().error.is_none(), "no word that Claude Code did not take it");
+        assert!(f.writes().is_empty());
     }
 
     #[test]

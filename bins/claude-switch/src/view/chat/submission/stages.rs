@@ -45,6 +45,8 @@ pub(super) struct Owned {
     /// The step's own deadline (`Entered`), and the latest moment for the whole of it.
     pub due: Instant,
     pub last: Instant,
+    /// When it was last looked at: time a turn runs meanwhile does not count against `last`.
+    pub seen: Instant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +66,9 @@ pub(in crate::view::chat) enum CommandResult {
     Withdrawn,
     /// It may be left on the input (the input shows other text, or could not be read).
     Left,
+    /// Following stopped after its Enter (terminal input, another session): most likely taken,
+    /// but nobody saw it go.
+    Unknown,
 }
 
 /// A message of several lines, pasted and waiting to show on the input line before Enter.
@@ -162,6 +167,9 @@ pub(in crate::view::chat) struct Staging {
     pub(super) command: Option<CommandWait>,
     /// A command Chat typed on its own, followed until Claude Code took it or it is withdrawn.
     pub(super) owned: Option<Owned>,
+    /// A command whose following ended while the input could not be read (taken for run): should
+    /// the input later show exactly its line at rest, the box says so.
+    pub(super) unseen: Option<String>,
     /// What became of the last such command (for the one who asked for it, a `/rename`).
     pub(in crate::view::chat) result: Option<CommandResult>,
 }
