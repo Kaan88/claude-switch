@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
+  light theme), an edge only just lighter than the box, and focus firms it only a little.
+
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

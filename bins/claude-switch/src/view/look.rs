@@ -76,8 +76,19 @@ pub(super) fn quiet_fill(pal: &Palette, ground: Rgb) -> Rgb {
 
 /// A raised box: the composer's, and a card's in its place.
 pub(super) fn raised_box(p: &mut Painter, pal: &Palette, r: Rect, strong: bool) {
-    p.shadow_with(r, BOX_RADIUS, pal.dark, 0.7);
-    let border = mix(edge(pal), pal.text, if strong { 0.38 } else { 0.12 });
+    // Quiet, as in the desktop app: no shadow in a dark theme (the lighter box stands out by
+    // itself) and only a breath of one in a light theme; in a dark theme an edge only just lighter
+    // than the box (a light theme keeps its hairline, or a white box would vanish).
+    if !pal.dark {
+        p.shadow_with(r, BOX_RADIUS, false, 0.25);
+    }
+    // Focus (`strong`) only firms the edge a little.
+    let border = match (pal.dark, strong) {
+        (true, false) => mix(raised(pal), pal.text, 0.05),
+        (true, true) => mix(raised(pal), pal.text, 0.12),
+        (false, false) => edge(pal),
+        (false, true) => mix(edge(pal), pal.text, 0.15),
+    };
     p.frame(r, BOX_RADIUS, raised(pal), border);
 }
 
