@@ -18,6 +18,9 @@ const COPY_BASE: u32 = 4;
 /// Above every `COPY_BASE + account` id.
 const OPEN_FOLDER: u32 = 100_000;
 const FIND: u32 = 100_001;
+const SPLIT_RIGHT: u32 = 100_002;
+const SPLIT_DOWN: u32 = 100_003;
+const CLOSE_PANE: u32 = 100_004;
 
 #[derive(Clone, Copy)]
 pub struct Drag {
@@ -96,7 +99,10 @@ impl AppState {
         items.extend([
             Item::new(COMPACT, "Compact and open as…").enabled(tab.resume_id.is_some()),
             Item::new(OPEN_FOLDER, "Open working folder").enabled(folder),
-            Item::new(FIND, "Find…").hint("Ctrl+Shift+F").sep(),
+            Item::new(FIND, "Find…").hint("Ctrl+Shift+F"),
+            Item::new(SPLIT_RIGHT, "Split right").enabled(self.can_split(id)),
+            Item::new(SPLIT_DOWN, "Split down").enabled(self.can_split(id)),
+            Item::new(CLOSE_PANE, "Close pane").enabled(tab.shows_panes()).sep(),
             Item::new(RENAME, "Rename tab…").sep(),
             Item::new(CLOSE, "Close"),
             Item::new(CLOSE_OTHERS, "Close others").enabled(self.tabs.list.len() > 1),
@@ -126,6 +132,15 @@ impl AppState {
                 self.show_tab(id);
                 self.open_find();
             }
+            SPLIT_RIGHT | SPLIT_DOWN => {
+                self.show_tab(id);
+                let axis = if item == SPLIT_RIGHT { crate::panes::Axis::Right } else { crate::panes::Axis::Down };
+                self.split_pane(now, id, axis);
+            }
+            CLOSE_PANE => {
+                self.show_tab(id);
+                self.ask_close_pane(now, id);
+            }
             OPEN_FOLDER => {
                 if let Some(folder) = self.tab_folder(id) {
                     self.open_working_folder(now, &folder);
@@ -135,7 +150,7 @@ impl AppState {
                 self.ask_tab_compact(id, None);
             }
             CLOSE_OTHERS => {
-                if self.tabs.list.iter().any(|tab| tab.id != id && tab.term.running()) {
+                if self.tabs.list.iter().any(|tab| tab.id != id && tab.any_running()) {
                     self.dialog = Some(Dialog::Confirm {
                         title: "Close the other tabs?".into(),
                         text: "Their running programs will end.".into(),

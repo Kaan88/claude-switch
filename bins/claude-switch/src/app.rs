@@ -456,6 +456,9 @@ impl AppState {
             self.find_press(control);
             return;
         }
+        if matches!(hover, Some(Target::PaneDivider(_))) && self.press_divider(x, y) {
+            return;
+        }
         if self.chat_press(cx, hover, x, y, clicks) {
             self.clear_session_text_focus();
             return;
@@ -542,6 +545,10 @@ impl AppState {
             return;
         }
         if self.session_release(cx, x, y) {
+            return;
+        }
+        if self.release_divider() {
+            cx.request_redraw_all();
             return;
         }
         if self.splitter.release() {

@@ -242,7 +242,7 @@ impl AppState {
     pub fn find_focused(&self) -> bool {
         self.terminal_shown()
             && self.nothing_over()
-            && self.tabs.shown().is_some_and(|tab| tab.term.find.as_ref().is_some_and(|f| f.focused))
+            && self.tabs.shown().is_some_and(|tab| tab.focused_term().find.as_ref().is_some_and(|f| f.focused))
             && !self.chat_takes_input()
     }
 
@@ -255,7 +255,7 @@ impl AppState {
         {
             pane.chat.show_terminal();
         }
-        let find = tab.term.find.get_or_insert_with(Find::new);
+        let find = tab.focused_term_mut().find.get_or_insert_with(Find::new);
         find.focused = true;
         find.field.select_all();
         self.clear_session_text_focus();
@@ -263,14 +263,14 @@ impl AppState {
 
     pub fn close_find(&mut self) {
         if let Some(tab) = self.tabs.shown_mut() {
-            tab.term.find = None;
+            tab.focused_term_mut().find = None;
         }
     }
 
     /// Finds again after the query changed and scrolls to the match it chose.
     fn find_changed(&mut self) {
         let Some(tab) = self.tabs.shown_mut() else { return };
-        let t = &mut tab.term;
+        let t = tab.focused_term_mut();
         let bottom = t.view(false).top_line(&t.screen) + t.screen.rows() as u64;
         let changes = t.changes;
         if let Some(hit) = t.find.as_mut().and_then(|f| f.update(&t.screen, changes, bottom)) {
@@ -282,7 +282,7 @@ impl AppState {
     pub fn find_step(&mut self, up: bool) {
         self.find_changed();
         let Some(tab) = self.tabs.shown_mut() else { return };
-        let t = &mut tab.term;
+        let t = tab.focused_term_mut();
         if let Some(hit) = t.find.as_mut().and_then(|f| f.step(up)) {
             t.reveal(hit.start.line);
         }
@@ -303,7 +303,9 @@ impl AppState {
             KeyName::Char('c' | 'C') if mods.alt && !mods.ctrl => self.toggle_find_case(),
             KeyName::Char('f' | 'F') if mods.ctrl && mods.shift && !mods.alt => self.open_find(),
             _ => {
-                let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.term.find.as_mut()) else { return true };
+                let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()) else {
+                    return true;
+                };
                 if find.field.handle_key(name, mods, text, true) == Some(true) {
                     self.find_changed();
                 }
@@ -314,7 +316,7 @@ impl AppState {
 
     /// Text an input method committed while the bar has the keyboard.
     pub fn find_text(&mut self, text: &str) {
-        if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.term.find.as_mut())
+        if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut())
             && find.field.insert(text)
         {
             self.find_changed();
@@ -322,7 +324,7 @@ impl AppState {
     }
 
     fn toggle_find_case(&mut self) {
-        if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.term.find.as_mut()) {
+        if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()) {
             find.match_case = !find.match_case;
         }
         self.find_changed();
@@ -332,7 +334,7 @@ impl AppState {
     pub fn find_press(&mut self, control: FindControl) {
         match control {
             FindControl::Field => {
-                if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.term.find.as_mut()) {
+                if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()) {
                     find.focused = true;
                 }
                 if let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) {
@@ -352,7 +354,7 @@ impl AppState {
         let pal = *self.pal();
         let hover = self.hover;
         let focused = self.window_focused && self.find_focused();
-        let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.term.find.as_mut()) else { return };
+        let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()) else { return };
         let bar = Bar::layout(area);
         if bar.card.w < 2.0 * BUTTON {
             return;

@@ -351,7 +351,30 @@ untouched. While the bar has the keyboard, keys go to its box (the window's shor
 and the cursor is drawn unfocused; a press on the grid gives the keyboard back to the program and
 leaves the bar open; Escape or its × closes it.
 
-**Not there:** more than one terminal in a tab, links in the terminal,
+**Panes.** A tab can be split into up to four panes (`panes.rs`), as a small tree: each split is
+side by side ("Split right", a vertical divider) or stacked ("Split down"), half and half at first,
+and divides the focused pane. The commands are in the tab's menu and the palette (with "Close pane"
+and "Next pane"); no key was added, since Windows Terminal's Alt+Shift+plus/minus and Alt+arrows
+would be taken from the programs. Pane 0 is the tab's own terminal (`Tab::term`): Chat, the session
+view, attention, the send gate, identity, saved tabs and the safeguard keep reading only it. A new
+pane is a plain shell (`launch::shell`, the same sanitized environment as a shell tab) started in
+the tab's launch folder (`Tab::folder`), else its session's, else its OpenCode folder, else the
+home folder; never a second Claude Code on the session. It starts at about the half it will get
+and every pane is then fitted to its own rectangle on each layout, so a split or a divider drag
+resizes only the programs it divides. Keys, paste, dropped files, the mouse and find go to the
+focused pane; a press on another pane focuses it first (the programs that asked are told of the
+focus change), the wheel over an unfocused pane scrolls its scrollback without focusing it. The
+focused pane has a 1 px edge between the theme's line and accent colours; unfocused panes draw the
+hollow cursor. The 6 px gap between panes holds a 1 px line, accent while hovered or dragged; it
+is dragged with a resize cursor and keeps 60 px for either side. An ended pane shows its end line
+and closes on Enter. "Close pane" asks first while the pane's program runs; the tab's own pane
+closes only last (closing it under shells would leave Chat without its terminal), and with no
+other pane it is "Close" of the tab, asking as before. Closing the tab or the window counts the
+panes' programs as running. In Chat's layout only pane 0 is shown (in the drawer) and has the
+keyboard; the other panes keep running, their size unchanged, and splitting waits for the
+terminal layout. Panes are not saved with the tabs.
+
+**Not there:** links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host
 has no name for Insert); input-method composition (the host turns input methods off on Windows).
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Terminal tabs: split a tab into up to four panes, side by side or stacked, with "Split right",
+  "Split down", "Close pane" and "Next pane" in the tab's menu and the palette. A new pane starts a
+  shell in the tab's folder; a click gives a pane the keyboard (it has a thin edge), the divider
+  between two panes can be dragged, and each pane has its own size. Chat and the session view stay
+  with the tab's own Claude pane, which closes last; closing the last pane closes the tab.
 - Terminal tabs: find in the screen and the scrollback. Ctrl+Shift+F (while the terminal has the
   keyboard, as in Windows Terminal), "Find in terminal" in the palette or "Find…" in the tab's menu
   opens a bar at the top right of the terminal, also over Chat's terminal drawer. Matches are marked

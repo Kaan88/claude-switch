@@ -94,6 +94,7 @@ impl App for AppState {
                 let (x, y) = self.mouse;
                 if !(!self.picture_overlay() && self.chat_wheel(x, y, dy))
                     && !self.session_wheel(cx.size().0, x, y, dy)
+                    && !self.wheel_other_pane(x, y, dy)
                     && self.term_area.contains(x, y)
                 {
                     self.term_wheel(dy, cx.mods());

@@ -40,10 +40,11 @@ impl AppState {
     pub fn draw_terminal(&mut self, cx: &mut Cx<'_, Msg>, p: &mut Painter, area: Rect) {
         let focused = self.window_focused && self.find_focused();
         let blink = self.blink;
-        let caret = self.tabs.shown_mut().and_then(|tab| tab.term.find.as_mut()).map(|find| {
+        let bar_area = self.focused_pane_rect(area);
+        let caret = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()).map(|find| {
             let on = find.field.blink_caret(cx.anim(), FIND_CARET, blink, focused);
             if focused && blink.is_some() && cx.anim().animates() {
-                cx.animating(crate::termfind::Bar::layout(area).field);
+                cx.animating(crate::termfind::Bar::layout(bar_area).field);
             }
             on
         });
@@ -75,28 +76,62 @@ impl AppState {
         let pal = *self.pal();
         let scheme = self.terminal_scheme();
         if let Some(tab) = self.tabs.shown_mut() {
-            let t = &mut tab.term;
-            let changes = t.changes;
-            if let Some(find) = &mut t.find {
-                find.update(&t.screen, changes, t.screen.end_line());
+            let extra = tab.panes.extra.iter_mut().map(|(_, t)| t);
+            for t in std::iter::once(&mut tab.term).chain(extra) {
+                let changes = t.changes;
+                if let Some(find) = &mut t.find {
+                    find.update(&t.screen, changes, t.screen.end_line());
+                }
             }
         }
+        let keyboard = self.terminal_focused();
+        let bar_area = self.focused_pane_rect(area);
+        let hot = match self.hover {
+            Some(Target::PaneDivider(i)) => Some(i),
+            _ => None,
+        };
         let (Some(metrics), Some(tab)) = (self.metrics, self.tabs.shown()) else {
             p.fill(area, scheme.background);
             return;
         };
-        let inner = self.term_area;
-        let t = &tab.term;
+        let split = tab.shows_panes();
+        let focused = tab.focused_pane();
+        let rects = if split { tab.panes.rects.clone() } else { vec![(crate::panes::MAIN, area)] };
         let prefs = &self.config.appearance;
-        let view = t.view(self.terminal_focused()).cursor_preference(default_shape(prefs), prefs.cursor_blink);
-        let blink = self.blink.filter(|_| cursor_can_blink(&t.screen, view, prefs.cursor_blink));
-        let show_cursor =
-            cursor(&t.screen, view, blink, view.cursor_row(&t.screen).map(|row| metrics.row_rect(inner, row)));
-        let view = view.cursor_shown(show_cursor);
-        let surface = Surface { area, inner, metrics, scheme, pal };
-        surface.draw(p, &mut self.cell_font, t, view, prefs.terminal_opacity);
+        let mut cursor = Some(cursor);
+        for (id, r) in rects {
+            let Some(t) = tab.term_of(id) else { continue };
+            let is_focused = id == focused;
+            let inner = if split { super::inner(r) } else { self.term_area };
+            let view = t.view(keyboard && is_focused).cursor_preference(default_shape(prefs), prefs.cursor_blink);
+            let show_cursor = match cursor.take_if(|_| is_focused) {
+                Some(cursor) => {
+                    let blink = self.blink.filter(|_| cursor_can_blink(&t.screen, view, prefs.cursor_blink));
+                    cursor(&t.screen, view, blink, view.cursor_row(&t.screen).map(|row| metrics.row_rect(inner, row)))
+                }
+                None => true,
+            };
+            let view = view.cursor_shown(show_cursor);
+            let surface = Surface { area: r, inner, metrics, scheme, pal };
+            surface.draw(p, &mut self.cell_font, t, view, prefs.terminal_opacity);
+        }
         self.hits.push((area, Target::Terminal));
-        self.draw_find_bar(p, area, caret_on);
+        if split {
+            crate::panes::draw_frame(p, &pal, &tab.panes, Some(focused), hot);
+            for (i, d) in tab.panes.dividers.iter().enumerate() {
+                self.hits.push((d.rect.inset(-1.0), Target::PaneDivider(i)));
+            }
+        }
+        self.draw_find_bar(p, bar_area, caret_on);
+    }
+
+    /// The pane of the shown tab that has the keyboard, or the whole `area` when it is not split.
+    fn focused_pane_rect(&self, area: Rect) -> Rect {
+        self.tabs
+            .shown()
+            .filter(|tab| tab.shows_panes())
+            .and_then(|tab| tab.panes.rects.iter().find(|(id, _)| *id == tab.focused_pane()))
+            .map_or(area, |(_, r)| *r)
     }
 }
 
