@@ -447,6 +447,8 @@ impl AppState {
         let now = tab.focused_pane();
         if let Some(t) = before.and_then(|b| tab.term_of_mut(b)) {
             t.stop_pointer();
+            // One selection per tab: the one copy and right-click act on is the only one shown.
+            t.selection = None;
             // Its find bar stays open but leaves the keyboard with the pane, so coming back
             // (Next pane, a closed neighbour) types into the program again.
             if let Some(find) = &mut t.find {

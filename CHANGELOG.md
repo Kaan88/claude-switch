@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Terminal panes: a selection belongs to the pane it was started in; dragging over another pane
+  selects to the edge of its own, and moving to another pane clears it, so a tab shows one.
 - Terminal find: whole word (Alt+W) and regular expression (Alt+R) toggles beside "Aa"; a pattern
   that does not compile says "Invalid pattern". The box takes mouse selection (drag, double and
   triple click) and its right-click menu (Cut, Copy, Paste, Select all) like the app's other fields.

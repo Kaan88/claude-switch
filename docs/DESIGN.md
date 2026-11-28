@@ -426,7 +426,11 @@ home folder; never a second Claude Code on the session. It starts at about the h
 and every pane is then fitted to its own rectangle on each layout, so a split or a divider drag
 resizes only the programs it divides. Keys, paste, dropped files, the mouse and find go to the
 focused pane; a press on another pane focuses it first (the programs that asked are told of the
-focus change), the wheel over an unfocused pane scrolls its scrollback without focusing it. The
+focus change), the wheel over an unfocused pane scrolls its scrollback without focusing it. A
+drag selects only in the pane it started in: past that pane's edge (over the divider, another pane,
+or out of the window) it takes the nearest cell of its own grid (`View::point_at` clamps), and the
+keyboard stays where it was. A pane that loses the keyboard drops its selection, so a tab shows one
+selection, the one Ctrl+Shift+C and right-click act on. The
 focused pane has a 1 px edge between the theme's line and accent colours; unfocused panes draw the
 hollow cursor. The 6 px gap between panes holds a 1 px line, accent while hovered or dragged; it
 is dragged with a resize cursor and keeps 60 px for either side. An ended pane shows its end line
