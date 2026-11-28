@@ -235,3 +235,27 @@ fn records_without_links_are_shown_as_before() {
     fs::write(&path, plain("one") + &two_turns() + &plain("two")).unwrap();
     assert_eq!(texts(&Reader::open(&path, 1 << 20).unwrap()), ["> one", "> one", "first", "> two", "second", "> two"]);
 }
+
+#[test]
+fn a_late_notice_parented_to_the_previous_turn_does_not_hide_the_prompt_just_typed() {
+    // A recap or notice written after the new prompt but linked to the previous turn's last record
+    // is the newest record: the prompt is not the one a rewind replaced, and stays with its turn.
+    let folder = Folder::new("late-notice");
+    let path = folder.0.join("s.jsonl");
+    let recap = line(json!({"type":"system","subtype":"away_summary","uuid":"n1","parentUuid":"a1",
+        "content":"While you were away"}));
+    fs::write(&path, two_turns() + &prompt("u3", Some("a2"), "three") + &recap).unwrap();
+    let mut reader = Reader::open(&path, 1 << 20).unwrap();
+    let shown = ["> one", "first", "> two", "second", "> three"];
+    assert_eq!(texts(&reader)[..5], shown, "{:?}", texts(&reader));
+    append(&path, &answer("a3", "u3", "third"));
+    reader.poll().unwrap();
+    assert!(texts(&reader).contains(&"third".to_owned()));
+    assert!(texts(&reader).contains(&"> three".to_owned()));
+    // A rewind still hides: the next prompt at the same place replaces the earlier one.
+    append(&path, &prompt("u4", Some("a2"), "three again"));
+    reader.poll().unwrap();
+    let after = texts(&reader);
+    assert!(!after.contains(&"> three".to_owned()) && !after.contains(&"third".to_owned()), "{after:?}");
+    assert!(after.contains(&"> three again".to_owned()));
+}

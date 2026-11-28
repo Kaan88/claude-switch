@@ -610,7 +610,16 @@ fn the_fixtures_read_as_the_states_the_check_names() {
         (MENU_MODEL, "kind = menu\ncount = 5\nesc = yes"),
         (MENU_CONFIG, "kind = panel\nrows = *Search settings*"),
         (REWIND_OPEN, "kind = rewind\nhighlight = (current)"),
-        (super::recorded::REWIND_ACTIONS, "kind = rewind-actions"),
+        (
+            super::recorded::REWIND_ACTIONS,
+            "kind = rewind-actions
+title = Reply with just the word bravo.",
+        ),
+        (
+            super::recorded::REWIND_UP1,
+            "kind = rewind
+highlight = Reply with just the word charlie.",
+        ),
     ] {
         let wanted = sections(&format!("[state]\n{wanted}")).remove(0).1;
         let screen = recorded(fixture);

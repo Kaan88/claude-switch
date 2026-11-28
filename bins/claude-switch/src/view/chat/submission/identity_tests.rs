@@ -367,6 +367,49 @@ fn a_fork_is_followed_by_the_record_it_leaves_in_the_transcript() {
     assert!(!f.tab().apply_live_identity(Some(B)));
     f.tab().apply_live_identity(Some(C));
     assert_eq!(f.tab().pane.as_ref().unwrap().pinned_id(), Some(C));
+    // After that, the old session in the record is the terminal going back to it (`/resume`).
+    f.tab().apply_live_identity(Some(A));
+    assert_eq!(f.tab().pane.as_ref().unwrap().pinned_id(), Some(A));
+    assert_eq!(f.tab().resume_id.as_deref(), Some(A), "the running-session guard sees the old session");
+}
+
+/// Item 80 review: once the record names the session gone on in, the mapping from the old one ends,
+/// so a later `/resume` of the old session is followed.
+#[test]
+fn a_return_to_the_session_a_fork_left_is_followed_once_the_record_caught_up() {
+    let mut f = Fixture::new("fork-back", |root| model::Source::File(handover_transcript(root, root, A)));
+    let root = f.root.clone();
+    let old = f.transcript(A, &root);
+    let continued = serde_json::json!({"type":"continued-in","sessionId":A,"continuedInSessionId":B});
+    let mut file = std::fs::OpenOptions::new().append(true).open(&old).unwrap();
+    std::io::Write::write_all(
+        &mut file,
+        format!(
+            "{continued}
+"
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    assert!(f.tab().apply_live_identity(Some(A)));
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.poll();
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while pane.model.chat.continued_in.is_none() && Instant::now() < deadline {
+        pane.model.collect();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(f.tab().follow_continuation());
+    f.transcript(B, &root);
+    f.tab().apply_live_identity(Some(A));
+    assert_eq!(f.tab().pane.as_ref().unwrap().pinned_id(), Some(B), "the record has not caught up yet");
+    f.tab().apply_live_identity(Some(B));
+    assert_eq!(f.tab().resume_id.as_deref(), Some(B));
+    // `/resume` of the old session: followed, and the tab names it.
+    f.tab().apply_live_identity(Some(A));
+    assert_eq!(f.tab().pane.as_ref().unwrap().pinned_id(), Some(A));
+    assert_eq!(f.tab().session.as_deref(), Some(A));
+    assert_eq!(f.tab().resume_id.as_deref(), Some(A));
 }
 
 #[test]

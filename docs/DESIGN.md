@@ -1592,8 +1592,10 @@ the next prompt is written; that prompt names an earlier message as its parent, 
 the reader shows the active branch only (`transcript/active.rs`): the chain from the newest record
 back through `parentUuid` (through a compaction boundary by its `logicalParentUuid`). A record is
 left out only when its own parents reach the chain through a typed prompt written before the
-chain's next record there (the prompt the rewind replaced, or a first prompt when the chain is whole
-back to its start). Records whose parents lead out of the loaded slice stay until history pages in,
+chain's next record there, and that next record is a typed prompt too (the prompt the rewind
+replaced and the one typed after it, or two first prompts when the chain is whole back to its
+start): a recap or notice parented to the previous turn and written after a new prompt becomes the
+newest record without hiding that prompt. Records whose parents lead out of the loaded slice stay until history pages in,
 and records without a `uuid`, sidechains, a subagent's transcript, and records hanging off the chain
 that do not start with a prompt (tool results recorded against their call, progress, notices) are
 never left out. The Tasks, Agents, Shells and Files pages still read every record. Recorded from

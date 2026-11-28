@@ -61,6 +61,14 @@ impl Tab {
     }
 
     pub(crate) fn apply_live_identity(&mut self, found: Option<&str>) -> bool {
+        if let Some(pane) = &mut self.pane {
+            pane.note_live_record(found);
+        }
+        self.apply_identity(found)
+    }
+
+    /// As [`apply_live_identity`](Self::apply_live_identity), for an id the pane itself followed.
+    fn apply_identity(&mut self, found: Option<&str>) -> bool {
         let Some(pane) = &mut self.pane else { return false };
         // A record still naming the session the transcript left stands for the one it went on in.
         let went_on = pane.live_session(found);
@@ -90,7 +98,7 @@ impl Tab {
             return false;
         }
         let Some(next) = pane.follow_continuation() else { return false };
-        self.apply_live_identity(Some(&next));
+        self.apply_identity(Some(&next));
         true
     }
 

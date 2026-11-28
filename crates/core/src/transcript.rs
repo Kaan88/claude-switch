@@ -441,18 +441,20 @@ struct ToolResult {
 
 impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
-        if !self.is_agent {
-            self.active.line(offset, line);
-            if decode::line_kind(line).is_none() {
-                self.continued_in(offset, line);
-                return;
+        let line_kind = decode::line_kind(line);
+        // Most attachments are large context records; parse only the kinds that are shown. Each
+        // line is parsed once: those not parsed further give the active branch their links alone.
+        if line_kind.is_none() || line_kind == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
+            // A `continued-in` record has no links; anything else may (progress, attachments).
+            if !self.is_agent && !(line_kind.is_none() && self.continued_in(offset, line)) {
+                self.active.line(offset, line);
             }
-        }
-        // Most attachments are large context records; parse only the kinds that are shown.
-        if decode::line_kind(line) == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
             return;
         }
         let Some((kind, value)) = message_line_with_meta(line) else { return };
+        if !self.is_agent {
+            self.active.value(offset, &value);
+        }
         if flag(&value, "isSidechain") && !self.is_agent {
             return;
         }
@@ -704,20 +706,24 @@ impl View {
         }
     }
 
-    /// Claude Code's record that the conversation goes on in another session (2.1.332 writes it last
-    /// in the transcript `/fork` leaves, naming the session the terminal goes on in).
-    fn continued_in(&mut self, offset: u64, line: &[u8]) {
+    /// Claude Code's record that the conversation goes on in another session (written last in the
+    /// transcript a session left, seen right after a `/fork` from 2.1.325 and once from 2.1.332).
+    /// True when the line is such a record, whatever it names.
+    fn continued_in(&mut self, offset: u64, line: &[u8]) -> bool {
         if !line.windows(14).any(|w| w == b"\"continued-in\"") {
-            return;
+            return false;
         }
-        let Ok(value) = serde_json::from_slice::<Value>(line) else { return };
-        let Some(id) = value["continuedInSessionId"].as_str().filter(|_| value["type"] == "continued-in") else {
-            return;
-        };
-        if crate::launch::validate_session_id(id).is_ok() && self.continued.as_ref().is_none_or(|(at, _)| *at < offset)
+        let Ok(value) = serde_json::from_slice::<Value>(line) else { return false };
+        if value["type"] != "continued-in" {
+            return false;
+        }
+        if let Some(id) = value["continuedInSessionId"].as_str()
+            && crate::launch::validate_session_id(id).is_ok()
+            && self.continued.as_ref().is_none_or(|(at, _)| *at < offset)
         {
             self.continued = Some((offset, id.to_owned()));
         }
+        true
     }
 
     /// Command output and shell mode as finished rows; true when the record was one of them. The CLI

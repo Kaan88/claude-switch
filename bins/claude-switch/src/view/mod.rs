@@ -181,6 +181,8 @@ impl Pane {
         if self.chat.awaiting_transcript && self.chat.first_sent {
             return false;
         }
+        // Following any session ends a mapping from a `continued-in` (set again by that follow).
+        self.left = None;
         let Some(source) = self.transcript_source.follow(&self.cwd, id) else { return false };
         // Only a session this tab had attached and verified is a parent: not one it was refused
         // for, nor a new chat whose transcript was never written.
@@ -206,6 +208,17 @@ impl Pane {
 
     /// The session the live record's `found` stands for: the one this pane went on in when the
     /// record still names the session the transcript left (`continued-in`).
+    /// The live record named `found`: once it names anything but the session left (the one gone on
+    /// in, as the record catches up, or a third), the mapping is done with, so a later return to
+    /// the old session (`/resume`) is followed as any other.
+    pub(crate) fn note_live_record(&mut self, found: Option<&str>) {
+        if let (Some((old, _)), Some(id)) = (&self.left, found)
+            && !id.eq_ignore_ascii_case(old)
+        {
+            self.left = None;
+        }
+    }
+
     pub(crate) fn live_session(&self, found: Option<&str>) -> Option<String> {
         let left = self.left.as_ref().filter(|(old, _)| found.is_some_and(|id| id.eq_ignore_ascii_case(old)));
         left.map(|(_, new)| new.clone())

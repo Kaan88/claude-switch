@@ -659,6 +659,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     against their own call, progress and hook records off the chain, sidechains and a subagent's transcript, a
     compaction boundary, the bounded slice and history paged in, records without links. Not checked: against a
     live rewind in the app; the Tasks, Agents, Shells and Files pages still count the rewound turns.
+    Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
+    its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
+    the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown
+    items without a new reader generation (history pages, pictures and prompt recall go on); each
+    line is parsed once. `recorder compat` script `rewind-send` (not run yet) rewinds to the second
+    of two prompts, sends a third and checks that the reader shows the first and third only.
     Review fixes (2026-11-27): every key on the choices needs them to quote the chosen prompt (the CLI could have
     been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
     prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list
@@ -1096,3 +1102,7 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     background fork with the first prompt only, the next turn in the tab's transcript, an idle
     input after `/fork`. It starts a background session that has to be ended by hand
     (`claude agents`).
+    Review fix (2026-11-28): once the live record names anything but the session a `continued-in`
+    left (the new one, as the record catches up, or a third), the record naming the old session is
+    no longer taken for the new one, so a later `/resume` of it is followed and the running-session
+    guard sees it. While the record has never moved, such a return cannot be told apart.

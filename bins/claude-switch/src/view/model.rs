@@ -642,13 +642,16 @@ impl Worker {
         }
         let reader = self.child.as_ref().map(|(_, r)| r).unwrap_or(root);
         let change = if self.child.is_some() { &visible } else { &lists };
-        // A prompt after a rewind leaves the replaced turns off the branch: show the items afresh.
-        reset |= change.reset || change.branch_changed;
+        reset |= change.reset;
         if reset {
             self.generation += 1;
         }
+        // A prompt after a rewind leaves the replaced turns off the branch: the items are shown
+        // afresh, but the reader is the same, so the generation (history pages, pictures, recall)
+        // stays.
+        let rebuild = reset || change.branch_changed;
         let mut u = Update {
-            reset,
+            reset: rebuild,
             earlier: reader.has_earlier(),
             loaded_earlier: earlier_request,
             agent: self.child.as_ref().map(|(id, _)| id.clone()),
@@ -665,13 +668,13 @@ impl Worker {
         if lists.reset || lists.subagents_changed {
             u.agents = Some(root.subagents().cloned().collect());
         }
-        if reset {
+        if rebuild {
             u.items = reader.items().map(|(id, item)| (id, item.clone())).collect();
         } else {
             u.items =
                 change.added.union(&change.updated).filter_map(|&id| Some((id, reader.item(id)?.clone()))).collect();
         }
-        u.files = self.refs.update(reset, &u.items, &self.cwd, |id| match reader.item(id).map(|item| &item.kind) {
+        u.files = self.refs.update(rebuild, &u.items, &self.cwd, |id| match reader.item(id).map(|item| &item.kind) {
             Some(ItemKind::Tool { state: claude_switch_core::transcript::ToolState::Ok, .. }) => reader
                 .result_details(id)
                 .map(|result| result.saved_paths().map(str::to_owned).collect())
@@ -685,22 +688,22 @@ impl Worker {
                 Some((id, outputs::collect(id, reader.item(id)?, reader.result_details(id), self.refs.get(id))))
             })
             .collect();
-        if reset
+        if rebuild
             || change.background_changed
             || u.items.iter().any(|(_, item)| matches!(&item.kind, ItemKind::Tool { .. }))
         {
             let shells = reader.background_shells();
-            if reset || self.shells != shells {
+            if rebuild || self.shells != shells {
                 self.shells.clone_from(&shells);
                 u.shells = Some(shells);
             }
             let tasks = reader.mcp_tasks();
-            if reset || self.mcp_tasks != tasks {
+            if rebuild || self.mcp_tasks != tasks {
                 self.mcp_tasks.clone_from(&tasks);
                 u.mcp_tasks = Some(tasks);
             }
         }
-        Ok((reset
+        Ok((rebuild
             || earlier_request
             || metadata_changed
             || !u.items.is_empty()
@@ -833,5 +836,66 @@ mod tests {
         fs::write(&file, b"{\"cwd\":\"C:/Work/rail.yard\"}\n").unwrap();
         assert_eq!(discover(&dir, cwd, UNIX_EPOCH, id).unwrap(), None);
         fs::remove_dir_all(config).unwrap();
+    }
+
+    #[test]
+    fn a_rewinds_next_prompt_drops_the_replaced_turns_and_keeps_the_generation() {
+        let dir = crate::testing::unique("cs-model-rewind");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.jsonl");
+        let line = |v: serde_json::Value| {
+            format!(
+                "{v}
+"
+            )
+        };
+        let prompt = |uuid: &str, parent: Option<&str>, text: &str| {
+            line(serde_json::json!({"type":"user","uuid":uuid,"parentUuid":parent,"message":{"content":text}}))
+        };
+        let answer = |uuid: &str, parent: &str, text: &str| {
+            line(serde_json::json!({"type":"assistant","uuid":uuid,"parentUuid":parent,
+                "message":{"content":[{"type":"text","text":text}],"stop_reason":"end_turn"}}))
+        };
+        let two = prompt("u1", None, "one")
+            + &answer("a1", "u1", "first")
+            + &prompt("u2", Some("a1"), "two")
+            + &answer("a2", "u2", "second");
+        fs::write(&path, two).unwrap();
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(Source::File(path.clone()), dir.clone(), move || {
+            let _ = wake.send(());
+        });
+        let texts = |model: &Model| -> Vec<String> {
+            model
+                .items
+                .values()
+                .filter_map(|item| match &item.kind {
+                    ItemKind::Prompt { text, .. } => Some(format!("> {text}")),
+                    ItemKind::Assistant { markdown } => Some(markdown.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let settle = |model: &mut Model, want: usize| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                model.poll();
+                let _ = events.recv_timeout(Duration::from_millis(50));
+                model.collect();
+                if texts(model).len() == want {
+                    break;
+                }
+            }
+        };
+        settle(&mut model, 4);
+        assert_eq!(texts(&model), ["> one", "first", "> two", "second"]);
+        let generation = model.generation;
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut file, prompt("u3", Some("a1"), "two again").as_bytes()).unwrap();
+        settle(&mut model, 3);
+        assert_eq!(texts(&model), ["> one", "first", "> two again"]);
+        assert_eq!(model.generation, generation, "the same reader: pages, pictures and recall go on");
+        drop(model);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -1,0 +1,43 @@
+# Rewind, then a prompt (scripts/rewind-send.txt). The keys are explained in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+
+[idle]
+kind = idle
+send = yes
+
+[before]
+prompts = Reply with just the word: alpha | Reply with just the word: bravo
+answers = alpha | bravo
+
+[list]
+kind = rewind
+highlight = (current)
+
+[up]
+kind = rewind
+highlight = Reply with just the word: bravo
+
+[actions]
+kind = rewind-actions
+title = Reply with just the word: bravo
+
+# Claude Code puts the prompt back on its input and writes nothing: the reader still shows both turns.
+[restored]
+kind = input
+input = Reply with just the word: bravo
+
+[cleared]
+kind = idle
+
+# The rewind wrote nothing, so until the next prompt the transcript still holds the replaced turn.
+[restored-transcript]
+prompts = Reply with just the word: alpha | Reply with just the word: bravo
+
+# The new prompt's parent is the first turn's last record: the active branch has no bravo.
+[after]
+kind = idle
+
+[after-transcript]
+prompts = Reply with just the word: alpha | Reply with just the word: charlie
+answers = alpha | charlie
+turn = Reply with just the word: charlie

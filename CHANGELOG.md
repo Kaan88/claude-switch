@@ -8,6 +8,8 @@
 - Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
   record and the transcripts (a `live` op records both), and whether Chat reads the screen after
   it as an idle input.
+- Tools: `recorder compat` has a `rewind-send` script: a rewind, then a prompt, checked against
+  what Chat shows of the transcript.
 - Chat and the Session view: after a rewind, the turns it replaced are no longer shown once the
   next message is written; the conversation follows the active branch of the transcript.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time

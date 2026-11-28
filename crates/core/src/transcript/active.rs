@@ -7,7 +7,9 @@
 //!
 //! Only what the loaded records prove is hidden: a record is off the branch when, following its own
 //! parents, it reaches a record on the chain through a typed prompt that was written before the
-//! chain's own next record there (the prompt a rewind replaced). Records whose parents lead out of
+//! chain's own next record there, and that next record is a typed prompt too (the prompt a rewind
+//! replaced, and the one typed after the rewind). A prompt is never hidden because a later notice
+//! or recap parented to an earlier record became the newest record. Records whose parents lead out of
 //! the loaded slice, records without a `uuid`, sidechains, and records hanging off the chain that do
 //! not start with a prompt (progress, tool results, notices) are never hidden.
 
@@ -71,24 +73,57 @@ fn is_prompt(content: &RawValue) -> bool {
         .is_ok_and(|blocks| blocks.iter().any(|b| b.kind.as_deref().is_some_and(|k| k != "tool_result")))
 }
 
+#[derive(Clone, Copy)]
+struct Next {
+    offset: u64,
+    prompt: bool,
+}
+
 enum Verdict {
     Keep,
     Hide,
 }
 
 impl Active {
-    /// Notes the record at `offset`, in any order (history pages in after newer records).
+    /// Notes the record at `offset` from its line, for a line the reader parses no further (a
+    /// context attachment, a record of another type): its links are read without building a tree.
+    /// Records come in any order (history pages in after newer records).
     pub(super) fn line(&mut self, offset: u64, line: &[u8]) {
         let Ok(link) = serde_json::from_slice::<Link>(line) else { return };
-        let Some(uuid) = link.uuid.filter(|u| !u.is_empty()) else { return };
-        if link.sidechain.as_ref().is_some_and(|s| s != &serde_json::Value::Bool(false)) {
-            return;
-        }
-        let parent = link.parent.filter(|p| !p.is_empty()).or(link.logical.filter(|p| !p.is_empty()));
         let prompt =
             link.kind.as_deref() == Some("user") && link.message.and_then(|m| m.content).is_some_and(is_prompt);
-        let node = Node { offset, parent: parent.map(Cow::into_owned), prompt };
-        self.nodes.insert(uuid.into_owned(), node);
+        let sidechain = link.sidechain.as_ref().is_some_and(|s| s != &serde_json::Value::Bool(false));
+        self.note(offset, link.uuid.as_deref(), link.parent.as_deref(), link.logical.as_deref(), sidechain, prompt);
+    }
+
+    /// Notes the record at `offset` from the tree the reader already parsed.
+    pub(super) fn value(&mut self, offset: u64, value: &serde_json::Value) {
+        let text = |key: &str| value[key].as_str();
+        let content = &value["message"]["content"];
+        let prompt = value["type"] == "user"
+            && (content.is_string()
+                || content.as_array().is_some_and(|blocks| {
+                    blocks.iter().any(|b| b["type"].as_str().is_some_and(|k| k != "tool_result"))
+                }));
+        let sidechain = value.get("isSidechain").is_some_and(|s| s != &serde_json::Value::Bool(false));
+        self.note(offset, text("uuid"), text("parentUuid"), text("logicalParentUuid"), sidechain, prompt);
+    }
+
+    fn note(
+        &mut self,
+        offset: u64,
+        uuid: Option<&str>,
+        parent: Option<&str>,
+        logical: Option<&str>,
+        sidechain: bool,
+        prompt: bool,
+    ) {
+        let Some(uuid) = uuid.filter(|u| !u.is_empty()) else { return };
+        if sidechain {
+            return;
+        }
+        let parent = parent.filter(|p| !p.is_empty()).or(logical.filter(|p| !p.is_empty()));
+        self.nodes.insert(uuid.to_owned(), Node { offset, parent: parent.map(str::to_owned), prompt });
         self.newest = self.newest.max(Some(offset));
         self.dirty = true;
     }
@@ -117,21 +152,22 @@ impl Active {
         let Some((leaf, _)) = self.nodes.iter().max_by_key(|(_, node)| node.offset) else {
             return BTreeSet::new();
         };
-        // The chain, each record with the offset of the chain's record after it.
-        let mut chain: HashMap<&str, u64> = HashMap::new();
+        // The chain, each record with the chain's record after it: its offset, and whether it is a
+        // typed prompt (only a prompt can have replaced another: a rewind's next prompt).
+        let mut chain: HashMap<&str, Next> = HashMap::new();
         let mut at = leaf.as_str();
-        let mut next = u64::MAX;
-        // The offset of the chain's first record when the chain is whole back to its start.
+        let mut next = Next { offset: u64::MAX, prompt: false };
+        // The chain's first record when the chain is whole back to its start.
         let mut start = None;
         loop {
             let node = &self.nodes[at];
             if chain.insert(at, next).is_some() {
                 break;
             }
-            next = node.offset;
+            next = Next { offset: node.offset, prompt: node.prompt };
             match node.parent.as_deref() {
                 None => {
-                    start = Some(node.offset);
+                    start = Some(next);
                     break;
                 }
                 Some(parent) if self.nodes.contains_key(parent) => at = parent,
@@ -152,7 +188,9 @@ impl Active {
                     break if known { Verdict::Hide } else { Verdict::Keep };
                 }
                 let current = &self.nodes[here];
-                let replaced = |before: u64| current.prompt && current.offset < before;
+                // A prompt written before the chain's own next prompt at the same place: replaced
+                // by a rewind. A notice or recap parented to an earlier record replaces nothing.
+                let replaced = |next: Next| current.prompt && next.prompt && current.offset < next.offset;
                 match current.parent.as_deref() {
                     Some(parent) if chain.contains_key(parent) => {
                         break if replaced(chain[parent]) { Verdict::Hide } else { Verdict::Keep };

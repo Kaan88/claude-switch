@@ -1,0 +1,54 @@
+# Rewind, then a prompt (Claude Switch item 49): two turns, Esc Esc, Up to the second prompt, Enter,
+# "Restore conversation" (Enter on its highlighted first choice), Ctrl+U to clear the prompt Claude
+# Code puts back on its input, then a new prompt. Claude Code appends nothing on the rewind; the new
+# prompt names the first turn's last record as its parent. The transcript copies are read by the
+# app's reader, which shows the active branch: after the new prompt the replaced turn is not shown.
+# Three model requests.
+#: args --permission-mode default
+#: seconds 70
+start
+send Reply with just the word: alpha
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+send Reply with just the word: bravo
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap idle
+tscopy before
+send \e
+sleep 150
+send \e
+wait (current) 5000
+quiet 500 5000
+snap list
+send \e[A
+sleep 500
+quiet 500 5000
+snap up
+send \r
+wait Restore conversation 5000
+quiet 500 5000
+snap actions
+send \r
+gone Restore conversation 5000
+quiet 1000 10000
+snap restored
+tscopy restored-transcript
+send \x15
+sleep 500
+quiet 500 5000
+snap cleared
+send Reply with just the word: charlie
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap after
+tscopy after-transcript
