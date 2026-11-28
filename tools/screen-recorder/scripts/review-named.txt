@@ -1,0 +1,20 @@
+# A form's review in a named session: Claude Code may draw blank rows and the input's named
+# rule under "2. Cancel", which the review was not read over. One model request.
+#: args --permission-mode default --name=compat-review
+#: seconds 25
+start
+send Use the AskUserQuestion tool now (no other tools) with two questions at once: header "Size" question "Which size?" options Small, Large; header "Speed" question "Which speed?" options Slow, Fast. multiSelect false.
+sleep 800
+send \r
+wait Chat about this 90000
+sleep 1500
+send \r
+sleep 1500
+send \r
+sleep 1500
+snap review
+send \r
+sleep 1500
+gone esc to interrupt 120000
+quiet 1500 60000
+snap done

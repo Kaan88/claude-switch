@@ -1,0 +1,14 @@
+# Background agents listed under the input, their timers redrawn every second while the input is
+# at rest. Chat tells the rows under the input's rule from activity (two snapshots a few seconds
+# apart: the same input, the list redrawn). About five model requests.
+#: args --permission-mode default
+#: seconds 40
+start
+send Use the Agent tool twice in one message, both with run_in_background true and subagent_type general-purpose, each with the task: "Without using any tools, write the numbers from one to two hundred in words, one per line, then say done." Then reply only with the word started.
+sleep 800
+send \r
+wait to manage 120000
+sleep 3000
+snap agents
+sleep 3000
+snap agents_later

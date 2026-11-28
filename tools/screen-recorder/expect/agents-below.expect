@@ -1,0 +1,12 @@
+# The list of agents under the input's bottom rule is no part of the input.
+[agents]
+kind = idle
+input =
+send = yes
+working = no
+
+[agents_later]
+kind = idle
+input =
+send = yes
+working = no
