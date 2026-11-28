@@ -180,7 +180,7 @@ impl AppState {
         let live = !name.is_empty() && self.recheck_tab_identity(id).as_deref() == Some(session.as_str());
         let Some(tab) = self.tabs.get_mut(id) else { return };
         tab.rename = None;
-        tab.cli_rename = live.then(|| (session, name.to_owned()));
+        tab.cli_rename = live.then(|| crate::tabs::CliRename::new(session, name));
         if live {
             self.toast("Renamed. Claude Code gets /rename from the Chat view when its prompt is idle.".into(), now);
         }
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(app.marks.name(&session.id), Some("toolkit"), "the list and search use the mark");
         let t = app.tabs.get(tab).unwrap();
         assert_eq!(t.rename, None, "the label follows the mark, which also survives a restart");
-        assert_eq!(t.cli_rename, Some((session.id.clone(), "toolkit".into())));
+        assert_eq!(t.cli_rename, Some(crate::tabs::CliRename::new(session.id.clone(), "toolkit")));
         app.rename_tab(now, tab, "");
         assert_eq!(app.marks.name(&session.id), None, "blank goes back to the derived name");
         assert_eq!(app.tabs.get(tab).unwrap().cli_rename, None, "and asks Claude Code for nothing");
@@ -306,7 +306,7 @@ mod tests {
         let marks = app.marks.clone();
         app.rename_tab(Instant::now(), shell, "build");
         let t = app.tabs.get(shell).unwrap();
-        assert_eq!((t.rename.as_deref(), t.cli_rename.as_ref()), (Some("build"), None));
+        assert_eq!((t.rename.as_deref(), t.cli_rename.is_some()), (Some("build"), false));
         assert_eq!(app.marks.name(&session), marks.name(&session));
     }
 

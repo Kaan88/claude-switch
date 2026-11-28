@@ -103,6 +103,11 @@ impl AppState {
         text: &str,
         (saved, basis): (PathBuf, u64),
     ) -> Result<(), String> {
+        // The handover itself up to the same 15,000 characters as a new process's first message
+        // (`recorder compat`'s `long-paste` checks that Claude Code shows such a paste within the
+        // gate's echo wait); a longer one would be slow to show, so that the wait could end after
+        // `/clear` already ran: the new session reads it from its file instead (in manual mode
+        // Claude Code asks first, as the file is outside the project folder; Chat's card answers).
         let prompt = crate::compact_open::first_prompt(text, &saved)?;
         if self.marks_read_only {
             return Err("Repair marks.json before starting a handover session.".into());
@@ -161,7 +166,8 @@ impl AppState {
         // Claude Code's own name follows (item 39): `/rename` at the next idle prompt, through the
         // Chat view's slash gate, once the first message has gone.
         if let Some(t) = self.tabs.get_mut(tab) {
-            t.cli_rename = Some((new.to_owned(), job.name.clone()));
+            let by = Instant::now() + crate::view::chat::RENAME_PROMPT_WAIT;
+            t.cli_rename = Some(crate::tabs::CliRename::after_handover(new, job.name.clone(), by));
         }
         self.rebuild_view();
         self.toast("Handed over: this tab continues from the summary.".into(), Instant::now());
@@ -211,6 +217,34 @@ mod tests {
         assert!(job.timeout_reason().contains("follow"));
         job.stage = Stage::Prompt;
         assert_eq!(job.deadline(), now + PROMPT_WAIT);
+    }
+
+    #[test]
+    fn a_handover_in_place_is_its_own_first_message_up_to_the_limit_and_read_from_its_file_above() {
+        use crate::{source::Source, tabs::NewTab, term::Term};
+        let mut st = AppState::new(Source::Demo, Some(false), Default::default());
+        st.apply_scan(crate::demo::scan(&st.config));
+        let session = st.sessions[0].clone();
+        let new = NewTab { label: "t".into(), color: [0; 3], session: Some(session.id.clone()), account: None };
+        let tab = st.tabs.open(new, Term::empty((8, 4)));
+        st.tabs.get_mut(tab).unwrap().resume_id = Some(session.id.clone());
+        let saved = PathBuf::from("C:/handover/a-1.md");
+        let mut start = |text: &str| {
+            st.tabs.get_mut(tab).unwrap().in_place = None;
+            let names = ("Old".to_owned(), "Old".to_owned());
+            st.continue_in_place(tab, &session, names, text, (saved.clone(), 0))?;
+            Ok::<_, String>(st.tabs.get(tab).unwrap().in_place.as_ref().unwrap().prompt.clone())
+        };
+        // Up to the limit, the text itself goes through the input.
+        let fits = "## Goal\n\nKeep going.\n".repeat(700);
+        assert!(!crate::compact_open::uses_file(&fits));
+        assert_eq!(start(&fits).unwrap(), fits);
+        // Longer, a paste could be slow to show after /clear already ran: the file is read instead.
+        let long = "## Goal\n\nKeep going.\n".repeat(2000);
+        assert!(crate::compact_open::uses_file(&long));
+        let prompt = start(&long).unwrap();
+        assert!(prompt.starts_with("Read the handover file at") && prompt.contains("a-1.md"), "{prompt}");
+        assert!(start("/clear").is_err());
     }
 
     #[test]

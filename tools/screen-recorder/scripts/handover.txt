@@ -1,0 +1,24 @@
+# A handover. (1) A new handover session started with the app's own arguments, its handover
+# long enough to be read from its file outside the project folder: in manual mode it reads that
+# file without asking (the app allows exactly that file). (2) A command typed while a turn runs
+# and not entered (as a /rename Chat typed just before a prompt took the screen) stays on the
+# input after the turn, and one Ctrl+U takes it off: what Chat relies on to take its own command
+# off again. Two model requests.
+#: args --permission-mode default
+#: seconds 60
+start
+handover new Reply with just the word: kilo
+quiet 2000 45000
+snap read
+send Run exactly this with the Bash tool and nothing else: echo handover-check
+sleep 800
+send \r
+sleep 300
+send /rename Notes
+gone esc to interrupt 60000
+quiet 1500 30000
+snap left_typed
+send \x15
+sleep 800
+quiet 800 5000
+snap cleared

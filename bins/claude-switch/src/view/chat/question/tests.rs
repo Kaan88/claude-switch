@@ -2366,3 +2366,40 @@ fn rewind_is_refused_in_a_subagents_transcript() {
     assert_eq!(f.chat().error, Some(rewind::IN_AGENT));
     assert!(f.rewind().is_none());
 }
+
+#[test]
+fn a_read_outside_the_project_is_a_card_with_or_without_its_call_in_the_transcript() {
+    use screens::recorded::PERM_READ_OUTSIDE;
+    for known in [true, false] {
+        let mut f = Fixture::idle();
+        let now = Instant::now();
+        if known {
+            // The transcript holds the pending Read call (a handover tab that read it already).
+            let path = r"C:\Users\user1\AppData\Local\Temp\cs-hand\data\handover\one\h.md";
+            let kind = ItemKind::Tool {
+                id: "toolu_read".into(),
+                name: "Read".into(),
+                summary: path.into(),
+                file_path: Some(path.into()),
+                state: ToolState::Running,
+                duration_ms: None,
+                pictures: vec![],
+                subagent: None,
+                denial: None,
+                card: None,
+            };
+            let pane = f.tab().pane.as_mut().unwrap();
+            pane.model.items.insert(ItemId { offset: 900, block: 0 }, Item { kind, timestamp: None });
+            pane.model.chat.pending = Some(900);
+            pane.model.chat.latest = Some((900, claude_switch_core::transcript::ChatPhase::Active));
+        }
+        f.tab().term.screen = screens::recorded::recorded(PERM_READ_OUTSIDE);
+        f.chat().output(now, true, false);
+        f.sync();
+        let card = &f.chat().question;
+        // With its call: the call's card; without (a new session whose transcript Chat has not read
+        // yet): the prompt read whole from the screen. Either answers it here.
+        assert!(if known { card.approval && card.answerable == Some(900) } else { card.prompt_answers() }, "{known}");
+        assert_eq!(f.decide(now + QUIET), Some(Reason::Approval), "{known}");
+    }
+}

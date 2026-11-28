@@ -7,14 +7,25 @@
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog
   as "Compact and open…", continuing in place where it can). Settings › Chat › "Compact chip runs"
   switches it back to Claude Code's `/compact` (labelled "/compact").
-- Handover: the new session keeps the old one's name instead of adding " · continued" each time
-  (which piled up as "… · continued · continued"); such endings from earlier handovers are
-  removed. The old session is marked as handed over, so the list still tells the two apart.
 - Chat and the Session view: the picture viewer goes to the conversation's previous and next
   picture with buttons on its sides (shown where there is one, quiet until pointed at) or the Left
   and Right arrow keys, and says where you are ("2 of 5"; left out in a window too narrow for it
   beside the buttons). Each picture still loads only when shown, and one that cannot be shown
   says why while the arrows go on.
+- Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
+  just before a permission prompt took the screen) and every later message waited behind it
+  without a word. The rename now goes only once Chat has read the new session's first prompt, and
+  every command Chat types on its own (a rename, a handover's `/clear`, the Compact, Clear and
+  model buttons) is followed until Claude Code took it: one that was not entered is taken off the
+  input again (only when the input shows exactly that line, never your own text), a rename is
+  typed again up to three times, and the box says what happened.
+- Handover: Claude Code no longer asks in the terminal whether it may read the handover file. A
+  new handover tab may read exactly that one file. A handover that continues in the same tab is
+  pasted whole up to 15,000 characters, as before; a longer one is still read from its file, and
+  Claude Code's question about it shows in Chat as a card with its choices, which answers it.
+- Handover: the new session keeps the old one's name instead of adding " · continued" each time
+  (which piled up as "… · continued · continued"); such endings from earlier handovers are
+  removed. The old session is marked as handed over, so the list still tells the two apart.
 
 ## 0.1.6 (2026-11-28)
 

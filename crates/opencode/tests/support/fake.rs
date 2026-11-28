@@ -47,6 +47,11 @@ fn main() {
         }
         ["reload"] => println!(" reloaded "),
         ["--session-id", "fake-id", rest @ ..] => {
+            // The rule to read the handover file is one argument, whatever spaces its path has.
+            let (rule, rest) = match rest {
+                [rule, rest @ ..] if rule.starts_with("--allowedTools=") => (Some(*rule), rest),
+                _ => (None, rest),
+            };
             let (name_arg, rest) = rest.split_first().unwrap();
             let name = name_arg.strip_prefix("--name=").expect("name is one native option with its value");
             assert_eq!(name, env::var("FAKE_CLAUDE_NAME").unwrap());
@@ -62,8 +67,13 @@ fn main() {
             {
                 assert!(std::path::Path::new(path).is_absolute());
                 assert!(!first.contains("long private marker"));
+                let plain = path.strip_prefix(r"\\?\").unwrap_or(path);
+                let (drive, tail) = plain.split_once(':').unwrap();
+                let want = format!("--allowedTools=Read(//{}{})", drive.to_ascii_lowercase(), tail.replace('\\', "/"));
+                assert_eq!(rule, Some(want.as_str()), "the rule names exactly the file, as one argument");
                 fs::read_to_string(path).unwrap()
             } else {
+                assert_eq!(rule, None, "no rule without a file to read");
                 (*first).into()
             };
             fs::write(env::var_os("FAKE_CLAUDE_OUT").unwrap(), text).unwrap();

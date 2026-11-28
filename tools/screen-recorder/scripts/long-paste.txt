@@ -1,0 +1,16 @@
+# A handover continued in place, as Chat sends it: a message of many lines, as long as the app
+# pastes one (15,000 characters; a longer handover is read from its file), pasted into the idle
+# input. Claude Code must show it on its input (as its paste marker) within the 5 seconds Chat
+# waits before Enter, else the handover stops after /clear already ran. Then Enter. One model
+# request.
+#: args --permission-mode default
+#: seconds 40
+start
+longpaste 15000 Reply with just the word: lima. Every line after this one is filler; ignore it.
+wait [Pasted text # 5000
+snap pasted
+sleep 300
+send \r
+gone [Pasted text # 5000
+quiet 2000 30000
+snap answered

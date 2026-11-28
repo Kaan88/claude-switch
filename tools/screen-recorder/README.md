@@ -58,9 +58,11 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `idle MS NAME` | Logs every burst of output for MS (is the screen quiet?), then snaps. |
 | `watch MS NAME` | Snaps `NAME-001`, `NAME-002`, … once a second while the screen changes. |
 | `resize COLS ROWS` | |
+| `longpaste UNITS TEXT` | A bracketed paste as Chat sends a message of several lines (CR between them): TEXT, then numbered filler lines up to UNITS characters. |
 | `tscopy NAME` | Copies the newest transcript of the work folder (`REC_PROJECT`; in `recorder compat` the run's own) to `NAME.jsonl`, as it is on disk now. |
 | `clipimage FILE` | Writes a small PNG as `FILE` in the work folder and puts it on the clipboard, for `send \ev` (Alt+V, as Chat sends a pasted picture). It refuses, and ends the script, when the clipboard holds anything but plain text (a picture, files, formatted text): that could not be put back. The text is put back when the script ends (the clipboard is emptied when it held none), unless something was copied meanwhile (the clipboard's sequence number changed): then it is left as it is. Uses Windows PowerShell. |
 | `help NAME` | `claude --help`, with the same account, into `NAME.help.txt`. |
+| `handover NAME TEXT` | Only in `recorder compat`: ends the recorded Claude Code and starts it again as the app starts a new handover session, with the app's own arguments (`compact_open::first_args`, through the check's test program `cli_handover_args`) for a handover that starts with TEXT and is long enough to be read from its file, written to a `handover` folder beside the work folder (outside it, as the app's is). `NAME.args.json` holds the arguments. |
 | `reopen NAME` | Ends the recorded Claude Code and starts it again with `--resume` and the id of the branch `NAME` wrote (as the app's Branch opens it), then waits for its input as `start` does. |
 | `branch NAME prompt\|answer TEXT` | Only in `recorder compat`: a branch as the app makes one at a message (the first prompt or the last answer that contains TEXT). The newest transcript is copied up to the end of that message's turn, under a new id, by the app's own code (`view::model::branch_cut` and `core::branch`, through the check's test program `cli_branch_write`, which never sees the API key); then `claude -p --resume <id> --output-format json` asks which of the words alpha, bravo and charlie it has replied with. `NAME.id` holds the id, `NAME.json` the answer. |
 
@@ -123,6 +125,14 @@ those too:
   does not put them back on its input: it sends them as the next turn (ordinary prompts), and the
   input reads empty, so Chat's take-back has nothing to do. Its
   `[Request interrupted by user for tool use]` user text is read as a notice, not a prompt.
+- `handover`: a new handover session started with the app's own arguments reads its long
+  handover from its file outside the project folder without a permission prompt, in manual mode
+  (the app allows exactly that file); and a command typed during a turn and not entered stays on
+  the input after the answer, and one Ctrl+U takes it off (what Chat relies on to take a command
+  of its own off again).
+- `long-paste`: a handover continued in place is pasted as one message of many lines, up to
+  15,000 characters (a longer one is read from its file). Claude Code shows it as its paste
+  marker within the 5 seconds Chat waits for it before Enter, and answers it once entered.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),
