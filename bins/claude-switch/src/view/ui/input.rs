@@ -464,7 +464,7 @@ mod tests {
     use mdshared_ui::gfx::Gfx;
 
     #[test]
-    fn working_stop_in_both_surfaces_requires_the_same_turn_at_press_and_release() {
+    fn the_session_views_stop_requires_the_same_turn_at_press_and_release_and_chat_has_none_in_the_pane() {
         let demo = crate::demo::Transcript::new_chat().unwrap();
         let mut model = Model::new(crate::view::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
         let mut gfx = Gfx::new();
@@ -490,7 +490,14 @@ mod tests {
                 label: "✻ Shimmying… (53m 37s · ↓ 27.1k tokens)".into(), stop: Some(one)
             }));
             draw(&mut ui, &mut p, &mut model);
-            let r = ui.hits.iter().find_map(|(r, action)| (*action == Action::Stop(one)).then_some(*r)).unwrap();
+            let stop = ui.hits.iter().find_map(|(r, action)| (*action == Action::Stop(one)).then_some(*r));
+            if chat {
+                // Chat's Stop is on the composer's Send button (`composer::tests`), not in the pane.
+                assert_eq!(stop, None);
+                assert_eq!(ui.footer_height(width, true), 0.0, "Chat has no strip under the conversation");
+                continue;
+            }
+            let r = stop.unwrap();
             let (x, y) = (r.cx(), r.cy());
             ui.press(x, y, 1, Mods::default(), &mut model);
             assert_eq!(ui.release(x, y, Mods::default(), &mut model), Release::Stop(one));
@@ -526,7 +533,8 @@ mod tests {
                     Instant::now(),
                     false,
                 );
-                let available = width - 2.0 * PAD - GUTTER;
+                // Chat keeps room beside the column for the composer's box, which is wider.
+                let available = width - 2.0 * CHAT_PAD - GUTTER;
                 let expected = match reading {
                     Reading::Narrow => available.min(560.0),
                     Reading::Medium => available.min(720.0),
@@ -540,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn the_working_line_and_the_error_line_start_at_the_reading_column() {
+    fn the_working_line_ends_the_conversation_at_the_reading_column_and_the_error_line_starts_there() {
         let demo = crate::demo::Transcript::new().unwrap();
         let source = crate::view::model::Source::File(demo.path().into());
         let mut model = Model::new(source, demo.cwd().into(), || {});
@@ -575,20 +583,24 @@ mod tests {
                 ui.draw(&mut p, &pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
                 let body = ui.body;
                 assert_eq!(ui.column(), (body.x, body.w), "{width} {reading:?}");
-                let footer = area.bottom() - ui.footer_height(width, true);
-                let (left, right) = ink(&bitmap, footer + 3.0, area.bottom(), width);
+                // The working line is the conversation's last row: right after the last message,
+                // inside the conversation, with no strip under it.
+                assert_eq!(ui.footer_height(width, true), 0.0);
+                assert!(ui.follow.active() && ui.offset == ui.max);
+                let top = body.y + ui.rows_end() - ui.offset;
+                assert!(top + crate::view::working::CHAT_LINE <= body.bottom() + 0.5, "{width} {reading:?}");
+                let (left, right) = ink(&bitmap, top + 4.0, top + crate::view::working::CHAT_LINE, width);
                 assert!(
                     left >= body.x && left <= body.x + 8.0,
                     "{width} {reading:?}: the working line starts at {left}, the text at {}",
                     body.x
                 );
                 assert!(
-                    right <= body.right() + 1.0,
-                    "{width} {reading:?}: the footer ends at {right}, the column at {}",
+                    right > left + 100.0 && right <= body.right() + 1.0,
+                    "{width} {reading:?}: the working line ends at {right}, the column at {}",
                     body.right()
                 );
-                let stop = ui.hits.iter().find_map(|(r, a)| matches!(a, Action::Stop(_)).then_some(*r)).unwrap();
-                assert!(stop.x > left && stop.right() <= body.right() + 1.0);
+                assert!(ui.hits.iter().all(|(_, a)| !matches!(a, Action::Stop(_))), "Stop is the composer's");
                 let (left, _) = ink(&bitmap, 9.0, 24.0, width);
                 assert!(left >= body.x && left <= body.x + 4.0, "{width} {reading:?}: the error at {left}");
             }
@@ -676,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn jumping_to_an_edit_expands_its_group_and_scrolls_to_the_exact_tool() {
+    fn jumping_to_an_edit_opens_it_and_jumping_to_a_step_opens_its_run() {
         let demo = crate::demo::Transcript::new_chat().unwrap();
         let source = crate::view::model::Source::File(demo.path().into());
         let (wake, events) = std::sync::mpsc::channel();
@@ -703,8 +715,9 @@ mod tests {
         let mut ui = Ui::default();
         ui.set_chat(true);
         ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
-        assert!(ui.rows.iter().any(|row| row.style == Style::Group && row.title == "4 tool calls"));
-        assert!(!ui.rows.iter().any(|row| row.id == Id::Tool(id)));
+        // An edit is a row of its own: there before the jump, closed.
+        let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
+        assert!(row.style == Style::Edit && !row.open);
         assert!(ui.jump_to_tool(&m, id));
         ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
         let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
@@ -715,5 +728,34 @@ mod tests {
         let offset = ui.offset;
         assert!(!ui.jump_to_tool(&m, ItemId { offset: 0, block: 1000 }));
         assert_eq!(ui.offset, offset);
+
+        // A call inside a run is not shown until its run opens: the jump opens both.
+        let demo = crate::demo::Transcript::new_showcase(None).unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut m = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        m.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(m.collect());
+        let id = m
+            .items
+            .iter()
+            .find_map(|(&id, item)| match &item.kind {
+                claude_switch_core::transcript::ItemKind::Tool { id: tool, .. } if tool == "grep" => Some(id),
+                _ => None,
+            })
+            .unwrap();
+        let mut ui = Ui::default();
+        ui.set_chat(true);
+        ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
+        assert!(ui.rows.iter().any(|row| row.style == Style::Group && row.title.starts_with("Ran a command, read 3")));
+        assert!(!ui.rows.iter().any(|row| row.id == Id::Tool(id)));
+        assert!(ui.jump_to_tool(&m, id));
+        ui.draw(&mut p, pal, area, &mut m, (0.0, 0.0), now, false);
+        let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
+        assert!(row.open && row.step == Some((false, true)));
+        assert_eq!(ui.tool_jump, Some((id, false)));
     }
 }

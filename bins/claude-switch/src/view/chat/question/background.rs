@@ -273,11 +273,23 @@ pub(super) fn advance_agent(tab: &mut Tab, now: Instant, may_write: bool) -> boo
     true
 }
 
+impl Card {
+    /// The shell call whose "Run in background" stands on its own line in the conversation, and
+    /// whether that key is on its way: the offer alone, with no agent to stop and no notice the
+    /// card would have to show.
+    pub(in crate::view::chat) fn background_inline(&self) -> Option<(ItemId, bool)> {
+        let shell = self.background.as_ref().filter(|_| self.agents.is_empty() && self.error.is_none())?;
+        Some((shell.item, self.background_step.is_some()))
+    }
+}
+
 /// The card's height for the background controls, without its padding, field and status rows.
 pub(super) fn height(card: &Card) -> Option<f32> {
-    let shell = card.background.as_ref().map_or(0.0, |_| LINE + 6.0);
+    // The offer alone is on the command's line in the conversation, not in a card.
+    let offered = card.background.is_some() && card.background_inline().is_none();
+    let shell = if offered { LINE + 6.0 } else { 0.0 };
     let agents = card.agents.len() as f32 * (CHOICE + 4.0);
-    (card.background.is_some() || !card.agents.is_empty()).then_some(HEADER + shell + agents)
+    (offered || !card.agents.is_empty()).then_some(HEADER + shell + agents)
 }
 
 impl Draw<'_> {

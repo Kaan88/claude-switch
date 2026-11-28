@@ -2,6 +2,85 @@
 
 ## Unreleased
 
+- Chat: a new session before its first message shows a greeting in place of the grey "Waiting
+  for messages" card: the mark, "What should Claude do in <folder>?", the folder and, when
+  Claude Code's banner is on the terminal's screen, the model and plan it names. The message box
+  is in the middle of the window with a few starts under it: your starred slash commands, else
+  /init, /review and /resume, and "Paste a picture". A start fills the box; it sends nothing.
+  The Details panel stays closed until there is something to show. With the first message the
+  box goes to the foot of the window.
+- Chat: a conversation that is still being read shows one quiet line, "Reading the
+  conversation…", instead of the card.
+
+- Chat: the Details panel is one scrolling list of sections in place of its five tabs.
+  **Progress** is the task list with "2 of 3", a thin bar and a mark per task (done, current,
+  waiting). **Background** has the agents, the background shells with their output and the MCP
+  tasks, running ones first. **Changed files** lists each file with its lines added and removed;
+  the name opens the file and the arrow lists its edits. **Outputs** is as before. A section with
+  nothing in it is not shown, and each folds from its heading. Everything the tabs did is still
+  there: full output, Stop…, jump to an edit, open an agent's transcript.
+- Chat: the Details panel opens by itself when it has a first thing to show and is closed when
+  it has nothing, until you open or close it yourself with Details; then it stays as you left it.
+  While it is closed and Claude works, the task list's progress ("2 of 3") stands at the right
+  end of the working line and opens the panel.
+
+- Chat: a question of Claude's, a permission prompt and a Claude Code menu now stand where the
+  message box is, in the same box, instead of in a card over it. The message box is not shown
+  while such a card waits (nothing can be sent then anyway); a draft is kept and comes back with
+  the box, and typing meanwhile no longer changes it. The line "Waiting for your answer" is gone:
+  the card says it.
+- Chat: these cards are laid out anew. A question has its own header as a small chip, the
+  question in larger type, and the choices as one list, each with its number and its
+  description. "Type something" is only the field ("Something else…", with a send arrow) and
+  "Chat about this" only a button at the foot; both used to be listed as choices too. A form
+  shows "1 of 2" with Back and Next, and Submit on the last question.
+- Chat: a permission prompt's title is the prompt's own ("Bash command"), and the command is
+  shown once, in a box; it used to be shown twice under two titles. The choices are the CLI's
+  exact words with their numbers, with the field "No, and tell Claude what to do instead…" where
+  the prompt offers it. An edit's lines are in the diff's colours.
+- Chat: every such card has a × at the top (Esc, where the CLI offers it) and "Open terminal" at
+  the foot. In a short window a card drops the descriptions, then lowers its rows, before it is
+  cut. What a click does, and every check before a key is written, is as before.
+
+- Chat and the Session view: a code block in an answer has a header with its language on the
+  left and Copy on the right. The Copy button used to cover the language, so no block showed it.
+
+- Chat and the Session view: a run of tool calls between two answers is one quiet line in words
+  ("Ran a command, read 3 files, searched the code"), at the column's edge. A single call reads as
+  itself ("Ran cargo test -p tiles"). The line opens into a timeline: an icon per kind of call,
+  what it did, its target in the monospace font, the time it took, and the output of an opened
+  step in a box. A failure is counted in the line in the warning colour ("· 1 failed"), without
+  the coloured wash; a refused call still says who refused it. While a call runs the line names
+  it ("Running cargo bench …"), and "Waiting to run …" while a card asks about it. A thought is a
+  step of the run. Results of slash commands and of shell mode keep their open output.
+- Chat and the Session view: a file edit is a row of its own with the path and the lines added
+  (green) and removed (red). It opens into a diff with tinted lines; with line numbers and the
+  lines around the change when Claude Code recorded them with the edit, else the changed lines
+  alone. The green and red are the terminal theme's. A long line is cut at the row's edge.
+
+- Chat: the working line ("✻ Shimmying… 12s · ↓ 1.2k tokens") is the last line of the
+  conversation, where the next text will appear, with the mark in the accent colour. The strip
+  between the conversation and the message box is gone.
+- Chat: Stop is the round Send button, as a square, while a turn runs and the box is empty. With
+  a draft the button sends (the draft is queued, as before) and Stop is a small square left of it.
+  Stop is dimmed while it cannot be used. The box reads "Queue the next message…" then, and no
+  longer shows a notice bar to say so.
+- Chat: "Run in background" stands at the right of the running command's line instead of in a
+  card of its own. The card still shows when there are agents to stop or something to report.
+
+- Chat: one column. Claude's answers start at the column's left edge, without the ✳ mark or an
+  indent; your messages are in a neutral grey bubble on the right; the message box and the cards
+  are as wide as the column, so the draft, a card's text and the answers share a left edge. The
+  reading width setting still sets the column; at Full the box stops at 900 px. The Session view
+  beside a terminal drops the mark and the indent too.
+- Chat: the message box is a raised, rounded box with a soft shadow, and its border no longer
+  turns to the accent colour with the keyboard. The draft is in the interface font at 15 px, not
+  the monospace one. Send is a round button with an up arrow: in the accent colour when there is
+  something to send, grey when not.
+- Chat: "Jump to latest" is a round button with a down arrow over the foot of the conversation,
+  shown only after you scroll up, with a dot once newer messages arrived. "Following latest" is
+  gone.
+
 ## 0.1.4 (2026-11-27)
 
 - Chat: in a named session (every session this app names) Claude Code writes the name into the

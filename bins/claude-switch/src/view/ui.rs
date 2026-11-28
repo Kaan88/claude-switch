@@ -98,7 +98,6 @@ pub struct Ui {
     focused: bool,
     agent_origin: Option<Page>,
     busy_visible: bool,
-    epoch: Option<Instant>,
     mouse: (f32, f32),
     working: Option<Footer>,
     /// The code block copied last, so its button can say so.
@@ -113,6 +112,27 @@ pub struct Ui {
     /// The left edge and width of the conversation's text in the last frame (Chat's reading
     /// column), which the lines above and below the conversation follow.
     column: (f32, f32),
+    /// The newest message there was while the view last followed the latest.
+    seen: Option<ItemId>,
+    /// Chat shows a card that says what Claude waits for: the working line does not repeat it.
+    working_hidden: bool,
+    /// The running shell call the CLI offers to move to the background, and whether that key is
+    /// on its way: its line in the conversation carries the button.
+    offer: Option<(ItemId, bool)>,
+    /// Where the last frame drew that button.
+    offer_rect: Option<Rect>,
+    /// The pending call a card asks about: its line says it waits, not that it runs.
+    awaiting: Option<ItemId>,
+    /// The colours of added and removed lines, from the terminal's theme.
+    diff: Option<super::look::Diff>,
+    /// Chat's Details panel is closed: the working line shows the task list's progress, and a
+    /// click on it opens the panel.
+    progress: bool,
+    /// Where the last frame drew that progress.
+    progress_rect: Option<Rect>,
+    /// What Chat says in place of an empty conversation: a quiet line, or nothing (a new
+    /// session's greeting is the host's).
+    empty_line: Option<&'static str>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -125,7 +145,24 @@ pub(super) enum Release {
 }
 
 const PAD: f32 = 12.0;
+/// Chat's side padding: the composer's box and the cards reach `look::INSET` past the reading
+/// column on each side and still keep the window's margin.
+const CHAT_PAD: f32 = PAD + super::look::INSET;
+/// The round "jump to latest" button.
+const JUMP: f32 = 34.0;
+
 impl Ui {
+    fn pad(&self) -> f32 {
+        if self.chat { CHAT_PAD } else { PAD }
+    }
+
+    /// Where the conversation's text goes in a Chat conversation area at `x`, `width` wide:
+    /// `(left, width)`. The composer and the cards are laid out on it before the frame is drawn.
+    pub(super) fn column_for(&self, x: f32, width: f32) -> (f32, f32) {
+        // Chat's column whatever this pane last drew as: the layout is Chat's.
+        self.reading_column(x + CHAT_PAD, (width - 2.0 * CHAT_PAD).max(1.0))
+    }
+
     pub(super) fn detail_side(&self) -> Option<super::chat::Side> {
         if let Page::Details(side) = self.page { Some(side) } else { None }
     }
@@ -154,6 +191,70 @@ impl Ui {
         model.select_agent(None);
     }
 
+    /// What the working line says, when Claude Code works or waits.
+    pub(super) fn working(&self) -> Option<&Footer> {
+        self.working.as_ref()
+    }
+
+    /// Chat hides the working line while a card says the same ("Waiting for your answer").
+    pub(super) fn hide_working(&mut self, hidden: bool) {
+        self.working_hidden = hidden;
+    }
+
+    /// The running shell call whose line offers "Run in background", and whether the key is on
+    /// its way (the button is then dimmed).
+    pub(super) fn set_offer(&mut self, offer: Option<(ItemId, bool)>) {
+        if self.offer.map(|(id, _)| id) != offer.map(|(id, _)| id) {
+            self.cache = None;
+        }
+        self.offer = offer;
+    }
+
+    /// The pending call a card asks about (it waits; it does not run yet).
+    pub(super) fn set_awaiting(&mut self, item: Option<ItemId>) {
+        if self.awaiting != item {
+            self.awaiting = item;
+            self.cache = None;
+        }
+    }
+
+    /// The colours of added and removed lines, from the window's terminal theme.
+    pub fn set_diff_colours(&mut self, diff: super::look::Diff) {
+        self.diff = Some(diff);
+    }
+
+    /// What Chat shows for a conversation with nothing in it: one quiet line (a transcript still
+    /// being read), or nothing at all. The Session view keeps its card.
+    pub(super) fn set_empty_line(&mut self, line: Option<&'static str>) {
+        self.empty_line = line;
+    }
+
+    /// Chat's Details panel is closed: the task list's progress ("2 of 3") stands at the right
+    /// end of the working line.
+    pub(super) fn show_progress(&mut self, shown: bool) {
+        self.progress = shown;
+    }
+
+    /// Where the last frame drew the task list's progress, for the host to take its click.
+    pub(super) fn progress_rect(&self) -> Option<Rect> {
+        self.progress_rect
+    }
+
+    /// Where the last frame drew "Run in background", for the host to take its click.
+    pub(super) fn offer_rect(&self) -> Option<Rect> {
+        self.offer_rect.filter(|_| self.offer.is_some_and(|(_, busy)| !busy))
+    }
+
+    /// The room Chat's working line takes after the last message.
+    fn working_room(&self, m: &Model) -> f32 {
+        let shown = self.chat
+            && self.page == Page::Conversation
+            && m.agent.is_none()
+            && self.working.is_some()
+            && !self.working_hidden;
+        if shown { super::working::CHAT_LINE } else { 0.0 }
+    }
+
     pub(super) fn set_working(&mut self, footer: Option<Footer>) -> bool {
         if self.working == footer {
             false
@@ -166,9 +267,11 @@ impl Ui {
     /// The left edge and width of the conversation's text between `x` and `x + width`: in Chat,
     /// the reading column beside the docked panel; elsewhere the whole width.
     fn text_column(&self, x: f32, width: f32) -> (f32, f32) {
-        if !self.chat {
-            return (x, width);
-        }
+        if self.chat { self.reading_column(x, width) } else { (x, width) }
+    }
+
+    /// Chat's reading column between `x` and `x + width`, beside the docked panel.
+    fn reading_column(&self, x: f32, width: f32) -> (f32, f32) {
         let row = Rect::new(x, 0.0, width, 1.0);
         let content = if self.markdown.is_some() { self.panel.split(row).0 } else { row };
         if content.w <= GUTTER {
@@ -184,11 +287,13 @@ impl Ui {
     }
 
     pub(super) fn footer_height(&self, width: f32, main: bool) -> f32 {
-        let width = if self.chat && self.column.1 > 0.0 { self.column.1 } else { width - 2.0 * PAD };
-        if self.page == Page::Conversation && main && self.working.is_some() && width < 440.0 {
+        if self.chat {
+            // Chat has no strip: the working line is the conversation's last row, Stop is the
+            // composer's, and "jump to latest" floats over the conversation.
+            return 0.0;
+        }
+        if self.page == Page::Conversation && main && self.working.is_some() && width - 2.0 * PAD < 440.0 {
             49.0
-        } else if self.chat {
-            25.0
         } else {
             40.0
         }
@@ -207,7 +312,6 @@ impl Ui {
     ) {
         self.mouse = mouse;
         self.busy_visible = false;
-        let phase = now.duration_since(*self.epoch.get_or_insert(now)).as_secs_f32();
         if self.generation.replace(m.generation).is_some_and(|g| g != m.generation) {
             self.expanded.clear();
             self.tool_expanded.clear();
@@ -222,8 +326,9 @@ impl Ui {
         self.hits.clear();
         let clip = p.clip(area);
         p.fill(area, pal.page);
-        let x = area.x + PAD;
-        let width = (area.w - 2.0 * PAD).max(1.0);
+        let pad = self.pad();
+        let x = area.x + pad;
+        let width = (area.w - 2.0 * pad).max(1.0);
         if !self.chat {
             p.text(Face::Semibold, 17.0, x, area.y + 22.0, "Session view", pal.text, (width - 116.0).max(1.0));
             self.button(
@@ -310,7 +415,16 @@ impl Ui {
             let body = Rect::new(content.x, top, (content.w - GUTTER).max(0.0), content.h);
             self.body = if self.chat { self.chat_reading.place(body) } else { body };
             self.layout(m, pal, p.scale);
-            self.paint_rows(p, pal, m, phase, motion);
+            self.offer_rect = None;
+            self.progress_rect = None;
+            if self.chat
+                && self.rows.is_empty()
+                && let Some(line) = self.empty_line
+            {
+                p.text(Face::Ui, 13.0, self.body.x, self.body.y + 14.0, line, pal.muted, self.body.w);
+            }
+            self.paint_rows(p, pal, m);
+            self.paint_working(p, pal, m);
             self.scrollbar =
                 Scrollbar::new(Rect::new(self.body.right() + 1.0, top, GUTTER - 1.0, self.body.h), self.max);
             if let Some(bar) = self.scrollbar {
@@ -339,8 +453,13 @@ impl Ui {
         } else {
             self.markdown_visibility = Visibility::default();
         }
-        p.fill(Rect::new(x, footer, width, p.px()), pal.line);
-        if self.page == Page::Conversation {
+        if !self.chat {
+            p.fill(Rect::new(x, footer, width, p.px()), pal.line);
+        }
+        if self.page == Page::Conversation && self.chat {
+            self.jump_button(p, pal, m, visible);
+        }
+        if self.page == Page::Conversation && !self.chat {
             self.conversation_footer(
                 p,
                 pal,
@@ -389,11 +508,21 @@ impl Ui {
                 } else {
                     Default::default()
                 };
-            let mut r = Rows { previous, list: Vec::new(), end: 0.0, width: self.body.w, pal, scale, chat: self.chat };
+            let mut r = Rows {
+                previous,
+                list: Vec::new(),
+                end: 0.0,
+                width: self.body.w,
+                pal,
+                scale,
+                chat: self.chat,
+                offer: self.offer.map(|(id, _)| id),
+                awaiting: self.awaiting,
+            };
             match self.page {
                 Page::Conversation => {
                     r.conversation(m, &self.expanded, &self.tool_expanded);
-                    if r.list.is_empty() {
+                    if r.list.is_empty() && !self.chat {
                         r.empty(
                             "Waiting for messages",
                             "The conversation appears here when its transcript is available.",
@@ -412,7 +541,7 @@ impl Ui {
                 self.offset = row.top + delta;
             }
         }
-        self.max = (self.rows.last().map_or(0.0, |r| r.top + r.h + 4.0) - self.body.h).max(0.0);
+        self.max = (self.rows_end() + self.working_room(m) - self.body.h).max(0.0);
         if let Some((id, pending)) = &mut self.tool_jump
             && *pending
             && self.body.h > 0.0
@@ -428,25 +557,103 @@ impl Ui {
         };
     }
 
+    /// Where the conversation's rows end, with a little air under the last.
+    fn rows_end(&self) -> f32 {
+        self.rows.last().map_or(0.0, |r| r.top + r.h + 4.0)
+    }
+
+    /// Chat's working line after the last message, where the next text will appear.
+    fn paint_working(&mut self, p: &mut Painter, pal: &Palette, m: &Model) {
+        if self.working_room(m) == 0.0 {
+            return;
+        }
+        let Some(work) = &self.working else { return };
+        let body = self.body;
+        let y = body.y + self.rows_end() - self.offset;
+        let clip = p.clip(body);
+        let cy = y + super::working::CHAT_LINE / 2.0 + 2.0;
+        let mut room = body.w;
+        if self.progress && !m.tasks.is_empty() && body.w >= 320.0 {
+            use claude_switch_core::transcript::TaskStatus;
+            let done = m.tasks.iter().filter(|t| t.status == TaskStatus::Completed).count();
+            let label = format!("{done} of {}", m.tasks.len());
+            let w = p.measure(Face::Ui, 12.0, &label) + 34.0;
+            let r = Rect::new(body.right() - w, cy - 12.0, w, 24.0);
+            let hot = r.contains(self.mouse.0, self.mouse.1);
+            p.frame(r, 12.0, if hot { pal.hover } else { pal.page }, super::look::edge(pal));
+            p.icon(mdshared_ui::glyph::TASK, 12.0, r.x + 14.0, cy, pal.muted);
+            p.text(Face::Ui, 12.0, r.x + 24.0, cy, &label, if hot { pal.text } else { pal.muted }, w);
+            self.progress_rect = intersection(r, body);
+            room -= w + 12.0;
+        }
+        super::working::draw_chat_line(p, pal, body.x, cy, &work.label, room);
+        p.restore(clip);
+    }
+
     pub(super) fn jump_to_tool(&mut self, model: &Model, id: ItemId) -> bool {
-        let Some(first) = model.groups.iter().find_map(|group| match group {
-            Group::Tools(ids) if ids.binary_search(&id).is_ok() => ids.first(),
+        let Some(ids) = model.groups.iter().find_map(|group| match group {
+            Group::Tools(ids) if ids.binary_search(&id).is_ok() => Some(ids),
             _ => None,
         }) else {
             return false;
         };
+        // The run the call is a step of opens; a call that is a line of its own has none.
+        let run = rows::parts(&model.items, ids).into_iter().find_map(|part| match part {
+            rows::Part::Run(run) if run.len() > 1 && run.contains(&id) => run.first().copied(),
+            _ => None,
+        });
         if self.page != Page::Conversation {
             self.show(Page::Conversation);
         } else {
             self.close_markdown();
         }
-        self.expanded.insert(*first);
-        self.tool_expanded.insert(id);
+        self.expanded.extend(run);
+        // Command output starts open, and a mark in the set folds it: leave such a row as it is.
+        let starts_open = model.items.get(&id).is_some_and(rows::starts_open);
+        if starts_open {
+            self.tool_expanded.remove(&id);
+        } else {
+            self.tool_expanded.insert(id);
+        }
         self.tool_jump = Some((id, true));
         self.cache = None;
         self.selection = None;
         self.follow.pause();
         true
+    }
+
+    /// Chat's "jump to latest": a round button over the foot of the conversation, only while the
+    /// view does not follow; a dot on it once newer messages arrived.
+    fn jump_button(&mut self, p: &mut Painter, pal: &Palette, m: &Model, visible: bool) {
+        let newest = m.items.keys().next_back().copied();
+        if self.follow.active() || !visible {
+            self.seen = newest;
+            return;
+        }
+        let body = self.body;
+        if body.h < JUMP + 24.0 {
+            return;
+        }
+        let r = Rect::new((body.cx() - JUMP / 2.0).round(), body.bottom() - JUMP - 10.0, JUMP, JUMP);
+        let hot = r.contains(self.mouse.0, self.mouse.1);
+        let pressed = hot && self.pressed == Some(Action::Latest);
+        let fill = if pressed {
+            pal.press
+        } else if hot {
+            pal.hover
+        } else {
+            super::look::raised(pal)
+        };
+        p.shadow_with(r, JUMP / 2.0, pal.dark, 0.9);
+        p.frame(r, JUMP / 2.0, fill, super::look::edge(pal));
+        p.icon(mdshared_ui::glyph::DOWN, 15.0, r.cx(), r.cy() + 0.5, pal.text);
+        // Before the view ever followed, nothing counts as new.
+        if self.seen.is_some_and(|seen| newest > Some(seen)) {
+            let dot = Rect::new(r.right() - 10.0, r.y + 1.0, 9.0, 9.0);
+            p.rbox(dot, 4.5, pal.page);
+            p.rbox(dot.inset(1.5), 3.0, pal.accent);
+        }
+        self.hits.push((r, Action::Latest));
     }
 
     fn button(&mut self, p: &mut Painter, pal: &Palette, r: Rect, label: &str, act: Action, selected: bool) {

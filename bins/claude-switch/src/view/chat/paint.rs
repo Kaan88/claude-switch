@@ -26,9 +26,14 @@ pub fn strip_button(
 
 impl AppState {
     pub fn layout_chat(&mut self, area: Rect) -> Rect {
+        let reading = crate::view::Reading::from_key(&self.win_file.chat_reading);
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return Rect::default() };
         let chat = &mut pane.chat;
         chat.shell_count = pane.model.running_shells();
+        // The panel opens when it has a first section to show and closes when none is left,
+        // unless the user opened or closed it.
+        chat.details.refresh_all(&pane.model, &pane.cwd);
+        chat.side_hidden = !chat.side_choice.unwrap_or_else(|| chat.details.has_sections(&pane.model));
         let running = chat.shell_count != 0;
         let reveal = matches!(chat.side, Side::Shells | Side::Outputs);
         let (panel, drawer, chips, notice) = (
@@ -40,8 +45,26 @@ impl AppState {
         // The draft's wrapped rows as last flowed; `draw_chat` flows again first and re-lays.
         let lines = chat.editor.rows.len().max(1);
         let left = composer::left_group(&composer::chips_of(&self.config.chat));
-        chat.layout =
-            Layout::with_shells(area, panel, drawer, chat.drawer_height, chips, notice, running, reveal, lines, left);
+        // A session with no message yet has its box in the middle, under a greeting.
+        let welcome = chat.welcome(&pane.model);
+        // The composer and the cards go on the conversation's reading column.
+        pane.ui.set_chat_reading(reading);
+        let main_w = (area.w - Layout::panel_width(area, panel, reveal)).max(0.0);
+        let column = Some(pane.ui.column_for(area.x, main_w));
+        chat.layout = Layout::with_shells(
+            area,
+            panel,
+            drawer,
+            chat.drawer_height,
+            chips,
+            notice,
+            running,
+            reveal,
+            lines,
+            left,
+            column,
+            welcome,
+        );
         super::question::place(chat, &pane.model);
         self.session_view.pane_area = chat.layout.conversation;
         chat.layout.drawer
@@ -74,6 +97,7 @@ impl AppState {
         let details_active = self.nothing_over() && !self.picture_overlay() && !self.usage.popup.open;
         let hover = self.hover;
         let mouse = self.background_pointer();
+        let diff = crate::view::look::Diff::from_ansi(&self.term_colours.0.ansi);
         let focused = window_focused && self.chat_takes_input() && self.nothing_over() && !self.picture_overlay();
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
@@ -83,15 +107,64 @@ impl AppState {
         if chat.editor.rows.len() != before {
             self.layout_chat(area);
         }
+        // A new session's greeting says what Claude Code's banner on the screen says.
+        let greets = |t: &&crate::tabs::Tab| t.pane.as_ref().is_some_and(|p| p.chat.layout.greeting.h > 0.0);
+        let banner = self.tabs.shown().filter(greets).and_then(|t| super::welcome::banner(&t.term.screen));
         let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) else { return frame };
         let chat = &mut pane.chat;
         let l = chat.layout;
-        let suggestions = chat.suggestion_plan(&self.win_file.chat_pins);
-        let popup = if suggestions.is_none() { chat.popup_plan(&pane.model) } else { None };
+        // A card that waits for an answer stands where the composer is: the composer is not
+        // drawn then, and its draft is kept.
+        let docked = chat.question.docked();
+        let suggestions = if docked { None } else { chat.suggestion_plan(&self.win_file.chat_pins) };
+        let popup = if suggestions.is_none() && !docked { chat.popup_plan(&pane.model) } else { None };
         let transcript_mouse = suggestions.as_ref().map_or(mouse, |popup| popup.pointer_behind(mouse));
         let transcript_mouse = popup.as_ref().map_or(transcript_mouse, |popup| popup.pointer_behind(transcript_mouse));
         pane.ui.set_chat_reading(crate::view::Reading::from_key(&self.win_file.chat_reading));
+        // A card that asks says what Claude waits for; the working line does not repeat it.
+        let asking = chat.question.visible() && !chat.question.only_denials();
+        let waiting = pane.ui.working().is_some_and(|w| super::question::waits_for_user(&w.label));
+        pane.ui.hide_working(asking && waiting);
+        // Stop is the composer's: on Send while a turn runs, dimmed while its checks fail.
+        let info = &pane.model.chat;
+        let running = chat.last_gate == Some(super::Gate::Running) || pane.ui.working().is_some() && !waiting;
+        let stop_ready = pane.ui.working().is_some_and(|w| w.stop.is_some())
+            || chat.last_gate == Some(super::Gate::Running) && chat.can_stop(info);
+        let stop = running.then_some(stop_ready);
+        pane.ui.set_offer(chat.question.background_inline());
+        // An empty conversation: the greeting of a new session (drawn below), or a quiet line
+        // while there is nothing to read yet.
+        let welcome = l.greeting.h > 0.0 && !docked;
+        pane.ui.set_empty_line(match () {
+            _ if welcome || pane.model.loaded || chat.awaiting_transcript => None,
+            _ if chat.identity_unverified => Some("The conversation appears here when its transcript is available."),
+            _ => Some("Reading the conversation…"),
+        });
+        // With the panel closed the working line shows the task list's progress.
+        pane.ui.show_progress(l.side.w <= 0.0);
+        // The pending call the card asks about has not started: its line says it waits.
+        let own = asking && chat.question.answerable.is_some() && chat.question.answerable == info.pending;
+        pane.ui.set_awaiting(super::question::pending(&pane.model).filter(|_| own).map(|p| p.item));
+        pane.ui.set_diff_colours(diff);
         pane.ui.draw(p, pal, l.conversation, &mut pane.model, transcript_mouse, now, motion);
+        if welcome {
+            super::welcome::Welcome::read(chat, &pane.cwd, banner.as_ref(), &self.win_file.chat_pins).draw(
+                p,
+                pal,
+                l.greeting,
+                l.starts,
+                hover,
+                &mut self.hits,
+            );
+        }
+        if let Some(r) = pane.ui.progress_rect() {
+            // "2 of 3" on the working line opens the panel, as its own button does.
+            self.hits.push((r, Target::Chat(Control::Panel)));
+        }
+        if let Some(r) = pane.ui.offer_rect() {
+            // "Run in background" on the command's line: the same click as the card's button.
+            self.hits.push((r, Target::Chat(Control::Question(super::question::Hit::Background))));
+        }
         frame.0 = pane.ui.scroll_deadline();
         if pane.ui.animating() && motion {
             frame.1 = Some(l.conversation);
@@ -106,26 +179,6 @@ impl AppState {
             let clip = p.clip(l.side);
             p.fill(l.side, pal.pane);
             p.fill(Rect::new(l.side.x, l.side.y, p.px(), l.side.h), pal.line);
-            let w = (l.side.w - 12.0) / 5.0;
-            let shells = format!("Shells {}", pane.model.shells.len() + pane.model.mcp_tasks.len());
-            for (i, (side, name)) in [
-                (Side::Tasks, "Tasks"),
-                (Side::Agents, "Agents"),
-                (Side::Shells, shells.as_str()),
-                (Side::Files, "Files"),
-                (Side::Outputs, "Outputs"),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                hit(
-                    p,
-                    Rect::new(l.side.x + 6.0 + w * i as f32, l.side.y + 10.0, w - 2.0, 27.0),
-                    name,
-                    Control::Side(side),
-                    chat.side == side,
-                );
-            }
             detail_hits = chat.details.draw(
                 p,
                 pal,
@@ -133,6 +186,8 @@ impl AppState {
                     tab: tab_id,
                     area: l.side,
                     side: chat.side,
+                    sections: true,
+                    diff,
                     model: &pane.model,
                     cwd: &pane.cwd,
                     hover: hover.filter(|_| details_active),
@@ -179,9 +234,14 @@ impl AppState {
             p.text(Face::Ui, 11.5, row.x, row.cy(), Reason::Tool.label(), pal.muted, (row.w - 122.0).max(0.0));
             hit(p, Rect::new(row.right() - 120.0, row.y, 120.0, 22.0), "Open terminal", Control::Open, false);
         }
+        chat.question.colours = Some(diff);
         super::question::Draw { pal, hover, focused, now }.card(p, chat, &pane.model, &mut self.hits);
         if details_active {
             self.hits.extend(detail_hits);
+        }
+        if docked {
+            chat.layout.suggestions = Rect::default();
+            return frame;
         }
         // The slash picker sits above the transcript, including its footer and the closed-drawer hint.
         composer::Draw {
@@ -193,6 +253,8 @@ impl AppState {
             pins: &self.win_file.chat_pins,
             chips: &composer::chips_of(&self.config.chat),
             own: &self.config.chat.commands,
+            stop,
+            welcome,
         }
         .composer(p, chat, &pane.model.chat, suggestions, popup);
         frame

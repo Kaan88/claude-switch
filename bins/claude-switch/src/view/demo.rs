@@ -52,6 +52,16 @@ impl Transcript {
         Ok(demo)
     }
 
+    /// A new session: its transcript holds nothing yet.
+    #[cfg(test)]
+    pub fn new_empty() -> io::Result<Self> {
+        let cwd = Self::folder()?;
+        let path = cwd.join("new-session.jsonl");
+        let demo = Self { cwd, path, stop: None, writer: None };
+        File::create(&demo.path)?;
+        Ok(demo)
+    }
+
     fn folder() -> io::Result<PathBuf> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         loop {
@@ -338,19 +348,30 @@ fn seed_showcase(file: &mut File, cwd: &Path) -> io::Result<()> {
             tool(
                 "edit",
                 "Edit",
-                json!({"file_path":"src/tiles/cache.rs", "old_string":"modified()", "new_string":"self.clock"})
+                json!({"file_path":"src/tiles/cache.rs",
+                    "old_string":"            entry.used = SystemTime::now();",
+                    "new_string":"            self.clock += 1;
+            entry.used = self.clock;"})
             ),
             tool("run2", "Bash", json!({"command":"cargo test -p tiles"})),
         ]),
     )?;
-    record(
+    record(file, 8, "user", json!([result("run2", json!("test result: ok. 48 passed; 0 failed"))]))?;
+    // The edit's result in a record of its own, with the patch Claude Code writes beside it.
+    writeln!(
         file,
-        8,
-        "user",
-        json!([
-            result("edit", json!("The file has been updated.")),
-            result("run2", json!("test result: ok. 48 passed; 0 failed"))
-        ]),
+        "{}",
+        json!({"timestamp": stamp(8), "type":"user",
+            "message":{"role":"user", "content":[result("edit", json!("The file has been updated."))]},
+            "toolUseResult":{"filePath":"src/tiles/cache.rs", "structuredPatch":[{
+                "oldStart":86, "oldLines":5, "newStart":86, "newLines":6, "lines":[
+                    "     fn touch(&mut self, id: TileId) {",
+                    "         if let Some(entry) = self.entries.get_mut(&id) {",
+                    "-            entry.used = SystemTime::now();",
+                    "+            self.clock += 1;",
+                    "+            entry.used = self.clock;",
+                    "         }",
+                    "     }"]}]}})
     )?;
     writeln!(
         file,

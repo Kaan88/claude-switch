@@ -16,9 +16,12 @@ mod recall;
 mod rename;
 mod screen_report;
 mod shortcuts;
+#[cfg(test)]
+mod shots;
 pub(super) mod side;
 pub(super) mod submission;
 mod undo;
+mod welcome;
 
 pub(crate) use commands::valid_name as valid_command_name;
 pub use input::Control;
@@ -154,7 +157,7 @@ enum Drawer {
     Auto(Reason),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Side {
     #[default]
     Tasks,
@@ -193,7 +196,10 @@ pub struct Chat {
     drawer_focus: bool,
     reason: Option<Reason>,
     suppressed: Option<Reason>,
+    /// The Details panel is closed: by the user's own choice, else because it has no section.
     side_hidden: bool,
+    /// The user opened (`true`) or closed the panel: it then stays so, whatever it has to show.
+    side_choice: Option<bool>,
     side: Side,
     pub(super) details: side::Details,
     shell_count: usize,
@@ -516,6 +522,20 @@ impl Chat {
             && info.pending.is_none()
             && info.latest.is_some_and(|(_, phase)| phase == ChatPhase::Active)
             && info.prompt.is_some_and(|prompt| self.stopped != Some((info.generation, prompt)))
+    }
+
+    /// The session has no message yet and none on its way: Chat greets, with the message box in
+    /// the middle of the window.
+    pub(super) fn welcome(&self, model: &crate::view::model::Model) -> bool {
+        self.enabled
+            && model.agent.is_none()
+            && model.items.is_empty()
+            && !model.has_earlier
+            && model.error.is_none()
+            && (self.awaiting_transcript || model.loaded)
+            && !self.first_sent
+            && self.queue.is_none()
+            && self.waiting().is_none()
     }
 
     pub(super) fn is_demo(&self) -> bool {

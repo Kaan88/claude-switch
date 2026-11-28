@@ -277,15 +277,20 @@ fn direct_input_discards_unsampled_old_prompt_and_stop_cannot_reuse_a_turn() {
 }
 
 #[test]
-fn layout_keeps_composer_and_drawer_disjoint_and_centers_the_reading_measure() {
+fn layout_keeps_composer_and_drawer_disjoint_and_puts_the_box_on_the_reading_column() {
     for (w, h, panel) in [(760.0, 480.0, false), (1100.0, 720.0, true), (1920.0, 1080.0, true)] {
         let area = Rect::new(0.0, 80.0, w, h - 80.0);
         for chips in [false, true] {
             let l = Layout::new(area, true, true, None, chips, false);
-            assert!(l.conversation.h >= 80.0 && l.composer.w <= 770.0);
+            // The box is the medium reading column (720 px at most) and 16 px on each side,
+            // centred where the conversation's text is (beside its scrollbar's gutter).
+            // With attachments in the smallest window the conversation keeps the layout's floor.
+            assert!(l.conversation.h >= 70.0 && l.box_frame.w <= 752.0);
             assert_eq!(l.side.w > 0.0, panel);
             assert_eq!(l.conversation.w + l.side.w, w);
-            assert_eq!(l.composer.x * 2.0 + l.composer.w + l.side.w, w);
+            assert_eq!((l.composer.x, l.composer.w), (l.conversation.x, l.conversation.w));
+            assert!(l.box_frame.x >= 12.0 && l.box_frame.right() <= l.conversation.right());
+            assert!((l.box_frame.cx() - (l.conversation.w - 13.0) / 2.0).abs() <= 1.0, "{:?}", l.box_frame);
             assert_eq!(l.conversation.bottom(), l.composer.y);
             assert_eq!(l.composer.bottom(), l.grip.y);
             assert_eq!(l.grip.bottom(), l.drawer.y);
@@ -751,4 +756,39 @@ fn caret_keys_move_and_select_by_character_word_line_and_draft_like_a_windows_te
     assert_eq!(chat.editor.text, "an earlier prompt", "plain Up on the first line recalls as before");
     press(&mut chat, KeyName::Escape, plain);
     assert_eq!(chat.editor.text, "one\ntwo");
+}
+
+/// The Details panel opens when it has a first section to show and is closed when it has none,
+/// unless the user opened or closed it: that choice holds.
+#[test]
+fn the_details_panel_follows_what_it_has_to_show_until_the_user_chooses() {
+    use super::readme_shots as shots;
+    fn chat(st: &mut crate::state::AppState, id: u64) -> &mut Chat {
+        &mut shots::tab(st, id).pane.as_mut().unwrap().chat
+    }
+    let area = Rect::new(0.0, 80.0, 1280.0, 800.0);
+    let demo = crate::demo::Transcript::new_showcase(None).unwrap();
+    let (mut st, id) = shots::chat_window(true, &demo);
+    st.layout_chat(area);
+    assert!(chat(&mut st, id).layout.side.w > 0.0, "tasks and a changed file: the panel is open");
+    chat(&mut st, id).side_choice = Some(false);
+    st.layout_chat(area);
+    assert_eq!(chat(&mut st, id).layout.side.w, 0.0, "closed by the user, it stays closed");
+
+    // A new session has nothing to show.
+    let empty = crate::demo::Transcript::new_empty().unwrap();
+    let mut st = shots::window(true);
+    let id = shots::claude_tab(&mut st, "Another tab");
+    let source = crate::view::model::Source::File(empty.path().into());
+    let mut pane = st.new_session_pane(source, empty.cwd().into());
+    pane.chat.scripted = true;
+    pane.chat.enabled = true;
+    pane.ui.set_chat(true);
+    shots::tab(&mut st, id).pane = Some(pane);
+    st.layout_chat(area);
+    assert_eq!(chat(&mut st, id).layout.side.w, 0.0, "nothing to show: the panel is closed");
+    assert!(chat(&mut st, id).side_hidden);
+    chat(&mut st, id).side_choice = Some(true);
+    st.layout_chat(area);
+    assert!(chat(&mut st, id).layout.side.w > 0.0, "opened by the user, it stays open");
 }

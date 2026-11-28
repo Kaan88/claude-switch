@@ -109,6 +109,13 @@ impl Selection {
 impl Ui {
     pub(super) fn selected_text(&self) -> Option<String> {
         let text = self.selection.as_ref()?.text(&self.rows);
+        // The room kept above a code block for its header is not text.
+        let spacer = crate::view::preview::SPACER;
+        let text = if text.contains(spacer) {
+            text.split('\n').filter(|line| *line != spacer).collect::<Vec<_>>().join("\n")
+        } else {
+            text
+        };
         (!text.is_empty()).then_some(text)
     }
 

@@ -34,6 +34,15 @@ enum Part {
     Stop,
     /// The tool call a background item began with, in the conversation.
     Call,
+    /// A section's head in Chat's panel: fold or unfold it.
+    Fold,
+}
+
+impl Hit {
+    /// The page the target belongs to: in Chat's panel every section has its own.
+    pub(in crate::view::chat) fn side(&self) -> Side {
+        self.side
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,6 +70,9 @@ struct ChangedFile {
     path: String,
     file: Option<NamedFile>,
     edits: Vec<Change>,
+    /// Lines added and removed by its edits, as the calls counted them.
+    added: usize,
+    removed: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -75,6 +87,8 @@ enum Action {
     ShellFull(ItemId),
     ShellStop(ItemId),
     McpResult(String),
+    /// Fold or unfold a section of Chat's panel.
+    Fold(Side),
 }
 
 #[derive(Default)]
@@ -83,6 +97,8 @@ pub(in crate::view) struct Details {
     files_revision: Option<u64>,
     files: Vec<ChangedFile>,
     expanded: BTreeSet<Key>,
+    /// The sections of Chat's panel that are folded.
+    folded: BTreeSet<Side>,
     offset: f32,
     max: f32,
     reveal: Option<Key>,
@@ -113,6 +129,22 @@ impl Details {
         }
     }
 
+    /// Everything Chat's panel lists, whichever section is asked for.
+    pub(in crate::view) fn refresh_all(&mut self, model: &Model, cwd: &Path) {
+        self.refresh(model, cwd, Side::Files);
+    }
+
+    /// Chat's panel has a section to show: tasks, something in the background, a changed file
+    /// or an output. Call after [`Details::refresh_all`].
+    pub(in crate::view) fn has_sections(&self, model: &Model) -> bool {
+        !model.tasks.is_empty()
+            || !model.agents.is_empty()
+            || !model.shells.is_empty()
+            || !model.mcp_tasks.is_empty()
+            || !self.files.is_empty()
+            || !model.output_list.is_empty()
+    }
+
     fn action(&self, model: &Model, tab: u64, side: Side, hit: Hit) -> Option<Action> {
         if hit.tab != tab
             || hit.side != side
@@ -123,6 +155,7 @@ impl Details {
         }
         let i = hit.index;
         match (side, hit.part) {
+            (_, Part::Fold) => Some(Action::Fold(side)),
             (Side::Tasks, Part::Expand) => Some(Action::Expand(task_key(i, &model.tasks.get(i)?.content))),
             (Side::Tasks, Part::Open) => model.tasks.get(i).and(plan_update(model)).map(Action::Jump),
             (Side::Agents, Part::Expand) => Some(Action::Expand(Key::Agent(model.agents.get(i)?.id.clone()))),
@@ -175,6 +208,11 @@ pub(in crate::view) fn activate(pane: &mut Pane, tab: u64, side: Side, hit: Hit)
     let Some(action) = chat.details.action(&pane.model, tab, side, hit) else { return Activated::None };
     chat.details.message = None;
     match action {
+        Action::Fold(side) => {
+            if !chat.details.folded.remove(&side) {
+                chat.details.folded.insert(side);
+            }
+        }
         Action::Expand(key) => chat.details.toggle(key),
         Action::Preview(file) => {
             if file.available() {
@@ -261,7 +299,7 @@ fn changed_files(model: &Model, cwd: &Path) -> Vec<ChangedFile> {
         }
         let key = links::transcript_path(path, cwd).map_or_else(|| FileKey::Unavailable(path.clone()), FileKey::Local);
         let index = *indices.entry(key.clone()).or_insert_with(|| {
-            files.push(ChangedFile { key, path: path.clone(), file: None, edits: vec![] });
+            files.push(ChangedFile { key, path: path.clone(), file: None, edits: vec![], added: 0, removed: 0 });
             files.len() - 1
         });
         let entry = &mut files[index];
@@ -274,6 +312,8 @@ fn changed_files(model: &Model, cwd: &Path) -> Vec<ChangedFile> {
         }
         if let Some(ToolCard::Edit { added, removed, .. }) = card {
             label.push_str(&format!("  +{added} −{removed}"));
+            entry.added += added;
+            entry.removed += removed;
         }
         entry.edits.push(Change { id, label });
     }

@@ -22,7 +22,6 @@ pub enum Control {
     Open,
     Grip,
     Panel,
-    Side(Side),
     Detail(super::side::Hit),
     Shells,
     Editor,
@@ -53,6 +52,8 @@ pub enum Control {
     Remove(usize),
     MoreChips,
     Question(super::question::Hit),
+    /// A start under a new session's message box: it fills the box and sends nothing.
+    Start(super::welcome::Start),
 }
 
 impl AppState {
@@ -67,6 +68,7 @@ impl AppState {
         }
         if pane.chat.enabled {
             pane.chat.side = Side::Shells;
+            pane.chat.side_choice = Some(true);
             pane.chat.side_hidden = false;
         } else {
             pane.ui.show_details(Side::Shells);
@@ -76,8 +78,9 @@ impl AppState {
     fn detail_control(&mut self, hit: super::side::Hit) {
         let Some(tab) = self.tabs.shown_mut() else { return };
         let Some(pane) = &mut tab.pane else { return };
+        // Chat's panel shows every section: a target says which it belongs to.
         let side = if pane.chat.enabled {
-            pane.chat.side
+            hit.side()
         } else if let Some(side) = pane.ui.detail_side() {
             side
         } else {
@@ -95,7 +98,8 @@ impl AppState {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
-        if !chat.locked() {
+        // A card stands where the composer is: its hidden draft takes no paste.
+        if !chat.locked() && !chat.question.docked() {
             chat.paste_clipboard(false);
             self.chat_editor_changed();
         }
@@ -280,6 +284,11 @@ impl AppState {
             self.arm_chat_tick(cx);
             return true;
         }
+        // A card stands where the composer is: the hidden draft takes no keys, and Enter sends
+        // nothing. The card's own field takes them once it was clicked (above).
+        if self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.question.docked()) {
+            return true;
+        }
         if mods.none()
             && let Some(key) = k.name.as_ref()
             && self.chat_picker_key(cx, key)
@@ -313,7 +322,7 @@ impl AppState {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
-        if super::question::text(chat, text) || chat.popup_text(text) {
+        if super::question::text(chat, text) || chat.question.docked() || chat.popup_text(text) {
             return true;
         }
         if !chat.locked() {
@@ -418,7 +427,7 @@ impl AppState {
             chat.popups.step(count, dy < 0.0);
         } else if chat.question_wheel(x, y, dy) {
             // A permission prompt longer than its card scrolls.
-        } else if chat.layout.editor.contains(x, y) {
+        } else if chat.layout.editor.contains(x, y) && !chat.question.docked() {
             chat.editor.wheel(dy);
         } else if chat.layout.side.w > 0.0 && chat.layout.side.contains(x, y) {
             chat.details.wheel(dy);
@@ -477,6 +486,13 @@ impl AppState {
                 }
                 return;
             }
+            Control::Start(start) => {
+                if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+                    pane.chat.start(start);
+                }
+                // As after typing: a command's name opens the list of commands.
+                return self.chat_editor_changed();
+            }
             _ => {}
         }
         if matches!(control, Control::Send | Control::Override | Control::SendNow | Control::PressEnter) {
@@ -500,10 +516,10 @@ impl AppState {
             Control::Drawer => chat.toggle_drawer(),
             Control::Open if chat.drawer == Drawer::Closed => chat.open_drawer(),
             Control::Open => chat.drawer_focus = true,
-            Control::Panel => chat.side_hidden = !chat.side_hidden,
-            Control::Side(side) => {
-                chat.side = side;
-                chat.details.reset_scroll();
+            Control::Panel => {
+                // The user's own choice: it holds whatever the panel has to show.
+                chat.side_choice = Some(chat.side_hidden);
+                chat.side_hidden = !chat.side_hidden;
             }
             Control::Remove(i) if i < chat.chips.len() && !chat.locked() => {
                 chat.recall.end();

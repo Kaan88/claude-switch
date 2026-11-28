@@ -143,26 +143,92 @@ fn pieces<'a>(label: &'a str, measure: &mut dyn FnMut(&str) -> f32) -> (Vec<Piec
         }
         _ => label,
     };
-    let mut x = glyph_slot + gap;
+    let end = runs(rest, glyph_slot + gap, digit, measure, &mut out);
+    (out, end)
+}
+
+/// The pieces of `text` from `x`, every digit in a slot `digit` wide; returns where they end.
+fn runs<'a>(
+    text: &'a str,
+    mut x: f32,
+    digit: f32,
+    measure: &mut dyn FnMut(&str) -> f32,
+    out: &mut Vec<Piece<'a>>,
+) -> f32 {
     let mut start = 0;
-    for (i, c) in rest.char_indices() {
+    for (i, c) in text.char_indices() {
         if c.is_ascii_digit() {
             if start < i {
-                let run = &rest[start..i];
+                let run = &text[start..i];
                 out.push((x, run, None));
                 x += measure(run);
             }
-            out.push((x, &rest[i..=i], Some(digit)));
+            out.push((x, &text[i..=i], Some(digit)));
             x += digit;
             start = i + 1;
         }
     }
-    if start < rest.len() {
-        let run = &rest[start..];
+    if start < text.len() {
+        let run = &text[start..];
         out.push((x, run, None));
         x += measure(run);
     }
-    (out, x)
+    x
+}
+
+/// The working line's parts: the CLI's spinner glyph (none in the fallback and in a waiting
+/// line), its word, and what stood in the brackets after it (the timer and the token count).
+fn parts(label: &str) -> (Option<&str>, &str, &str) {
+    let (head, tail) = match label.split_once(" (") {
+        Some((head, tail)) => (head, tail.strip_suffix(')').unwrap_or(tail)),
+        None => (label, ""),
+    };
+    match head.split_once(' ') {
+        Some((glyph, word)) if glyph.chars().count() <= 2 && !glyph.starts_with(char::is_alphanumeric) => {
+            (Some(glyph), word, tail)
+        }
+        _ => (None, head, tail),
+    }
+}
+
+/// The height Chat's working line takes at the end of the conversation.
+pub(super) const CHAT_LINE: f32 = 34.0;
+
+/// Chat's working line, where the next text will appear: the CLI's glyph in the accent (the
+/// Claude mark when the line has none), its word in the text colour, then the timer and the token
+/// count, fainter. The glyph and every digit keep fixed slots, as in `draw_line`.
+pub(super) fn draw_chat_line(
+    p: &mut Painter,
+    pal: &mdshared_ui::theme::Palette,
+    x: f32,
+    cy: f32,
+    label: &str,
+    max: f32,
+) {
+    const GLYPH: f32 = 16.0;
+    const WORD: f32 = 14.5;
+    const REST: f32 = 12.5;
+    let (glyph, word, rest) = parts(label);
+    let glyph = glyph.unwrap_or(super::look::MARK);
+    let slot = GLYPHS.iter().chain(&[super::look::MARK]).map(|g| p.measure(Face::Ui, GLYPH, g)).fold(0.0, f32::max);
+    let offset = (slot - p.measure(Face::Ui, GLYPH, glyph)) / 2.0;
+    p.text(Face::Ui, GLYPH, x + offset, cy, glyph, pal.accent, f32::INFINITY);
+    let mut at = x + slot + 7.0;
+    at += p.text(Face::Ui, WORD, at, cy, word, pal.text, (x + max - at).max(0.0));
+    if rest.is_empty() {
+        return;
+    }
+    at += 10.0;
+    let digit = ('0'..='9').map(|d| p.measure(Face::Ui, REST, d.encode_utf8(&mut [0; 4]))).fold(0.0, f32::max);
+    let mut pieces = Vec::new();
+    let end = runs(rest, at, digit, &mut |t| p.measure(Face::Ui, REST, t), &mut pieces);
+    if end > x + max {
+        return;
+    }
+    for (px, text, slot) in pieces {
+        let offset = slot.map_or(0.0, |w| (w - p.measure(Face::Ui, REST, text)) / 2.0);
+        p.text(Face::Ui, REST, px + offset, cy + 0.5, text, pal.faint, f32::INFINITY);
+    }
 }
 
 /// A copied CLI row that starts with a spinner glyph and a space ("✻ Scanning local sessions…"):
