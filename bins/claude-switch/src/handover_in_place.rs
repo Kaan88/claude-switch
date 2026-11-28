@@ -103,7 +103,11 @@ impl AppState {
         text: &str,
         (saved, basis): (PathBuf, u64),
     ) -> Result<(), String> {
-        let prompt = crate::compact_open::first_prompt(text, &saved)?;
+        // The handover itself, whatever its length: a running session gets it through its input
+        // (a paste), where no command line limits it, so Claude has no file outside the project
+        // folder to read (which Claude Code asks about first, in manual mode).
+        crate::compact_open::validate_prompt(text)?;
+        let prompt = text.to_owned();
         if self.marks_read_only {
             return Err("Repair marks.json before starting a handover session.".into());
         }
@@ -211,6 +215,28 @@ mod tests {
         assert!(job.timeout_reason().contains("follow"));
         job.stage = Stage::Prompt;
         assert_eq!(job.deadline(), now + PROMPT_WAIT);
+    }
+
+    #[test]
+    fn a_handover_in_place_is_its_own_first_message_however_long_with_no_file_to_read() {
+        use crate::{source::Source, tabs::NewTab, term::Term};
+        let mut st = AppState::new(Source::Demo, Some(false), Default::default());
+        st.apply_scan(crate::demo::scan(&st.config));
+        let session = st.sessions[0].clone();
+        let new = NewTab { label: "t".into(), color: [0; 3], session: Some(session.id.clone()), account: None };
+        let tab = st.tabs.open(new, Term::empty((8, 4)));
+        st.tabs.get_mut(tab).unwrap().resume_id = Some(session.id.clone());
+        // Longer than a command line takes: a new process would read it from its file.
+        let long = "## Goal\n\nKeep going.\n".repeat(2000);
+        assert!(crate::compact_open::uses_file(&long));
+        let saved = PathBuf::from(r"C:\handover\a-1.md");
+        let names = ("Old".to_owned(), "Old".to_owned());
+        st.continue_in_place(tab, &session, names, &long, (saved, 0)).unwrap();
+        let job = st.tabs.get(tab).unwrap().in_place.as_ref().unwrap();
+        assert_eq!(job.prompt, long, "the text itself goes through the input, no file outside the project");
+        let names = ("Old".to_owned(), "Old".to_owned());
+        st.tabs.get_mut(tab).unwrap().in_place = None;
+        assert!(st.continue_in_place(tab, &session, names, "/clear", (PathBuf::from("h.md"), 0)).is_err());
     }
 
     #[test]

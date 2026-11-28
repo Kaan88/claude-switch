@@ -556,7 +556,12 @@ are kept per session. An opened edited handover is kept as a new revision. Save 
 overwrites an existing file. Native Claude Code receives `claude --session-id <new-uuid> --name=<title> -- <text>`
 in the original folder with the selected account's normal sanitized launch environment. The
 interactive CLI documents no stdin/file argument for a first prompt, so short text is one native
-argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file. The app uses the
+argument (no shell); above 15,000 UTF-16 units a short prompt asks it to read the saved file, and
+the session may read exactly that file (`--allowedTools=Read(//c/…/<file>.md)`, the form Claude
+Code writes such paths in): the handover folder lies outside the project folder, where Claude Code
+2.1.332 asks before a read in manual mode. A path the rule could not name exactly (not a drive
+path, or with `*`, brackets or quotes in it) gets no rule; the question then shows as a card in
+Chat, which answers it as any permission prompt. The app uses the
 new UUID for `marks.json` provenance. It never resumes or modifies the source transcript.
 
 The new session name is independent of the OpenCode run title (“Claude Switch handover”) and
@@ -807,8 +812,9 @@ the first message), then puts the handover in the empty composer and sends it wi
 composer's own send as that new chat's first message, so its checks, refusals and staging apply:
 a handover of several lines is entered by the gate once the input line shows it, and a staging
 the gate gives up on stops the handover with the draft left for the gate's recovery (up to 60
-seconds). A draft in the composer is never replaced. Above the command-line limit the first
-message asks the session to read the saved file, as for a new tab. When the message is taken, the
+seconds). A draft in the composer is never replaced. The handover goes whole, however long: a
+running session takes it through its input, where no command line limits it, so it has no file
+outside the project folder to read (which a new tab's long handover is allowed instead). When the message is taken, the
 new session gets the handover provenance and continuation name, and the old one is marked handed
 over; then, once the new transcript exists and at the next idle prompt, `/rename <continuation
 name>` goes through the same slash gate (which re-checks the session right before writing), so Claude Code's own name follows as for a tab rename. A step that does not happen in time,
@@ -1644,7 +1650,8 @@ which the fixtures had not shown. It also checks what Chat reads from Claude Cod
 flags: messages sent while a turn runs as the transcript records them, what Esc does with messages
 waiting in Claude Code's queue, thinking shown as updates, and branches cut at a turn's end resumed
 under their new ids in print mode and in the terminal (scripts `queued`, `queued-text`,
-`queued-esc` and `branch`).
+`queued-esc` and `branch`), and a new handover session reading its file without a prompt and a
+command left typed on the input taken off with Ctrl+U (script `handover`).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat

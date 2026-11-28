@@ -78,8 +78,32 @@ pub fn keep(roots: &Roots, id: &str, text: &str, previous: Option<&Path>) -> Res
     compact::save(roots, id, text).map_err(|e| format!("Could not keep the handover: {e}"))
 }
 
-fn first_args(id: &str, text: &str, saved: &Path) -> Result<Vec<String>, String> {
-    Ok(vec!["--session-id".into(), id.into(), "--".into(), first_prompt(text, saved)?])
+/// A new handover process's own arguments: its session ID and its first message; when that
+/// message asks Claude to read the saved file, permission to read exactly that file, which lies
+/// outside the project folder (Claude Code 2.1.332 asks first otherwise, in manual mode).
+pub(crate) fn first_args(id: &str, text: &str, saved: &Path) -> Result<Vec<String>, String> {
+    let mut args = vec!["--session-id".into(), id.into()];
+    if uses_file(text) {
+        let path = std::path::absolute(saved).map_err(|_| "Could not resolve the absolute handover path.")?;
+        args.extend(read_rule(&path).map(|rule| format!("--allowedTools={rule}")));
+    }
+    args.extend(["--".into(), first_prompt(text, saved)?]);
+    Ok(args)
+}
+
+/// Claude Code's permission rule for reading exactly `path` (`Read(//c/Users/…/file.md)`, the
+/// form it writes such paths in), or `None` for a path the rule could not name exactly: not a
+/// drive path, or with a character a rule gives a meaning (`*`, brackets, quotes). The handover
+/// then waits for the question, which Chat's card answers.
+pub(crate) fn read_rule(path: &Path) -> Option<String> {
+    let path = path.to_str()?;
+    let (drive, rest) = path.split_once(':')?;
+    let drive = drive.chars().next().filter(|c| c.is_ascii_alphabetic() && drive.len() == 1)?;
+    let special = |c: char| "*?[](){}\"'`,".contains(c) || c.is_control();
+    if !rest.starts_with(['\\', '/']) || rest.chars().any(special) {
+        return None;
+    }
+    Some(format!("Read(//{}{})", drive.to_ascii_lowercase(), rest.replace('\\', "/")))
 }
 
 /// The first message: the handover itself, or above the command-line limit a request to read
@@ -289,6 +313,32 @@ mod tests {
 
     mod fixture {
         include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../crates/opencode/tests/support/mod.rs"));
+    }
+
+    #[test]
+    fn a_handover_read_from_its_file_may_read_exactly_that_file() {
+        let saved = Path::new(r"C:\Users\someone\AppData\Roaming\claude-switch\handover\a-1.md");
+        assert_eq!(
+            read_rule(saved).as_deref(),
+            Some("Read(//c/Users/someone/AppData/Roaming/claude-switch/handover/a-1.md)")
+        );
+        for odd in [r"\\server\share\a.md", r"C:\x (copy)\a.md", r"C:\x\a*.md", r"relative\a.md", r"C:\x,y\a.md"] {
+            assert_eq!(read_rule(Path::new(odd)), None, "{odd}");
+        }
+        let long = "## Long\n\nwords\n".repeat(2000);
+        let args = first_args("new-id", &long, saved).unwrap();
+        assert_eq!(
+            args[..3],
+            [
+                "--session-id",
+                "new-id",
+                "--allowedTools=Read(//c/Users/someone/AppData/Roaming/claude-switch/handover/a-1.md)"
+            ]
+        );
+        assert_eq!(args[3], "--");
+        assert!(args[4].starts_with("Read the handover file at"));
+        // A handover given whole needs no file and no rule.
+        assert_eq!(first_args("new-id", "## Short", saved).unwrap(), ["--session-id", "new-id", "--", "## Short"]);
     }
 
     #[test]

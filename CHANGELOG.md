@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Handover: Claude Code no longer asks in the terminal whether it may read the handover file. A
+  new handover tab may read exactly that one file, and a handover that continues in the same tab
+  is handed to Claude whole instead of as a file to read. Should such a question still come, Chat
+  shows it as a card with its choices and answers it.
 - Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
   just before a permission prompt took the screen) and every later message waited behind it
   without a word. The rename now goes only once Chat has read the new session's first prompt, and

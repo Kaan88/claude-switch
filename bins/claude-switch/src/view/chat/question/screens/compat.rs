@@ -358,6 +358,29 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
         .collect())
 }
 
+/// For `recorder compat`'s `handover`: a handover that starts with `CS_HANDOVER_TEXT`, long enough
+/// to be read from its file, written to `CS_HANDOVER_DIR`, and the arguments the app gives a new
+/// handover session for it (`compact_open::first_args`), as JSON to `CS_HANDOVER_OUT`.
+#[test]
+#[ignore = "a tool for recorder compat: writes a handover file and its session's arguments"]
+fn cli_handover_args() {
+    let dir = std::path::PathBuf::from(std::env::var("CS_HANDOVER_DIR").expect("CS_HANDOVER_DIR"));
+    let mut text = format!("{}\n\n", std::env::var("CS_HANDOVER_TEXT").expect("CS_HANDOVER_TEXT"));
+    for n in 1.. {
+        if crate::compact_open::uses_file(&text) {
+            break;
+        }
+        text.push_str(&format!("Background note {n}: nothing in it is a task.\n"));
+    }
+    std::fs::create_dir_all(&dir).expect("the handover folder");
+    let saved = dir.join("handover.md");
+    std::fs::write(&saved, &text).expect("the handover file");
+    let id = crate::compact_open::session_id().expect("a new id");
+    let args = crate::compact_open::first_args(&id, &text, &saved).expect("the arguments");
+    let out = std::env::var("CS_HANDOVER_OUT").expect("CS_HANDOVER_OUT");
+    std::fs::write(out, serde_json::to_string(&args).unwrap()).expect("the arguments' file");
+}
+
 /// For `recorder compat`'s `branch`: writes a branch of the transcript `CS_BRANCH_SOURCE` with the
 /// app's own code, as Branch under a message does: `CS_BRANCH_AT` is `prompt TEXT` or
 /// `answer TEXT` (the first prompt, or the last answer, whose text contains TEXT), cut where the
@@ -524,6 +547,10 @@ fn the_fixtures_read_as_the_states_the_check_names() {
         (FORM_MULTI, "kind = question\nchoices = [ ] Apple | [ ] Pear | [ ] Plum | [ ] Type something | Next | *"),
         (ASK_REVIEW, "kind = review\nanswers = Which size? = Small | Which speed? = Slow\nhighlight = Submit answers"),
         (PERM_BASH, "kind = permission\ntitle = Do you want to proceed?\ncount = 4\ntell = -\nattention = yes"),
+        (
+            PERM_READ_OUTSIDE,
+            "kind = permission\ncount = 3\nhighlight = Yes\nattention = yes\nbody = Read file | Read(*h.md)",
+        ),
         (PERM_AGENT_BASH, "kind = permission\nrequest = Bash command * from the general-purpose agent | *"),
         (PERM_TWO_AFTER, "kind = permission\nattention = yes\nbody = Bash command*| mkdir par_b"),
         (BLOCKED_ONE, "kind = blocked\nmarks = none\npending = -\nesc-does = close\nbody = mkdir probe_blocked_two"),
