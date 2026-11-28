@@ -105,11 +105,21 @@ impl AppState {
         let mode = self.list_mode();
         let keep_pins_with_group =
             matches!(mode, Mode::Threads | Mode::Topics) || (mode == Mode::Projects && !self.config.group_by_folder);
+        // A session named by its id is what the search is for: it goes first, in a group of its
+        // own, also when it is hidden, archived or a worker's (its row says so), unless another
+        // filter than All or Hidden is chosen.
+        let id_filter = matches!(self.filter, Filter::All | Filter::Hidden);
+        let mut by_id: Vec<usize> = Vec::new();
         let mut rows: Vec<_> = self
             .sessions
             .iter()
             .enumerate()
             .filter_map(|(i, s)| {
+                if !query.is_empty() && model::id_matches(query, s) && (id_filter || self.list_session_visible(s, true))
+                {
+                    by_id.push(i);
+                    return None;
+                }
                 if !self.list_session_visible(s, !query.is_empty()) {
                     return None;
                 }
@@ -129,6 +139,7 @@ impl AppState {
             })
             .collect();
         rows.sort_unstable_by_key(newest);
+        by_id.sort_unstable_by_key(newest);
 
         let mut groups = Vec::<ViewGroup>::new();
         let mut by_key = HashMap::new();
@@ -202,6 +213,9 @@ impl AppState {
                 rows = self.cluster_rows(rows, offset);
             }
             groups.push(ViewGroup { name: BUCKETS[i].into(), key: format!("recent:{i}"), rows });
+        }
+        if !by_id.is_empty() {
+            groups.insert(0, ViewGroup { name: "Session id".into(), key: "session-id".into(), rows: by_id });
         }
         groups
     }

@@ -929,7 +929,8 @@ Rows show the latest `last-prompt` record (`lastPrompt`) or real user message fo
 bounded transcript tail. Search and the quick switcher match the local name, original title,
 last prompt and folder, and a session id: the whole id or a prefix of at least eight hex digits,
 alone, or after `--resume` in a pasted line (`claude --resume <id>`), which ranks that session
-first; the switcher orders by fuzzy match quality, then recency. Opening from
+first; in the Sessions list it goes into a first group, "Session id", also when hidden, archived or
+a worker's (with the All or Hidden filter), its row showing that state as usual; the switcher orders by fuzzy match quality, then recency. Opening from
 it uses the existing resume checks, and Ctrl+Enter opens the other-account menu.
 
 The Waiting filter is a hint, not a process signal. A live session is waiting if its newest

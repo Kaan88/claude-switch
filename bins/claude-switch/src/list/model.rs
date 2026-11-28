@@ -113,8 +113,13 @@ fn queried_id(query: &str) -> Option<String> {
     (shape && hex >= ID_PREFIX).then(|| id.to_ascii_lowercase())
 }
 
+/// The query names this session by its id (whole, a prefix, or in a pasted `--resume` line).
+pub fn id_matches(query: &str, s: &Session) -> bool {
+    queried_id(query).is_some_and(|id| s.id.to_ascii_lowercase().starts_with(id.as_str()))
+}
+
 pub fn score(query: &str, name: Option<&str>, s: &Session, folder: &str) -> Option<i32> {
-    let by_id = queried_id(query).filter(|id| s.id.to_ascii_lowercase().starts_with(id.as_str())).map(|_| BY_ID);
+    let by_id = id_matches(query, s).then_some(BY_ID);
     let words = [name, Some(&s.title), Some(&s.last_prompt), Some(folder), s.cwd.to_str()]
         .into_iter()
         .flatten()

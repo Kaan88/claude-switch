@@ -19,8 +19,9 @@
   subagent's transcript. The original session is not changed; a branch has no file backups, so
   it cannot rewind code changes made before its cut.
 - Sessions: the search finds a session by its id: the whole id, its first eight characters or
-  more, or a pasted line such as `claude --resume <id>` from a hand-over. Other searches are as
-  before.
+  more, or a pasted line such as `claude --resume <id>` from a hand-over. It is listed first, under
+  "Session id", also when it is hidden, archived or a worker's session (its row says Hidden or
+  Archived, or its title is grey when the desktop app archived it). Other searches are as before.
 - Chat: when the terminal opens for a question Chat cannot answer itself (Claude Code may be
   waiting, a permission prompt Chat cannot read whole, or a card's answer that could not go), the
   terminal takes the keyboard, so the answer can be typed at once; not while you are typing in the
