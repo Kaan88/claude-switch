@@ -1,13 +1,16 @@
-# Back from a shown agent while the main turn works (Chat's Back: ↓, Enter on main, Esc from the
-# list). Written 2026-11-28 from the `agent-message` recording, not recorded yet: the Esc after
-# Back must leave the running main turn alone.
+# Back from a shown agent while the main turn works (Chat's Back right after a pick: ↑ to main,
+# Enter, Esc from the list). Written from the `agent-message` recording; the first run of this
+# script (20261128-132435) stopped at an agent's PowerShell permission prompt. The Esc after Back
+# must leave the running main turn alone.
 
 [busy]
 working = yes
 agents = input
 
+# The agent shows; the list keeps the keys on it.
 [viewing]
 viewing = general-purpose
+agents = select · general-purpose Count slowly
 
 [back_list]
 agents = select · main

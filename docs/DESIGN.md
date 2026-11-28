@@ -2097,7 +2097,8 @@ row) and writes it into the agent's own transcript only when it hands it in at t
 step, as a `queued_command` without `commandMode`, which the reader takes as a prompt there; it is
 never in the main transcript. A second message while Claude Code still shows that agent goes
 straight in. ‹ Back returns Claude Code to the main session the same way: ↓ (highlight on main,
-"↑/↓ to select · enter to view"), Enter on main; main shows again with the list still holding
+"↑/↓ to select · enter to view"), or ↑ when a pick left the list holding the keys on the agent it
+shows (↓ cannot reach main from there), Enter on main; main shows again with the list still holding
 the keys on it, and one Esc, only with no agent shown and main highlighted, gives them to the
 input. The hint row ends with the effort after a gap ("◐ medium · /effort"), also while the list
 has the keys; the reader cuts it off. A message for the main session (any intent, Override

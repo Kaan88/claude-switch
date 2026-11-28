@@ -3020,3 +3020,29 @@ fn stop_agent_is_not_offered_while_an_agent_shows() {
         assert!(f.chat().question.agents.is_empty());
     }
 }
+
+/// Back right after a pick, with the list still holding the keys on the agent it shows: ↑ to
+/// main (↓ cannot reach it from there), Enter, then Esc once main shows.
+#[test]
+fn back_from_a_pick_moves_up_to_main() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("Count slowly");
+    f.show(AGENT_MESSAGE_VIEWING, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    f.chat().question.cli_agent = Some("a-Count slowly".into());
+    f.writes();
+    let up = mdshared_term::input::encode_key(mdshared_term::Key::Up, mdshared_term::Mods::NONE, &Default::default());
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [up], "↑ from the shown agent's row");
+    f.show(AGENT_MESSAGE_BACK_LIST, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Enter on main");
+    f.show(AGENT_MESSAGE_BACK, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\x1b".to_vec()]);
+    f.show(AGENT_MESSAGE_IDLE, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.chat().question.cli_agent, None);
+}

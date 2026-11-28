@@ -12,6 +12,9 @@
 - Chat: a message to a subagent waits while another message or command is on its way, and goes
   straight into the shown agent only when the list's filled row is that agent (not another of the
   same type); keys typed in the terminal make Chat forget which agent it picked.
+- Chat: ‹ Back also brings Claude Code back to the main session after a message to a subagent
+  stopped right after the pick, with the agent list still holding the keys on that agent (it
+  moves up to main instead of waiting for an input that never gets the keys back).
 
 ## 0.1.7 (2026-11-28)
 

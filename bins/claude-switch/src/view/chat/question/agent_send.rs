@@ -268,18 +268,40 @@ fn start_back(tab: &mut Tab, now: Instant) -> bool {
         tab.pane.as_mut().unwrap().chat.question.cli_agent = None;
         return true;
     }
-    let Some(list) = idle_list(screen) else { return false };
+    let epoch = pane.chat.output_epoch;
+    if let Some(list) = idle_list(screen) {
+        let step = Step {
+            agent: None,
+            name: String::new(),
+            row: 0,
+            names: owned(&list),
+            stage: Stage::Opening,
+            message: None,
+            due: now + STEP,
+            epoch,
+        };
+        return open(tab, step);
+    }
+    // Right after a pick the list still has the keys, its highlight on the agent it shows (a send
+    // that stopped there): ↑ towards main, the rest as from ↓ (`agent-back-busy`).
+    let Some(list) = screens::agent_list(screen).filter(|l| l.keys == ListKeys::Select) else { return false };
+    let Some(h) = list.highlight.filter(|&h| h > 0 && list.rows[h].shown) else { return false };
+    let up = moves(h, h - 1, screen);
     let step = Step {
         agent: None,
         name: String::new(),
         row: 0,
         names: owned(&list),
-        stage: Stage::Opening,
+        stage: Stage::Moving(h - 1),
         message: None,
         due: now + STEP,
-        epoch: pane.chat.output_epoch,
+        epoch,
     };
-    open(tab, step)
+    match write(tab, &up) {
+        Ok(()) => tab.pane.as_mut().unwrap().chat.question.agent_send = Some(step),
+        Err(error) => tab.pane.as_mut().unwrap().chat.error = Some(error),
+    }
+    true
 }
 
 enum Next {

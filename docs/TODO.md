@@ -117,10 +117,14 @@ as the second account, Windows Terminal, the desktop hand-over.
   (`ended_transcript`; the first run's `wait completed` never matched 2.1.332's "Agent "Count
   slowly" finished · 1m 3s"). Still open: whether a named agent's placeholder gives its name
   rather than its type (Chat then holds the message, as the name does not match).
-- Record `agent-back-busy` (written 2026-11-28, not run): Back's Esc from the list on main while
-  the main turn still works must leave that turn alone (`back_closed`, `after_esc` and `done`
-  read no "Interrupted"; the turn's answer is in `done_transcript`). Until it is recorded, Back
-  during a running main turn relies on the Stop agent recording (an Esc from the list mid-turn).
+- Record `agent-back-busy` again: Back's Esc from the list on main while the main turn still
+  works must leave that turn alone (`back_closed`, `after_esc` and `done` read no "Interrupted";
+  the turn's answer is in `done_transcript`). Its first run (20261128-132435) stopped at the
+  agent's PowerShell permission prompt (`allow-ping.json` allows only Bash's ping); it now uses
+  `allow-ping-any.json`, waits for the hint row's `· ↓ to manage` before its first key, and goes
+  back with ↑ (the list keeps its highlight on the agent right after the pick). Until it is
+  recorded, Back during a running main turn relies on the Stop agent recording (an Esc from the
+  list mid-turn).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.
