@@ -2029,7 +2029,8 @@ line, whole, or cut with "…" (a prompt of several lines always is). A later pr
 read stops it before Enter. Enter must lead to the prompt's choices, under "Restore to the point
 before you sent this message:" with the prompt quoted; the card shows that screen's rows and its
 numbered choices (for example "Restore code and conversation", "Restore conversation", "Restore
-code", "Summarize from here", "Summarize up to here", "Never mind") and chooses nothing by itself. A
+code", "Summarize from here", "Summarize up to here", "Never mind"), the list 8 px under the rows
+(picture `rewind-choices`, from the recorded screen), and chooses nothing by itself. A
 click moves the highlight one row at a time and Enter goes on the choice only with the same choices
 on screen; it is done when neither rewind screen shows and the input is back (Claude Code then puts
 the prompt back on its input after a conversation restore). Cancel writes Esc (back to the list),

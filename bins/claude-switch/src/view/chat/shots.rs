@@ -394,6 +394,20 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             pane(&mut st, id).chat.question.rewinding("Fix the flaky tile cache test");
             (demo, st, later)
         }
+        "rewind-choices" => {
+            // The rewind's Enter went on the prompt's row and Claude Code shows its choices for it
+            // (recorded): Chat reads them from the screen, and the card offers them.
+            use crate::view::chat::question::screens::recorded::REWIND_ACTIONS;
+            let demo = Transcript::new_showcase(None).unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            let later = shots::show(&mut st, id, REWIND_ACTIONS, now);
+            pane(&mut st, id).chat.question.rewinding("Reply with just the word bravo.");
+            let later = later + Duration::from_millis(200);
+            pane(&mut st, id).chat.output(later, true, false);
+            st.progress_chat_tabs(later, true);
+            assert!(pane(&mut st, id).chat.question.rewind_choosing(), "the card offers the choices");
+            (demo, st, later)
+        }
         "very-short" | "scale-125" | "scale-200" | "custom-theme" => {
             let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
             let (mut st, id) = shots::chat_window(dark, &demo);
@@ -556,6 +570,7 @@ fn chat_shots() {
         "panel",
         "blocked",
         "rewind",
+        "rewind-choices",
         "very-short",
         "scale-125",
         "scale-200",
@@ -569,11 +584,12 @@ fn chat_shots() {
             _ => [(WIDE, "wide"), (NARROW, "narrow")],
         };
         // The question cards at both common scales, wide and narrow.
-        let more: &[(Size, &str)] = if state.starts_with("preview") || state.starts_with("form-") {
-            &[(WIDE_100, "wide-100"), (NARROW_150, "narrow-150")]
-        } else {
-            &[]
-        };
+        let more: &[(Size, &str)] =
+            if state.starts_with("preview") || state.starts_with("form-") || state == "rewind-choices" {
+                &[(WIDE_100, "wide-100"), (NARROW_150, "narrow-150")]
+            } else {
+                &[]
+            };
         let sizes: Vec<(Size, &str)> = sizes.into_iter().chain(more.iter().copied()).collect();
         for (size, width) in sizes {
             for (dark, theme) in [(true, "dark"), (false, "light")] {

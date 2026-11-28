@@ -2150,6 +2150,11 @@ impl Card {
         self.rewind = Some(rewind::Rewind::entering(prompt));
     }
 
+    /// For pictures: the rewind's choices are on screen and the card offers them.
+    pub(in crate::view::chat) fn rewind_choosing(&self) -> bool {
+        self.rewind.as_ref().is_some_and(|r| r.choosing() && r.actions.is_some())
+    }
+
     /// For tests outside this module: whether a step is in flight, and the card's notice.
     pub(in crate::view::chat) fn probe(&self) -> (bool, Option<&'static str>) {
         (self.step.is_some(), self.error)

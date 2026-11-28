@@ -44,9 +44,10 @@ with queued messages and Send now (Claude Code's Ctrl+X Ctrl+S). Still to do:
   patch on real edits (diff line numbers), "Run in background" on the working line, queued
   messages and their Send now (recorded only through `recorder compat`), a card scrolled under
   its pinned foot.
-- Never drawn: the rewind card's choices (the picture shows a rewind on its way). A form built
-  from the transcript's pending call is drawn since 2026-11-28 (`chat_shots` `form-tabs`,
-  `form-submit`).
+- Drawn 2026-11-28 (`chat_shots`): a form built from the transcript's pending call (`form-tabs`,
+  `form-submit`) and the rewind card's choices (`rewind-choices`, the recorded choices screen
+  read by Chat's own rewind step; looking at it found the list flush against the rows above it,
+  now apart). Neither tried in the running app.
 - Decided, to confirm by the owner: typing while a card is docked still goes nowhere (the card
   says so once); Stop is a small square in its own slot beside Send whenever a turn runs; Chat's
   side padding is 28 px, 12 px under a 560 px column; code blocks sit about 40 px lower (header
