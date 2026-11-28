@@ -656,8 +656,19 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     nothing (recorded). Not checked: the menu item and the card have not been seen or clicked in the running app; a
     list long enough to scroll (the one-row scroll rule is untested); what "Summarize from here", "Summarize up to
     here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
-    text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
-    a rewind and the reader does not follow `parentUuid` branches.
+    text markers in the list. Done (2026-11-28): the reader shows the active branch only, the chain from
+    the newest record back through `parentUuid` (DESIGN.md, "Rewind"), so the rewound turns go once the next
+    prompt is written (the CLI appends nothing on the rewind itself, so they show until then). Checked by unit
+    tests over made-up transcripts: a rewind, a rewind to the first prompt, a fork's copy, tool results recorded
+    against their own call, progress and hook records off the chain, sidechains and a subagent's transcript, a
+    compaction boundary, the bounded slice and history paged in, records without links. Not checked: against a
+    live rewind in the app; the Tasks, Agents, Shells and Files pages still count the rewound turns.
+    Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
+    its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
+    the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown
+    items without a new reader generation (history pages, pictures and prompt recall go on); each
+    line is parsed once. `recorder compat` script `rewind-send` (not run yet) rewinds to the second
+    of two prompts, sends a third and checks that the reader shows the first and third only.
     Review fixes (2026-11-27): every key on the choices needs them to quote the chosen prompt (the CLI could have
     been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
     prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list
@@ -1072,4 +1083,30 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     prompt · <title> · continued · <id>"), while Chat keeps showing the old conversation and does not
     pick up the new turns the terminal shows. Chat follows a tab to a new session after `/clear`,
     compaction and `/resume`; `/fork` probably needs the same (find the forked session's transcript
-    and switch the tab to it, as for `/resume`). Not looked into yet.
+    and switch the tab to it, as for `/resume`).
+    Looked into (2026-11-28). Recorded with `recorder compat`'s `fork` script (2.1.332, Haiku): the
+    live record keeps the tab's session id before and after `/fork` and after the next turn; the
+    tab's transcript gets the command's records, Claude Code's note about the fork (`isMeta`) and
+    then the next turn; the fork is a background session (own process, `kind: bg`) whose copy names
+    the tab's session in `derived-from`. Over those files (trimmed into
+    `crates/core/src/transcript/fixtures/fork-2.1.332`) the reader shows the `/fork` row and the
+    next turn, read in one go or as the file grew, takes the note for no prompt and no turn, shows
+    the copy's task notification as no prompt, and the tab keeps its session with the copy newer
+    beside it; the screen after `/fork` reads as an idle input with Send offered. So this shape
+    breaks nothing in Chat. The owner's report (2026-11-27) matches another shape found in a
+    transcript of that day, also 2.1.332, the same "<title> · continued · <id>" line: about 14 s
+    after `/fork` (Claude Code's first request after it) the session moved to a new id, the old
+    transcript ending with a `continued-in` record naming it, and the new transcript was written
+    only with the next message, 13 minutes later. Chat showing the `/fork` row means it stayed on
+    the old transcript, so the live record most likely did not move then; what makes Claude Code
+    move (and whether its record moves) is not known. Chat now follows `continued-in` (DESIGN.md,
+    "Tab identity and interaction checks"); for the recorded shape it is never written, so it
+    changes nothing there. Not checked: the moving shape live, and in the app.
+    `recorder compat` `fork` checks: the record stays (`session = same`), no `continued-in`, one
+    background fork with the first prompt only, the next turn in the tab's transcript, an idle
+    input after `/fork`. It starts a background session that has to be ended by hand
+    (`claude agents`).
+    Review fix (2026-11-28): once the live record names anything but the session a `continued-in`
+    left (the new one, as the record catches up, or a third), the record naming the old session is
+    no longer taken for the new one, so a later `/resume` of it is followed and the running-session
+    guard sees it. While the record has never moved, such a return cannot be told apart.

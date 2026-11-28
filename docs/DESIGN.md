@@ -1655,8 +1655,19 @@ stops with its list on screen closes it with one Esc, checked on the next screen
 after Cancel, whose own Esc may still be on its way); when
 its choices are on screen or no key can go, the card says the rewind screen is still open, keeps its
 place over the panel card while that screen shows, and goes once it is gone. The rewind writes
-nothing to the transcript, and the reader follows the file as written, so the Chat view still shows
-the turns after the chosen prompt. Recorded from Claude Code 2.1.332 (`rewind_*`).
+nothing to the transcript, so the Chat view still shows the turns after the chosen prompt until
+the next prompt is written; that prompt names an earlier message as its parent, and from then on
+the reader shows the active branch only (`transcript/active.rs`): the chain from the newest record
+back through `parentUuid` (through a compaction boundary by its `logicalParentUuid`). A record is
+left out only when its own parents reach the chain through a typed prompt written before the
+chain's next record there, and that next record is a typed prompt too (the prompt the rewind
+replaced and the one typed after it, or two first prompts when the chain is whole back to its
+start): a recap or notice parented to the previous turn and written after a new prompt becomes the
+newest record without hiding that prompt. Records whose parents lead out of the loaded slice stay until history pages in,
+and records without a `uuid`, sidechains, a subagent's transcript, and records hanging off the chain
+that do not start with a prompt (tool results recorded against their call, progress, notices) are
+never left out. The Tasks, Agents, Shells and Files pages still read every record. Recorded from
+Claude Code 2.1.332 (`rewind_*`).
 
 A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click
 says so instead of writing, and it ends (or fails) in a hidden tab too. A menu that stays open after
@@ -1996,6 +2007,19 @@ Switch cannot explain (the new transcript records another folder, or the record 
 new chat's first message created its file) clears the current identity used by Open, local marks, and
 background transcript notices without moving that draft to the other session. A missing
 PID record retains the existing duplicate-resume guard, not permission to send or mark seen.
+`/fork` in Claude Code 2.1.332 starts a background session (its own process and live record,
+`kind: bg`, its transcript a copy of the conversation that names the tab's session in
+`derived-from` with `via: background`) and, as recorded by `recorder compat`'s `fork` script, leaves
+the terminal in its session: the live record keeps its id, the tab's transcript gets the command's
+records and Claude Code's note about the fork (`isMeta`, no prompt), and the next turn goes on in
+it. The background session's process is not the tab's, so it is never taken for the tab. In
+transcripts from 2.1.325 and once from 2.1.332 (2026-11-27), the session moved right after a
+`/fork` instead: the transcript the fork left ends with a `continued-in` record naming a new id,
+whose transcript (the active chain copied, then the new turns) is written only with the next
+message. The shown pane follows that record as it follows a new id in the live record (awaiting
+the transcript, linked as the old one's continuation), unless the live record names a third
+session, and from then on a live record still naming the session left stands for the one it went
+on in.
 Real Chat panes start with both Send paths blocked until verification. A verified tab missing from
 the Sessions index requests a refresh when asked to open a handover and explains how to retry.
 

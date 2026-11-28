@@ -86,6 +86,9 @@ pub struct Pane {
     wake: Wake,
     /// A new session this pane followed and the one it continues, for the Threads link.
     pub(crate) continued: Option<(String, String)>,
+    /// A session this pane left for the one its transcript said the conversation goes on in
+    /// (`continued-in`, as `/fork` writes), and that one: the live record may go on naming the first.
+    left: Option<(String, String)>,
     pub chat: chat::Chat,
     pub(crate) transcript_source: model::Source,
     verified_path: Option<PathBuf>,
@@ -178,6 +181,8 @@ impl Pane {
         if self.chat.awaiting_transcript && self.chat.first_sent {
             return false;
         }
+        // Following any session ends a mapping from a `continued-in` (set again by that follow).
+        self.left = None;
         let Some(source) = self.transcript_source.follow(&self.cwd, id) else { return false };
         // Only a session this tab had attached and verified is a parent: not one it was refused
         // for, nor a new chat whose transcript was never written.
@@ -199,6 +204,41 @@ impl Pane {
         self.verified_path = None;
         self.chat.followed(&self.model.chat, end);
         true
+    }
+
+    /// The session the live record's `found` stands for: the one this pane went on in when the
+    /// record still names the session the transcript left (`continued-in`).
+    /// The live record named `found`: once it names anything but the session left (the one gone on
+    /// in, as the record catches up, or a third), the mapping is done with, so a later return to
+    /// the old session (`/resume`) is followed as any other.
+    pub(crate) fn note_live_record(&mut self, found: Option<&str>) {
+        if let (Some((old, _)), Some(id)) = (&self.left, found)
+            && !id.eq_ignore_ascii_case(old)
+        {
+            self.left = None;
+        }
+    }
+
+    pub(crate) fn live_session(&self, found: Option<&str>) -> Option<String> {
+        let left = self.left.as_ref().filter(|(old, _)| found.is_some_and(|id| id.eq_ignore_ascii_case(old)));
+        left.map(|(_, new)| new.clone())
+    }
+
+    /// Follows the session this pane's own, verified transcript says the conversation goes on in
+    /// (Claude Code's `continued-in` record, written last by `/fork`), as it follows the live
+    /// record. Its id, when followed.
+    pub(crate) fn follow_continuation(&mut self) -> Option<String> {
+        let next = self.model.chat.continued_in.clone()?;
+        let old = self.pinned_id()?.to_owned();
+        let own = self.model.session_id().is_some_and(|id| id.eq_ignore_ascii_case(&old));
+        if !own || next.eq_ignore_ascii_case(&old) || self.verified_path.is_none() || self.chat.identity_unverified {
+            return None;
+        }
+        if !self.follow(&next) {
+            return None;
+        }
+        self.left = Some((old, next.clone()));
+        Some(next)
     }
 
     pub(crate) fn update_identity(&mut self, found: Option<&str>) -> bool {
@@ -386,6 +426,7 @@ impl AppState {
             model,
             wake,
             continued: None,
+            left: None,
             transcript_source: source,
             verified_path: None,
             ui,
@@ -468,6 +509,11 @@ impl AppState {
                 cx.request_redraw_all();
             } else {
                 cx.request_redraw(area);
+            }
+            if tab.follow_continuation() {
+                self.see_shown();
+                self.rebuild_view();
+                cx.request_redraw_all();
             }
         }
         self.chat_input_tick(cx);

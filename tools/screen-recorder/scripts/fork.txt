@@ -1,0 +1,33 @@
+# `/fork` (Claude Switch item 80): one turn, then `/fork`, then a second turn. `live` writes what
+# the CLI's live record (`sessions/<pid>.json`) names and copies every transcript at that moment:
+# before the fork, right after it, and after the next turn. Checked: the record keeps naming the
+# session, the next turn goes on in its transcript, the fork is a background session derived from
+# it, and Chat's screen readers see an idle input after `/fork`. Two model requests. `/fork` starts
+# a background session holding a copy of the conversation, which this script does not stop: end it
+# afterwards (`claude agents`).
+#: args --permission-mode default
+#: seconds 80
+start
+send Reply with just the word: alpha
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap idle
+live before
+send /fork
+sleep 800
+send \r
+sleep 3000
+quiet 2000 30000
+snap forked
+live forked
+send Reply with just the word: bravo
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap after
+live after

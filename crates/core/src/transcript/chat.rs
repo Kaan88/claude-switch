@@ -26,6 +26,9 @@ pub struct ChatInfo {
     pub effort_report: Option<(u64, String)>,
     /// The newest "Set model to …" a local command printed, with its offset.
     pub model_report: Option<(u64, String)>,
+    /// The session Claude Code says this conversation goes on in (a `continued-in` record after the
+    /// newest message: `/fork` moves the terminal to a new session that way).
+    pub continued_in: Option<String>,
     usage_at: Option<u64>,
     compacted_at: Option<u64>,
     /// A slash command typed while the CLI was at rest: its record's offset, until its output.

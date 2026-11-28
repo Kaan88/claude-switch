@@ -896,4 +896,20 @@ mod tests {
         assert_eq!(live_id(&records, "main", Path::new(r"C:\other"), |_| true), None);
         assert_eq!(live_id(&records, "main", &cwd, |_| true), None);
     }
+
+    #[test]
+    fn a_background_fork_of_the_tabs_session_is_not_taken_for_the_tab() {
+        // `/fork` (Claude Code 2.1.332) starts a background session in the same folder and account,
+        // with its own process and live record (`kind: bg`).
+        let cwd = PathBuf::from(r"C:	est");
+        let record = |id: &str, pid| Running {
+            session_id: id.into(),
+            pid,
+            app: App::Cli,
+            account: "main".into(),
+            cwd: cwd.clone(),
+        };
+        let records = [record(A, 10), record(B, 11)];
+        assert_eq!(live_id(&records, "main", &cwd, |pid| pid == 10), Some(A));
+    }
 }

@@ -487,6 +487,49 @@ impl Recorder {
         self.run_for(Duration::from_millis(1500))
     }
 
+    /// What the live record of the recorded process names (Claude Switch follows a tab's session by
+    /// it), with a copy of every transcript of the work folder: `NAME.live.json` holds the pid and
+    /// the record (`null` when there is none), `NAME.transcripts/<id>.jsonl` the transcripts.
+    fn live(&mut self, name: &str) -> Result<(), Abort> {
+        self.pump();
+        let config = self
+            .env
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
+            .map(|(_, value)| PathBuf::from(value))
+            .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".claude")))
+            .ok_or_else(|| Abort::Script("live: no CLAUDE_CONFIG_DIR and no USERPROFILE".into()))?;
+        let pid = self.pty.pid();
+        let record = std::fs::read(config.join("sessions").join(format!("{pid}.json")))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let dir = match &self.project {
+            Some(dir) => dir.clone(),
+            None => PathBuf::from(
+                std::env::var("REC_PROJECT").map_err(|_| Abort::Script("this op needs REC_PROJECT".into()))?,
+            ),
+        };
+        let to = self.out.join(format!("{name}.transcripts"));
+        std::fs::create_dir_all(&to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+        let mut copied = 0;
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().filter_map(Result::ok) {
+            let path = entry.path();
+            if path.extension().is_some_and(|x| x == "jsonl") && path.is_file() {
+                let target = to.join(entry.file_name());
+                std::fs::copy(&path, &target).map_err(|e| Abort::Io(format!("{}: {e}", target.display())))?;
+                copied += 1;
+            }
+        }
+        let live = serde_json::json!({ "pid": pid, "record": record });
+        let file = self.out.join(format!("{name}.live.json"));
+        std::fs::write(&file, serde_json::to_string_pretty(&live).unwrap_or_default())
+            .map_err(|e| Abort::Io(format!("{}: {e}", file.display())))?;
+        let id = live["record"]["sessionId"].as_str().unwrap_or("none").to_owned();
+        self.note(&format!("live {name}: record names {id}, {copied} transcripts"));
+        Ok(())
+    }
+
     /// The newest transcript in the work folder's transcript folder, other than the copies
     /// `branch` wrote (resuming one makes it the newest).
     fn newest_transcript(&self) -> Result<Option<PathBuf>, Abort> {
@@ -690,6 +733,7 @@ impl Recorder {
                 self.note(&format!("help {name}: {} bytes", output.stdout.len()));
             }
             Step::Branch { name, at } => self.branch(&name, &at)?,
+            Step::Live(name) => self.live(&name)?,
             // Claude Code again, resuming the session `branch` wrote, as the app's Branch opens it.
             Step::Reopen(name) => {
                 let id = std::fs::read_to_string(self.out.join(format!("{name}.id"))).unwrap_or_default();
@@ -762,6 +806,9 @@ enum Step {
         name: String,
         text: String,
     },
+    /// The recorded process's live record (`sessions/<pid>.json`) into `NAME.live.json` and every
+    /// transcript of the work folder into `NAME.transcripts/`, as they are now.
+    Live(String),
     /// A branch at a message: `prompt TEXT` or `answer TEXT`.
     Branch {
         name: String,
@@ -974,6 +1021,8 @@ impl Step {
                 }
                 Step::Branch { name: name.to_owned(), at: at.to_owned() }
             }
+            "live" if !rest.is_empty() => Step::Live(rest.to_owned()),
+            "live" => return Err("live needs NAME".to_owned()),
             "start" => Step::Start,
             _ => return Err(format!("unknown op {op}")),
         })

@@ -61,7 +61,18 @@ impl Tab {
     }
 
     pub(crate) fn apply_live_identity(&mut self, found: Option<&str>) -> bool {
+        if let Some(pane) = &mut self.pane {
+            pane.note_live_record(found);
+        }
+        self.apply_identity(found)
+    }
+
+    /// As [`apply_live_identity`](Self::apply_live_identity), for an id the pane itself followed.
+    fn apply_identity(&mut self, found: Option<&str>) -> bool {
         let Some(pane) = &mut self.pane else { return false };
+        // A record still naming the session the transcript left stands for the one it went on in.
+        let went_on = pane.live_session(found);
+        let found = went_on.as_deref().or(found);
         let pane_changed = pane.update_identity(found);
         // A session awaiting its first transcript is not yet one to route, mark or resume.
         let verified = found.filter(|_| !pane.chat.identity_unverified && !pane.chat.awaiting_transcript);
@@ -75,6 +86,20 @@ impl Tab {
             self.attention.clear_transcript();
         }
         changed || pane_changed
+    }
+
+    /// Claude Code wrote in this tab's transcript that the conversation goes on in another session
+    /// (`/fork` does, and moves the terminal there): the pane follows it, as for a new id in the
+    /// live record, unless that record names a third session (which is then the tab's).
+    pub(crate) fn follow_continuation(&mut self) -> bool {
+        let Some(pane) = &mut self.pane else { return false };
+        let Some(pinned) = pane.pinned_id() else { return false };
+        if self.session.as_deref().is_some_and(|live| !live.eq_ignore_ascii_case(pinned)) {
+            return false;
+        }
+        let Some(next) = pane.follow_continuation() else { return false };
+        self.apply_identity(Some(&next));
+        true
     }
 
     /// The running program's title or launch label; after exit, identify the original launch.

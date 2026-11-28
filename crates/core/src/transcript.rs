@@ -11,6 +11,7 @@ pub(crate) mod handover;
 const MAX_PICTURE: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_LINE: usize = 48 * 1024 * 1024;
 const MAX_SIDECAR: u64 = 1024 * 1024;
+mod active;
 mod background;
 mod chat;
 pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellStatus};
@@ -157,6 +158,8 @@ pub struct Changes {
     pub tasks_changed: bool,
     pub subagents_changed: bool,
     pub background_changed: bool,
+    /// Items left or joined the active branch (a prompt after a rewind): show `items()` afresh.
+    pub branch_changed: bool,
 }
 
 pub struct Reader {
@@ -184,8 +187,9 @@ impl Reader {
         Ok(reader)
     }
 
-    pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> + ExactSizeIterator {
-        self.view.items.iter().map(|(&id, item)| (id, item))
+    /// The items on the conversation's active branch, in transcript order.
+    pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> {
+        self.view.items.iter().filter(|(id, _)| !self.view.active.hides(id.offset)).map(|(&id, item)| (id, item))
     }
 
     pub fn background_shells(&self) -> Vec<BackgroundShell> {
@@ -205,6 +209,9 @@ impl Reader {
     pub fn chat(&self) -> ChatInfo {
         let mut info = self.view.chat.clone();
         info.generation = self.view.generation;
+        let newest = self.view.active.newest();
+        info.continued_in =
+            self.view.continued.as_ref().filter(|(at, _)| newest.is_none_or(|n| n < *at)).map(|(_, id)| id.clone());
         info.pending = self
             .view
             .items
@@ -218,7 +225,7 @@ impl Reader {
     }
 
     pub fn item(&self, id: ItemId) -> Option<&Item> {
-        self.view.items.get(&id)
+        self.view.items.get(&id).filter(|_| !self.view.active.hides(id.offset))
     }
 
     pub fn tasks(&self) -> &[Task] {
@@ -411,6 +418,10 @@ struct View {
     native_calls: BTreeMap<ItemId, (String, native_tasks::Call)>,
     native_results: HashMap<String, (ItemId, native_tasks::Outcome)>,
     chat: ChatInfo,
+    /// The active branch, so a rewind's replaced turns are not shown.
+    active: active::Active,
+    /// The newest `continued-in` record: its offset and the session it names.
+    continued: Option<(u64, String)>,
     background: background::Background,
     /// The newest slash command, for the output record that follows it.
     last_command: Option<String>,
@@ -431,11 +442,20 @@ struct ToolResult {
 
 impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
-        // Most attachments are large context records; parse only the kinds that are shown.
-        if decode::line_kind(line) == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
+        let line_kind = decode::line_kind(line);
+        // Most attachments are large context records; parse only the kinds that are shown. Each
+        // line is parsed once: those not parsed further give the active branch their links alone.
+        if line_kind.is_none() || line_kind == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
+            // A `continued-in` record has no links; anything else may (progress, attachments).
+            if !self.is_agent && !(line_kind.is_none() && self.continued_in(offset, line)) {
+                self.active.line(offset, line);
+            }
             return;
         }
         let Some((kind, value)) = message_line_with_meta(line) else { return };
+        if !self.is_agent {
+            self.active.value(offset, &value);
+        }
         if flag(&value, "isSidechain") && !self.is_agent {
             return;
         }
@@ -687,6 +707,26 @@ impl View {
         }
     }
 
+    /// Claude Code's record that the conversation goes on in another session (written last in the
+    /// transcript a session left, seen right after a `/fork` from 2.1.325 and once from 2.1.332).
+    /// True when the line is such a record, whatever it names.
+    fn continued_in(&mut self, offset: u64, line: &[u8]) -> bool {
+        if !line.windows(14).any(|w| w == b"\"continued-in\"") {
+            return false;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(line) else { return false };
+        if value["type"] != "continued-in" {
+            return false;
+        }
+        if let Some(id) = value["continuedInSessionId"].as_str()
+            && crate::launch::validate_session_id(id).is_ok()
+            && self.continued.as_ref().is_none_or(|(at, _)| *at < offset)
+        {
+            self.continued = Some((offset, id.to_owned()));
+        }
+        true
+    }
+
     /// Command output and shell mode as finished rows; true when the record was one of them. The CLI
     /// may write a shell command and its output as two text blocks of one record, so every block is read.
     fn local_record(&mut self, offset: u64, timestamp: Option<&str>, texts: &[&str], changes: &mut Changes) -> bool {
@@ -813,6 +853,11 @@ impl View {
     }
 
     fn finish(&mut self, changes: &mut Changes) {
+        if self.active.finish() {
+            changes.branch_changed = true;
+            changes.added.retain(|id| !self.active.hides(id.offset));
+            changes.updated.retain(|id| !self.active.hides(id.offset));
+        }
         if !std::mem::take(&mut self.plans_dirty) {
             return;
         }
@@ -993,5 +1038,7 @@ fn one_line(text: &str) -> String {
         .join(" ")
 }
 
+#[cfg(test)]
+mod active_tests;
 #[cfg(test)]
 mod tests;

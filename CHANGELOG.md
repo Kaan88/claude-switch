@@ -25,6 +25,8 @@
   cell grid and theme colours, so `/context`'s grid and the columns beside it line up and keep
   their colours. Lines wider than the box wrap; selection and Copy give plain text. Other escape
   sequences in the output are dropped, so it cannot move or clear what is shown.
+- Chat and the Session view: after a rewind, the turns it replaced are no longer shown once the
+  next message is written; the conversation follows the active branch of the transcript.
 - Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
   just before a permission prompt took the screen) and every later message waited behind it
   without a word. The rename now goes only once Chat has read the new session's first prompt, and
@@ -42,6 +44,9 @@
 - Chat: a message that is a numbered list ("1. …", "2. …") no longer shows as a question card
   that blocks sending. What is in Claude Code's input box, under it or in the conversation above
   it is never read as a menu, question or dialog.
+- Chat: when Claude Code moves a tab's conversation to a new session after `/fork` and says so in
+  the transcript it leaves, Chat follows it instead of staying on the old conversation; the
+  conversation shows there once its transcript is written with the next message.
 - Handover: Claude Code no longer asks in the terminal whether it may read the handover file. A
   new handover tab may read exactly that one file. A handover that continues in the same tab is
   pasted whole up to 15,000 characters, as before; a longer one is still read from its file, and
@@ -49,6 +54,11 @@
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.
+- Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
+  record and the transcripts (a `live` op records both), and whether Chat reads the screen after
+  it as an idle input.
+- Tools: `recorder compat` has a `rewind-send` script: a rewind, then a prompt, checked against
+  what Chat shows of the transcript.
 
 ## 0.1.6 (2026-11-28)
 
