@@ -941,7 +941,8 @@ const SEQUENCE: &str = "Add-Type -Namespace CsRecorder -Name Clip -MemberDefinit
     '[DllImport(\"user32.dll\")] public static extern uint GetClipboardSequenceNumber();';";
 
 /// The formats plain text comes in: anything else on the clipboard is not put back.
-const TEXT_FORMATS: &str = "'Text','UnicodeText','OEMText','Locale','System.String'";
+/// `EnterpriseDataProtectionId` is only a tag Windows adds beside copied text, not content.
+const TEXT_FORMATS: &str = "'Text','UnicodeText','OEMText','Locale','System.String','EnterpriseDataProtectionId'";
 
 /// The clipboard's text, `None` when it is empty. Anything else on it (a picture, files,
 /// formatted text) could not be put back, so `clipimage` refuses.
