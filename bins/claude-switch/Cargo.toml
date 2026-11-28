@@ -17,7 +17,7 @@ mdview-preview = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "
 mdview-render = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }
 mdview-core = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f67b2aba1a89e0e1ccfba5f423b1b8085a6b99" }
 png = "0.18"
-getrandom = "0.3"
+getrandom = "0.4"
 serde_json = "1"
 # Already in the build through syntect (fancy-regex), all these features on; the find bar's patterns.
 regex-automata = { version = "0.4.19", default-features = false, features = ["std", "syntax", "meta", "unicode", "perf"] }
