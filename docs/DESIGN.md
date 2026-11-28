@@ -1063,26 +1063,51 @@ Two sections. "Shared · settings.json of <master>": saved in the master account
 sharing accounts by the same sync as the Claude Code page (`settings.json` is backed up before it
 is replaced). "Per account · .claude.json": an **Account** choice (the master first time); only that
 account's file changes. Claude Code holds the whole of `.claude.json` in memory and writes it back
-while it runs and when it exits, so while the chosen account has a running Claude Code (the
-app's running-session scan: a live `sessions/<pid>.json` of that account, terminal or desktop) its
-rows are read-only: each shows its value as a single option with "Close <account>'s sessions to
-change this.", and **Check again** reads again after they were closed. The write itself scans
-again and refuses if one started meanwhile.
+while it runs and when it exits, so while the chosen account may run Claude Code its rows are
+read-only: each shows its value as a single option with "Close <account>'s sessions to change
+this.", and **Check again** reads again after they were closed. "May run" is any of
+(`cc_config::refuse_if_running`):
+
+- a live `sessions/<pid>.json` in the account's own CLI folder, whatever account the session is
+  shown under: a desktop app's session of a further account runs in the first account's
+  `%USERPROFILE%\.claude` and holds `%USERPROFILE%\.claude.json` (`running::live_folders` keeps
+  the folder each record was found in);
+- a running-session scan that could not read everything, or found a live process whose record
+  names no session yet (one that is starting): then nothing tells that the account is free;
+- a program in one of this window's tabs for that account (a Claude tab or a sign-in tab that
+  started seconds ago may not have written its record yet).
+
+The write checks all of it again, and also refuses when the account has no `.claude.json` yet:
+Claude Code makes it on first use, and the sharing seeds a further account's `mcpServers` only
+while there is none (`share::sync_mcp`), so a file of one key would stop that.
 
 Every write (`cc_config::save`) reads the file again and compares the key with the value the page
 showed; when another program changed it since, nothing is written, an error says so, and the
 page shows the current value. Otherwise only the key changes (and, for Dynamic workflows and
-Artifacts, the old `disable…` key `/config` removes too); every other key, known or not, is kept,
-and the file is replaced atomically (a temporary file beside it, then a rename). For
-`.claude.json` the write also holds Claude Code's own lock folder `.claude.json.lock` (what its
-`proper-lockfile` takes when that lock is on); when it exists, the write is refused with "try
-again". A file that is not a JSON object is never replaced. The page reads the files when it
-opens, after every change, and on Check again or another account.
+Artifacts, the old `disable…` key `/config` removes too); every other key, known or not, is kept
+in its place (serde_json's `preserve_order`; a removed key is taken out with `shift_remove`).
+The file as read is kept in the backups folder (`settings-backups`, the newest 30 of each name,
+`…-settings.json` and `…-claude.json`). The new file is written beside it, then the file is read
+again and compared byte for byte with what was read, and only when equal renamed over it: the
+compare is the last step before the rename. A file that is not a JSON object is never replaced.
+
+For `.claude.json` the write holds Claude Code's own lock folder `.claude.json.lock`, which Claude
+Code takes with `proper-lockfile` when that lock is on (its call passes no `stale`, so the
+library's 10 s apply; a holder touches the folder every 5 s). A lock folder younger than a minute
+refuses the write with "try again"; an older one was left behind by a Claude Code that ended, and
+is taken over (only an empty folder is removed, and a racing taker makes the create fail), and the
+page says so. When a `settings.json` save reaches the master but the sync to the other accounts
+fails, the page says that the setting was saved in the master account and not shared yet.
+
+Reads and writes run off the window thread (a background job per page); the page shows the
+result when it ends, and a change made while one runs is not taken (the row shows its value
+again). The page reads the files when it opens, after every change, and on Check again or
+another account.
 
 **Settings › Claude Code › Status** shows, for the account chosen on it (the same choice as
 Advanced's), what `/status` and `/stats` show that files hold, so nothing is run
-(`core::cc_status`). Read when the page opens and when another account is chosen; values are
-single-option rows, as the toolkit has no label/value row.
+(`core::cc_status`). Read off the window thread when the page opens and when another account is
+chosen; values are single-option rows, as the toolkit has no label/value row.
 
 - Claude Code: the installed version, the newest folder of `%USERPROFILE%\.local\share\claude\versions`
   (the native installer's), with the version the Advanced table was taken from.

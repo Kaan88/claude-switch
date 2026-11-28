@@ -565,11 +565,17 @@ impl Recorder {
                 self.pump();
                 self.write(&bytes);
             }
-            Step::Wait { text, want, max } => {
+            Step::Wait { text, want, max, must } => {
                 if !self.until(max, |r| r.has(&text) == want)? {
-                    let op = if want { "wait" } else { "gone" };
+                    let op = if must {
+                        "need"
+                    } else if want {
+                        "wait"
+                    } else {
+                        "gone"
+                    };
                     self.note(&format!("TIMEOUT {op} {text}"));
-                    if self.strict {
+                    if self.strict || must {
                         return Err(Abort::Timeout(format!("{op} {text}")));
                     }
                 }
@@ -694,10 +700,12 @@ enum Step {
     Sleep(Duration),
     Send(Vec<u8>),
     /// `wait` (`want`) or `gone` (not `want`): until the screen shows `text`, or no longer does.
+    /// `need` is a `wait` whose timeout always ends the script, before any further key.
     Wait {
         text: String,
         want: bool,
         max: Duration,
+        must: bool,
     },
     Quiet {
         time: Duration,
@@ -878,9 +886,9 @@ impl Step {
         Ok(match op {
             "sleep" => Step::Sleep(ms(rest)?),
             "send" => Step::Send(unescape(rest)?),
-            "wait" | "gone" => {
+            "wait" | "gone" | "need" => {
                 let (text, max) = rest.rsplit_once(' ').ok_or_else(|| format!("{op} needs TEXT MS"))?;
-                Step::Wait { text: text.to_owned(), want: op == "wait", max: ms(max)? }
+                Step::Wait { text: text.to_owned(), want: op != "gone", max: ms(max)?, must: op == "need" }
             }
             "quiet" => {
                 let (time, max) = two("MS MAX")?;
@@ -987,7 +995,11 @@ mod tests {
         assert_eq!(Step::read("sleep 250"), Ok(Step::Sleep(ms(250))));
         assert_eq!(
             Step::read("wait for shortcuts 9000"),
-            Ok(Step::Wait { text: "for shortcuts".into(), want: true, max: ms(9000) })
+            Ok(Step::Wait { text: "for shortcuts".into(), want: true, max: ms(9000), must: false })
+        );
+        assert_eq!(
+            Step::read("need ⌕ 3000"),
+            Ok(Step::Wait { text: "⌕".into(), want: true, max: ms(3000), must: true })
         );
         assert_eq!(Step::read("resize 80 24"), Ok(Step::Resize { cols: 80, rows: 24 }));
         assert_eq!(Step::read("send hi\\r"), Ok(Step::Send(b"hi\r".to_vec())));

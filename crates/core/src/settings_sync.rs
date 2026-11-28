@@ -252,14 +252,21 @@ pub fn sync(roots: &Roots, config: &Config, share: &Share) -> Result<Report, Ref
 /// Keeps a copy of `path` before it is replaced; the newest [`BACKUPS`] are kept.
 pub(crate) fn backup(roots: &Roots, account: &Account, path: &Path) -> Result<(), Refusal> {
     let Ok(bytes) = std::fs::read(path) else { return Ok(()) };
+    backup_bytes(roots, account, "settings.json", &bytes)
+}
+
+/// Keeps `bytes` as a backup named after `name` (`settings.json`, `claude.json`); the newest
+/// [`BACKUPS`] of each name are kept.
+pub(crate) fn backup_bytes(roots: &Roots, account: &Account, name: &str, bytes: &[u8]) -> Result<(), Refusal> {
     let dir = backup_dir(roots);
     std::fs::create_dir_all(&dir).map_err(|e| io_refusal("create the folder", &dir, &e))?;
     let stamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_millis());
-    write_atomic(&dir.join(format!("{stamp}-{}-settings.json", account.slug)), &bytes)?;
+    write_atomic(&dir.join(format!("{stamp}-{}-{name}", account.slug)), bytes)?;
     let mut names: Vec<String> = std::fs::read_dir(&dir)
         .map(|rd| rd.filter_map(|e| e.ok()?.file_name().into_string().ok()).collect())
         .unwrap_or_default();
-    names.retain(|n| n.ends_with("-settings.json"));
+    let suffix = format!("-{name}");
+    names.retain(|n| n.ends_with(&suffix));
     names.sort_by_key(|n| n.split('-').next().and_then(|s| s.parse::<u128>().ok()).unwrap_or(0));
     for old in &names[..names.len().saturating_sub(BACKUPS)] {
         let _ = std::fs::remove_file(dir.join(old));
@@ -447,7 +454,7 @@ pub fn set(roots: &Roots, config: &Config, setting: Setting, value: Option<Value
     let map = node.as_object_mut().expect("an object");
     match value {
         Some(value) => _ = map.insert((*last).to_owned(), value),
-        None => _ = map.remove(*last),
+        None => _ = map.shift_remove(*last),
     }
     if in_settings {
         backup(roots, account, &file)?;

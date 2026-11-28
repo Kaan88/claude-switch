@@ -1,219 +1,262 @@
 # Searches /config for every entry Settings › Claude Code › Advanced writes and snaps each
 # result: a label that no longer shows means a renamed or removed entry. Written by
 # ../config-list.py from crates/core/src/cc_config.rs. The search text is the label in lower
-# case, so the label as written shows only in the list. No model request; nothing is changed.
+# case, so the label as written shows only in the list. Each search first needs the empty
+# search box on screen, so no key goes anywhere else. No model request; nothing is changed.
 #: size 160 50
 #: seconds 94
 start
 send /config
 sleep 800
 send \r
-sleep 2500
+need ⌕ Search settings 5000
+need ⌕ Search settings 3000
 send idle\scompaction
 sleep 900
 snap cfg-idlecompaction
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send continue\sautomatically\sat\susage\slimit
 sleep 900
 snap cfg-autocontinueatusagelimit
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send switch\smodels\swhen\sa\smessage\sis\sflagged
 sleep 900
 snap cfg-switchmodelsonflag
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send show\stips
 sleep 900
 snap cfg-spinnertipsenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send claude-drafted\sfeedback
 sleep 900
 snap cfg-feedbackdrafts
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send reduce\smotion
 sleep 900
 snap cfg-prefersreducedmotion
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send thinking\smode
 sleep 900
 snap cfg-alwaysthinkingenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send prompt\ssuggestions
 sleep 900
 snap cfg-promptsuggestionenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send session\srecap
 sleep 900
 snap cfg-awaysummaryenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send rewind\scode\s(checkpoints)
 sleep 900
 snap cfg-filecheckpointingenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send dynamic\sworkflows
 sleep 900
 snap cfg-enableworkflows
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send ultracode\skeyword\strigger
 sleep 900
 snap cfg-workflowkeywordtriggerenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send dynamic\sworkflow\ssize
 sleep 900
 snap cfg-workflowsizeguideline
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send artifacts
 sleep 900
 snap cfg-enableartifact
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send terminal\sprogress\sbar
 sleep 900
 snap cfg-terminalprogressbarenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send show\sstatus\sin\sterminal\stab
 sleep 900
 snap cfg-showstatusinterminaltab
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send show\sturn\sduration
 sleep 900
 snap cfg-showturnduration
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send precompute\scompaction
 sleep 900
 snap cfg-precomputecompactionenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send show\smessage\stimestamps
 sleep 900
 snap cfg-showmessagetimestamps
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send time\sformat
 sleep 900
 snap cfg-timeformat
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send worktree\sbase\sref
 sleep 900
 snap cfg-worktree-baseref
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send use\sauto\smode\sduring\splan
 sleep 900
 snap cfg-useautomodeduringplan
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send respect\s.gitignore\sin\sfile\spicker
 sleep 900
 snap cfg-respectgitignore
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send skip\sthe\s/copy\spicker
 sleep 900
 snap cfg-copyfullresponse
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send copy\son\sselect
 sleep 900
 snap cfg-copyonselect
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send auto-scroll
 sleep 900
 snap cfg-autoscrollenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send local\snotifications
 sleep 900
 snap cfg-preferrednotifchannel
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send push\swhen\sactions\srequired
 sleep 900
 snap cfg-inputneedednotifenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send push\swhen\sclaude\sdecides
 sleep 900
 snap cfg-agentpushnotifenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send language
 sleep 900
 snap cfg-language
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send editor\smode
 sleep 900
 snap cfg-editormode
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send question\sauto-continue\stimeout
 sleep 900
 snap cfg-askuserquestiontimeout
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send claude-proposed\sgoals
 sleep 900
 snap cfg-modelproposedgoals
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send show\slast\sresponse\sin\sexternal\seditor
 sleep 900
 snap cfg-externaleditorcontext
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send show\spr\sstatus\sfooter
 sleep 900
 snap cfg-prstatusfooterenabled
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send diff\stool
 sleep 900
 snap cfg-difftool
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send auto-connect\sto\side\s(external\sterminal)
 sleep 900
 snap cfg-autoconnectide
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send teammate\smode
 sleep 900
 snap cfg-teammatemode
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send enable\sremote\scontrol\sfor\sall\ssessions
 sleep 900
 snap cfg-remotecontrolatstartup
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send dialog\sexpiry
 sleep 900
 snap cfg-dialogexpiry
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send messages\sfrom\syour\sother\ssessions
 sleep 900
 snap cfg-crosssessioninbound
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
+need ⌕ Search settings 3000
 send delivery\snotices\sto\sand\sfrom\scloud\sand\sremote\scontrol\ssessions
 sleep 900
 snap cfg-remotemessagereceipts

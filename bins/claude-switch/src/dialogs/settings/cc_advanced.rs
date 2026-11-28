@@ -5,7 +5,7 @@
 //!
 //! The page reads both files when it opens, after each change and on "Check again"; a change is
 //! compared with what the page showed, so a value changed elsewhere meanwhile is never
-//! overwritten.
+//! overwritten. Reads and saves run off the window thread; a change while one runs is not taken.
 use super::{AppState, Dialog, Row};
 use claude_switch_core::Account;
 use claude_switch_core::cc_config::{self, ENTRIES, Entry, Kind, Store};
@@ -21,18 +21,34 @@ pub(super) const FIRST: u32 = 510;
 const LAST: u32 = FIRST + 2 * ENTRIES.len() as u32;
 const DEFAULT: &str = "Default";
 
-/// What the page read, and its search and account.
+/// What the page read from the files.
+#[derive(Default)]
+pub(crate) struct Snapshot {
+    settings: Option<Json>,
+    global: Option<Json>,
+    settings_error: Option<String>,
+    global_error: Option<String>,
+    /// The chosen account may run Claude Code: its rows are read-only.
+    busy: bool,
+}
+
+/// What a background job of the page gives: what it read, after a save if there was one.
+pub(crate) struct Done {
+    saved: Option<Result<cc_config::Saved, claude_switch_core::Refusal>>,
+    read: Snapshot,
+}
+
+/// What the page read, its search and account, and its file work in the background.
 #[derive(Default)]
 pub(crate) struct Page {
     pub(super) search: String,
     /// The account whose `.claude.json` the page shows; the master when unset or gone.
     account: Option<String>,
-    settings: Option<Json>,
-    global: Option<Json>,
-    settings_error: Option<String>,
-    global_error: Option<String>,
-    /// The chosen account has a running Claude Code.
-    busy: bool,
+    read: Snapshot,
+    /// A read, or a save then a read, off the window thread.
+    job: Option<mdshared_app::job::Job<Done>>,
+    /// Read again when the job ends: the account changed, or Check again, meanwhile.
+    read_again: bool,
 }
 
 pub(super) fn owns(id: u32) -> bool {
@@ -55,9 +71,19 @@ pub(super) fn set_account(st: &mut AppState, index: usize) {
     load(st);
 }
 
-/// Reads both files again (and whether the chosen account runs Claude Code).
-pub(super) fn load(st: &mut AppState) {
-    let crate::source::Source::Real(roots) = &st.source else { return };
+/// A program the app started for `account` runs in one of its tabs (it may not have written its
+/// session record yet).
+fn tab_running(st: &AppState, account: &Account) -> bool {
+    st.tabs.list.iter().any(|t| t.opencode.is_none() && t.account.as_deref() == Some(&account.slug) && t.term.running())
+}
+
+/// Both files, and whether the chosen account may run Claude Code. Off the window thread.
+fn read_files(
+    roots: &claude_switch_core::Roots,
+    config: &claude_switch_core::Config,
+    chosen: Option<&Account>,
+    tab_running: bool,
+) -> Snapshot {
     let read = |account: Option<&Account>, store| match account {
         Some(a) => match cc_config::read(&cc_config::file(roots, a, store)) {
             Ok(v) => (v, None),
@@ -65,19 +91,88 @@ pub(super) fn load(st: &mut AppState) {
         },
         None => (None, None),
     };
-    let (settings, settings_error) = read(master(st), Store::Settings);
-    let (global, global_error) = read(chosen(st), Store::Global);
-    let slug = chosen(st).map(|a| a.slug.clone());
-    let busy = st.source.running(&st.config).iter().any(|r| Some(&r.account) == slug.as_ref());
-    let page = &mut st.cc_page;
-    (page.settings, page.settings_error, page.global, page.global_error, page.busy) =
-        (settings, settings_error, global, global_error, busy);
+    let master = claude_switch_core::settings_sync::master_account(config, &config.settings_share);
+    let (settings, settings_error) = read(master, Store::Settings);
+    let (global, global_error) = read(chosen, Store::Global);
+    let busy = chosen.is_some_and(|a| cc_config::refuse_if_running(roots, config, a, tab_running).is_err());
+    Snapshot { settings, global, settings_error, global_error, busy }
+}
+
+/// A save (the entry, the value the page showed, the new one), if any, then a read, in the
+/// background; [`take_job`] shows the result. With a job running, a read waits for it; a save
+/// never gets here then ([`apply`]).
+fn start(st: &mut AppState, save: Option<(&'static Entry, Option<Json>, Option<Json>)>) {
+    let crate::source::Source::Real(roots) = &st.source else { return };
+    if st.cc_page.job.is_some() {
+        st.cc_page.read_again = true;
+        return;
+    }
+    let (roots, config) = (roots.clone(), st.config.clone());
+    let chosen = chosen(st).cloned();
+    let tab = chosen.as_ref().is_some_and(|a| tab_running(st, a));
+    let job = mdshared_app::job::Job::start(st.wake_fn(), move |_, _| {
+        let saved = save.map(|(entry, expected, value)| match &chosen {
+            Some(account) => cc_config::save(&roots, &config, account, entry, expected.as_ref(), value, tab),
+            None => Err(claude_switch_core::Refusal::Invalid("There is no account.".into())),
+        });
+        Done { saved, read: read_files(&roots, &config, chosen.as_ref(), tab) }
+    });
+    match job {
+        Ok(job) => st.cc_page.job = Some(job),
+        Err(e) => st.error("Claude Code's settings were not read", e.to_string()),
+    }
+}
+
+/// Reads both files again, in the background.
+pub(super) fn load(st: &mut AppState) {
+    start(st, None);
+}
+
+/// Shows what the page's job did, once it ended. True when there was something.
+pub(crate) fn take_job(st: &mut AppState) -> bool {
+    if !st.cc_page.job.as_ref().is_some_and(|job| !job.running()) {
+        return false;
+    }
+    let Some(done) = st.cc_page.job.take().and_then(|job| job.take()) else {
+        st.error("Claude Code's settings", "The worker stopped.".into());
+        return true;
+    };
+    st.cc_page.read = done.read;
+    match done.saved {
+        Some(Err(e)) => st.error("Claude Code's setting was not saved", e.to_string()),
+        Some(Ok(saved)) => {
+            if let Some(e) = saved.sync_error {
+                let text = format!("Saved in the master account; bringing the other accounts in line failed: {e}");
+                st.warn("Not shared yet", text);
+            } else if saved.stale_lock {
+                let text = "Claude Code's lock .claude.json.lock was over a minute old, left by a Claude Code                             that ended; it was taken over.";
+                st.note("Saved", text.into());
+            }
+        }
+        None => {}
+    }
+    if std::mem::take(&mut st.cc_page.read_again) {
+        load(st);
+    }
+    refresh(st);
+    true
+}
+
+/// Waits for the page's jobs and shows their results.
+#[cfg(test)]
+pub(super) fn wait(st: &mut AppState) {
+    while st.cc_page.job.is_some() {
+        while st.cc_page.job.as_ref().is_some_and(|job| job.running()) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        take_job(st);
+    }
 }
 
 fn file(st: &AppState, store: Store) -> Option<&Json> {
     match store {
-        Store::Settings => st.cc_page.settings.as_ref(),
-        Store::Global => st.cc_page.global.as_ref(),
+        Store::Settings => st.cc_page.read.settings.as_ref(),
+        Store::Global => st.cc_page.read.global.as_ref(),
     }
 }
 
@@ -177,7 +272,7 @@ pub(super) fn rows(st: &AppState) -> Vec<Row> {
         ENTRIES.iter().enumerate().filter(|(_, e)| e.store == Store::Settings && matches(e, search)).collect();
     if !shared.is_empty() {
         rows.push(Row::header(format!("Shared · settings.json of {master_name}")));
-        if page.settings_error.is_some() {
+        if page.read.settings_error.is_some() {
             rows.push(Row::action(RECHECK, "settings.json is not valid JSON", "Check again"));
         } else {
             for (i, entry) in shared {
@@ -194,19 +289,19 @@ pub(super) fn rows(st: &AppState) -> Vec<Row> {
         let names: Vec<&str> = st.config.accounts.iter().map(|a| a.name.as_str()).collect();
         let index = account.and_then(|a| st.config.accounts.iter().position(|b| b.slug == a.slug)).unwrap_or(0);
         let why_busy = format!("Close {name}'s sessions to change this.");
-        let account_help = if page.busy {
+        let account_help = if page.read.busy {
             format!("{name} runs Claude Code: read-only.")
         } else {
             "Only this account's file changes.".to_owned()
         };
         rows.push(Row::choice(ACCOUNT, "Account", &names, index).help(account_help));
-        if page.global_error.is_some() {
+        if page.read.global_error.is_some() {
             rows.push(Row::action(RECHECK, ".claude.json is not valid JSON", "Check again"));
         } else {
-            if page.busy {
+            if page.read.busy {
                 rows.push(Row::action(RECHECK, "Closed its sessions?", "Check again"));
             }
-            let read_only = page.busy.then_some(why_busy.as_str());
+            let read_only = page.read.busy.then_some(why_busy.as_str());
             for (i, entry) in own {
                 rows.extend(entry_rows(st, i, entry, read_only));
             }
@@ -248,8 +343,8 @@ pub(super) fn apply(st: &mut AppState, id: u32, value: Option<Value>) {
     let Some(offset) = id.checked_sub(FIRST) else { return };
     let Some(entry) = ENTRIES.get(offset as usize / 2) else { return };
     let reset = offset % 2 == 1;
-    if entry.store == Store::Global && st.cc_page.busy {
-        // Read-only rows: nothing to save.
+    if entry.store == Store::Global && st.cc_page.read.busy || st.cc_page.job.is_some() {
+        // Read-only rows, or the files are being read or saved: the row shows its value again.
         return refresh(st);
     }
     let saved = saved(st, entry).cloned();
@@ -266,34 +361,24 @@ pub(super) fn apply(st: &mut AppState, id: u32, value: Option<Value>) {
         }
         _ => return,
     };
-    // A read-only row (a single option) never gets here with a change; a stale one is refused.
-    let result = match &st.source {
-        crate::source::Source::Real(roots) => match chosen(st) {
-            Some(account) => cc_config::save(roots, &st.config, account, entry, saved.as_ref(), new),
-            None => Err(claude_switch_core::Refusal::Invalid("There is no account.".into())),
-        },
-        crate::source::Source::Demo => {
-            let page = &mut st.cc_page;
-            let file = match entry.store {
-                Store::Settings => &mut page.settings,
-                Store::Global => &mut page.global,
-            };
-            cc_config::put(file.get_or_insert_with(|| Json::Object(Default::default())), entry.key, new);
-            Ok(())
-        }
-    };
-    if let Err(e) = result {
-        st.error("Claude Code's setting was not saved", e.to_string());
+    if st.source.is_demo() {
+        let page = &mut st.cc_page.read;
+        let file = match entry.store {
+            Store::Settings => &mut page.settings,
+            Store::Global => &mut page.global,
+        };
+        cc_config::put(file.get_or_insert_with(|| Json::Object(Default::default())), entry.key, new);
+        return refresh(st);
     }
-    load(st);
-    refresh(st);
+    // Saved in the background against the value the page showed; the page shows the result.
+    start(st, Some((entry, saved, new)));
 }
 
 /// Every entry set to a value other than its default, as a page with Reset rows looks; `busy`
 /// makes the per-account rows read-only.
 #[cfg(test)]
 pub(super) fn fill_for_pictures(st: &mut AppState, busy: bool) {
-    let page = &mut st.cc_page;
+    let page = &mut st.cc_page.read;
     for entry in ENTRIES {
         let value = match entry.kind {
             Kind::Switch(on) => Json::Bool(!on),

@@ -77,6 +77,9 @@ fn shape(raw: Value, bearer: &str, labels: bool) -> Value {
     }
     match raw {
         Value::Object(raw) => {
+            // By name, as before serde_json kept the order of a document's keys.
+            let mut raw: Vec<(String, Value)> = raw.into_iter().collect();
+            raw.sort_by(|a, b| a.0.cmp(&b.0));
             let members = raw.into_iter().map(|(name, value)| {
                 let expose = labels && matches!(name.as_str(), "kind" | "group" | "severity" | "key" | "display_name");
                 let name = if name.contains(bearer) { "<redacted>".into() } else { name };

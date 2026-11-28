@@ -135,6 +135,11 @@ fn save_handover_prefs(st: &mut AppState, change: impl FnOnce(&mut claude_switch
     }
 }
 
+/// Shows what the Claude Code pages read or saved in the background. True when there was something.
+pub(crate) fn take_claude_code_jobs(st: &mut AppState) -> bool {
+    cc_advanced::take_job(st) | cc_status::take_job(st)
+}
+
 pub(crate) fn settings(st: &mut AppState, category: Option<&str>) -> Dialog {
     let category = category.or(st.settings_category);
     let index = PAGES.iter().position(|(name, _)| Some(*name) == category).unwrap_or(0);
@@ -890,16 +895,19 @@ mod tests {
         std::fs::create_dir_all(&roots.home).unwrap();
         std::fs::write(&claude_json, r#"{"numStartups":3}"#).unwrap();
         st.dialog = Some(settings(&mut st, Some(cc_advanced::ADVANCED)));
+        cc_advanced::wait(&mut st);
         let at = |key: &str| cc_advanced::FIRST + 2 * ENTRIES.iter().position(|e| e.key == key).unwrap() as u32;
 
         // Changed by Claude Code after the page read it: refused, the file keeps its value.
         std::fs::write(&claude_json, r#"{"numStartups":3,"showTurnDuration":false}"#).unwrap();
         settings_outcome(&mut st, Outcome::Changed { id: at("showTurnDuration"), value: Value::Bool(true) });
+        cc_advanced::wait(&mut st);
         assert!(st.info.take().is_some(), "the refusal is shown");
         let now: serde_json::Value = serde_json::from_slice(&std::fs::read(&claude_json).unwrap()).unwrap();
         assert_eq!(now["showTurnDuration"], false);
         // The page read it again: now the change goes through and keeps the other keys.
         settings_outcome(&mut st, Outcome::Changed { id: at("showTurnDuration"), value: Value::Bool(true) });
+        cc_advanced::wait(&mut st);
         assert!(st.info.is_none());
         let now: serde_json::Value = serde_json::from_slice(&std::fs::read(&claude_json).unwrap()).unwrap();
         assert_eq!(now, serde_json::json!({"numStartups": 3, "showTurnDuration": true}));
@@ -915,10 +923,12 @@ mod tests {
         )
         .unwrap();
         settings_outcome(&mut st, Outcome::Action(cc_advanced::RECHECK));
+        cc_advanced::wait(&mut st);
         let row = current(&st).form.rows().iter().find(|r| r.id() == Some(at("copyOnSelect"))).cloned();
         let Some(Row::Choice { options, help, .. }) = row else { panic!("a read-only row is a single choice") };
         assert_eq!((options.as_slice(), help.contains("Close")), (&["On".to_owned()][..], true));
         settings_outcome(&mut st, Outcome::Changed { id: at("copyOnSelect"), value: Value::Choice(0) });
+        cc_advanced::wait(&mut st);
         let now: serde_json::Value = serde_json::from_slice(&std::fs::read(&claude_json).unwrap()).unwrap();
         assert!(now.get("copyOnSelect").is_none(), "nothing written while it runs");
     }

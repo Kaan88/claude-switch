@@ -1100,3 +1100,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     page with a help line saying when they apply (`cc_config::WHEN`), and their expectation now
     accepts "No settings match"; Auto-install IDE extension (only inside an IDE's own terminal) was
     dropped. Re-checked on that recording without recording again: 43 of 43 as expected.
+    Review fixes (2026-11-28): the running check by the folder a record is in (a desktop session
+    of another account), an incomplete scan and the window's own tabs refuse, a missing
+    `.claude.json` is never made, a backup and a byte compare right before the rename, a lock left
+    behind is taken over after a minute, a sync failure is told apart from a failed save, saves
+    and reads in the background, key order kept (`preserve_order`; the usage shape probe sorts its
+    members itself so its output is as before), and the `config-list` script needs the empty search
+    box before each search (`need`, which ends the script in any run). Tested in core on temporary
+    folders; the tab check is not (a test cannot start a tab's program) and the background save
+    is tested through the page with a wait. Not re-recorded.

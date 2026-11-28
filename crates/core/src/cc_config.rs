@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use crate::settings_sync::{self, master_account};
-use crate::util::{io_refusal, write_json};
+use crate::util::{io_refusal, json_bytes, regular_target, temp_beside};
 use crate::{Account, Config, Refusal, Roots};
 
 /// The Claude Code version the table was taken from.
@@ -433,7 +433,7 @@ pub fn put(root: &mut Value, key: &str, value: Option<Value>) {
     let Some(map) = node.as_object_mut() else { return };
     match value {
         Some(value) => _ = map.insert((*last).to_owned(), value),
-        None => _ = map.remove(*last),
+        None => _ = map.shift_remove(*last),
     }
 }
 
@@ -468,23 +468,45 @@ pub fn read(path: &Path) -> Result<Option<Value>, Refusal> {
     }
 }
 
+/// How old Claude Code's lock folder must be before it is taken as left behind. Claude Code's
+/// own `proper-lockfile` call passes no `stale`, so it takes over a lock after the library's 10 s
+/// (a live holder touches the folder every 5 s); this waits much longer.
+pub const STALE_LOCK: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Claude Code's lock for its config file (a folder beside it, as `proper-lockfile` makes it),
 /// held while the file is replaced, and removed when dropped.
 struct ConfigLock(PathBuf);
 
 impl ConfigLock {
-    fn take(path: &Path) -> Result<ConfigLock, Refusal> {
+    /// The lock, and whether a lock left behind (older than [`STALE_LOCK`]) was taken over.
+    fn take(path: &Path) -> Result<(ConfigLock, bool), Refusal> {
+        Self::take_after(path, STALE_LOCK)
+    }
+
+    fn take_after(path: &Path, stale: std::time::Duration) -> Result<(ConfigLock, bool), Refusal> {
         let mut lock = path.as_os_str().to_owned();
         lock.push(".lock");
         let lock = PathBuf::from(lock);
+        let busy =
+            || Refusal::Invalid(format!("Claude Code is saving {} right now; try again in a moment.", path.display()));
         match std::fs::create_dir(&lock) {
-            Ok(()) => Ok(ConfigLock(lock)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(Refusal::Invalid(format!(
-                "Claude Code is saving {} right now; try again in a moment.",
-                path.display()
-            ))),
-            Err(e) => Err(io_refusal("lock", path, &e)),
+            Ok(()) => return Ok((ConfigLock(lock), false)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(io_refusal("lock", path, &e)),
         }
+        let age = std::fs::symlink_metadata(&lock)
+            .ok()
+            .filter(|m| m.is_dir())
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok());
+        if !age.is_some_and(|age| age > stale) {
+            return Err(busy());
+        }
+        // Left behind: take it over as Claude Code would. Only an empty folder is removed, and
+        // another taker in between makes the create fail.
+        std::fs::remove_dir(&lock).map_err(|_| busy())?;
+        std::fs::create_dir(&lock).map_err(|_| busy())?;
+        Ok((ConfigLock(lock), true))
     }
 }
 
@@ -494,12 +516,66 @@ impl Drop for ConfigLock {
     }
 }
 
+/// What a save did besides saving.
+#[derive(Debug, Default)]
+pub struct Saved {
+    /// A `.claude.json.lock` older than [`STALE_LOCK`] was taken over.
+    pub stale_lock: bool,
+    /// `settings.json` was saved in the master account, but bringing the sharing accounts in line
+    /// failed (they get it at the next sync).
+    pub sync_error: Option<Refusal>,
+}
+
+/// Refuses while a Claude Code may hold `account`'s `.claude.json`: a live session record in its
+/// CLI folder (any app's: a desktop app's session of another account runs there too), a scan that
+/// could not read everything, or `program_running` (the caller knows a program it started for the
+/// account runs, which may not have written its record yet).
+pub fn refuse_if_running(
+    roots: &Roots,
+    config: &Config,
+    account: &Account,
+    program_running: bool,
+) -> Result<(), Refusal> {
+    let running = |why: &str| {
+        Refusal::Invalid(format!(
+            "{} {why}, which would write its .claude.json back. Close the account's sessions to change this.",
+            account.name
+        ))
+    };
+    if program_running {
+        return Err(running("has a program running in a Switch tab"));
+    }
+    let (live, complete) = crate::running::live_folders(roots, config);
+    if !complete {
+        return Err(Refusal::Invalid(format!(
+            "Could not tell whether Claude Code runs with {} (a session record could not be read or is still \
+             being written), so nothing was saved. Try again in a moment.",
+            account.name
+        )));
+    }
+    match std::fs::canonicalize(account.cli_dir.join("sessions")) {
+        Ok(folder) if live.contains(&folder) => Err(running("has Claude Code running")),
+        _ => Ok(()),
+    }
+}
+
+/// Claude Code makes `.claude.json` on its first run, and the sharing seeds a further account's
+/// (`share::sync_mcp`) only while there is none: never made here.
+fn no_claude_json(account: &Account) -> Refusal {
+    Refusal::Invalid(format!(
+        "{} has no .claude.json yet. Start Claude Code with this account once, then change this.",
+        account.name
+    ))
+}
+
 /// Saves `value` (or, with `None`, removes the key: Claude Code's default) for `entry`.
 ///
 /// `expected` is the value the page showed. When the file holds another one now, nothing is
-/// written and the error says so. `settings.json` goes to the master account and on to the
-/// sharing accounts; `.claude.json` goes to `account` only, and is refused while that account has
-/// a running Claude Code.
+/// written and the error says so; the file's bytes are compared again just before it is replaced.
+/// The file is backed up first. `settings.json` goes to the master account and on to the sharing
+/// accounts; `.claude.json` goes to `account` only, must exist (Claude Code makes it, and the
+/// sharing seeds a new account's), and is refused while the account may run Claude Code
+/// ([`refuse_if_running`]).
 pub fn save(
     roots: &Roots,
     config: &Config,
@@ -507,44 +583,96 @@ pub fn save(
     entry: &Entry,
     expected: Option<&Value>,
     value: Option<Value>,
-) -> Result<(), Refusal> {
+    program_running: bool,
+) -> Result<Saved, Refusal> {
     let account = account_of(config, entry.store, account)
         .ok_or_else(|| Refusal::Invalid("There is no account to save Claude Code's settings in.".into()))?;
     let path = file(roots, account, entry.store);
+    let mut saved = Saved::default();
     let _lock = match entry.store {
         Store::Global => {
-            let running = crate::running::scan(roots, config);
-            if running.iter().any(|r| r.account == account.slug) {
-                return Err(Refusal::Invalid(format!(
-                    "{} has Claude Code running, which would write its .claude.json back. Close the account's \
-                     sessions to change this.",
-                    account.name
-                )));
+            refuse_if_running(roots, config, account, program_running)?;
+            if !path.exists() {
+                return Err(no_claude_json(account));
             }
-            Some(ConfigLock::take(&path)?)
+            let (lock, stale) = ConfigLock::take(&path)?;
+            saved.stale_lock = stale;
+            Some(lock)
         }
         Store::Settings => None,
     };
-    let mut root = read(&path)?.unwrap_or_else(|| Value::Object(Map::new()));
-    if get(&root, entry.key) != expected.filter(|v| !v.is_null()) {
-        return Err(Refusal::Invalid(format!(
+    let before = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(io_refusal("read", &path, &e)),
+    };
+    let mut root = match &before {
+        Some(bytes) => match serde_json::from_slice::<Value>(bytes) {
+            Ok(v @ Value::Object(_)) => v,
+            _ => {
+                return Err(Refusal::Invalid(format!(
+                    "{} is not valid JSON, so it was left as it is. Fix it or remove it first.",
+                    path.display()
+                )));
+            }
+        },
+        None if entry.store == Store::Global => return Err(no_claude_json(account)),
+        None => Value::Object(Map::new()),
+    };
+    let changed = || {
+        Refusal::Invalid(format!(
             "\"{}\" was changed elsewhere since this page was read, so it was not saved. The page shows the \
              value it has now.",
             entry.label
-        )));
+        ))
+    };
+    if get(&root, entry.key) != expected.filter(|v| !v.is_null()) {
+        return Err(changed());
     }
     put(&mut root, entry.key, value);
     for key in entry.also_remove {
         put(&mut root, key, None);
     }
-    match entry.store {
-        Store::Settings => {
-            settings_sync::backup(roots, account, &path)?;
-            write_json(&path, &root)?;
-            settings_sync::sync(roots, config, &config.settings_share).map(|_| ())
-        }
-        Store::Global => write_json(&path, &root),
+    let bytes = json_bytes(&path, &root)?;
+    if let Some(before) = &before {
+        let name = match entry.store {
+            Store::Settings => "settings.json",
+            Store::Global => "claude.json",
+        };
+        settings_sync::backup_bytes(roots, account, name, before)?;
     }
+    replace_if_same(&path, before.as_deref(), &bytes).map_err(|e| e.unwrap_or_else(changed))?;
+    if entry.store == Store::Settings {
+        saved.sync_error = settings_sync::sync(roots, config, &config.settings_share).err();
+    }
+    Ok(saved)
+}
+
+/// Writes `bytes` beside `path`, then replaces `path` only if it still holds `before` (absent for
+/// `None`): the compare is the last thing before the rename. `Err(None)` when it changed.
+fn replace_if_same(path: &Path, before: Option<&[u8]>, bytes: &[u8]) -> Result<(), Option<Refusal>> {
+    use std::io::Write as _;
+    regular_target(path).map_err(Some)?;
+    let tmp = temp_beside(path);
+    let written = std::fs::File::create_new(&tmp).and_then(|mut f| f.write_all(bytes).and_then(|()| f.sync_all()));
+    let result = match written {
+        Err(e) => Err(Some(io_refusal("write", &tmp, &e))),
+        Ok(()) => match std::fs::read(path) {
+            Ok(now) if Some(now.as_slice()) == before => {
+                std::fs::rename(&tmp, path).map_err(|e| Some(io_refusal("replace", path, &e)))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && before.is_none() => {
+                std::fs::rename(&tmp, path).map_err(|e| Some(io_refusal("replace", path, &e)))
+            }
+            Ok(_) => Err(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(None),
+            Err(e) => Err(Some(io_refusal("read", path, &e))),
+        },
+    };
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -593,20 +721,20 @@ mod tests {
         let [main, work] = [&config.accounts[0], &config.accounts[1]];
         put_file(&main.cli_dir.join("settings.json"), r#"{"someday":{"x":1},"worktree":{"symlinkDirectories":["a"]}}"#);
         let base = by_key("worktree.baseRef");
-        save(&roots, &config, work, base, None, Some(json!("head"))).unwrap();
+        save(&roots, &config, work, base, None, Some(json!("head")), false).unwrap();
         let main_now = read_json(&main.cli_dir.join("settings.json")).unwrap();
         assert_eq!(main_now["worktree"], json!({"symlinkDirectories": ["a"], "baseRef": "head"}));
         assert_eq!(main_now["someday"], json!({"x": 1}));
         assert_eq!(read_json(&work.cli_dir.join("settings.json")).unwrap(), main_now, "shared");
 
         // Reset: the key goes, its neighbours stay.
-        save(&roots, &config, main, base, Some(&json!("head")), None).unwrap();
+        save(&roots, &config, main, base, Some(&json!("head")), None, false).unwrap();
         let main_now = read_json(&main.cli_dir.join("settings.json")).unwrap();
         assert_eq!(main_now["worktree"], json!({"symlinkDirectories": ["a"]}));
 
         // Workflows: /config drops the old switch with it.
         put_file(&main.cli_dir.join("settings.json"), r#"{"disableWorkflows":true}"#);
-        save(&roots, &config, main, by_key("enableWorkflows"), None, Some(json!(true))).unwrap();
+        save(&roots, &config, main, by_key("enableWorkflows"), None, Some(json!(true)), false).unwrap();
         assert_eq!(read_json(&main.cli_dir.join("settings.json")).unwrap(), json!({"enableWorkflows": true}));
     }
 
@@ -619,14 +747,14 @@ mod tests {
         let json_path = crate::accounts::claude_json(&roots, main);
         put_file(&json_path, r#"{"showTurnDuration":false,"numStartups":4}"#);
         // The page showed "absent" but the file says false now.
-        let err = save(&roots, &config, main, by_key("showTurnDuration"), None, Some(json!(true))).unwrap_err();
+        let err = save(&roots, &config, main, by_key("showTurnDuration"), None, Some(json!(true)), false).unwrap_err();
         assert!(err.to_string().contains("changed elsewhere"), "{err}");
         assert_eq!(read_json(&json_path).unwrap()["showTurnDuration"], false);
-        save(&roots, &config, main, by_key("showTurnDuration"), Some(&json!(false)), Some(json!(true))).unwrap();
+        save(&roots, &config, main, by_key("showTurnDuration"), Some(&json!(false)), Some(json!(true)), false).unwrap();
         assert_eq!(read_json(&json_path).unwrap(), json!({"showTurnDuration": true, "numStartups": 4}));
 
         put_file(&main.cli_dir.join("settings.json"), r#"{"timeFormat":"24-hour"}"#);
-        let err = save(&roots, &config, main, by_key("timeFormat"), Some(&json!("auto")), None).unwrap_err();
+        let err = save(&roots, &config, main, by_key("timeFormat"), Some(&json!("auto")), None, false).unwrap_err();
         assert!(err.to_string().contains("changed elsewhere"));
     }
 
@@ -645,7 +773,7 @@ mod tests {
             &json!({"pid": pid, "sessionId": "0b4f5a64-1c0e-4a43-9a43-1f4c2b1f8f10", "cwd": "C:\\x"}).to_string(),
         );
         let entry = by_key("copyOnSelect");
-        let err = save(&roots, &config, work, entry, None, Some(json!(false))).unwrap_err();
+        let err = save(&roots, &config, work, entry, None, Some(json!(false)), false).unwrap_err();
         assert!(err.to_string().contains("Work has Claude Code running"), "{err}");
         assert_eq!(read_json(&work_json).unwrap(), json!({"numStartups": 2}));
         // Another account is free; a held lock refuses, and the lock is gone after a save.
@@ -653,15 +781,129 @@ mod tests {
         put_file(&main_json, "{}");
         std::fs::create_dir(main_json.with_extension("json.lock")).unwrap();
         assert!(
-            save(&roots, &config, main, entry, None, Some(json!(false))).unwrap_err().to_string().contains("try again")
+            save(&roots, &config, main, entry, None, Some(json!(false)), false)
+                .unwrap_err()
+                .to_string()
+                .contains("try again")
         );
         std::fs::remove_dir(main_json.with_extension("json.lock")).unwrap();
-        save(&roots, &config, main, entry, None, Some(json!(false))).unwrap();
+        save(&roots, &config, main, entry, None, Some(json!(false)), false).unwrap();
         assert_eq!(read_json(&main_json).unwrap(), json!({"copyOnSelect": false}));
         assert!(!main_json.with_extension("json.lock").exists());
         // A file that is not JSON is never replaced.
         put_file(&main_json, "{ nope");
-        assert!(save(&roots, &config, main, entry, Some(&json!(false)), None).is_err());
+        assert!(save(&roots, &config, main, entry, Some(&json!(false)), None, false).is_err());
         assert_eq!(std::fs::read_to_string(&main_json).unwrap(), "{ nope");
+    }
+
+    fn record(folder: &std::path::Path, extra: Value) {
+        let pid = std::process::id();
+        let mut v = json!({"pid": pid, "cwd": "C:/x"});
+        for (k, x) in extra.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        put_file(&folder.join("sessions").join(format!("{pid}.json")), &v.to_string());
+    }
+
+    const SESSION: &str = "0b4f5a64-1c0e-4a43-9a43-1f4c2b1f8f10";
+
+    #[test]
+    fn a_desktop_session_shown_under_another_account_still_blocks_the_folder_it_runs_in() {
+        let t = TempDir::new("ccc-desktop");
+        let roots = t.roots();
+        let config = config_with(&roots, &[("work", "Work")]);
+        let [main, work] = [&config.accounts[0], &config.accounts[1]];
+        let main_json = crate::accounts::claude_json(&roots, main);
+        put_file(&main_json, r#"{"numStartups":1}"#);
+        // Work's desktop app runs a session in the first account's CLI folder.
+        put_file(&work.desktop_dir.join("claude-code-sessions/acc/org/local_abc.json"), "{}");
+        record(
+            &main.cli_dir,
+            json!({"sessionId": SESSION, "entrypoint": "claude-desktop", "hostSessionId": "local_abc"}),
+        );
+        let running = crate::running::scan(&roots, &config);
+        assert_eq!(running.iter().map(|r| r.account.as_str()).collect::<Vec<_>>(), ["work"], "shown as Work's");
+        let err = save(&roots, &config, main, by_key("copyOnSelect"), None, Some(json!(false)), false).unwrap_err();
+        assert!(err.to_string().contains("Main has Claude Code running"), "{err}");
+        assert_eq!(std::fs::read_to_string(&main_json).unwrap(), r#"{"numStartups":1}"#);
+    }
+
+    #[test]
+    fn a_record_not_yet_naming_its_session_or_a_running_tab_refuses_and_a_missing_file_is_never_made() {
+        let t = TempDir::new("ccc-unsure");
+        let roots = t.roots();
+        let config = config_with(&roots, &[("work", "Work")]);
+        let [main, work] = [&config.accounts[0], &config.accounts[1]];
+        let entry = by_key("copyOnSelect");
+        // No .claude.json yet: refused, and none is made (the sharing seeds a new one).
+        let work_json = crate::accounts::claude_json(&roots, work);
+        let err = save(&roots, &config, work, entry, None, Some(json!(false)), false).unwrap_err();
+        assert!(err.to_string().contains("no .claude.json yet"), "{err}");
+        assert!(!work_json.exists());
+        // A program the caller started for the account.
+        put_file(&work_json, "{}");
+        let err = save(&roots, &config, work, entry, None, Some(json!(false)), true).unwrap_err();
+        assert!(err.to_string().contains("in a Switch tab"), "{err}");
+        // A live process whose record names no session yet, in any folder: the scan is unsure.
+        record(&main.cli_dir, json!({}));
+        let err = save(&roots, &config, work, entry, None, Some(json!(false)), false).unwrap_err();
+        assert!(err.to_string().contains("Could not tell"), "{err}");
+        assert_eq!(std::fs::read_to_string(&work_json).unwrap(), "{}");
+    }
+
+    #[test]
+    fn the_bytes_are_compared_last_and_a_backup_is_kept() {
+        let t = TempDir::new("ccc-bytes");
+        let roots = t.roots();
+        let config = config_with(&roots, &[]);
+        let main = &config.accounts[0];
+        let path = crate::accounts::claude_json(&roots, main);
+        put_file(&path, r#"{"b":1,"a":2}"#);
+        // Another program wrote between the read and the replace: refused, the file and its folder
+        // as they were (no temporary file left).
+        assert!(matches!(replace_if_same(&path, Some(b"{}"), b"{\"x\":1}"), Err(None)));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"b":1,"a":2}"#);
+        assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        save(&roots, &config, main, by_key("copyOnSelect"), None, Some(json!(false)), false).unwrap();
+        let backups: Vec<_> = std::fs::read_dir(roots.config_file().with_file_name("settings-backups"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(backups.len() == 1 && backups[0].ends_with("-main-claude.json"), "{backups:?}");
+    }
+
+    #[test]
+    fn a_save_keeps_the_order_of_the_file_keys() {
+        let t = TempDir::new("ccc-order");
+        let roots = t.roots();
+        let config = config_with(&roots, &[]);
+        let main = &config.accounts[0];
+        let path = crate::accounts::claude_json(&roots, main);
+        put_file(&path, r#"{"zeta":1,"copyOnSelect":false,"alpha":2,"mid":3}"#);
+        let entry = by_key("copyOnSelect");
+        save(&roots, &config, main, entry, Some(&json!(false)), Some(json!(true)), false).unwrap();
+        save(&roots, &config, main, by_key("autoScrollEnabled"), None, Some(json!(false)), false).unwrap();
+        let keys = |p: &std::path::Path| -> Vec<String> {
+            read_json(p).unwrap().as_object().unwrap().keys().cloned().collect()
+        };
+        assert_eq!(keys(&path), ["zeta", "copyOnSelect", "alpha", "mid", "autoScrollEnabled"]);
+        save(&roots, &config, main, entry, Some(&json!(true)), None, false).unwrap();
+        assert_eq!(keys(&path), ["zeta", "alpha", "mid", "autoScrollEnabled"], "a reset keeps the others in place");
+    }
+
+    #[test]
+    fn a_lock_left_behind_is_taken_over_and_a_fresh_one_is_not() {
+        let t = TempDir::new("ccc-lock");
+        let path = t.0.join(".claude.json");
+        put_file(&path, "{}");
+        let lock = t.0.join(".claude.json.lock");
+        std::fs::create_dir(&lock).unwrap();
+        assert!(ConfigLock::take(&path).is_err(), "fresh: someone holds it");
+        assert!(lock.is_dir(), "and it is not removed");
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let (held, stale) = ConfigLock::take_after(&path, std::time::Duration::from_millis(10)).unwrap();
+        assert!(stale && lock.is_dir());
+        drop(held);
+        assert!(!lock.exists());
     }
 }

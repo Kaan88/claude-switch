@@ -52,6 +52,7 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `sleep MS` | |
 | `send TEXT` | Bytes to the terminal. Escapes: `\e` Esc, `\r` Enter, `\n`, `\t` Tab, `\s` space, `\xHH`, `\\`. Arrows `\e[A` `\e[B` `\e[C` `\e[D`, Shift+Tab `\e[Z`, Ctrl+C `\x03`, Ctrl+U `\x15`, a paste `\e[200~…\e[201~` with `\r` between its lines. |
 | `wait TEXT MS` | Until some row contains TEXT, at most MS. |
+| `need TEXT MS` | As `wait`, but when TEXT does not show in time the script ends there, before another key goes, in any run (a `wait` ends it only in `recorder compat`). For keys that would do harm on another screen. |
 | `gone TEXT MS` | Until no row contains TEXT. |
 | `quiet MS MAX` | Until the terminal sent nothing for MS. |
 | `snap NAME` | Writes `NAME.txt` (rows, first line `cursor ROW COL`) and `NAME.ansi` (the fixture form). |

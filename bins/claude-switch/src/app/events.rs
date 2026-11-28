@@ -264,7 +264,8 @@ impl App for AppState {
                     | self.take_desktop_job(cx.now())
                     | self.take_compact_jobs()
                     | self.take_background_handovers()
-                    | self.take_opencode_job(cx.now());
+                    | self.take_opencode_job(cx.now())
+                    | crate::dialogs::take_claude_code_jobs(self);
                 let changed = changed | self.open_finished_handover(cx.now());
                 self.handover_attention(cx);
                 let changed = changed | self.restore_tabs_if_always(cx.now());

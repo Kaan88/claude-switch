@@ -18,18 +18,22 @@ when = dict(re.findall(r'\("([^"]+)",\s*"([^"]+)"\)', when_block))
 assert set(when) <= {k for k, _ in items}, 'WHEN names a key the table lacks'
 
 BS = '\\'
+SEARCH = '\u2315 Search settings'
 lines = [
     '# Searches /config for every entry Settings › Claude Code › Advanced writes and snaps each',
     '# result: a label that no longer shows means a renamed or removed entry. Written by',
     '# ../config-list.py from crates/core/src/cc_config.rs. The search text is the label in lower',
-    '# case, so the label as written shows only in the list. No model request; nothing is changed.',
+    '# case, so the label as written shows only in the list. Each search first needs the empty',
+    '# search box on screen, so no key goes anywhere else. No model request; nothing is changed.',
     '#: size 160 50',
     '#: seconds %d' % (10 + len(items) * 2),
     'start',
     'send /config',
     'sleep 800',
     'send ' + BS + 'r',
-    'sleep 2500',
+    # Typed text goes into /config's search box only while it shows, empty (its placeholder after
+    # the search mark); anywhere else a space could toggle a setting. Without it the script ends.
+    'need ' + SEARCH + ' 5000',
 ]
 exp = [
     '# The labels scripts/config-list.txt searches /config for. Written by ../config-list.py from',
@@ -39,6 +43,7 @@ for key, label in items:
     name = 'cfg-' + re.sub(r'[^a-z0-9]+', '-', key.lower())
     term = label.lower()
     lines += [
+        'need ' + SEARCH + ' 3000',
         'send ' + term.replace(' ', BS + 's'),
         'sleep 900',
         'snap ' + name,

@@ -18,49 +18,80 @@ const MCP_ROWS: usize = 8;
 pub(crate) struct Read {
     status: Option<Status>,
     stats: Option<Stats>,
+    /// The read, off the window thread; a newer request waits for it (`again`).
+    job: Option<mdshared_app::job::Job<(Status, Stats)>>,
+    again: bool,
 }
 
 pub(super) fn owns(id: u32) -> bool {
     (ACCOUNT..LAST).contains(&id)
 }
 
+/// Reads the chosen account's status in the background ([`take_job`] shows it).
 pub(super) fn load(st: &mut AppState) {
-    let read = match (&st.source, super::cc_advanced::chosen(st)) {
+    match (&st.source, super::cc_advanced::chosen(st)) {
         (crate::source::Source::Real(roots), Some(account)) => {
-            let files: std::collections::HashMap<&str, &std::path::Path> =
-                st.sessions.iter().map(|s| (s.id.as_str(), s.file.as_path())).collect();
-            Read {
-                status: Some(cc_status::status(roots, account)),
-                stats: Some(cc_status::stats(account, claude_switch_core::clock::local_offset_minutes(), |id| {
-                    files.get(id).map(|p| p.to_path_buf())
-                })),
+            if st.cc_status.job.is_some() {
+                st.cc_status.again = true;
+                return;
+            }
+            let files: std::collections::HashMap<String, std::path::PathBuf> =
+                st.sessions.iter().map(|s| (s.id.clone(), s.file.clone())).collect();
+            let (roots, account) = (roots.clone(), account.clone());
+            let job = mdshared_app::job::Job::start(st.wake_fn(), move |_, _| {
+                let offset = claude_switch_core::clock::local_offset_minutes();
+                let status = cc_status::status(&roots, &account);
+                (status, cc_status::stats(&account, offset, |id| files.get(id).cloned()))
+            });
+            match job {
+                Ok(job) => st.cc_status.job = Some(job),
+                Err(e) => st.error("Claude Code's status was not read", e.to_string()),
             }
         }
-        (crate::source::Source::Demo, _) => Read {
-            status: Some(Status {
-                installed: Some(claude_switch_core::cc_config::VERSION.into()),
-                sign_in: SignIn::ClaudeAccount,
-                email: Some("owner@example.com".into()),
-                organization: Some("Example".into()),
-                plan: Some("Max".into()),
-                user_settings: Some(Ok(6)),
-                managed: None,
-                mcp: vec![("files".into(), "stdio".into()), ("docs".into(), "http".into())],
-                memory: Some(42),
-            }),
-            stats: Some(Stats {
-                prompts: 1280,
-                sessions: 96,
-                days: 31,
-                folders: 12,
-                partial: false,
-                models: vec![("claude-opus-5-5".into(), 30), ("claude-sonnet-5-5".into(), 9)],
-                model_sessions: MODEL_SESSIONS,
-            }),
-        },
-        _ => Read::default(),
+        (crate::source::Source::Demo, _) => demo(st),
+        _ => st.cc_status = Read::default(),
+    }
+}
+
+/// Shows the status once its read ended. True when there was one.
+pub(crate) fn take_job(st: &mut AppState) -> bool {
+    if !st.cc_status.job.as_ref().is_some_and(|job| !job.running()) {
+        return false;
+    }
+    if let Some((status, stats)) = st.cc_status.job.take().and_then(|job| job.take()) {
+        (st.cc_status.status, st.cc_status.stats) = (Some(status), Some(stats));
+    }
+    if std::mem::take(&mut st.cc_status.again) {
+        load(st);
+    }
+    refresh(st);
+    true
+}
+
+fn demo(st: &mut AppState) {
+    st.cc_status = Read {
+        status: Some(Status {
+            installed: Some(claude_switch_core::cc_config::VERSION.into()),
+            sign_in: SignIn::ClaudeAccount,
+            email: Some("owner@example.com".into()),
+            organization: Some("Example".into()),
+            plan: Some("Max".into()),
+            user_settings: Some(Ok(6)),
+            managed: None,
+            mcp: vec![("files".into(), "stdio".into()), ("docs".into(), "http".into())],
+            memory: Some(42),
+        }),
+        stats: Some(Stats {
+            prompts: 1280,
+            sessions: 96,
+            days: 31,
+            folders: 12,
+            partial: false,
+            models: vec![("claude-opus-5-5".into(), 30), ("claude-sonnet-5-5".into(), 9)],
+            model_sessions: MODEL_SESSIONS,
+        }),
+        ..Read::default()
     };
-    st.cc_status = read;
 }
 
 pub(super) fn rows(st: &AppState) -> Vec<Row> {
