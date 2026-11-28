@@ -19,6 +19,8 @@ mdview-core = { git = "https://github.com/Kaan88/markdown-viewer-rs", rev = "01f
 png = "0.18"
 getrandom = "0.3"
 serde_json = "1"
+# Already in the build through syntect (fancy-regex), all these features on; the find bar's patterns.
+regex-automata = { version = "0.4.19", default-features = false, features = ["std", "syntax", "meta", "unicode", "perf"] }
 winit = { version = "=0.30.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]

@@ -410,11 +410,23 @@ and the cursor is drawn unfocused; a press on the grid gives the keyboard back t
 leaves the bar open; Escape or its × closes it. A pane that loses the keyboard also takes it from
 its bar (still open), so coming back to the pane types into the program.
 
+Beside Aa are two more toggles: whole word ("ab" over a bar, Alt+W), where a match needs no letter,
+digit or underscore just before or after it, and regular expression (".*", Alt+R), compiled with
+`regex-automata`'s meta engine (already in the build through syntect; its syntax, Unicode classes,
+case-insensitive unless Aa); with both on the pattern is wrapped in `\b(?:…)\b`. A pattern is
+compiled once per query and options; matches of nothing are skipped. One that does not compile
+finds nothing, says "Invalid pattern" in the danger colour and edges the bar in it, until the text
+or the toggle changes. The Alt keys work only while the box has the keyboard. The box is a text
+field of `fieldmouse` like the others (`FieldId::TermFind`, its own hit target inside the card):
+press places the caret, drag, double and triple click select, the I-beam shows over it, and a
+right click opens Cut, Copy, Paste, Select all; an edit through that menu finds again.
+
 **Panes.** A tab can be split into up to four panes (`panes.rs`), as a small tree: each split is
 side by side ("Split right", a vertical divider) or stacked ("Split down"), half and half at first,
 and divides the focused pane. The commands are in the tab's menu and the palette (with "Close pane"
-and "Next pane"); no key was added, since Windows Terminal's Alt+Shift+plus/minus and Alt+arrows
-would be taken from the programs. Pane 0 is the tab's own terminal (`Tab::term`): Chat, the session
+and "Next pane"). There are no keys for them, by the owner's choice (no new shortcuts,
+2026-11-28); Windows Terminal's Alt+Shift+plus/minus and Alt+arrows would also be taken from the
+programs. Pane 0 is the tab's own terminal (`Tab::term`): Chat, the session
 view, attention, the send gate, identity, saved tabs and the safeguard keep reading only it. A new
 pane is a plain shell (`launch::shell`, the same sanitized environment as a shell tab) started in
 the tab's launch folder (`Tab::folder`), else its session's, else its OpenCode folder, else the
@@ -422,19 +434,33 @@ home folder; never a second Claude Code on the session. It starts at about the h
 and every pane is then fitted to its own rectangle on each layout, so a split or a divider drag
 resizes only the programs it divides. Keys, paste, dropped files, the mouse and find go to the
 focused pane; a press on another pane focuses it first (the programs that asked are told of the
-focus change), the wheel over an unfocused pane scrolls its scrollback without focusing it. The
+focus change), the wheel over an unfocused pane scrolls its scrollback without focusing it. A
+drag selects only in the pane it started in: past that pane's edge (over the divider, another pane,
+or out of the window) it takes the nearest cell of its own grid (`View::point_at` clamps), and the
+keyboard stays where it was. A pane that loses the keyboard drops its selection, so a tab shows one
+selection, the one Ctrl+Shift+C and right-click act on. The
 focused pane has a 1 px edge between the theme's line and accent colours; unfocused panes draw the
 hollow cursor. The 6 px gap between panes holds a 1 px line, accent while hovered or dragged; it
 is dragged with a resize cursor and keeps 60 px for either side. An ended pane shows its end line
 and closes on Enter; Enter on the ended tab's own pane is "Close" of the tab, which asks while
 another pane's program runs. Only keys for pane 0 count as input to Claude's terminal for Chat (its
 send gate and card keys); a shell pane's do not. Switching to Chat's layout while a shell pane has
-the keyboard moves it to pane 0, and back again, telling the programs that asked. "Close pane" asks first while the pane's program runs; the tab's own pane
-closes only last (closing it under shells would leave Chat without its terminal), and with no
-other pane it is "Close" of the tab, asking as before. Closing the tab or the window counts the
+the keyboard moves it to pane 0, and back again, telling the programs that asked. "Close pane" asks first while the pane's program runs. The tab's own pane
+never closes alone, since Chat would be left without its terminal: with other panes open, "Close
+pane" on it always asks "Close the whole tab?" (naming how many other panes go with it, running
+or not), and OK closes the tab as Close does; with no other pane it is "Close" of the tab, asking
+as before. Promoting a shell to be the tab's pane was not done: the tab's label, session, account,
+Chat and the safeguard all describe the program it was opened for. Closing the tab or the window counts the
 panes' programs as running. In Chat's layout only pane 0 is shown (in the drawer) and has the
 keyboard; the other panes keep running, their size unchanged, and splitting waits for the
-terminal layout. Panes are not saved with the tabs.
+terminal layout. A split tab's row in `terminal-tabs.json` (Claude and OpenCode tabs; plain shell
+tabs are not saved) carries `panes` (`panes/saved.rs`): the tree with its ratios, numbered leaves
+(0 the tab's own pane, `k` the shell started in `folders[k - 1]`) and the focused leaf; no commands,
+names or screen contents. Reopening the tab puts the layout back and starts each shell again in its
+saved folder, or the tab's own folder when that one is gone. The folder is where the shell was
+started; a later `cd` inside it is not known to the app. A row it cannot read as a layout (shape,
+leaf numbers, ratios outside 0.02–0.98, relative folders) reopens the tab unsplit, as does a shell
+that cannot start; older builds ignore the field.
 
 **Not there:** links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host

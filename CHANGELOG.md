@@ -2,12 +2,6 @@
 
 ## Unreleased
 
-- Resume in the desktop app as a further account opens that account's desktop app (its own data
-  folder) with the session; it used to go through Claude Code's `--desktop`, whose link Windows
-  hands to the first account's desktop app.
-- Chat and the Session view: after a rewind, the Tasks, Agents, Shells and Files pages leave out
-  what the replaced turns did once the next message is written, as the conversation does; an agent
-  or background shell started there that is still running stays listed.
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog
@@ -33,6 +27,9 @@
   sequences in the output are dropped, so it cannot move or clear what is shown.
 - Chat and the Session view: after a rewind, the turns it replaced are no longer shown once the
   next message is written; the conversation follows the active branch of the transcript.
+- Chat and the Session view: after a rewind, the Tasks, Agents, Shells and Files pages leave out
+  what the replaced turns did once the next message is written, as the conversation does; an agent
+  or background shell started there that is still running stays listed.
 - Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
   just before a permission prompt took the screen) and every later message waited behind it
   without a word. The rename now goes only once Chat has read the new session's first prompt, and
@@ -120,6 +117,15 @@
   as you type, the current one in its own colour, with a count ("3 of 12"); Enter or ↑ goes to the
   match above, Shift+Enter or ↓ to the one below, Aa (Alt+C) matches case (off by default), Escape
   closes it. A match across a wrapped line is found.
+- Terminal panes: "Close pane" on the tab's own (Claude) pane while other panes are open asks
+  "Close the whole tab?" and closes the tab, instead of refusing; Chat never loses its terminal.
+- Terminal panes: a selection belongs to the pane it was started in; dragging over another pane
+  selects to the edge of its own, and moving to another pane clears it, so a tab shows one.
+- Terminal find: whole word (Alt+W) and regular expression (Alt+R) toggles beside "Aa"; a pattern
+  that does not compile says "Invalid pattern". The box takes mouse selection (drag, double and
+  triple click) and its right-click menu (Cut, Copy, Paste, Select all) like the app's other fields.
+- Terminal tabs: a split tab reopened with the saved tabs gets its panes back, in the same layout
+  and sizes, each shell started again in the folder it was started in.
 - Sessions: the details show the selected session's conversation as Chat draws it (answers in
   Markdown, code blocks, tool rows that open), read-only, in a region that scrolls on its own and
   follows new messages; it replaces the short "Last messages" list. Earlier history loads on
@@ -144,6 +150,9 @@
   sign-in method and account, the settings files in effect, user MCP servers and memory file, and
   stats from its prompt history (prompts, sessions, days active, folders) and the models of its
   newest sessions. Read from files only; plan usage links to the Usage page.
+- Resume in the desktop app as a further account opens that account's desktop app (its own data
+  folder) with the session; it used to go through Claude Code's `--desktop`, whose link Windows
+  hands to the first account's desktop app.
 - Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
   record and the transcripts (a `live` op records both), and whether Chat reads the screen after
   it as an idle input.

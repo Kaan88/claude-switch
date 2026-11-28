@@ -221,7 +221,7 @@ impl AppState {
             }
             CLOSE_PANE => {
                 if let Some(t) = self.tabs.active {
-                    self.ask_close_pane(now, t);
+                    self.ask_close_pane(t);
                 }
             }
             NEXT_PANE => self.focus_next_pane(),

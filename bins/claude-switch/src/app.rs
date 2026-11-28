@@ -463,7 +463,10 @@ impl AppState {
         }
         self.usage.popup = Default::default();
         if let Some(Target::Find(control)) = hover {
-            self.find_press(control);
+            // In the box the toolkit places the caret, selects and drags, as in other fields.
+            if !(control == crate::termfind::FindControl::Text && self.field_press(x, y, cx.mods(), cx.now())) {
+                self.find_press(control);
+            }
             return;
         }
         if matches!(hover, Some(Target::PaneDivider(_))) && self.press_divider(x, y) {

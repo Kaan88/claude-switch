@@ -127,13 +127,35 @@ fn closing_panes_the_tabs_own_last_and_the_last_closes_the_tab() {
     let (mut st, id, _) = app();
     st.split_pane(now, id, Axis::Down);
     st.focus_pane(MAIN);
-    st.ask_close_pane(now, id);
-    assert_eq!(st.tabs.get(id).unwrap().panes.count(), 2, "the tab's own pane closes last");
+    st.ask_close_pane(id);
+    // The tab's own pane never goes alone: the question is about the whole tab.
+    let Some(crate::dialogs::Dialog::Confirm { title, then, .. }) = st.dialog.take() else { panic!("no question") };
+    assert_eq!(title, "Close the whole tab?");
+    assert!(matches!(then, crate::dialogs::Pending::CloseTab(t) if t == id));
+    assert_eq!(st.tabs.get(id).unwrap().panes.count(), 2, "nothing closed before the answer");
     st.focus_pane(1);
-    st.ask_close_pane(now, id);
+    st.ask_close_pane(id);
     assert!(!st.tabs.get(id).unwrap().panes.is_split());
-    st.ask_close_pane(now, id);
+    st.ask_close_pane(id);
     assert!(st.tabs.get(id).is_none(), "the last pane closes the tab");
+}
+
+#[test]
+fn closing_the_tabs_own_pane_under_others_closes_the_whole_tab_once_confirmed() {
+    let now = Instant::now();
+    let (mut st, id, _) = app();
+    st.split_pane(now, id, Axis::Right);
+    st.split_pane(now, id, Axis::Down);
+    st.focus_pane(MAIN);
+    st.ask_close_pane(id);
+    let Some(crate::dialogs::Dialog::Confirm { text, .. }) = &st.dialog else { panic!("no question") };
+    assert!(text.contains("the 2 other panes"), "{text}");
+    // Cancel keeps everything; OK closes the tab, the other panes with it.
+    crate::dialogs::click(&mut st, now, crate::dialogs::CANCEL, 0.0);
+    assert_eq!(st.tabs.get(id).unwrap().panes.count(), 3);
+    st.ask_close_pane(id);
+    crate::dialogs::click(&mut st, now, crate::dialogs::OK, 0.0);
+    assert!(st.tabs.get(id).is_none());
 }
 
 #[test]
@@ -225,4 +247,40 @@ fn enter_on_the_ended_tabs_own_pane_closes_the_tab_through_close() {
     st.term_key(Instant::now(), &enter);
     // Nothing runs in the demo's panes, so Close closes at once; with a running pane it asks.
     assert!(st.tabs.get(id).is_none());
+}
+
+#[test]
+fn a_drag_selection_stays_in_the_pane_it_started_in() {
+    use mdshared_term::Point;
+    let (mut st, id, window) = app();
+    st.tabs.get_mut(id).unwrap().term.feed(b"left pane text\r\nsecond line");
+    st.split_pane(Instant::now(), id, Axis::Right);
+    st.tabs.get_mut(id).unwrap().panes.get_mut(1).unwrap().feed(b"\r\nright pane text");
+    st.layout_terminals(window, window, 1.0);
+    let rects = st.tabs.get(id).unwrap().panes.rects.clone();
+    let (left, right) = (rects[0].1, rects[1].1);
+    // From the left pane across the divider, deep into the right one and below the window.
+    st.term_press(left.x + 10.0, left.y + 10.0, Button::Left, 1, Mods::default());
+    assert_eq!(st.tabs.get(id).unwrap().focused_pane(), MAIN);
+    st.term_move(right.x + 200.0, right.bottom() + 50.0, Mods::default());
+    st.term_release(right.x + 200.0, right.bottom() + 50.0, Button::Left, Mods::default());
+    let tab = st.tabs.get(id).unwrap();
+    assert_eq!(tab.focused_pane(), MAIN, "a drag does not move the keyboard");
+    let main = &tab.term;
+    let (from, to) = main.selection.unwrap().range();
+    assert!(to.col < main.screen.cols(), "clipped to its own columns: {to:?}");
+    assert!(to.line < main.screen.end_line(), "and its own rows: {to:?}");
+    assert_eq!(from, Point::new(main.screen.screen_start(), 0));
+    assert!(tab.panes.get(1).unwrap().selection.is_none(), "nothing selected in the other pane");
+    // The other way round: from the right pane leftwards past the window's edge.
+    st.term_press(right.x + 30.0, right.y + 30.0, Button::Left, 1, Mods::default());
+    st.term_move(-40.0, right.y + 30.0, Mods::default());
+    st.term_release(-40.0, right.y + 30.0, Button::Left, Mods::default());
+    let tab = st.tabs.get(id).unwrap();
+    assert_eq!(tab.focused_pane(), 1);
+    let (a, b) = tab.panes.get(1).unwrap().selection.unwrap().range();
+    assert_eq!((a.col, b.line), (0, a.line), "to its own first column, on the same line");
+    let text = st.tabs.get(id).unwrap().focused_term().selected_text().unwrap();
+    assert!(!text.contains("left pane"), "no text of the other pane: {text:?}");
+    assert!(st.tabs.get(id).unwrap().term.selection.is_none(), "one selection in the tab, the focused pane's");
 }

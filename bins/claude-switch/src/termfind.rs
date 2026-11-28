@@ -4,15 +4,19 @@
 //! A terminal keeps its own [`Find`] while the bar is open. The matches are found again whenever
 //! the query, the case setting or the screen changed ([`Term::changes`]), so new output and a
 //! resize (which rewraps the lines) are searched as they come. A match is found across a wrap:
-//! the rows a long line wrapped onto are searched as one line, as copying sees them.
+//! the rows a long line wrapped onto are searched as one line, as copying sees them. Beside "Aa"
+//! (match case) the bar has whole word and regular expression toggles; a pattern that does not
+//! compile shows as invalid and finds nothing.
 
 use mdshared_term::{Point, Screen};
 use mdshared_ui::gfx::{Face, Painter, Rect, mix};
 use mdshared_ui::glyph;
 use mdshared_ui::keys::{KeyName, Mods};
 use mdshared_ui::termview::{Metrics, View};
-use mdshared_ui::textfield::{FieldColors, TextField};
+use mdshared_ui::textfield::{FieldColors, FieldHit, TextField};
 use mdshared_ui::theme::Palette;
+use regex_automata::meta::Regex;
+use regex_automata::util::syntax;
 
 use crate::state::{AppState, Target};
 use crate::term::Term;
@@ -20,9 +24,13 @@ use crate::term::Term;
 /// A control of the find bar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FindControl {
-    /// The card itself and its text box: a press gives it the keyboard.
+    /// The card itself: a press gives the box the keyboard.
     Field,
+    /// The text box, where the mouse selects (`fieldmouse`).
+    Text,
     Case,
+    Word,
+    Regex,
     /// To the match above (older output), as Enter does.
     Previous,
     /// To the match below, as Shift+Enter does.
@@ -44,19 +52,113 @@ pub struct Find {
     pub field: TextField,
     /// The bar has the keyboard (a press on the grid gives it back to the program).
     pub focused: bool,
-    pub match_case: bool,
+    pub options: Options,
+    /// The box's text rectangle as last drawn, for the mouse.
+    pub hit: Option<FieldHit>,
     matches: Vec<Hit>,
     current: Option<usize>,
-    /// What `matches` were found for: the query, the case setting and the terminal's change count.
-    found: Option<(String, bool, u64)>,
+    /// What `matches` were found for: the query and options, and the terminal's change count.
+    found: Option<(String, Options, u64)>,
+    /// The query compiled for those: `Err` holds why a regular expression is invalid.
+    matcher: Option<Result<Matcher, String>>,
     /// The screen's size and its top line when they were found: lines above that top were
     /// scrollback then, which output never rewrites, so only what lies below is searched again.
     scanned: Option<((usize, usize), u64)>,
 }
 
+/// The bar's toggles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    pub match_case: bool,
+    pub whole_word: bool,
+    pub regex: bool,
+}
+
+/// A query ready to search with.
+#[derive(Clone, Debug)]
+pub enum Matcher {
+    /// Characters, folded to lower case unless the case must match.
+    Text {
+        needle: Vec<char>,
+        match_case: bool,
+        whole_word: bool,
+    },
+    Regex(Regex),
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn fold(c: char, match_case: bool) -> char {
+    if match_case { c } else { c.to_lowercase().next().unwrap_or(c) }
+}
+
+impl Matcher {
+    /// `None` for an empty query; `Err` with the reason for a regular expression that does not
+    /// compile.
+    pub fn new(query: &str, o: Options) -> Result<Option<Matcher>, String> {
+        if query.is_empty() {
+            return Ok(None);
+        }
+        if !o.regex {
+            let needle = query.chars().map(|c| fold(c, o.match_case)).collect();
+            return Ok(Some(Matcher::Text { needle, match_case: o.match_case, whole_word: o.whole_word }));
+        }
+        let pattern = if o.whole_word { format!(r"\b(?:{query})\b") } else { query.to_string() };
+        Regex::builder()
+            .syntax(syntax::Config::new().case_insensitive(!o.match_case))
+            .build(&pattern)
+            .map(|re| Some(Matcher::Regex(re)))
+            .map_err(|e| e.to_string())
+    }
+
+    /// The matches in one logical line, as (first, last) character indices.
+    fn find(&self, text: &[char], out: &mut Vec<(usize, usize)>) {
+        match self {
+            Matcher::Text { needle, match_case, whole_word } => {
+                let n = needle.len();
+                let mut i = 0;
+                while i + n <= text.len() {
+                    let here = text[i..i + n].iter().zip(needle).all(|(c, m)| fold(*c, *match_case) == *m);
+                    let bounded = !whole_word
+                        || (i == 0 || !is_word(text[i - 1])) && text.get(i + n).is_none_or(|c| !is_word(*c));
+                    if here && bounded {
+                        out.push((i, i + n - 1));
+                        i += n;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            Matcher::Regex(re) => {
+                let mut line = String::with_capacity(text.len());
+                let mut starts = Vec::with_capacity(text.len());
+                for c in text {
+                    starts.push(line.len());
+                    line.push(*c);
+                }
+                for m in re.find_iter(line.as_str()) {
+                    if m.is_empty() {
+                        continue;
+                    }
+                    let first = starts.partition_point(|b| *b < m.start());
+                    let last = starts.partition_point(|b| *b < m.end()) - 1;
+                    out.push((first, last));
+                }
+            }
+        }
+    }
+}
+
 impl Find {
     pub fn new() -> Find {
         Find { focused: true, ..Find::default() }
+    }
+
+    /// Why the regular expression does not compile, while it does not.
+    pub fn invalid(&self) -> Option<&str> {
+        self.matcher.as_ref()?.as_ref().err().map(String::as_str)
     }
 
     pub fn current(&self) -> Option<Hit> {
@@ -65,6 +167,9 @@ impl Find {
 
     /// "3 of 12", "No results", or nothing while the box is empty.
     pub fn count(&self) -> String {
+        if self.invalid().is_some() {
+            return "Invalid pattern".into();
+        }
         match (self.field.is_empty(), self.matches.len(), self.current) {
             (true, _, _) => String::new(),
             (false, 0, _) => "No results".into(),
@@ -79,10 +184,14 @@ impl Find {
     /// scrolled to. New output keeps the current match where it was, without scrolling.
     pub fn update(&mut self, screen: &Screen, changes: u64, bottom: u64) -> Option<Hit> {
         let query = self.field.text();
-        let same_query = self.found.as_ref().is_some_and(|(q, c, _)| q == query && *c == self.match_case);
+        let same_query = self.found.as_ref().is_some_and(|(q, o, _)| q == query && *o == self.options);
         if same_query && self.found.as_ref().is_some_and(|f| f.2 == changes) {
             return None;
         }
+        if !same_query {
+            self.matcher = Matcher::new(query, self.options).transpose();
+        }
+        let matcher = self.matcher.as_ref().and_then(|m| m.as_ref().ok()).cloned();
         let before = self.current();
         let size = (screen.cols(), screen.rows());
         match self.scanned.filter(|(s, _)| same_query && *s == size) {
@@ -91,13 +200,13 @@ impl Find {
                 let from = logical_start(screen, top.min(screen.screen_start()));
                 let first = screen.first_line();
                 self.matches.retain(|h| h.start.line >= first && h.start.line < from);
-                self.matches.extend(search_from(screen, from, query, self.match_case));
+                self.matches.extend(search_from(screen, from, matcher.as_ref()));
             }
             // A new query, or a resize (which rewraps): everything.
-            None => self.matches = search(screen, query, self.match_case),
+            None => self.matches = search_from(screen, screen.first_line(), matcher.as_ref()),
         }
         self.scanned = Some((size, screen.screen_start()));
-        self.found = Some((query.to_string(), self.match_case, changes));
+        self.found = Some((query.to_string(), self.options, changes));
         if same_query {
             self.current = before.and_then(|b| {
                 self.matches.iter().position(|h| h.start == b.start).or_else(|| self.last_before(b.start))
@@ -130,8 +239,11 @@ impl Find {
 
 /// Every match of `query` in the screen and its scrollback, top to bottom, not overlapping.
 /// Without `match_case` letters match whatever their case. Rows joined by a wrap are one line.
+#[cfg(test)]
 pub fn search(screen: &Screen, query: &str, match_case: bool) -> Vec<Hit> {
-    search_from(screen, screen.first_line(), query, match_case)
+    let options = Options { match_case, ..Options::default() };
+    let matcher = Matcher::new(query, options).ok().flatten();
+    search_from(screen, screen.first_line(), matcher.as_ref())
 }
 
 /// The first line of the logical line `line` belongs to: back over the rows a wrap continued.
@@ -144,13 +256,10 @@ fn logical_start(screen: &Screen, mut line: u64) -> u64 {
 }
 
 /// [`search`] from line `from` on, which starts a logical line.
-fn search_from(screen: &Screen, from: u64, query: &str, match_case: bool) -> Vec<Hit> {
-    let fold = |c: char| if match_case { c } else { c.to_lowercase().next().unwrap_or(c) };
-    let needle: Vec<char> = query.chars().map(fold).collect();
+fn search_from(screen: &Screen, from: u64, matcher: Option<&Matcher>) -> Vec<Hit> {
     let mut out = Vec::new();
-    if needle.is_empty() {
-        return out;
-    }
+    let Some(matcher) = matcher else { return out };
+    let mut found = Vec::new();
     let (mut line, end) = (from.max(screen.first_line()), screen.end_line());
     // One logical line: its characters and, for each, its first cell and the column of its last.
     let mut text: Vec<char> = Vec::new();
@@ -167,7 +276,7 @@ fn search_from(screen: &Screen, from: u64, query: &str, match_case: bool) -> Vec
                 if cell.is_spacer() {
                     continue;
                 }
-                text.push(fold(cell.ch));
+                text.push(cell.ch);
                 cells.push((Point::new(line, col), col + usize::from(cell.width.max(1)) - 1));
             }
             line += 1;
@@ -179,16 +288,11 @@ fn search_from(screen: &Screen, from: u64, query: &str, match_case: bool) -> Vec
             text.pop();
             cells.pop();
         }
-        let n = needle.len();
-        let mut i = 0;
-        while i + n <= text.len() {
-            if text[i..i + n] == needle[..] {
-                let (last, last_col) = cells[i + n - 1];
-                out.push(Hit { start: cells[i].0, end: Point::new(last.line, last_col) });
-                i += n;
-            } else {
-                i += 1;
-            }
+        found.clear();
+        matcher.find(&text, &mut found);
+        for &(first, last) in &found {
+            let (end, end_col) = cells[last];
+            out.push(Hit { start: cells[first].0, end: Point::new(end.line, end_col) });
         }
     }
     out
@@ -239,6 +343,8 @@ pub struct Bar {
     pub field: Rect,
     pub count: Rect,
     pub case: Rect,
+    pub word: Rect,
+    pub regex: Rect,
     pub previous: Rect,
     pub next: Rect,
     pub close: Rect,
@@ -246,23 +352,26 @@ pub struct Bar {
 
 pub const BAR_H: f32 = 34.0;
 const BUTTON: f32 = 26.0;
-const COUNT_W: f32 = 78.0;
+const COUNT_W: f32 = 92.0;
+const TOGGLE: f32 = 28.0;
 
 impl Bar {
-    /// The bar at the top right of the terminal's area, 360 px wide or what fits.
+    /// The bar at the top right of the terminal's area, 430 px wide or what fits.
     pub fn layout(area: Rect) -> Bar {
-        let w = 360.0_f32.min((area.w - 16.0).max(0.0));
+        let w = 430.0_f32.min((area.w - 16.0).max(0.0));
         let card = Rect::new(area.right() - 8.0 - w, area.y + 8.0, w, BAR_H);
         let y = card.y + (BAR_H - BUTTON) / 2.0;
         let button = |right: f32| Rect::new(right - BUTTON, y, BUTTON, BUTTON);
         let close = button(card.right() - 4.0);
         let next = button(close.x - 2.0);
         let previous = button(next.x);
-        let case = Rect::new(previous.x - 6.0 - 30.0, y, 30.0, BUTTON);
+        let regex = Rect::new(previous.x - 6.0 - TOGGLE, y, TOGGLE, BUTTON);
+        let word = Rect::new(regex.x - 2.0 - TOGGLE, y, TOGGLE, BUTTON);
+        let case = Rect::new(word.x - 2.0 - TOGGLE, y, TOGGLE, BUTTON);
         let count = Rect::new(case.x - 4.0 - COUNT_W, card.y, COUNT_W, BAR_H);
         let icon = Rect::new(card.x + 4.0, y, BUTTON, BUTTON);
         let field = Rect::new(icon.right() + 2.0, card.y, (count.x - icon.right() - 6.0).max(0.0), BAR_H);
-        Bar { card, icon, field, count, case, previous, next, close }
+        Bar { card, icon, field, count, case, word, regex, previous, next, close }
     }
 }
 
@@ -329,7 +438,9 @@ impl AppState {
             KeyName::Enter | KeyName::F(3) => self.find_step(!only_shift),
             KeyName::Up => self.find_step(true),
             KeyName::Down => self.find_step(false),
-            KeyName::Char('c' | 'C') if mods.alt && !mods.ctrl => self.toggle_find_case(),
+            KeyName::Char('c' | 'C') if mods.alt && !mods.ctrl => self.toggle_find(FindControl::Case),
+            KeyName::Char('w' | 'W') if mods.alt && !mods.ctrl => self.toggle_find(FindControl::Word),
+            KeyName::Char('r' | 'R') if mods.alt && !mods.ctrl => self.toggle_find(FindControl::Regex),
             KeyName::Char('f' | 'F') if mods.ctrl && mods.shift && !mods.alt => self.open_find(),
             _ => {
                 let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()) else {
@@ -352,17 +463,34 @@ impl AppState {
         }
     }
 
-    fn toggle_find_case(&mut self) {
+    fn toggle_find(&mut self, control: FindControl) {
         if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()) {
-            find.match_case = !find.match_case;
+            let o = &mut find.options;
+            match control {
+                FindControl::Case => o.match_case = !o.match_case,
+                FindControl::Word => o.whole_word = !o.whole_word,
+                FindControl::Regex => o.regex = !o.regex,
+                _ => return,
+            }
         }
         self.find_changed();
+    }
+
+    /// The box's text changed through its menu (Cut, Paste): find again.
+    pub(crate) fn find_edited(&mut self) {
+        self.find_changed();
+    }
+
+    /// The box of the focused pane's bar and where it was drawn, for the mouse.
+    pub(crate) fn find_field(&mut self) -> Option<(&mut TextField, Option<FieldHit>)> {
+        let find = self.tabs.shown_mut()?.focused_term_mut().find.as_mut()?;
+        Some((&mut find.field, find.hit))
     }
 
     /// A press on a control of the bar.
     pub fn find_press(&mut self, control: FindControl) {
         match control {
-            FindControl::Field => {
+            FindControl::Field | FindControl::Text => {
                 if let Some(find) = self.tabs.shown_mut().and_then(|tab| tab.focused_term_mut().find.as_mut()) {
                     find.focused = true;
                 }
@@ -371,7 +499,7 @@ impl AppState {
                 }
                 self.clear_session_text_focus();
             }
-            FindControl::Case => self.toggle_find_case(),
+            FindControl::Case | FindControl::Word | FindControl::Regex => self.toggle_find(control),
             FindControl::Previous => self.find_step(true),
             FindControl::Next => self.find_step(false),
             FindControl::Close => self.close_find(),
@@ -389,12 +517,22 @@ impl AppState {
             return;
         }
         let clip = p.clip(area);
-        p.frame(bar.card, 6.0, pal.popup, if focused { pal.accent } else { pal.popup_line });
+        let invalid = find.invalid().is_some();
+        let edge = if invalid {
+            pal.danger
+        } else if focused {
+            pal.accent
+        } else {
+            pal.popup_line
+        };
+        p.frame(bar.card, 6.0, pal.popup, edge);
         p.icon(glyph::SEARCH, 14.0, bar.icon.cx(), bar.icon.cy(), pal.muted);
         let colors = FieldColors { text: pal.text, placeholder: pal.muted, selection: pal.selection, caret: pal.text };
-        find.field.draw(p, bar.field, Face::Ui, 13.0, &colors, "Find", focused, caret_on);
+        let placeholder = if find.options.regex { "Find (regular expression)" } else { "Find" };
+        find.field.draw(p, bar.field, Face::Ui, 13.0, &colors, placeholder, focused, caret_on);
+        find.hit = crate::fieldmouse::hit(p, bar.field, 13.0);
         let count = find.count();
-        let none = find.matches.is_empty() && !find.field.is_empty();
+        let none = invalid || find.matches.is_empty() && !find.field.is_empty();
         p.text(Face::Ui, 12.0, bar.count.x, bar.count.cy(), &count, if none { pal.danger } else { pal.muted }, COUNT_W);
         let button = |p: &mut Painter, r: Rect, control: FindControl, on: bool| {
             let hot = hover == Some(Target::Find(control));
@@ -404,8 +542,17 @@ impl AppState {
                 p.rbox(r, 5.0, pal.hover);
             }
         };
-        button(p, bar.case, FindControl::Case, find.match_case);
-        p.text_center(Face::Ui, 12.0, bar.case, "Aa", if find.match_case { pal.text } else { pal.muted });
+        let o = find.options;
+        let ink = |on: bool| if on { pal.text } else { pal.muted };
+        button(p, bar.case, FindControl::Case, o.match_case);
+        p.text_center(Face::Ui, 12.0, bar.case, "Aa", ink(o.match_case));
+        // Whole word: "ab" over a bar, as editors draw it.
+        button(p, bar.word, FindControl::Word, o.whole_word);
+        let word = Rect::new(bar.word.x, bar.word.y - 1.0, bar.word.w, bar.word.h);
+        p.text_center(Face::Ui, 12.0, word, "ab", ink(o.whole_word));
+        p.fill(Rect::new(bar.word.x + 8.0, bar.word.bottom() - 7.0, bar.word.w - 16.0, 1.0), ink(o.whole_word));
+        button(p, bar.regex, FindControl::Regex, o.regex);
+        p.text_center(Face::Mono, 12.0, bar.regex, ".*", ink(o.regex));
         for (r, control, icon) in [
             (bar.previous, FindControl::Previous, glyph::UP),
             (bar.next, FindControl::Next, glyph::DOWN),
@@ -417,8 +564,11 @@ impl AppState {
         }
         p.restore(clip);
         self.hits.push((bar.card, Target::Find(FindControl::Field)));
+        self.hits.push((bar.field, Target::Find(FindControl::Text)));
         for (r, control) in [
             (bar.case, FindControl::Case),
+            (bar.word, FindControl::Word),
+            (bar.regex, FindControl::Regex),
             (bar.previous, FindControl::Previous),
             (bar.next, FindControl::Next),
             (bar.close, FindControl::Close),
@@ -431,8 +581,10 @@ impl AppState {
 /// The tooltip of a control of the bar.
 pub fn tip_of(control: FindControl) -> Option<&'static str> {
     Some(match control {
-        FindControl::Field => return None,
+        FindControl::Field | FindControl::Text => return None,
         FindControl::Case => "Match case (Alt+C)",
+        FindControl::Word => "Match whole word (Alt+W)",
+        FindControl::Regex => "Use regular expression (Alt+R)",
         FindControl::Previous => "Previous match, above (Enter)",
         FindControl::Next => "Next match, below (Shift+Enter)",
         FindControl::Close => "Close (Escape)",

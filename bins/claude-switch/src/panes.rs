@@ -131,6 +131,8 @@ pub struct Divider {
 /// The panes of a tab beyond its own terminal, how they are arranged and which has the keyboard.
 pub struct Panes {
     pub extra: Vec<(PaneId, Term)>,
+    /// The folder each shell pane was started in, kept for reopening the tab (`saved`).
+    pub folders: Vec<(PaneId, std::path::PathBuf)>,
     pub tree: Node,
     pub focus: PaneId,
     next: PaneId,
@@ -145,6 +147,7 @@ impl Default for Panes {
     fn default() -> Panes {
         Panes {
             extra: Vec::new(),
+            folders: Vec::new(),
             tree: Node::Leaf(MAIN),
             focus: MAIN,
             next: MAIN + 1,
@@ -205,6 +208,7 @@ impl Panes {
         }
         let i = self.extra.iter().position(|(p, _)| *p == id)?;
         let (_, term) = self.extra.remove(i);
+        self.folders.retain(|(p, _)| *p != id);
         if self.focus == id {
             // The pane before it in reading order, or the first.
             let left = self.ids();
@@ -362,38 +366,54 @@ impl AppState {
                 Axis::Down => (cols, (rows.saturating_sub(1) / 2).max(1)),
             }
         });
-        let term = if self.source.is_demo() {
-            let mut t = Term::empty(size);
-            t.feed(format!("Demo: no shell started in {}\r\n", cwd.display()).as_bytes());
-            t
-        } else {
-            let mut l = claude_switch_core::launch::shell(&cwd);
-            let spawned = crate::run::native_program(&l.program).and_then(|program| {
-                l.program = program;
-                Term::spawn(&crate::term::command(&l), size, self.term_wake())
-            });
-            match spawned {
-                Ok(t) => t,
-                Err(e) => return self.error("Could not start a shell", format!("{}: {e}", l.program.display())),
-            }
+        let term = match self.shell_term(&cwd, size) {
+            Ok(t) => t,
+            Err(e) => return self.error("Could not start a shell", e),
         };
         let before = self.tabs.get(id).map(|t| t.focused_pane());
         let Some(tab) = self.tabs.get_mut(id) else { return };
-        if tab.panes.split(axis, term).is_some() {
+        if let Some(pane) = tab.panes.split(axis, term) {
+            tab.panes.folders.push((pane, cwd));
             self.pane_focus_moved(id, before);
         }
     }
 
+    /// A pane's shell in `cwd` (in the demo, a terminal with no program that says so).
+    pub(crate) fn shell_term(&self, cwd: &std::path::Path, size: (u16, u16)) -> Result<Term, String> {
+        if self.source.is_demo() {
+            let mut t = Term::empty(size);
+            t.feed(format!("Demo: no shell started in {}\r\n", cwd.display()).as_bytes());
+            return Ok(t);
+        }
+        let mut l = claude_switch_core::launch::shell(cwd);
+        let spawned = crate::run::native_program(&l.program).and_then(|program| {
+            l.program = program;
+            Term::spawn(&crate::term::command(&l), size, self.term_wake())
+        });
+        spawned.map_err(|e| format!("{}: {e}", l.program.display()))
+    }
+
     /// Closes the focused pane of tab `id`, asking while its program runs. The last pane closes
-    /// the tab; the tab's own pane closes only last, since Chat and the session follow it.
-    pub fn ask_close_pane(&mut self, now: Instant, id: u64) {
+    /// the tab. The tab's own pane never closes alone, since Chat and the session follow it:
+    /// with other panes open, closing it asks to close the whole tab.
+    pub fn ask_close_pane(&mut self, id: u64) {
         let Some(tab) = self.tabs.get(id) else { return };
         if !tab.panes.is_split() {
             return self.ask_close_tab(id);
         }
         let pane = tab.focused_pane();
         if pane == MAIN {
-            self.toast("The tab's own pane closes last: close the other panes first, or the tab.".into(), now);
+            // Chat, the session view and the safeguard follow this pane: it never goes alone.
+            // Always asked, running or not, since the other panes go with it.
+            let others = tab.panes.count() - 1;
+            let panes = if others == 1 { "the other pane".to_string() } else { format!("the {others} other panes") };
+            let why = if tab.pane.is_some() { "Chat and the session view need this pane, so " } else { "" };
+            self.dialog = Some(Dialog::Confirm {
+                title: "Close the whole tab?".into(),
+                text: format!("{why}closing it closes the tab with {panes}. Their programs end."),
+                ok: "Close tab".into(),
+                then: Pending::CloseTab(id),
+            });
             return;
         }
         if tab.panes.get(pane).is_some_and(Term::running) {
@@ -438,6 +458,8 @@ impl AppState {
         let now = tab.focused_pane();
         if let Some(t) = before.and_then(|b| tab.term_of_mut(b)) {
             t.stop_pointer();
+            // One selection per tab: the one copy and right-click act on is the only one shown.
+            t.selection = None;
             // Its find bar stays open but leaves the keyboard with the pane, so coming back
             // (Next pane, a closed neighbour) types into the program again.
             if let Some(find) = &mut t.find {
@@ -511,6 +533,8 @@ impl AppState {
         self.tabs.shown_mut().and_then(|t| t.panes.drag.take()).is_some()
     }
 }
+
+pub mod saved;
 
 #[cfg(test)]
 mod tests;

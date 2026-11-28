@@ -156,10 +156,27 @@ as the second account, Windows Terminal, the desktop hand-over.
   swatch ("For the toolkit", item 1).
 - Font-family settings, tab reordering, restoring tabs. Done 2026-11-28, not yet tried in the
   running app (only tests and pictures): search in the scrollback (DESIGN.md, "Find in a terminal";
-  not there yet: mouse selection and the right-click menu in its box, regular expressions, whole
-  words) and splits (DESIGN.md, "Panes"; not there yet: keys to split or move between panes,
-  panes in saved and reopened tabs, splits shown in Chat's layout, closing the tab's own pane
-  while others are open, dragging a selection across panes).
+  with mouse selection and the menu in its box, whole words and regular expressions) and splits
+  (DESIGN.md, "Panes"; not there yet: splits shown in Chat's layout, below). Panes come back with
+  reopened tabs; a drag selects within its own pane; closing the tab's own pane under others asks
+  to close the tab (2026-11-28). No keys to split or move between panes: the owner wants no new
+  shortcuts (2026-11-28); the tab's menu and the palette (Split right/down, Close pane, Next pane)
+  stay the way.
+- **Split panes in Chat's layout** (designed 2026-11-28, not built). Today Chat's drawer shows only
+  the Claude pane and the shells wait, unchanged, for the terminal layout. Design: a small switcher in
+  the drawer's header, "Claude · Shell 1 · Shell 2" (shell labels from their folder), shown only
+  when the tab is split; the drawer shows one pane at a time, `Chat::drawer_pane` (default pane 0).
+  Keys in the drawer, paste, the mouse and find go to the pane it shows (`Tab::focused_pane` returns
+  it in Chat instead of always 0); only pane 0's input counts for Chat (already so). Any reason
+  that opens the drawer for Claude (a question, a permission, the shell manager, Press Enter, Stop)
+  switches it back to pane 0 first, and Chat's screen readers keep reading `Tab::term` whatever the
+  drawer shows. The shown shell takes the drawer's size only while shown. Not built because
+  (1) `Screen::resize` cuts lines and never brings them back ("For the toolkit", item 23), so
+  moving a shell between its pane size and the drawer's would lose its output each switch; it
+  needs reflow, or a drawer-sized view that scrolls sideways instead of resizing the shell;
+  (2) the drawer's focus (`drawer_focus`) and auto-open reasons assume the drawer is Claude's, and
+  changing that touches the send gate's safety logic, which wants tests against recorded screens
+  first.
 - Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.
 
 ## For the toolkit (what the app's authors had to work around)
@@ -199,6 +216,10 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 22. No list widget with virtual rows, hover and selection for app data: the Workers tab draws its
     own rows, as the Sessions list does.
+23. `mdshared_term::Screen::resize` does not reflow: a line longer than the new width is cut, and
+    the cells stay gone when the screen widens again. A new split pane therefore starts near the
+    size it will get, and showing split shells in Chat's drawer waits for reflow (Next, "Split
+    panes in Chat's layout").
 
 ### Done in the toolkit
 

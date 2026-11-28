@@ -445,6 +445,7 @@ dependencies = [
  "mdview-render",
  "opencode-cli",
  "png",
+ "regex-automata",
  "serde_json",
  "windows-sys 0.61.2",
  "winit",
