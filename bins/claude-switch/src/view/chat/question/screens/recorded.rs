@@ -225,6 +225,41 @@ fn the_review_step_reads_its_questions_answers_and_highlight() {
 }
 
 #[test]
+fn the_review_step_is_read_over_blank_rows_and_the_inputs_rule_under_it() {
+    // Under "2. Cancel" Claude Code may leave blank rows and the input's rule, plain or named:
+    // taken for the review's last row, the review was not read (owner, 2026-11-28).
+    let review_over = |under: &str| {
+        let rows = [
+            "─".repeat(20).as_str(),
+            "←  ☒ Size  ✔ Submit  →",
+            "",
+            "Review your answers",
+            "",
+            " │ ● Which size should the test use? A long question",
+            " │   that wraps onto a second row.",
+            "   → Small",
+            "",
+            "❯ 1. Submit answers",
+            "  2. Cancel",
+        ]
+        .join("\n");
+        recorded(&format!("cursor 9 2\n{rows}\n{under}"))
+    };
+    let named = "──────────────────── Test session ─";
+    for under in [format!("\n\n\n\n\n{named}"), format!("\n\n{}", "─".repeat(20)), String::new()] {
+        let screen = review_over(&under);
+        let read = review(&screen).expect("the review");
+        assert_eq!(read.highlight, Some(0));
+        let question = "Which size should the test use? A long question that wraps onto a second row.";
+        assert_eq!(read.answers, [(question.to_owned(), "Small".to_owned())]);
+        let panel = panel(&screen).expect("the review as a menu");
+        assert_eq!(panel.menu.expect("its entries").texts(), ["Submit answers", "Cancel"]);
+    }
+    // Text under "Cancel" is no review.
+    assert!(review(&review_over("\nsomething else")).is_none());
+}
+
+#[test]
 fn a_multi_select_shows_its_submit_or_next_row_between_type_something_and_chat_about_this() {
     let row = |fixture: &str| {
         let screen = recorded(fixture);

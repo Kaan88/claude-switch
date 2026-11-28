@@ -445,7 +445,7 @@ pub(super) fn walk_menu(screen: &Screen) -> Option<Menu> {
 fn review_panel(screen: &Screen) -> Option<Panel> {
     let review = review(screen)?;
     let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
-    let last = rows.iter().rposition(|(_, text)| !text.is_empty())?;
+    let last = review_last(&rows)?;
     let entries = (last - 1..=last)
         .map(|row| Entry { row, highlighted: rows[row].0, text: numbered(&rows[row].1).map_or("", |n| n.1).to_owned() })
         .collect();
@@ -1030,9 +1030,17 @@ pub(super) struct Review {
     pub highlight: Option<usize>,
 }
 
+/// The last row the review draws: under "Cancel" Claude Code may leave blank rows and the input
+/// box's rule, plain or with the session's name (2.1.332).
+fn review_last(rows: &[(bool, String)]) -> Option<usize> {
+    rows.iter().rposition(|(_, text)| {
+        !text.is_empty() && !rule(text) && !crate::view::chat::submission::screen::named_rule(text)
+    })
+}
+
 pub(super) fn review(screen: &Screen) -> Option<Review> {
     let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
-    let last = rows.iter().rposition(|(_, text)| !text.is_empty())?;
+    let last = review_last(&rows)?;
     let first = last.checked_sub(1)?;
     let entry = |at: usize, n: usize| numbered(&rows[at].1) == Some((n + 1, REVIEW_ENTRIES[n]));
     (entry(first, 0) && entry(last, 1)).then_some(())?;

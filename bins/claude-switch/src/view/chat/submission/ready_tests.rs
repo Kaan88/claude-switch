@@ -58,6 +58,15 @@ impl Live {
         self.chat().output(now, true, false);
     }
 
+    /// The CLI drew this screen now, read as the window reads output: only a change down to the
+    /// input box is activity.
+    pub(in crate::view::chat) fn draw(&mut self, fixture: &str) {
+        let now = self.now;
+        let screen = recorded(fixture);
+        self.tab().term.screen = screen.clone();
+        self.chat().output_on(now, true, false, &screen);
+    }
+
     /// Time passes and the window's tick runs.
     pub(in crate::view::chat) fn pass(&mut self, time: Duration) -> (Gate, Option<Reason>) {
         self.now += time;
@@ -848,4 +857,123 @@ fn a_forms_typed_answer_ticks_its_box_and_is_left_for_next_or_submit() {
     let now = f.now;
     assert!(question::press(f.tab(), now, Hit::Option(4)));
     assert_eq!(f.writes(), [downs(1)]);
+}
+
+const RULE: &str = "────────────────────";
+const NAMED: &str = "──────────────────── Test session ─";
+
+/// Background agents listed under the input, their row redrawn with `timer`; `above` over the
+/// input's rule.
+fn agents_below(above: &str, timer: &str) -> String {
+    format!(
+        "cursor 2 2\n{above}\n{NAMED}\n❯ \x1b[2msuggested text\x1b[0m\n{RULE}\n  ⏵⏵ auto mode on · 2 background tasks · ↓ to manage\n  ● main\n  ◯ general-purpose  Reading a.rs   {timer} · ↓ 1.0k tokens\n  ↓ 1 more"
+    )
+}
+
+#[test]
+fn background_agents_redrawn_under_the_input_do_not_keep_a_command_from_going() {
+    // Their timers redraw every second while the CLI is at rest: counted as activity, the screen
+    // was never quiet and every command was refused (owner, 2026-11-28).
+    let waiting = "✻ Waiting for 2 background agents to finish";
+    let mut f = Live::new();
+    f.draw(&agents_below(waiting, "1m 02s"));
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert!(f.chat().error.is_none() && f.writes().is_empty());
+    for second in 3..7 {
+        f.pass(QUIET * 2 / 3);
+        f.draw(&agents_below(waiting, &format!("1m 0{second}s")));
+    }
+    assert_eq!(f.writes(), [b"/context".to_vec()]);
+    assert!(f.chat().staging.command.is_none() && f.chat().error.is_none());
+
+    // A row above the input that keeps changing is still activity: never quiet, refused.
+    let mut f = Live::new();
+    f.draw(&agents_below("✻ Thinking (1s)", "1m 02s"));
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    for second in 2..10 {
+        f.pass(QUIET * 2 / 3);
+        f.draw(&agents_below(&format!("✻ Thinking ({second}s)"), "1m 02s"));
+    }
+    assert_eq!(f.chat().error, Some(NO_QUIET_PROMPT));
+    assert!(f.chat().staging.command.is_none() && f.writes().is_empty());
+}
+
+#[test]
+fn only_the_rows_down_to_the_input_box_count_as_activity() {
+    let digest = |fixture: &str| screen::activity_digest(&recorded(fixture));
+    let base = digest(&agents_below("Done.", "1m 02s"));
+    assert_eq!(base, digest(&agents_below("Done.", "1m 03s")), "under the box");
+    assert_ne!(base, digest(&agents_below("Done!", "1m 02s")), "over it");
+    // A menu has no input box: an earlier prompt's mark in the history does not cut it short.
+    let menu = |highlight: usize| {
+        let row = |n: usize, text: &str| format!("{} {n}. {text}", if n == highlight { "❯" } else { " " });
+        format!("cursor 0 0\n❯ hello\n\n{RULE}\n Do you want to proceed?\n{}\n{}", row(1, "Yes"), row(2, "No"))
+    };
+    assert_ne!(digest(&menu(1)), digest(&menu(2)));
+}
+
+#[test]
+fn a_menus_highlighted_choice_is_no_input_mark() {
+    let screen = recorded(&format!("cursor 0 0\n❯ 1. Yes\n  2. No\n❯ 12. Twelve\n❯ hello\n❯ 1.5 is a number\n{RULE}"));
+    assert!(!screen::marks_input(&screen, 0) && !screen::marks_input(&screen, 2));
+    assert!(screen::marks_input(&screen, 3) && screen::marks_input(&screen, 4));
+}
+
+#[test]
+fn a_command_after_slash_model_goes_once_the_idle_screen_is_quiet() {
+    // The turn before `/model` had no `end_turn` record, so the command's own record stays the
+    // newest and Active: the idle screen is what tells it is over.
+    let idle = format!(
+        "cursor 3 2\n❯ /model opus\n  ⎿  Set model to Opus and saved as your default\n{NAMED}\n❯ \n{RULE}\n  ⏵⏵ auto mode on (shift+tab to cycle)"
+    );
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&idle);
+    let now = f.now;
+    assert_eq!(blocked(f.tab(), now, Intent::Slash), Some(BUSY_CMD), "not quiet yet");
+    f.pass(SECOND);
+    let now = f.now;
+    assert_eq!(blocked(f.tab(), now, Intent::Slash), None);
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert_eq!(f.writes(), [b"/context".to_vec()]);
+    // The same transcript with a working line: the turn runs.
+    let mut working = idle.replace("  ⎿  Set model", "✻ Working… (3s)\n  ⎿  Set model");
+    working = working.replacen("cursor 3 2", "cursor 4 2", 1);
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&working);
+    f.pass(SECOND);
+    let now = f.now;
+    assert_eq!(blocked(f.tab(), now, Intent::Slash), Some(BUSY_CMD));
+}
+
+#[test]
+fn a_review_step_over_blank_rows_and_a_named_rule_shows_as_a_card() {
+    // Claude Code left five blank rows and the input's named rule under "2. Cancel": the last
+    // row was taken for the review's last entry, and Chat sent the user to the terminal.
+    let review = format!(
+        "cursor 9 2\n{RULE}\n←  ☒ Size  ✔ Submit  →\n\nReview your answers\n\n │ ● Which size should the test use? A long question\n │   that wraps onto a second row.\n   → Small\n\n❯ 1. Submit answers\n  2. Cancel\n\n\n\n\n\n{NAMED}"
+    );
+    let mut f = Live::new();
+    f.turn();
+    f.draw(&review);
+    // The transcript holds no call while the question waits: a card for the screen's menu.
+    assert_eq!(f.pass(QUIET), (Gate::Check, Some(Reason::Menu)));
+    let shown = f.chat().question.menu.clone().expect("a card");
+    assert!(format!("{shown:?}").contains(r#"["Submit answers", "Cancel"]"#), "{shown:?}");
+    assert_eq!(f.chat().drawer, Drawer::Closed, "no terminal needed");
+    f.send("later");
+    assert!(f.writes().is_empty() && f.chat().queue.is_none());
 }

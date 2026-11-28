@@ -45,9 +45,11 @@ impl ChatInfo {
 
     /// A slash command's record (`<command-name>`), seen before it counts as a prompt. Typed at
     /// rest, it may run in the CLI alone and only print (`/model`, `/effort`): its output ends it
-    /// ([`command_done`](Self::command_done)). Typed during a turn it changes nothing.
+    /// ([`command_done`](Self::command_done)). Typed during a turn it changes nothing. At rest is
+    /// anything but a running turn: a turn may end with no `end_turn` record (a tool result and a
+    /// system notice, an answer whose stop reason was never written).
     pub(super) fn command_started(&mut self, at: u64) {
-        let at_rest = self.latest.is_none_or(|(_, phase)| phase == Phase::EndTurn);
+        let at_rest = self.latest.is_none_or(|(_, phase)| phase != Phase::Active);
         self.command_at = at_rest.then_some(at);
     }
 
@@ -533,7 +535,7 @@ mod tests {
             json!({"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"cargo test"}}]}}),
         ]);
         write(&command);
-        write(&[output]);
+        write(std::slice::from_ref(&output));
         reader.poll().unwrap();
         assert_eq!(phase(&reader), Some(Phase::Active), "the turn goes on");
 
@@ -547,6 +549,19 @@ mod tests {
         reader.poll().unwrap();
         assert_eq!(phase(&reader), Some(Phase::Active));
         assert_eq!(reader.chat().pending, None);
+
+        // A turn whose last answer has no stop reason (no `end_turn` record) is over too: a
+        // command typed after it ends with its output.
+        write(&[
+            json!({"type":"user","message":{"content":"Hello again"}}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Hi."}],"stop_reason":null}}),
+        ]);
+        write(&command);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active), "the command still runs");
+        write(&[output]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::EndTurn), "its output ends it");
     }
 
     #[test]

@@ -256,8 +256,13 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
         Intent::Override if gate == Gate::Running => Some("A turn is running. Use Queue to send after it ends."),
         Intent::Now if !chat.demo && !clean_prompt(&tab.term.screen) => Some(NOT_EMPTY),
         Intent::Slash if pane.model.chat.pending.is_some() => Some(Reason::Tool.label()),
+        // The transcript's running turn counts only while the screen does not read idle: a
+        // command's own record stays the newest and Active when the turn before it had no
+        // `end_turn` (Claude Code 2.1.332), while the CLI is plainly at rest.
         Intent::Slash
-            if gate == Gate::Running || pane.model.chat.latest.is_some_and(|(_, p)| p == ChatPhase::Active) =>
+            if gate == Gate::Running
+                || pane.model.chat.latest.is_some_and(|(_, p)| p == ChatPhase::Active)
+                    && !chat.screen_idle(&tab.term, now) =>
         {
             Some(BUSY_CMD)
         }

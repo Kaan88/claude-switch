@@ -5,6 +5,13 @@
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.
+- Chat: a slash command after `/model` is no longer refused with "A turn is running (the screen
+  reads idle)" when the turn before it ended without an `end_turn` record.
+- Chat: background agents listed under the input (their timers redraw every second) no longer
+  keep the screen from reading quiet, so commands and messages go instead of being refused.
+- Chat: the "Review your answers" step of a question shows as a card when blank rows and the
+  input's rule are drawn under it, instead of sending you to the terminal. A menu's highlighted
+  choice (`❯ 1. Yes`) is no longer taken for the input's mark.
 
 ## 0.1.6 (2026-11-28)
 
