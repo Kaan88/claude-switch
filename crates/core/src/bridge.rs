@@ -159,13 +159,13 @@ impl Job {
         }
         let ms = |key: &str| v.get(key).and_then(Value::as_u64).filter(|&t| t > 0);
         let pid = |key: &str| v.get(key).and_then(Value::as_u64).and_then(|p| u32::try_from(p).ok()).filter(|&p| p > 0);
-        let text = |key: &str| str_field(&v, key).map(|s| crate::util::squeeze(s, 200)).filter(|s| !s.is_empty());
+        let text = |key: &str| str_field(&v, key).map(|s| plain(s, 200)).filter(|s| !s.is_empty());
         Some(Self {
             id: id.to_owned(),
             label: text("label"),
             worker: text("worker"),
             model: text("model"),
-            directory: str_field(&v, "directory").map(PathBuf::from).unwrap_or_default(),
+            directory: str_field(&v, "directory").map(|s| PathBuf::from(plain(s, MAX_PATH))).unwrap_or_default(),
             state: State::parse(str_field(&v, "status").unwrap_or("")),
             owner_gone: false,
             started_ms: ms("started").unwrap_or(saved_ms),
@@ -173,7 +173,7 @@ impl Job {
             finished_ms: ms("finished"),
             last_event_ms: ms("lastEvent"),
             last_tool: text("lastTool"),
-            in_flight: v.get("inFlight").and_then(|f| str_field(f, "label")).map(|s| crate::util::squeeze(s, 200)),
+            in_flight: v.get("inFlight").and_then(|f| str_field(f, "label")).map(|s| plain(s, 200)),
             waiting: text("waiting"),
             owner: pid("owner"),
             child_pid: pid("childPid"),
@@ -190,6 +190,16 @@ impl Job {
         Self::parse(id, &bytes, dir, saved)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not a job's state"))
     }
+}
+
+/// The longest folder shown: Windows' long-path limit.
+const MAX_PATH: usize = 1024;
+
+/// A text of the job file as the window may draw it: one line, no control characters, at most
+/// `max` characters.
+fn plain(text: &str, max: usize) -> String {
+    let text: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    crate::util::squeeze(&text, max)
 }
 
 pub fn unix_ms(t: SystemTime) -> u64 {
@@ -257,6 +267,8 @@ pub enum Refused {
     NotTheJobs(u32),
     /// The process cannot be looked at (another user's, or an elevated one).
     Unknown(u32),
+    /// It runs as another user, or elevated while Switch is: Switch does not end it.
+    Protected(u32),
     /// It could not be ended (access denied).
     Denied(u32, String),
     /// The state file could not be read.
@@ -279,6 +291,10 @@ impl std::fmt::Display for Refused {
             Self::Unknown(pid) => write!(
                 f,
                 "Process {pid} could not be checked (it may belong to another user or run elevated), so it was not ended."
+            ),
+            Self::Protected(pid) => write!(
+                f,
+                "Process {pid} runs as another user or elevated, so Switch does not end it. Nothing was ended."
             ),
             Self::Denied(pid, why) => write!(f, "Process {pid} could not be ended: {why}"),
             Self::Unreadable(why) => write!(f, "The job's file could not be read: {why}"),

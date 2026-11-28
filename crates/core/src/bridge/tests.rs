@@ -36,6 +36,41 @@ fn only_the_bridges_state_file_names_are_jobs() {
 }
 
 #[test]
+fn the_job_files_texts_are_one_bounded_line_without_control_characters() {
+    let t = TempDir::new("bridge-plain");
+    let long = format!("C:\\work\\{}", "d".repeat(5_000));
+    let text = state(
+        "job_a_1",
+        "running",
+        json!({"directory": "C:\\x\u{1b}[31m\nred", "label": "a\u{7}b\r\nc", "worker": long}),
+    );
+    let job = Job::parse("job_a_1", text.as_bytes(), &t.0, 1).unwrap();
+    assert_eq!(job.directory, PathBuf::from("C:\\x [31m red"));
+    assert_eq!(job.label.as_deref(), Some("a b c"));
+    assert_eq!(job.worker.as_ref().unwrap().chars().count(), 200);
+    let text = state("job_a_1", "running", json!({"directory": long}));
+    let job = Job::parse("job_a_1", text.as_bytes(), &t.0, 1).unwrap();
+    assert_eq!(job.directory.as_os_str().len(), 1024);
+}
+
+#[test]
+fn a_process_tree_is_walked_only_through_held_parents_and_never_into_switch() {
+    // 10 is the job's worker; 20 is Switch (say, run by the worker's `cargo run`), 21 under it.
+    let all = [(10, 1), (11, 10), (12, 11), (20, 11), (21, 20), (30, 99)];
+    assert_eq!(process::next_round(&all, &[10], 20), [(11, 10)]);
+    assert_eq!(process::next_round(&all, &[10, 11], 20), [(12, 11)], "Switch is skipped");
+    assert!(process::next_round(&all, &[10, 11, 12], 20).is_empty(), "and so is all under it");
+    // A pid found in a snapshot is under its parent only if it existed then and is no older.
+    assert!(process::accept(150, 200, 100));
+    assert!(!process::accept(250, 200, 100), "given out again after the snapshot");
+    assert!(!process::accept(50, 200, 100), "older than its parent: a stale parent pid");
+    // Only the user's own processes, and no elevated one for an elevated Switch.
+    assert!(process::may_end(true, false, false) && process::may_end(true, false, true));
+    assert!(process::may_end(true, true, false));
+    assert!(!process::may_end(true, true, true) && !process::may_end(false, false, false));
+}
+
+#[test]
 fn a_state_file_reads_into_a_job_and_its_log_is_the_file_beside_it() {
     let t = TempDir::new("bridge-parse");
     let text = state(
@@ -101,7 +136,9 @@ fn a_cancel_says_why_it_cannot_end_a_job_that_is_not_running() {
     assert_eq!(cancel(&t.0, "job_a_2", alive), Err(Refused::Queued));
     assert_eq!(cancel(&t.0, "job_a_3", alive), Err(Refused::NoProcess));
     assert!(matches!(cancel(&t.0, "job_a_9", alive), Err(Refused::Unreadable(_))));
-    for refusal in [Refused::Queued, Refused::NotTheJobs(9), Refused::Ended(9), Refused::Unknown(9)] {
+    for refusal in
+        [Refused::Queued, Refused::NotTheJobs(9), Refused::Ended(9), Refused::Unknown(9), Refused::Protected(9)]
+    {
         assert!(refusal.to_string().ends_with('.'), "{refusal}");
     }
 }

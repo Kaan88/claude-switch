@@ -288,9 +288,18 @@ running-session poll, and the tab goes (Sessions shows) when the folder does. `c
   worker, so the pid is taken for the job's only while Windows knows it as a child of the job's
   `owner` (Windows keeps a process's parent pid after the parent exits) created between the job's
   start and its last save (2 s of slack each way); the snapshot is taken while a handle to it is
-  held, so the pid cannot change hands between the check and the end. Then its tree ends, the
-  deepest first, each process checked to be no older than its parent (a stale parent pid is not a
-  child) and held open from that check to its end. A queued job has no process: only the bridge
+  held, so the pid cannot change hands between the check and the end. Only a process of Switch's
+  own user is ended, and, when Switch runs elevated, only one that does not: the job file lies in
+  the user's temporary folder, so an elevated Switch must not end for it what the user could not.
+  The worker is ended first, so it starts nothing more, then what ran under it, round by round
+  until a round finds nothing new (at most 64 rounds, 512 processes). Every process ended stays
+  held open to the end, so the pids that name parents in later snapshots cannot change hands. A
+  process under one is taken only when it was created no later than the snapshot that found it
+  (a pid given out again after the snapshot is newer) and no earlier than its parent (a stale
+  parent pid), and still names that parent in a snapshot taken after it was opened. Switch
+  itself, and everything under it (a worker that ran `cargo run` on Switch), is never ended. The
+  job file's texts are drawn as one line without control characters (the folder at most 1 024
+  characters, the others 200). A queued job has no process: only the bridge
   (`opencode_cancel`) can take it out of its queue, and the tab says so. With its owner there, the
   bridge sees the worker end and marks the job; with the owner gone the file keeps saying running.
   The demo (`--demo --demo-jobs`) shows made-up jobs from a temporary folder of its own and ends
