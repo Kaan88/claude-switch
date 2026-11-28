@@ -901,7 +901,7 @@ mod tests {
     fn a_background_fork_of_the_tabs_session_is_not_taken_for_the_tab() {
         // `/fork` (Claude Code 2.1.332) starts a background session in the same folder and account,
         // with its own process and live record (`kind: bg`).
-        let cwd = PathBuf::from(r"C:	est");
+        let cwd = PathBuf::from(r"C:\test");
         let record = |id: &str, pid| Running {
             session_id: id.into(),
             pid,

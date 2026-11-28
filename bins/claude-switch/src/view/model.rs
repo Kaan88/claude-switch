@@ -854,12 +854,7 @@ mod tests {
         let dir = crate::testing::unique("cs-model-rewind");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("s.jsonl");
-        let line = |v: serde_json::Value| {
-            format!(
-                "{v}
-"
-            )
-        };
+        let line = |v: serde_json::Value| format!("{v}\n");
         let prompt = |uuid: &str, parent: Option<&str>, text: &str| {
             line(serde_json::json!({"type":"user","uuid":uuid,"parentUuid":parent,"message":{"content":text}}))
         };

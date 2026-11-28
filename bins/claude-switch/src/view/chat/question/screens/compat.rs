@@ -216,13 +216,7 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
         }
         // Any one of the parts: an entry `/config` may not list in the recorded context.
         "shows-any" => {
-            let all: String = (0..s.rows())
-                .map(|r| {
-                    s.row_text(r)
-                        + "
-"
-                })
-                .collect();
+            let all: String = (0..s.rows()).map(|r| s.row_text(r) + "\n").collect();
             if want.split(" | ").any(|part| all.contains(part.trim())) {
                 want.to_owned()
             } else {
