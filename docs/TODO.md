@@ -44,9 +44,9 @@ with queued messages and Send now (Claude Code's Ctrl+X Ctrl+S). Still to do:
   patch on real edits (diff line numbers), "Run in background" on the working line, queued
   messages and their Send now (recorded only through `recorder compat`), a card scrolled under
   its pinned foot.
-- Never drawn: a form built from the transcript's pending call (laid out as the form read from the
-  screen, which `chat_shots` draws), the rewind card's choices (the picture shows a rewind on its
-  way).
+- Never drawn: the rewind card's choices (the picture shows a rewind on its way). A form built
+  from the transcript's pending call is drawn since 2026-11-28 (`chat_shots` `form-tabs`,
+  `form-submit`).
 - Decided, to confirm by the owner: typing while a card is docked still goes nowhere (the card
   says so once); Stop is a small square in its own slot beside Send whenever a turn runs; Chat's
   side padding is 28 px, 12 px under a 560 px column; code blocks sit about 40 px lower (header
@@ -149,6 +149,12 @@ as the second account, Windows Terminal, the desktop hand-over.
     the recording), and whether the transcript holds the call while the question waits (`asked`):
     2.1.332 did not, and then the card built from the call (and its preview) never shows while the
     question waits, only the menu card read from the screen (now without the box's rows).
+  - Form tabs and the Submit step built 2026-11-28 on the same branch (DESIGN.md, "Forms"), for
+    the card built from the transcript's call. Seen in `chat_shots` states `form-tabs` and
+    `form-submit` (same sizes and themes) and unit tests; the keys to Claude Code's form are the
+    ones already tested over recorded screens. Not done: tabs on the menu card read from the
+    screen, which is what shows while Claude Code (as 2.1.332 did) keeps the call out of the
+    transcript until it is answered: that card still answers one page at a time.
 - **Workers tab**: built 2026-11-28 on branch `feature/workers-tab` (DESIGN.md, "The Workers tab").
   Seen only in the picture test `workers_tab_shots` (made-up jobs, both themes, wide and 760×480)
   and unit tests; never in the running app against the real folder. To try: the first scan of a

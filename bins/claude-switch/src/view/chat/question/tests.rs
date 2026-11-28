@@ -1625,15 +1625,71 @@ fn enter_in_a_forms_field_turns_the_page_and_submits_on_the_last_question() {
     assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
     assert_eq!(f.chat().question.form.page, 1, "Enter turns to the next question");
     assert!(f.writes().is_empty());
-    // On the last question Enter is Submit, with the same checks.
+    // After the last question Enter turns to the Submit step, which has no field.
     assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.chat().question.form.page, 2);
+    assert!(!f.chat().question.focus && f.writes().is_empty());
+    // Submit there checks first: the second question has no answer, and is shown.
+    assert!(press(f.tab(), now, Hit::Submit));
     assert_eq!(f.chat().question.error, Some(UNANSWERED));
+    assert_eq!(f.chat().question.form.page, 1);
     assert!(f.writes().is_empty());
     press(f.tab(), now, Hit::Option(0));
-    assert!(press(f.tab(), now, Hit::Field));
-    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert!(press(f.tab(), now, Hit::Page(2)));
+    assert_eq!(f.chat().question.form.page, 2);
+    assert!(press(f.tab(), now, Hit::Submit));
     assert_eq!(f.writes(), [b"\r".to_vec()], "Large is highlighted: chosen");
     assert!(f.chat().question.step.is_some());
+}
+
+#[test]
+fn a_forms_tabs_name_its_questions_and_submit_and_mark_what_the_terminal_shows() {
+    let qs = [size(), speed()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    f.screen(&form_screen(&qs, 0, 0, &[], None), now);
+    let tab = f.tab();
+    let pane = tab.pane.as_mut().unwrap();
+    pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
+    assert_eq!(f.chat().question.form_shown, Some(0), "the terminal shows the first question");
+    press(f.tab(), now, Hit::Option(1));
+    let tabs = |f: &mut Fixture| {
+        let pane = f.tab().pane.as_mut().unwrap();
+        let parts = cards::parts(&pane.chat, &pane.model, 600.0).expect("the form's card");
+        parts
+            .into_iter()
+            .find_map(|p| match p {
+                cards::Part::Tabs(tabs) => Some(tabs),
+                _ => None,
+            })
+            .expect("its tabs")
+    };
+    let row = tabs(&mut f);
+    let names: Vec<(&str, bool, bool, bool)> =
+        row.iter().map(|t| (t.label.as_str(), t.answered, t.current, t.terminal)).collect();
+    assert_eq!(
+        names,
+        [
+            (qs[0].header.as_str(), true, true, true),
+            (qs[1].header.as_str(), false, false, false),
+            ("Submit", false, false, false)
+        ]
+    );
+    // A tab turns the card's page, and nothing is written.
+    assert!(press(f.tab(), now, Hit::Page(2)));
+    assert!(f.writes().is_empty());
+    let pane = f.tab().pane.as_mut().unwrap();
+    let parts = cards::parts(&pane.chat, &pane.model, 600.0).unwrap();
+    let answers = parts.iter().find_map(|p| match p {
+        cards::Part::Answers(rows) => Some(rows.clone()),
+        _ => None,
+    });
+    let answers = answers.expect("the Submit step lists the answers");
+    assert_eq!(answers[0], (collapse(&qs[0].question), collapse(&qs[0].options[1].label), true));
+    assert!(!answers[1].2, "the second has none yet");
+    assert!(parts.iter().any(
+        |p| matches!(p, cards::Part::Buttons(b) if b.iter().any(|(_, h, primary)| *h == Hit::Submit && *primary))
+    ));
 }
 
 #[test]

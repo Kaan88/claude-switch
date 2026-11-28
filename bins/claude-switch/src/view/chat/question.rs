@@ -278,6 +278,8 @@ pub enum Hit {
     /// A form's previous and next question in the card (nothing is sent).
     Back,
     Next,
+    /// A form's tab: its question, or the Submit step after the last (nothing is sent).
+    Page(usize),
     /// Send the form's answers.
     Submit,
     /// Scroll a long permission prompt on (nothing is sent).
@@ -488,6 +490,9 @@ pub(super) struct Card {
     busy: Option<&'static str>,
     /// What the user picked in a form's card.
     form: Picks,
+    /// The form's question the terminal shows (the number of questions for its review), read as
+    /// before every key; `None` when the screen shows none of them.
+    pub(super) form_shown: Option<usize>,
     /// The previews of the question's options, as the card shows them.
     pub(in crate::view::chat) previews: preview::State,
     /// The card stands in the composer's place: it waits for an answer, and nothing is sent
@@ -805,6 +810,23 @@ fn typed_shows(multi: bool, row: &str, text: &str) -> bool {
     } else {
         !pristine(false, row) && squash(row).contains(&squash(text))
     }
+}
+
+/// What the card holds for each question of a form, as the review writes it (the chosen labels
+/// in order, then the text); empty where it holds nothing. Not checked: Submit checks.
+pub(super) fn form_summary(questions: &[Question], picks: &Picks, field: &TextField) -> Vec<String> {
+    questions
+        .iter()
+        .enumerate()
+        .map(|(k, q)| {
+            let raw = if k == picks.page { field.text() } else { picks.texts.get(k).map_or("", String::as_str) };
+            let chosen = picks.chosen.get(k).map_or(&[][..], Vec::as_slice);
+            let mut parts: Vec<String> =
+                q.options.iter().zip(chosen).filter(|(_, on)| **on).map(|(o, _)| collapse(&o.label)).collect();
+            parts.extend(Some(collapse(raw)).filter(|t| !t.is_empty()));
+            parts.join(", ")
+        })
+        .collect()
 }
 
 /// A question's answer as the review writes it: the chosen labels in order, then the text.
@@ -1190,6 +1212,14 @@ impl Chat {
             Kind::Tool(_) => shown.as_ref().is_some_and(|s| s.matched),
         });
         let answerable = answerable.map(|p| p.item.offset);
+        // Which of the form's questions the terminal shows: the card marks its tab.
+        let form_shown = match pending.as_ref().map(|p| p.kind) {
+            Some(Kind::Question(Some(questions))) if form(questions) => (0..questions.len())
+                .find(|&at| form_question(screen, questions, at).is_some())
+                .or_else(|| screens::review(screen).map(|_| questions.len())),
+            _ => None,
+        };
+        changed |= std::mem::replace(&mut self.question.form_shown, form_shown) != form_shown;
         // A rewind that stopped and left its screen open keeps its card (its reason and that the
         // screen is still open) while that screen shows, and goes once it is gone.
         let rewind_screen = screens::rewind_list(screen).is_some() || screens::rewind_actions(screen).is_some();
@@ -1322,13 +1352,14 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         _ => None,
     });
     if let Some((item, questions)) = form.clone()
-        && matches!(hit, Hit::Option(_) | Hit::Back | Hit::Next | Hit::Answer | Hit::Submit)
+        && matches!(hit, Hit::Option(_) | Hit::Back | Hit::Next | Hit::Answer | Hit::Submit | Hit::Page(_))
     {
         // Enter in the field (`Answer`) turns the page, and on the last question submits.
         let card = &mut pane.chat.question;
         card.form.fit(&questions, &card.field);
-        let last = card.form.page + 1 >= questions.len();
-        if hit != Hit::Submit && !(hit == Hit::Answer && last) {
+        // Enter on the Submit step submits, as its button does; elsewhere it turns the page.
+        let review = card.form.page >= questions.len();
+        if hit != Hit::Submit && !(hit == Hit::Answer && review) {
             return press_form(card, hit, &questions);
         }
         if busy(&mut pane.chat) {
@@ -1468,13 +1499,17 @@ impl Card {
         let text = self.form.texts.get(to).cloned().unwrap_or_default();
         self.field.set_text(&text);
         self.error = None;
+        // The Submit step has no field: the keys go back to the card.
+        if to >= self.form.texts.len() {
+            self.focus = false;
+        }
     }
 }
 
 /// A pick or a page turn in a form's card: nothing goes to the terminal.
 fn press_form(card: &mut Card, hit: Hit, questions: &[Question]) -> bool {
     card.form.fit(questions, &card.field);
-    let page = card.form.page.min(questions.len().saturating_sub(1));
+    let page = card.form.page.min(questions.len());
     match hit {
         Hit::Option(i) => {
             let Some(row) = card.form.chosen.get_mut(page).filter(|row| i < row.len()) else { return false };
@@ -1491,8 +1526,11 @@ fn press_form(card: &mut Card, hit: Hit, questions: &[Question]) -> bool {
             Some(to) => card.turn(to),
             None => return false,
         },
-        // Enter in the field turns the page too (on the last one it submits, see `press`).
-        Hit::Next | Hit::Answer if page + 1 < questions.len() => card.turn(page + 1),
+        // Enter in the field turns the page too; after the last question comes the Submit step
+        // (where Enter submits, see `press`).
+        Hit::Next | Hit::Answer if page < questions.len() => card.turn(page + 1),
+        Hit::Page(to) if to <= questions.len() && to != page => card.turn(to),
+        Hit::Page(_) => {}
         _ => return false,
     }
     true

@@ -1792,10 +1792,18 @@ card built from the call, and so the preview, does not show while the question w
 `recorder compat` scripts `preview` and `preview-form` record both (`side`, `asked`).
 
 **Forms.** Several questions, or a multi-select one, are a form (decided 2026-11-27: it was the main
-reason to open the terminal). The card shows one question at a time ("Size · 1 of 2", Back, Next);
-a click picks a choice (single choice) or ticks a box (multi-select), and the field holds that
-question's "Type something" text; Enter in it turns to the next question, and on the last one submits, as the Submit button does. Nothing reaches the terminal before Submit, and nothing is picked
-for the user. Submit first checks the card: every question answered, a single choice by one choice
+reason to open the terminal). The card shows one question at a time under a row of tabs, as the
+terminal's form has them (2026-11-28): each question's header (or "Question n" without one), then
+Submit. A tab turns the card's page; an answered question's tab has a tick, the shown one is
+filled, and the one the terminal's form shows now has a dot (the same reading as before every key:
+`form_question` for each question, the review for Submit; no dot when the screen shows none of
+them). A click picks a choice (single choice) or ticks a box (multi-select), and the field holds
+that question's "Type something" text; Back and Next turn the page, and Enter in the field turns
+to the next question. After the last question comes the Submit step, in the card: "Review your
+answers", each question with the answer the card holds (labels in option order, then the text, as
+the terminal's review writes them; "Not answered yet" in the warning colour), Back and **Submit
+answers** (Enter there submits too). Nothing reaches the terminal before Submit, and nothing is
+picked for the user. Submit first checks the card: every question answered, a single choice by one choice
 or one text, texts short, without control characters and not starting with a digit; otherwise it
 shows the question and says why. Then Chat drives the CLI's form one key at a time, each written only
 while the screen shows exactly what the key before should have led to, with a two second deadline

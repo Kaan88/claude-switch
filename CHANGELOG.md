@@ -9,6 +9,11 @@
   plain text. The previews come from the question's call in the transcript; a preview box the
   terminal draws beside the choices is left out when Chat reads the question from the screen, so
   it no longer runs into the choices. Not yet seen with a real Claude Code question.
+- Chat: a form of several questions (or a multi-select one) built from the question's call shows
+  its tabs, as the terminal does ("Layout · Extras · Names · Submit"): a tick on each answered
+  question, a dot on the one the terminal shows, and a click turns the page. After the last
+  question comes the Submit step in the card, with every answer and **Submit answers**; Chat then
+  drives Claude Code's form as before, one checked key at a time.
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog

@@ -292,6 +292,47 @@ fn shot(state: &str, dark: bool, size: Size) -> Bitmap {
             }
             (demo, st, later)
         }
+        "form-tabs" | "form-submit" => {
+            // A form of three questions from the transcript's pending call: its tabs, the
+            // multi-select page with two boxes ticked and a typed answer, or the Submit step.
+            let mut input = layout_question();
+            let extras = serde_json::json!({
+                "header": "Extras", "question": "Which extras should the cache keep beside each tile?",
+                "multiSelect": true,
+                "options": [
+                    {"label": "Logs", "description": "Who fetched it and when."},
+                    {"label": "Metrics", "description": "Hits and misses per zoom level."},
+                    {"label": "Traces", "description": "The full request, for debugging."}
+                ]
+            });
+            let name = serde_json::json!({
+                "header": "Names", "question": "How should tile files be named?", "multiSelect": false,
+                "options": [{"label": "Short", "description": "z/x/y.png"}, {"label": "Long", "description": "kind_z_x_y.png"}]
+            });
+            input["questions"].as_array_mut().unwrap().extend([extras, name]);
+            let demo = Transcript::new_asking(
+                "Now add elevation tiles to the same cache.",
+                "A few choices before I start.",
+                input,
+            )
+            .unwrap();
+            let (mut st, id) = shots::chat_window(dark, &demo);
+            shots::running(&mut st, id, "Waiting for your answer");
+            let later = shots::show(&mut st, id, shots::IDLE, now);
+            use super::question::{Hit, press};
+            let tab = shots::tab(&mut st, id);
+            press(tab, later, Hit::Option(1));
+            press(tab, later, Hit::Page(1));
+            press(tab, later, Hit::Option(0));
+            press(tab, later, Hit::Option(2));
+            tab.pane.as_mut().unwrap().chat.question.field.set_text("alerts");
+            if state == "form-submit" {
+                press(tab, later, Hit::Page(2));
+                press(tab, later, Hit::Option(0));
+                press(tab, later, Hit::Page(3));
+            }
+            (demo, st, later)
+        }
         "permission" => {
             let demo = Transcript::new_showcase(Some(BENCH)).unwrap();
             let (mut st, id) = shots::chat_window(dark, &demo);
@@ -496,6 +537,8 @@ fn chat_shots() {
         "question",
         "preview",
         "preview-hover",
+        "form-tabs",
+        "form-submit",
         "permission",
         "running",
         "scrolled",
@@ -526,8 +569,11 @@ fn chat_shots() {
             _ => [(WIDE, "wide"), (NARROW, "narrow")],
         };
         // The question cards at both common scales, wide and narrow.
-        let more: &[(Size, &str)] =
-            if state.starts_with("preview") { &[(WIDE_100, "wide-100"), (NARROW_150, "narrow-150")] } else { &[] };
+        let more: &[(Size, &str)] = if state.starts_with("preview") || state.starts_with("form-") {
+            &[(WIDE_100, "wide-100"), (NARROW_150, "narrow-150")]
+        } else {
+            &[]
+        };
         let sizes: Vec<(Size, &str)> = sizes.into_iter().chain(more.iter().copied()).collect();
         for (size, width) in sizes {
             for (dark, theme) in [(true, "dark"), (false, "light")] {
