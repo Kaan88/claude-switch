@@ -123,7 +123,12 @@ pub(super) enum Part {
     Choices {
         rows: Vec<Choice>,
         enabled: bool,
+        /// The preview of the option under the pointer or the keyboard, beside the list.
+        side: Option<preview::Size>,
     },
+    /// The preview of the option under the pointer or the keyboard, under the list (a narrow
+    /// card). Laid out by `preview::lay`, which turns it into the list's `side` in a wide card.
+    Preview(preview::Size),
     Field {
         placeholder: &'static str,
         send: Send,
@@ -153,7 +158,11 @@ impl Part {
                 (lines.len() + usize::from(*more > 0)) as f32 * WELL_LINE + 2.0 * WELL_PAD + WELL_GAP
             }
             Part::Panel { rows, more } => (rows.len() + usize::from(*more > 0)) as f32 * PANEL_ROW + 8.0,
-            Part::Choices { rows, .. } => rows.iter().map(|row| choice_height(row, density)).sum::<f32>() + LIST_GAP,
+            Part::Choices { rows, side, .. } => {
+                let list = rows.iter().map(|row| choice_height(row, density)).sum::<f32>();
+                list.max(side.map_or(0.0, |s| s.h())) + LIST_GAP
+            }
+            Part::Preview(size) => size.h() + LIST_GAP,
             Part::Field { .. } => FIELD_ROW + FIELD_GAP,
             Part::Status { .. } => STATUS_ROW,
             Part::Foot { .. } => FOOT,
@@ -241,8 +250,22 @@ pub(super) fn fit(parts: &mut [Part], room: f32) -> Density {
             *lines = (*lines).min(keep);
         }
     };
-    let steps: [(Step, usize); 7] =
-        [(well, 4), (rows, 2), (ask, 4), (well, WELL_LEAST), (rows, ROWS_LEAST), (ask, ASK_LEAST), (ask, ASK_LEAST)];
+    let preview: Step = |part, keep| {
+        if let Part::Preview(size) | Part::Choices { side: Some(size), .. } = part {
+            size.rows = size.rows.min(keep);
+        }
+    };
+    let steps: [(Step, usize); 9] = [
+        (well, 4),
+        (rows, 2),
+        (preview, 10),
+        (ask, 4),
+        (well, WELL_LEAST),
+        (rows, ROWS_LEAST),
+        (preview, preview::LEAST_ROWS),
+        (ask, ASK_LEAST),
+        (ask, ASK_LEAST),
+    ];
     for (step, keep) in steps {
         parts.iter_mut().for_each(|part| step(part, keep));
         if height(parts, density) <= room {
@@ -371,7 +394,11 @@ fn question(chat: &Chat, questions: Option<&[Question]>, width: f32, scale: f32)
             on: chosen.get(i).copied().unwrap_or(false),
         })
         .collect();
-    parts.push(Part::Choices { rows, enabled: can_answer });
+    parts.push(Part::Choices { rows, enabled: can_answer, side: None });
+    if question.options.iter().any(|o| !o.preview.is_empty()) {
+        // Sized and placed (beside the list or under it) by `preview::lay`.
+        parts.push(Part::Preview(preview::Size { w: width, rows: 0, cell: 0.0 }));
+    }
     if can_answer {
         let send = if is_form {
             let mut buttons = Vec::new();
@@ -439,7 +466,7 @@ fn permission(chat: &Chat, kind: &ItemKind, width: f32, scale: f32) -> Vec<Part>
             on: false,
         })
         .collect();
-    parts.push(Part::Choices { rows, enabled: can_answer });
+    parts.push(Part::Choices { rows, enabled: can_answer, side: None });
     if can_answer && shown.deny.is_some() {
         parts
             .push(Part::Field {
@@ -511,7 +538,7 @@ fn menu(chat: &Chat, menu: &MenuShown, width: f32, scale: f32) -> Vec<Part> {
             }
         })
         .collect();
-    parts.push(Part::Choices { rows, enabled: true });
+    parts.push(Part::Choices { rows, enabled: true, side: None });
     if let Some((_, boxed)) = menu.other {
         // A multi-select question adds the text to its answers; any other answers with it.
         let send = if boxed { Send::Buttons(vec![("Add answer", Hit::Answer)]) } else { Send::Arrow(Hit::Answer) };
@@ -789,6 +816,10 @@ impl Draw<'_> {
     ) {
         let pal = self.pal;
         let density = chat.question.density;
+        // The preview follows the pointer over the options (and stays when it leaves them).
+        if let Some(Target::Chat(Control::Question(Hit::Option(at)))) = self.hover {
+            chat.question.previews.hover(at);
+        }
         let colours = chat.question.colours.unwrap_or_else(|| look::Diff::fallback(pal));
         let (x, w) = (r.x + INSET, (r.w - 2.0 * INSET).max(1.0));
         let over = (height(parts, density) - r.h).max(0.0).floor();
@@ -899,9 +930,15 @@ impl Draw<'_> {
                     p.text(Face::Ui, 11.0, x, cy, &format!("{more} more rows in the terminal"), pal.muted, w);
                 }
             }
-            Part::Choices { rows, enabled } => {
+            Part::Choices { rows, enabled, side: None } => {
                 self.choices(p, hits, x, y, w, rows, *enabled, density);
             }
+            Part::Choices { rows, enabled, side: Some(size) } => {
+                let list_w = (w - size.w - preview::GAP).max(1.0);
+                self.choices(p, hits, x, y, list_w, rows, *enabled, density);
+                self.preview(p, chat, hits, Rect::new(x + list_w + preview::GAP, y, size.w, size.h()), size);
+            }
+            Part::Preview(size) => self.preview(p, chat, hits, Rect::new(x, y, w, size.h()), size),
             Part::Field { placeholder, send } => {
                 self.field(p, chat, hits, Rect::new(x, y, w, FIELD_ROW), placeholder, send);
             }
@@ -1099,7 +1136,7 @@ mod tests {
         let parts = vec![
             Part::Head { chip: "Size".into(), title: String::new(), icon: "", note: String::new(), close: true },
             ask("Which size?", 600.0, 15.5, 1.0),
-            Part::Choices { rows: (1..=4).map(choice).collect(), enabled: true },
+            Part::Choices { rows: (1..=4).map(choice).collect(), enabled: true, side: None },
             Part::Foot { left: Vec::new(), text: "", right: vec![("Open terminal", Hit::Open)] },
         ];
         let roomy = height(&parts, Density::Roomy);
@@ -1255,6 +1292,7 @@ mod tests {
                     on: false,
                 }],
                 enabled: true,
+                side: None,
             },
             Part::Foot { left: Vec::new(), text: "", right: vec![("Open terminal", Hit::Open)] },
         ];

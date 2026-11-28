@@ -52,6 +52,16 @@ impl Transcript {
         Ok(demo)
     }
 
+    /// The showcase with another turn that asks: its prompt, the start of the answer, and an
+    /// `AskUserQuestion` call with `input` that waits for its answer.
+    #[cfg(test)]
+    pub fn new_asking(prompt: &str, answer: &str, input: Value) -> io::Result<Self> {
+        let demo = Self::new_showcase(Some((prompt, answer, "")))?;
+        let mut file = fs::OpenOptions::new().append(true).open(&demo.path)?;
+        record(&mut file, 12, "assistant", json!([tool("ask", "AskUserQuestion", input)]))?;
+        Ok(demo)
+    }
+
     /// A conversation that ran commands: `/context`, which printed `stdout` (colour codes and
     /// all), and a shell-mode `git status` with coloured output.
     #[cfg(test)]

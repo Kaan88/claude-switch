@@ -155,7 +155,7 @@ impl Chat {
 
     /// The wheel over the card: true when the card took it.
     pub(in crate::view::chat) fn question_wheel(&mut self, x: f32, y: f32, dy: f32) -> bool {
-        self.question.wheel(x, y, dy) || self.question.wheel_card(x, y, dy)
+        self.question.previews.wheel(x, y, dy) || self.question.wheel(x, y, dy) || self.question.wheel_card(x, y, dy)
     }
 }
 

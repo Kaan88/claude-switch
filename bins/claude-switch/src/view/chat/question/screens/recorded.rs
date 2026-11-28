@@ -87,6 +87,10 @@ pub(in crate::view::chat) const REWIND_OPEN: &str = include_str!("../fixtures/re
 pub(in crate::view::chat) const REWIND_UP1: &str = include_str!("../fixtures/rewind_up1.txt");
 pub(in crate::view::chat) const REWIND_UP2: &str = include_str!("../fixtures/rewind_up2.txt");
 pub(in crate::view::chat) const REWIND_ACTIONS: &str = include_str!("../fixtures/rewind_actions.txt");
+/// Made up, not recorded: a question whose options have previews, the highlighted option's
+/// preview in a box beside the choices, as Claude Code is described to draw it. To be replaced by
+/// a recording (`recorder compat`, script `preview`).
+pub(in crate::view::chat) const MADE_PREVIEW: &str = include_str!("../fixtures/made_preview.txt");
 pub(in crate::view::chat) const REWIND_CLOSED: &str = include_str!("../fixtures/rewind_closed.txt");
 pub(in crate::view::chat) const REWIND_ACTIONS_CODE: &str = include_str!("../fixtures/rewind_actions_code.txt");
 pub(in crate::view::chat) const REWIND_ACTIONS_CODE_DOWN: &str =

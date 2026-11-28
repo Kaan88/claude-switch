@@ -356,6 +356,19 @@ impl AppState {
             self.arm_chat_tick(cx);
             return true;
         }
+        // Ctrl+C over a selection in a question's preview copies it (plain text).
+        if matches!(k.name, Some(KeyName::Char('c' | 'C')))
+            && mods.ctrl
+            && !mods.alt
+            && let Some(text) = self
+                .tabs
+                .shown()
+                .and_then(|t| t.pane.as_ref())
+                .and_then(|pane| pane.chat.question.previews.copy_text(true))
+        {
+            platform::set_clipboard_text(&text);
+            return true;
+        }
         if let Some(name) = k.name.as_ref()
             && let Some(pane) = self.tabs.shown().and_then(|t| t.pane.as_ref())
             && pane.copy_conversation(name, mods, platform::set_clipboard_text)
@@ -491,6 +504,10 @@ impl AppState {
                 true
             }
             Some(Target::Chat(Control::CommandBackground)) => true,
+            Some(Target::Chat(Control::Question(super::question::Hit::Preview))) => {
+                chat.question.previews.press(x, y);
+                true
+            }
             Some(Target::Chat(_)) => {
                 self.pressed = target;
                 true
@@ -509,6 +526,9 @@ impl AppState {
         }
         if chat.editor_drag {
             return Some(chat.editor_drag_to(x, y));
+        }
+        if chat.question.previews.drag_to(x, y) {
+            return Some(true);
         }
         if chat.commands.open && chat.layout.suggestions.contains(x, y) {
             return Some(false);
@@ -566,6 +586,16 @@ impl AppState {
                 return;
             }
             Control::Model | Control::Effort => return self.chat_choice_menu(control),
+            Control::Question(super::question::Hit::CopyPreview) => {
+                let text = self.tabs.shown().and_then(|t| t.pane.as_ref()).and_then(|pane| {
+                    let previews = &pane.chat.question.previews;
+                    previews.copy_text(true).or_else(|| previews.copy_text(false))
+                });
+                if let Some(text) = text {
+                    platform::set_clipboard_text(&text);
+                }
+                return;
+            }
             Control::Question(hit) => {
                 // As Send: read the newest screen before matching the question on it.
                 self.term_woke(cx);
@@ -834,7 +864,8 @@ impl Chat {
             }
         }
         self.editor_words = None;
-        self.resizing.take().is_some() | std::mem::take(&mut self.editor_drag)
+        let preview = self.question.previews.release(point);
+        self.resizing.take().is_some() | std::mem::take(&mut self.editor_drag) | preview
     }
 
     /// A drag in the message box: by characters, or by whole words after a double click.

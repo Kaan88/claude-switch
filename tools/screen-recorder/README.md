@@ -108,6 +108,14 @@ unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and 
 where the terminal card's rows start (a running call in `working`, its bullet lit or not, and an
 answer's `●`/`⏺` bullet at column 0 in `context`).
 
+`preview` and `preview-form` (added 2026-11-28, never run yet) ask a question whose options have
+previews, and a form of three questions (one with previews, a multi-select with a typed answer, a
+single choice) through its review to Submit. They snap every step and copy the transcript while
+the question waits and after: the check's `asked` key says whether Claude Code holds the call in
+the transcript while it asks (Chat's preview pane and form tabs are built from that call), and
+`side` whether the preview box beside the choices was found. Their expectations were written
+without a recording: compare them with the first run's snapshots before trusting them.
+
 `config-list` is not about Chat: it searches `/config` for the label of every entry Settings ›
 Claude Code › Advanced writes (`crates/core/src/cc_config.rs`; after changing that table, write the
 script and its `expect` file again with `python -I tools/screen-recorder/config-list.py`) and checks

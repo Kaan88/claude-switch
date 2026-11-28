@@ -13,8 +13,8 @@ fn question(multi_select: bool) -> Question {
         header: "Who builds".into(),
         question: "Who builds the parser?".into(),
         options: vec![
-            QuestionOption { label: "Me".into(), description: "I write it".into() },
-            QuestionOption { label: "You".into(), description: "Claude writes it".into() },
+            QuestionOption { label: "Me".into(), description: "I write it".into(), preview: String::new() },
+            QuestionOption { label: "You".into(), description: "Claude writes it".into(), preview: String::new() },
         ],
         multi_select,
     }
@@ -117,7 +117,14 @@ fn the_screen_must_show_the_same_question_and_every_option_in_order() {
     assert!(other(&|q| q.question = "Who tests the parser?".into()).is_none());
     assert!(other(&|q| q.options[1].label = "Them".into()).is_none());
     assert!(other(&|q| q.options.swap(0, 1)).is_none());
-    assert!(other(&|q| q.options.push(QuestionOption { label: "Both".into(), description: String::new() })).is_none());
+    assert!(
+        other(&|q| q.options.push(QuestionOption {
+            label: "Both".into(),
+            description: String::new(),
+            preview: String::new()
+        }))
+        .is_none()
+    );
     assert!(other(&|q| q.options.truncate(1)).is_none(), "an unknown extra entry is not accepted");
 
     let mut no_footer = Screen::new(70, 24, 0);
@@ -131,8 +138,8 @@ fn a_screen_that_looks_like_a_permission_question_is_never_answered() {
         header: String::new(),
         question: "Do you want to proceed?".into(),
         options: vec![
-            QuestionOption { label: "Yes".into(), description: String::new() },
-            QuestionOption { label: "No".into(), description: String::new() },
+            QuestionOption { label: "Yes".into(), description: String::new(), preview: String::new() },
+            QuestionOption { label: "No".into(), description: String::new(), preview: String::new() },
         ],
         multi_select: false,
     };
@@ -1256,7 +1263,8 @@ fn a_question_worded_like_a_permission_prompt_never_opens_the_drawer_for_a_tick(
 }
 
 fn fruits() -> Question {
-    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let option =
+        |label: &str| QuestionOption { label: label.into(), description: String::new(), preview: String::new() };
     Question {
         header: "Fruits".into(),
         question: "Which fruits do you like?".into(),
@@ -1266,7 +1274,8 @@ fn fruits() -> Question {
 }
 
 fn size() -> Question {
-    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let option =
+        |label: &str| QuestionOption { label: label.into(), description: String::new(), preview: String::new() };
     Question {
         header: "Size".into(),
         question: "Which size?".into(),
@@ -1276,7 +1285,8 @@ fn size() -> Question {
 }
 
 fn speed() -> Question {
-    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let option =
+        |label: &str| QuestionOption { label: label.into(), description: String::new(), preview: String::new() };
     let options = vec![option("Slow"), option("Fast")];
     Question { header: "Speed".into(), question: "Which speed?".into(), options, multi_select: false }
 }
@@ -2403,4 +2413,112 @@ fn a_read_outside_the_project_is_a_card_with_or_without_its_call_in_the_transcri
         assert!(if known { card.approval && card.answerable == Some(900) } else { card.prompt_answers() }, "{known}");
         assert_eq!(f.decide(now + QUIET), Some(Reason::Approval), "{known}");
     }
+}
+
+/// The made-up question with previews (`fixtures/made_preview.txt`), as the transcript would
+/// hold it.
+fn layout_question() -> Question {
+    let option = |label: &str, preview: &str| QuestionOption {
+        label: label.into(),
+        description: String::new(),
+        preview: preview.into(),
+    };
+    Question {
+        header: "Layout".into(),
+        question: "Which folder layout should the tile cache use?".into(),
+        options: vec![
+            option("Flat folder", "cache/\n  z12_x2154_y1430.png\n  z12_x2155_y1430.png\n  z13_x4308_y2860.png"),
+            option("Nested by zoom", "cache/\n├── 12/\n│   └── 2154_1430.png\n└── 13/\n    └── 4308_2860.png"),
+            option("One packed file", ""),
+        ],
+        multi_select: false,
+    }
+}
+
+#[test]
+fn a_preview_box_beside_the_choices_is_left_out_when_the_question_is_read() {
+    use screens::recorded::{MADE_PREVIEW, recorded};
+    let screen = recorded(MADE_PREVIEW);
+    // Read as it is, the box's rows run into the choices.
+    let raw = screens::menu(&screen).expect("a menu");
+    assert!(raw.entries[1].text.contains('│'), "{:?}", raw.entries[1].text);
+    let (col, rows) = screens::side_box(&screen).expect("the box beside the choices");
+    assert_eq!((col, rows.len()), (37, 6));
+    let (menu, other, chat) = question_menu(&screen, &layout_question(), false).expect("the question");
+    assert_eq!(
+        menu.texts(),
+        ["Flat folder", "Nested by zoom", "One packed file", "Type something.", "Chat about this"]
+    );
+    assert_eq!((menu.highlight(), other, chat), (Some(0), Some(3), Some(4)));
+    // The cut keeps the modes the arrow keys are written for and the cursor.
+    let view = screens::question_view(&screen);
+    assert_eq!(view.modes(), screen.modes());
+    assert_eq!((view.cursor().row, view.cursor().col), (screen.cursor().row, screen.cursor().col));
+    // The screen menu card lists the choices without the box.
+    let shown = menu_shown(&screen).expect("the menu card");
+    assert!(shown.question && shown.choices.iter().all(|c| !c.contains('│')), "{:?}", shown.choices);
+
+    // A box that starts near the left edge, or with no menu footer under it, is no preview box.
+    let near = MADE_PREVIEW.replace(&" ".repeat(30), "");
+    assert!(screens::side_box(&recorded(&near)).is_none());
+    let no_footer = MADE_PREVIEW.replace("Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel", "");
+    assert!(screens::side_box(&recorded(&no_footer)).is_none());
+    // Without the cut the question would not be answered: one more check that it fails closed
+    // when a label differs.
+    let mut other = layout_question();
+    other.options[1].label = "Deep folders".into();
+    assert!(question_menu(&screen, &other, false).is_none());
+}
+
+#[test]
+fn a_question_with_previews_shows_the_one_under_the_pointer_or_the_keys_and_copies_plain_text() {
+    let mut f = Fixture::new(vec![layout_question()]);
+    let now = Instant::now();
+    f.screen("\x1b[2J", now);
+    let tab = f.tab();
+    let pane = tab.pane.as_mut().unwrap();
+    pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
+    let lay = |f: &mut Fixture, width: f32| {
+        let pane = f.tab().pane.as_mut().unwrap();
+        let mut parts = cards::parts(&pane.chat, &pane.model, width).expect("the question's card");
+        let options = layout_question().options;
+        preview::lay(&mut pane.chat.question, &mut parts, width, 1.0, &options);
+        parts
+    };
+    // Wide: beside the choices, as tall as the tallest preview.
+    let parts = lay(&mut f, 900.0);
+    let side = parts.iter().find_map(|p| match p {
+        cards::Part::Choices { side, .. } => Some(*side),
+        _ => None,
+    });
+    let size = side.flatten().expect("the preview beside the list");
+    assert_eq!(size.rows, 5);
+    assert!(!parts.iter().any(|p| matches!(p, cards::Part::Preview(_))));
+    // Narrow: under them.
+    let parts = lay(&mut f, 420.0);
+    assert!(parts.iter().any(|p| matches!(p, cards::Part::Preview(s) if s.w == 420.0 && s.rows == 5)));
+    let previews = &mut f.chat().question.previews;
+    assert_eq!(previews.copy_text(false).as_deref(), Some(layout_question().options[0].preview.as_str()));
+    // ↓ shows the next option's (while the card is in view); the pointer over the third shows
+    // it has none.
+    f.chat().question.rect = Rect::new(0.0, 0.0, 420.0, 400.0);
+    assert!(key(f.tab(), now, &KeyName::Down, Mods::default(), None));
+    assert_eq!(
+        f.chat().question.previews.copy_text(false).as_deref(),
+        Some(layout_question().options[1].preview.as_str())
+    );
+    assert!(f.writes().is_empty(), "the keys only move the preview");
+    f.chat().question.previews.hover(2);
+    assert_eq!(f.chat().question.previews.copy_text(false), None);
+    // Nothing to copy without a selection; the press goes nowhere near the terminal.
+    f.chat().question.previews.hover(0);
+    assert_eq!(f.chat().question.previews.copy_text(true), None);
+    assert!(!press(f.tab(), now, Hit::Preview) && !press(f.tab(), now, Hit::CopyPreview));
+    assert!(f.writes().is_empty());
+    // A question without previews has no preview part.
+    let mut plain = Fixture::new(vec![question(false)]);
+    let pane = plain.tab().pane.as_mut().unwrap();
+    let mut parts = cards::parts(&pane.chat, &pane.model, 700.0).unwrap();
+    preview::lay(&mut pane.chat.question, &mut parts, 700.0, 1.0, &question(false).options);
+    assert!(parts.iter().all(|p| !matches!(p, cards::Part::Preview(_) | cards::Part::Choices { side: Some(_), .. })));
 }

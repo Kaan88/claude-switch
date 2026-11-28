@@ -1126,6 +1126,88 @@ pub(super) fn review(screen: &Screen) -> Option<Review> {
     Some(Review { answers, highlight })
 }
 
+/// How far right a box beside a question's choices starts at least: the choices' own column
+/// (`❯ 1. `) and a short label come first.
+const SIDE_BOX_LEFT: usize = 12;
+
+/// A box Claude Code draws beside a question's choices: the highlighted option's `preview`
+/// (not recorded yet; `recorder compat` scripts `preview` and `preview-form` record it). Its
+/// column and its rows, top and bottom edges included: a top-left corner (`┌` or `╭`) followed
+/// by a rule at column [`SIDE_BOX_LEFT`] or further right, the same column's side (`│`) on every
+/// row down to a bottom-left corner (`└` or `╰`), text left of it on one of those rows, and a
+/// menu footer under it. The lowest such box counts.
+pub(super) fn side_box(screen: &Screen) -> Option<(usize, std::ops::Range<usize>)> {
+    let footer = (0..screen.rows()).rposition(|r| menu_footer(&screen.row_text(r)))?;
+    let ch = |r: usize, c: usize| screen.cell(r, c).ch;
+    let mut found = None;
+    for top in 0..footer {
+        for col in SIDE_BOX_LEFT..screen.cols().saturating_sub(2) {
+            if !matches!(ch(top, col), '┌' | '╭') || ch(top, col + 1) != '─' {
+                continue;
+            }
+            let mut bottom = None;
+            for r in top + 1..footer {
+                match ch(r, col) {
+                    '│' | '┃' => {}
+                    '└' | '╰' => {
+                        bottom = Some(r);
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            let Some(bottom) = bottom.filter(|&b| b > top + 1) else { continue };
+            let beside = (top..=bottom).any(|r| (0..col).any(|c| !ch(r, c).is_whitespace()));
+            if beside {
+                found = Some((col, top..bottom + 1));
+            }
+            break;
+        }
+    }
+    found
+}
+
+/// The screen as a question is read from it: without the box [`side_box`] finds beside the
+/// choices, whose rows would otherwise run into the choices' and the question's text. Every
+/// other cell, the cursor and the modes the keys are encoded for are as they were.
+pub(in crate::view::chat) fn question_view(screen: &Screen) -> std::borrow::Cow<'_, Screen> {
+    use crate::view::chat::terminal_card::sgr;
+    let Some((col, rows)) = side_box(screen) else { return std::borrow::Cow::Borrowed(screen) };
+    let modes = screen.modes();
+    let mut feed = String::new();
+    if modes.app_cursor {
+        feed.push_str("\x1b[?1h");
+    }
+    if modes.bracketed_paste {
+        feed.push_str("\x1b[?2004h");
+    }
+    for r in 0..screen.rows() {
+        let Some(line) = screen.line(r) else { continue };
+        let end = if rows.contains(&r) { col } else { screen.cols() };
+        let cells = &line.cells()[..end.min(line.cells().len())];
+        let end = cells.iter().rposition(|c| c.ch != ' ' || c.bg != mdshared_term::Color::Default).map_or(0, |i| i + 1);
+        feed.push_str(&format!("\x1b[{};1H", r + 1));
+        let mut pen = None;
+        for cell in cells[..end].iter().filter(|c| !c.is_spacer()) {
+            let look = (cell.fg, cell.bg, cell.attrs);
+            if pen != Some(look) {
+                feed.push_str(&sgr(look));
+                pen = Some(look);
+            }
+            feed.push(if cell.ch.is_control() { ' ' } else { cell.ch });
+        }
+        feed.push_str("\x1b[0m");
+    }
+    let cursor = screen.cursor();
+    feed.push_str(&format!("\x1b[{};{}H", cursor.row + 1, cursor.col + 1));
+    if !modes.cursor_visible {
+        feed.push_str("\x1b[?25l");
+    }
+    let mut view = Screen::new(screen.cols(), screen.rows(), 0);
+    view.feed(feed.as_bytes());
+    std::borrow::Cow::Owned(view)
+}
+
 #[cfg(test)]
 mod compat;
 #[cfg(test)]

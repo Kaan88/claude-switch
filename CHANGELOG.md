@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Chat: a question whose options have previews (mock-ups, code) shows the preview of the option
+  under the pointer, or the one ↑ and ↓ move to, in the terminal's font, cell grid and colours:
+  beside the choices in a wide card, under them in a narrow one, as tall as the tallest preview up
+  to 16 rows, scrolling with the wheel when longer. A drag selects in it; Ctrl+C or Copy copies
+  plain text. The previews come from the question's call in the transcript; a preview box the
+  terminal draws beside the choices is left out when Chat reads the question from the screen, so
+  it no longer runs into the choices. Not yet seen with a real Claude Code question.
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog

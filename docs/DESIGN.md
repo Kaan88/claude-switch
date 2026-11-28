@@ -1765,6 +1765,32 @@ second deadline; a mismatch, timeout or a question still open eight seconds afte
 why, and opens the drawer. While the card can answer, sends are refused with "Answer Claude's question
 above" and the drawer does not open by itself; the working line reads "Waiting for your answer".
 
+**Previews** (2026-11-28, `question/preview.rs`). An option of a question may carry a `preview`
+(monospace text: a mock-up, code, a layout); the terminal shows the highlighted option's preview in
+a box right of the choices. Chat reads previews only from the call's input in the transcript
+(`QuestionOption::preview`: plain text, escape sequences and control characters other than tab and
+line break dropped, cut at 8,000 characters or 200 lines with a line saying so), never from the
+screen. The card built from the call shows the preview of the option under the pointer, else the
+one ↑ and ↓ moved to (whether or not the field has the keys; they write nothing), else the first
+option that has one; an option without one says so. It is drawn with the command output's grid
+renderer (`view/ui/grid.rs`): the terminal's font, cell grid and theme colours at full strength on
+the terminal's background, the text smaller to fit the widest preview line down to 9 px, past that
+wrapped. Beside the choices when the card is at least 720 px wide inside (56 % of it), under them
+otherwise (the narrowest window). It is as tall as the tallest of the question's previews, at most
+16 rows, so the card does not jump as the pointer moves; a short window cuts it to 10, then 5 rows
+before the question is cut, and the wheel over it scrolls a longer one. A drag selects (the
+selection scrolls on past its edges); Ctrl+C copies the selection, Copy the selection or the whole
+preview, as plain text (a wrapped line as one line). The pane only looks. When Chat reads a
+question from the screen (the menu card, and every check before a key), a box beside the choices
+is left out first (`screens::side_box`, `question_view`): a top-left corner and rule at column 12
+or further right, its side down to its bottom corner on every row, text left of it, and a menu
+footer under it; the cells right of its column on its rows are blanked in a copy of the screen
+(cursor and key modes kept), so its rows no longer run into the choices and the question. Not
+recorded yet: the layout was described, not seen (fixture `made_preview.txt` is made up), and
+Claude Code 2.1.332 wrote a question's call to the transcript only once answered, in which case the
+card built from the call, and so the preview, does not show while the question waits.
+`recorder compat` scripts `preview` and `preview-form` record both (`side`, `asked`).
+
 **Forms.** Several questions, or a multi-select one, are a form (decided 2026-11-27: it was the main
 reason to open the terminal). The card shows one question at a time ("Size · 1 of 2", Back, Next);
 a click picks a choice (single choice) or ticks a box (multi-select), and the field holds that

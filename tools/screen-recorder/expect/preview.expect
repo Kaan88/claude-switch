@@ -1,0 +1,38 @@
+# Not recorded yet (written 2026-11-28 with no recording): what Chat is built to read. `side`
+# says whether the preview box was found beside the choices; every other screen key is read
+# without it, as Chat reads the question.
+
+[asked]
+kind = question
+title = Which layout do you prefer?
+choices = Boxed | Tree | Plain | Type something. | Chat about this
+highlight = Boxed
+side = yes
+esc = yes
+send = no
+
+[asked_transcript]
+# Claude Code 2.1.332 wrote a question's call only once it was answered: Chat's card from the
+# call (and so its preview pane) shows only where this reads the call as running.
+asked = -
+
+[second]
+kind = question
+highlight = Tree
+side = yes
+
+[third]
+kind = question
+highlight = Plain
+
+[back]
+kind = question
+highlight = Tree
+
+[answered]
+kind = idle
+send = yes
+working = no
+
+[answered_transcript]
+asked = Layout (2 previews, 0 multi-select, ok)

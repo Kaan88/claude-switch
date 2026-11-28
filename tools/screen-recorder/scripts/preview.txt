@@ -1,0 +1,30 @@
+# One question whose options have previews (the terminal shows the highlighted option's preview in
+# a box beside the choices), a walk down the options so each preview shows, and an answer. The
+# transcript is copied while the question waits (does Claude Code write the call before it is
+# answered?) and after. Not recorded yet: the expectations are what Chat is built to read; look at
+# the snapshots of the first run before trusting them. Two model requests.
+#: args --permission-mode default
+#: seconds 30
+start
+send Use the AskUserQuestion tool now (no other tools) with one question: header "Layout", question "Which layout do you prefer?", multiSelect false, and three options. Option "Boxed" with a preview of three lines that draws a small box around the word Map with the characters + - and |. Option "Tree" with a preview of three lines: cache/ then two indented lines 12/ and 13/. Option "Plain" with no preview.
+sleep 800
+send \r
+wait Chat about this 90000
+sleep 1500
+snap asked
+tscopy asked_transcript
+send \e[B
+sleep 800
+snap second
+send \e[B
+sleep 800
+snap third
+send \e[A
+sleep 800
+snap back
+send \r
+sleep 1500
+gone esc to interrupt 120000
+quiet 1500 60000
+snap answered
+tscopy answered_transcript

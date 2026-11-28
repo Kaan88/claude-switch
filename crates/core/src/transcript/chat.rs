@@ -277,10 +277,51 @@ pub struct Question {
     pub multi_select: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QuestionOption {
     pub label: String,
     pub description: String,
+    /// Monospace text Claude gave the option to look at (a mock-up, code, a layout), which the
+    /// terminal shows in a box beside the choices: plain text, bounded (see [`preview`]); empty
+    /// without one. Never matched against the screen, so a long one may be cut.
+    pub preview: String,
+}
+
+/// The most of a preview kept: characters and lines.
+const MAX_PREVIEW: usize = 8000;
+const MAX_PREVIEW_LINES: usize = 200;
+
+/// An option's `preview`, as plain text: tabs and line breaks kept, every other control character
+/// (escape sequences included) dropped, cut at [`MAX_PREVIEW`] characters or
+/// [`MAX_PREVIEW_LINES`] lines with a last line saying so. `None` when it is not text.
+fn preview(value: Option<&Value>) -> Option<String> {
+    let Some(value) = value else { return Some(String::new()) };
+    let mut rest = value.as_str()?;
+    let mut plain = String::with_capacity(rest.len().min(4 * MAX_PREVIEW));
+    while let Some(c) = rest.chars().next() {
+        let len = if c == '\u{1b}' { super::local::escape_len(rest).max(1) } else { c.len_utf8() };
+        if !c.is_control() || matches!(c, '\n' | '\t') {
+            plain.push(c);
+        }
+        rest = &rest[len..];
+    }
+    let plain = plain.trim_end().trim_start_matches('\n');
+    let mut out = String::new();
+    let mut cut = false;
+    for (i, line) in plain.lines().enumerate() {
+        if i == MAX_PREVIEW_LINES || out.chars().count() + line.chars().count() > MAX_PREVIEW {
+            cut = true;
+            break;
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end());
+    }
+    if cut {
+        out.push_str("\n… (the rest is in the terminal)");
+    }
+    Some(out)
 }
 
 const MAX_QUESTIONS: usize = 4;
@@ -304,7 +345,8 @@ impl Question {
             .map(|option| {
                 let label = whole(&option["label"], 200).filter(|label| !label.is_empty() && !label.contains('\n'))?;
                 let description = option.get("description").map_or(Some(String::new()), |d| whole(d, 1000))?;
-                Some(QuestionOption { label, description })
+                let preview = preview(option.get("preview"))?;
+                Some(QuestionOption { label, description, preview })
             })
             .collect::<Option<Vec<_>>>()?;
         Some(Self {
@@ -648,7 +690,10 @@ mod tests {
             (q.header.as_str(), q.question.as_str(), q.multi_select),
             ("Who builds", "Who builds the parser?", false)
         );
-        assert_eq!(q.options[0], QuestionOption { label: "Me".into(), description: "I write it".into() });
+        assert_eq!(
+            q.options[0],
+            QuestionOption { label: "Me".into(), description: "I write it".into(), preview: String::new() }
+        );
         assert_eq!(q.options[1].description, "");
         for bad in [
             json!({"questions":[]}),
@@ -660,6 +705,26 @@ mod tests {
         ] {
             assert_eq!(ToolCard::from_input("AskUserQuestion", &bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn an_option_keeps_its_preview_as_plain_text_and_a_long_one_is_cut() {
+        let mock = "┌──────┐\n│ Map  │\t\u{1b}[31mred\u{1b}[0m\r\n└──────┘   ";
+        let input = json!({"questions":[{"question":"Which layout?","options":[
+            {"label":"Boxed","preview":mock},{"label":"Plain"},{"label":"Long","preview":"line\n".repeat(300)}
+        ]}]});
+        let Some(ToolCard::Questions(questions)) = ToolCard::from_input("AskUserQuestion", &input) else {
+            panic!("no card");
+        };
+        let options = &questions[0].options;
+        // Escape sequences and carriage returns go; tabs and line breaks stay.
+        assert_eq!(options[0].preview, "┌──────┐\n│ Map  │\tred\n└──────┘");
+        assert_eq!(options[1].preview, "");
+        let long: Vec<&str> = options[2].preview.lines().collect();
+        assert_eq!(long.len(), MAX_PREVIEW_LINES + 1);
+        assert_eq!(long.last(), Some(&"… (the rest is in the terminal)"));
+        let bad = json!({"questions":[{"question":"Q","options":[{"label":"A","preview":7}]}]});
+        assert_eq!(ToolCard::from_input("AskUserQuestion", &bad), None);
     }
 
     #[test]

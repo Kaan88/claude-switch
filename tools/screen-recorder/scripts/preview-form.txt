@@ -1,0 +1,47 @@
+# A form of three questions: the first with previews, the second a multi-select with a typed
+# "Other" answer, the third a single choice; each page, the review and Submit. The transcript is
+# copied while the form waits and after. Not recorded yet: the expectations are what Chat is built
+# to read; look at the snapshots of the first run before trusting them. Two model requests.
+#: args --permission-mode default
+#: seconds 40
+start
+send Use the AskUserQuestion tool now (no other tools) with three questions at once. First: header "Layout", question "Which layout do you prefer?", multiSelect false, options "Boxed" with a preview of three lines drawing a small box around the word Map with + - and |, and "Tree" with a preview of three lines: cache/ then indented 12/ and 13/. Second: header "Extras", question "Which extras should it keep?", multiSelect true, options Logs, Metrics, Traces. Third: header "Name", question "How long a name?", multiSelect false, options Short, Long.
+sleep 800
+send \r
+wait Chat about this 90000
+sleep 1500
+snap page1
+tscopy waiting_transcript
+send \e[B
+sleep 800
+snap page1_tree
+send \r
+sleep 1500
+snap page2
+send \r
+sleep 800
+snap page2_logs
+send \e[B
+sleep 500
+send \e[B
+sleep 500
+send \e[B
+sleep 500
+send alerts
+sleep 800
+snap page2_typed
+send \e[B
+sleep 500
+snap page2_next
+send \r
+sleep 1500
+snap page3
+send \r
+sleep 1500
+snap review
+send \r
+sleep 1500
+gone esc to interrupt 120000
+quiet 1500 60000
+snap submitted
+tscopy submitted_transcript

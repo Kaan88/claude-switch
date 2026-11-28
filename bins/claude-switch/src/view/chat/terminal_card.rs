@@ -285,7 +285,7 @@ pub(super) fn encode(screen: &Screen, rows: Range<usize>) -> (String, usize, usi
 }
 
 /// The code that sets exactly these colours and attributes.
-fn sgr((fg, bg, attrs): (Color, Color, Attrs)) -> String {
+pub(in crate::view::chat) fn sgr((fg, bg, attrs): (Color, Color, Attrs)) -> String {
     let mut codes = vec!["0".to_owned()];
     for (flag, code) in [
         (Attrs::BOLD, "1"),

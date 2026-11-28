@@ -15,6 +15,7 @@ mod background;
 mod blocked;
 mod cards;
 pub(in crate::view) mod denials;
+mod preview;
 mod prompt;
 pub(in crate::view) mod rewind;
 pub(super) mod screens;
@@ -291,6 +292,10 @@ pub enum Hit {
     AskRetry,
     /// Show or fold the list of denied permissions (nothing is sent).
     Denials(bool),
+    /// The preview of an option: a press starts a selection in it (nothing is sent).
+    Preview,
+    /// Copy the shown preview's text (nothing is sent).
+    CopyPreview,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -395,7 +400,13 @@ impl MenuShown {
 }
 
 fn menu_shown(screen: &Screen) -> Option<MenuShown> {
-    let panel = screens::panel(screen)?;
+    // A question's preview box beside its choices is not part of the menu: read without it.
+    let panel = match screens::question_view(screen) {
+        std::borrow::Cow::Owned(view) => {
+            screens::panel(&view).filter(|p| p.question).or_else(|| screens::panel(screen))
+        }
+        std::borrow::Cow::Borrowed(_) => screens::panel(screen),
+    }?;
     let choices = panel.menu.as_ref().map(screens::Menu::texts).unwrap_or_default();
     let (notes, question) = (panel.notes, panel.question);
     // Only the row as the CLI first draws it: once it holds text it is an answer, not the field.
@@ -477,6 +488,8 @@ pub(super) struct Card {
     busy: Option<&'static str>,
     /// What the user picked in a form's card.
     form: Picks,
+    /// The previews of the question's options, as the card shows them.
+    pub(in crate::view::chat) previews: preview::State,
     /// The card stands in the composer's place: it waits for an answer, and nothing is sent
     /// past it. (The denied permissions and the background agents sit over the composer.)
     docked: bool,
@@ -693,6 +706,9 @@ fn question_menu(
     if crate::attention::screen_permission_prompt(screen) {
         return None;
     }
+    // Without the preview box beside the choices, which is the option's, never the question's.
+    let view = screens::question_view(screen);
+    let screen = &*view;
     let menu = screens::menu(screen)?;
     let options = question.options.len();
     if menu.entries.len() < options
@@ -737,6 +753,8 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
         return None;
     }
     let question = questions.get(at)?;
+    let view = screens::question_view(screen);
+    let screen = &*view;
     let mut menu = screens::menu(screen)?;
     let n = question.options.len();
     (menu.entries.len() == n + 2).then_some(())?;
@@ -1283,6 +1301,8 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             return true;
         }
         Hit::Denials(_) | Hit::Review | Hit::AskRetry => return denials::press(tab, now, hit),
+        // The preview only looks: a press there selects (see `input.rs`), Copy is the window's.
+        Hit::Preview | Hit::CopyPreview => return false,
         Hit::Option(_) | Hit::Escape | Hit::Close if rewind_shown(&chat.question, &pane.model) => {
             return rewind::press(tab, now, hit);
         }
@@ -1825,6 +1845,14 @@ pub(super) fn key(tab: &mut Tab, now: Instant, name: &KeyName, mods: Mods, text:
     if !chat.question.visible() {
         chat.question.focus = false;
     }
+    // ↑ and ↓ show the previous or next option's preview, whether or not the field has the keys.
+    if mods.none()
+        && matches!(name, KeyName::Up | KeyName::Down)
+        && chat.question.visible()
+        && chat.question.previews.step(*name == KeyName::Down)
+    {
+        return true;
+    }
     if !chat.question.focus {
         return false;
     }
@@ -1927,6 +1955,19 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     // The cards that are not laid out from parts give their height inside the same padding.
     let old = |inside: f32| 2.0 * cards::INSET + inside - 6.0;
     let mut parts = cards::parts(chat, model, inner_w);
+    if let Some(parts) = &mut parts {
+        let options = match pending(model).map(|p| p.kind) {
+            Some(Kind::Question(Some(questions))) if !questions.is_empty() => {
+                let page = if form(questions) { chat.question.form.page } else { 0 };
+                questions.get(page).map_or(&[][..], |q| q.options.as_slice())
+            }
+            _ => &[][..],
+        };
+        let scale = chat.question.scale();
+        preview::lay(&mut chat.question, parts, inner_w, scale, options);
+    } else {
+        chat.question.previews.clear();
+    }
     let (wanted, docked) = if rewind {
         (chat.question.rewind.as_ref().map(|r| old(rewind::height(r))), true)
     } else if screen_prompt {
@@ -1989,6 +2030,8 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
 
 pub(super) struct Draw<'a> {
     pub pal: &'a Palette,
+    /// The terminal theme's colours: a preview is drawn in them.
+    pub scheme: mdshared_ui::termview::Scheme,
     pub hover: Option<Target>,
     pub focused: bool,
     /// When this frame is painted: a prompt read from the screen notes when it was first shown.

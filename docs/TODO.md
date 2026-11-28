@@ -141,6 +141,14 @@ as the second account, Windows Terminal, the desktop hand-over.
   currently falls back to "Choose in Claude Code's menu above"; show its tabs in the card so it can
   be answered in Chat, with the Submit step. Check with a compat script that asks a question with
   previews and one with several questions.
+  - Previews built 2026-11-28 on `feature/question-previews` (DESIGN.md, "Previews"). Seen only in
+    the picture test (`chat_shots` states `preview` and `preview-hover`: wide and narrow, 100 % and
+    150 %, both themes) and unit tests over a made-up screen (`fixtures/made_preview.txt`). To do
+    first: run `recorder compat` scripts `preview` and `preview-form` (never run) and look at their
+    snapshots: how the preview box really sits beside the choices (replace the made-up fixture with
+    the recording), and whether the transcript holds the call while the question waits (`asked`):
+    2.1.332 did not, and then the card built from the call (and its preview) never shows while the
+    question waits, only the menu card read from the screen (now without the box's rows).
 - **Workers tab**: built 2026-11-28 on branch `feature/workers-tab` (DESIGN.md, "The Workers tab").
   Seen only in the picture test `workers_tab_shots` (made-up jobs, both themes, wide and 760×480)
   and unit tests; never in the running app against the real folder. To try: the first scan of a
