@@ -338,10 +338,7 @@ impl Ui {
                 let page = self.agent_origin.take().unwrap_or(Page::Agents);
                 self.show(page);
             }
-            Action::Picture(id, index) => {
-                let image = m.picture(id, index, true).or_else(|| m.picture(id, index, false));
-                self.overlay = Some(Overlay { id, index, image, bounds: Rect::default() });
-            }
+            Action::Picture(id, index) => self.overlay = Some(Overlay::open(m, id, index)),
             Action::File(file) => self.open_markdown(file, m),
             Action::Editor => {
                 if let Some(pane) = &mut self.markdown {
@@ -356,6 +353,11 @@ impl Ui {
                 }
             }
             Action::Close => self.overlay = None,
+            Action::Previous | Action::Next => {
+                if let Some(o) = &mut self.overlay {
+                    o.step(action == Action::Next);
+                }
+            }
             Action::CopyCode(code) => {
                 if platform::set_clipboard_text(&code) {
                     self.copied = Some(code);
@@ -405,10 +407,7 @@ impl Ui {
                 platform::open_url(&url);
             }
             Destination::File(file) => self.open_markdown(file, m),
-            Destination::Picture(id, index) => {
-                let image = m.picture(id, index, true).or_else(|| m.picture(id, index, false));
-                self.overlay = Some(Overlay { id, index, image, bounds: Rect::default() });
-            }
+            Destination::Picture(id, index) => self.overlay = Some(Overlay::open(m, id, index)),
             _ => {}
         }
     }
@@ -454,9 +453,14 @@ impl Ui {
     }
 
     pub fn key(&mut self, name: &KeyName, mods: Mods) -> bool {
-        if self.overlay_open() {
-            if *name == KeyName::Escape {
-                self.overlay = None;
+        if let Some(overlay) = &mut self.overlay {
+            // Every key stays with the viewer while it is open; none reaches the terminal.
+            match name {
+                KeyName::Escape => self.overlay = None,
+                KeyName::Left | KeyName::Right if mods.none() => {
+                    overlay.step(*name == KeyName::Right);
+                }
+                _ => {}
             }
             return true;
         }

@@ -8,6 +8,11 @@
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.
+- Chat and the Session view: the picture viewer goes to the conversation's previous and next
+  picture with buttons on its sides (shown where there is one, quiet until pointed at) or the Left
+  and Right arrow keys, and says where you are ("2 of 5"; left out in a window too narrow for it
+  beside the buttons). Each picture still loads only when shown, and one that cannot be shown
+  says why while the arrows go on.
 
 ## 0.1.6 (2026-11-28)
 

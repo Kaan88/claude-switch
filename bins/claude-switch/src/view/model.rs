@@ -460,6 +460,17 @@ impl Model {
     pub fn select_agent(&self, agent: Option<&str>) {
         let _ = self.tx.send(Command::Select(agent.map(str::to_owned)));
     }
+    /// Every picture of the conversation shown, in conversation order: a prompt's pasted
+    /// pictures and a tool's results, each as its item and its place there. Nothing is loaded.
+    pub fn pictures(&self) -> impl Iterator<Item = (ItemId, usize)> + '_ {
+        self.items.iter().flat_map(|(&id, item)| (0..refs(item).len()).map(move |index| (id, index)))
+    }
+    /// Whether a picture's preview was asked of the worker, loaded or not.
+    #[cfg(test)]
+    pub fn picture_asked(&mut self, id: ItemId, index: usize, large: bool) -> bool {
+        let key = Key::new(id, index, large);
+        self.requested.contains(&key) || self.cache.get(&key).is_some() || self.failed.contains_key(&key)
+    }
     fn reference(&self, id: ItemId, index: usize) -> Option<&Picture> {
         refs(self.items.get(&id)?).get(index)
     }
