@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Chat: Stop no longer writes Esc while Claude Code shows a subagent (there Esc may stop the
+  agent, not the turn) or while its agent list has the keys; the box says to go ‹ Back first.
+  Stop agent is not offered while a subagent is shown either.
+- Chat: a message for the main session waits while the agent list under Claude Code's input has
+  the keys (a pick that stopped, ↓ typed in the terminal) or while Claude Code shows a subagent by
+  any sign, instead of being typed where Enter would go to the list or the agent. A pick that
+  stops with the list open says so.
+- Chat: a message to a subagent waits while another message or command is on its way, and goes
+  straight into the shown agent only when the list's filled row is that agent (not another of the
+  same type); keys typed in the terminal make Chat forget which agent it picked.
+
 ## 0.1.7 (2026-11-28)
 
 - Chat: with a subagent's conversation open, the message box talks to that agent: its edge and

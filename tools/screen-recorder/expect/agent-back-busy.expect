@@ -1,0 +1,35 @@
+# Back from a shown agent while the main turn works (Chat's Back: ↓, Enter on main, Esc from the
+# list). Written 2026-11-28 from the `agent-message` recording, not recorded yet: the Esc after
+# Back must leave the running main turn alone.
+
+[busy]
+working = yes
+agents = input
+
+[viewing]
+viewing = general-purpose
+
+[back_list]
+agents = select · main
+viewing = general-purpose
+
+[back]
+viewing = -
+agents = select · main
+
+# The input has the keys again, and the main turn still works.
+[back_closed]
+agents = input
+working = yes
+hides = Interrupted
+
+[after_esc]
+working = yes
+hides = Interrupted
+
+[done]
+shows = started
+hides = Interrupted
+
+[done_transcript]
+answers = *started*

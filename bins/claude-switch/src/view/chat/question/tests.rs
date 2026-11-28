@@ -2883,3 +2883,140 @@ fn a_question_with_previews_shows_the_one_under_the_pointer_or_the_keys_and_copi
     preview::lay(&mut pane.chat.question, &mut parts, 700.0, 1.0, &question(false).options);
     assert!(parts.iter().all(|p| !matches!(p, cards::Part::Preview(_) | cards::Part::Choices { side: Some(_), .. })));
 }
+
+/// `AGENT_MESSAGE_SENT` with its input's placeholder gone: Claude Code shows the agent (`◯ main`,
+/// the agent's row filled) with nothing naming it on the input.
+fn shown_without_placeholder() -> String {
+    use screens::recorded::AGENT_MESSAGE_SENT;
+    let dim = "\x1b[0;2mMessage @general-purpose…\x1b[0m";
+    assert!(AGENT_MESSAGE_SENT.contains(dim));
+    AGENT_MESSAGE_SENT.replace(dim, "")
+}
+
+/// A message for the main session never goes while the agent list has the keys (Enter would go to
+/// its row), whichever way the send was asked for; it waits.
+#[test]
+fn a_main_message_waits_while_the_agent_list_has_the_keys() {
+    use crate::view::chat::Intent;
+    use crate::view::chat::submission::blocked;
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    for fixture in [AGENT_MESSAGE_LIST, AGENT_MESSAGE_HIGHLIGHTED, AGENT_MESSAGE_BACK, AGENT_MESSAGE_BACK_LIST] {
+        f.show(fixture, now);
+        for intent in [Intent::Draft, Intent::Now, Intent::Override, Intent::Slash] {
+            assert_eq!(blocked(f.tab(), now, intent), Some(agent_send::LIST_HAS_KEYS), "{intent:?}");
+        }
+    }
+    f.show(AGENT_MESSAGE_IDLE, now);
+    assert_ne!(blocked(f.tab(), now, Intent::Override), Some(agent_send::LIST_HAS_KEYS));
+    // Held, not refused: it goes once the input has the keys again.
+    f.show(AGENT_MESSAGE_BACK, now);
+    f.chat().editor.set("hello main".into());
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().queue.is_some(), "the message waits");
+}
+
+/// A pick that stops with the list holding the keys says so.
+#[test]
+fn a_pick_that_stops_with_the_list_open_says_so() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("Count slowly");
+    f.tab().pane.as_mut().unwrap().model.agent = Some("a-Count slowly".into());
+    f.show(AGENT_MESSAGE_IDLE, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    f.writes();
+    f.chat().editor.set("Reply with kilo".into());
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(AGENT_MESSAGE_LIST, now);
+    // No key may go (the window holds them back) until the step's time is up.
+    advance(f.tab(), now + Duration::from_secs(3), false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::LIST_LEFT));
+    assert_eq!(f.chat().editor.text, "Reply with kilo");
+}
+
+/// No send to an agent while another send is on its way (to the agent or to the main session).
+#[test]
+fn a_message_to_an_agent_waits_for_the_send_before_it() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("Count slowly");
+    f.tab().pane.as_mut().unwrap().model.agent = Some("a-Count slowly".into());
+    f.show(AGENT_MESSAGE_IDLE, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    f.writes();
+    let generation = f.tab().pane.as_ref().unwrap().model.chat.generation;
+    f.chat().queue_draft(generation);
+    f.chat().editor.set("Reply with kilo".into());
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::BUSY));
+}
+
+/// The message goes straight in only when the list's filled row is this agent: another agent of
+/// the same type has the same placeholder. Keys typed in the terminal forget what Chat picked.
+#[test]
+fn the_straight_way_in_needs_this_agent_shown() {
+    use crate::view::agent_status::Listed;
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("Count slowly");
+    f.agent("Other count");
+    f.show(AGENT_MESSAGE_SENT, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    f.writes();
+    let pane = f.tab().pane.as_mut().unwrap();
+    pane.model.agent = Some("a-Other count".into());
+    pane.model.listed.insert("a-Other count".into(), Listed::Running);
+    f.chat().question.cli_agent = Some("a-Other count".into());
+    f.chat().editor.set("Reply with kilo".into());
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty(), "not pasted into another agent of the same type");
+    assert_eq!(f.chat().error, Some(agent_send::UNLISTED));
+    // Terminal input: Chat no longer knows which agent shows.
+    let info = f.tab().pane.as_ref().unwrap().model.chat.clone();
+    f.chat().invalidate_input(&info, None);
+    assert_eq!(f.chat().question.cli_agent, None);
+}
+
+/// A main message waits while Chat left Claude Code on an agent, or while the list's `main` row
+/// is not the filled one, even with no placeholder to say so.
+#[test]
+fn a_main_message_waits_while_an_agent_shows_by_any_sign() {
+    use crate::view::chat::Intent;
+    use crate::view::chat::submission::blocked;
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.show(&shown_without_placeholder(), now);
+    assert_eq!(screens::viewing_agent(&f.tab().term.screen), None);
+    assert_eq!(blocked(f.tab(), now, Intent::Draft), Some(agent_send::SHOWS_AGENT), "`◯ main`");
+    f.show(AGENT_MESSAGE_IDLE, now);
+    assert_ne!(blocked(f.tab(), now, Intent::Draft), Some(agent_send::SHOWS_AGENT));
+    f.chat().question.cli_agent = Some("a1".into());
+    assert_eq!(blocked(f.tab(), now, Intent::Draft), Some(agent_send::SHOWS_AGENT), "Chat left it on one");
+}
+
+/// Stop agent ends with Esc: it is not offered while Claude Code shows an agent.
+#[test]
+fn stop_agent_is_not_offered_while_an_agent_shows() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("Count slowly");
+    f.show(AGENT_MESSAGE_IDLE, now);
+    f.sync();
+    assert_eq!(f.chat().question.agents.len(), 1, "offered on main");
+    for screen in [AGENT_MESSAGE_SENT.to_owned(), shown_without_placeholder()] {
+        f.show(&screen, now);
+        f.sync();
+        assert!(f.chat().question.agents.is_empty());
+    }
+}

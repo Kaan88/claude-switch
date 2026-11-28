@@ -329,6 +329,9 @@ impl Chat {
 
     pub(super) fn invalidate_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.interrupt_submission();
+        // Keys typed in the terminal may have picked another agent or gone back to main: what Chat
+        // picked is no longer known (sends then go by what the screen shows).
+        self.question.cli_agent = None;
         self.watermark_input(info, end);
     }
 

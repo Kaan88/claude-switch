@@ -273,8 +273,14 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
     if screen::menu(&tab.term.screen) {
         return Some(MENU_OPEN);
     }
-    // Claude Code shows an agent: what goes into its input goes to that agent.
-    if super::question::screens::viewing_agent(&tab.term.screen).is_some() {
+    // The agent list has the keys (a pick that stopped, ↓ in the terminal): Enter would go to its
+    // highlighted row, not send the message.
+    if super::question::screens::list_has_keys(&tab.term.screen) {
+        return Some(super::question::agent_send::LIST_HAS_KEYS);
+    }
+    // Claude Code shows an agent (its placeholder, or `main` not the filled row of its list), or
+    // Chat left it on one and has not brought it back yet: what goes into its input goes there.
+    if super::question::screens::agent_shown(&tab.term.screen) || chat.question.cli_agent.is_some() {
         return Some(super::question::agent_send::SHOWS_AGENT);
     }
     if pane.model.error.is_some() && !chat.demo {
@@ -433,7 +439,8 @@ impl AppState {
         // goes out once the CLI's input is ready. So does one the CLI's input still holds text
         // for: never cleared by Chat, it goes once that text was sent or cleared in the terminal.
         let waits = matches!(error, Some(e) if e == CHECK || e == NO_TRANSCRIPT || e == INPUT_HAS_TEXT
-            || e == Reason::Slash.label() || e == OWNED_PENDING || e == super::question::agent_send::SHOWS_AGENT);
+            || e == Reason::Slash.label() || e == OWNED_PENDING || e == super::question::agent_send::SHOWS_AGENT
+            || e == super::question::agent_send::LIST_HAS_KEYS);
         // A picture needs the visibly empty input for its marker, whoever asked for the send.
         let picture_waits =
             chat.clipboard_sequence().is_some() && error.is_none() && !chat.demo && !clean_prompt(&tab.term.screen);
@@ -496,6 +503,17 @@ impl AppState {
         if chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now) != (Gate::Running, None)
             || !chat.can_stop(&pane.model.chat)
         {
+            return;
+        }
+        // Esc while Claude Code shows an agent may stop that agent, not the turn; with the agent
+        // list holding the keys it goes to the list.
+        let screen = &tab.term.screen;
+        if super::question::screens::agent_shown(screen) || chat.question.cli_agent.is_some() {
+            chat.refused(super::question::agent_send::STOP_AGENT_SHOWN, None);
+            return;
+        }
+        if super::question::screens::list_has_keys(screen) {
+            chat.refused(super::question::agent_send::STOP_LIST_KEYS, None);
             return;
         }
         let stop = Stop {

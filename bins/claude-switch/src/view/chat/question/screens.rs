@@ -938,6 +938,22 @@ pub(in crate::view::chat) fn names_agent(shown: &str, agent_type: &str) -> bool 
     shown == agent_type || agent_type.starts_with(shown) && shown.chars().count() >= 8
 }
 
+/// The agent list under the input has the keys: a row of it is highlighted (`❯ ● …`, `❯ ◯ …`),
+/// whatever its hint row says. Keys then go to the list, and Enter to its highlighted row.
+pub(in crate::view::chat) fn list_has_keys(screen: &Screen) -> bool {
+    if let Some(list) = agent_list(screen) {
+        return list.keys != ListKeys::Input;
+    }
+    let Some(input) = input_row(screen) else { return false };
+    (input + 3..screen.rows()).any(|r| agent_row(&screen.row_text(r)).is_some_and(|(highlighted, _)| highlighted))
+}
+
+/// Claude Code shows an agent instead of the main session: its empty input's placeholder names
+/// one, or its agent list's `main` row is not the filled one.
+pub(in crate::view::chat) fn agent_shown(screen: &Screen) -> bool {
+    viewing_agent(screen).is_some() || agent_list(screen).is_some_and(|list| !list.rows[0].shown)
+}
+
 /// The input shows and no agent list is under it: its hint row offers no "↓ to manage" and no
 /// `● main` row follows (Claude Code draws the list only while background agents exist).
 pub(super) fn no_agent_list(screen: &Screen) -> bool {
