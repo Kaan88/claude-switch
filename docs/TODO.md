@@ -106,6 +106,15 @@ as the second account, Windows Terminal, the desktop hand-over.
   keyboard, as 0.1.6 does for questions). Chat still never types into a screen it cannot read. Not on
   Tab: Tab completes in the message box. The screen reports (`%APPDATA%\claude-switch\screen-reports`)
   show which prompts come up; frequent ones can become real cards, as the trust question did.
+- **The message box talks to the subagent Chat shows** (owner, 2026-11-28). With a subagent's
+  conversation open in Chat ("‹ Back · <agent's task>"), the box still sends to the main session.
+  It should send to that agent, the way Claude Code does when an agent is picked in the list under its
+  input (`↓ to manage`, then the agent: typed text goes to it). Chat picks the agent through that list
+  and sends only once the screen shows that agent selected; otherwise it holds the message and says
+  why. Make the target plain: the box's edge and placeholder take the agent's colour and name
+  ("Message general-purpose…"), and Back returns the box to the main session. An agent that has
+  ended or is not in the list can't be messaged: the box says so instead of sending to main. Record
+  the agent list's selection and a message to an agent with a compat script first.
 - **Question previews and tabbed forms in Chat's card** (owner, 2026-11-28; after the queue job and the
   command-output renderer). Claude Code's question tool can give each option a `preview` (monospace
   text: mock-ups, code, layouts); the terminal shows the options on the left and the highlighted
