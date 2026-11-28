@@ -903,7 +903,9 @@ Only the visible rows and sticky heading are drawn. Mode and Show hidden are con
 
 Rows show the latest `last-prompt` record (`lastPrompt`) or real user message found in the
 bounded transcript tail. Search and the quick switcher match the local name, original title,
-last prompt and folder; the switcher orders by fuzzy match quality, then recency. Opening from
+last prompt and folder, and a session id: the whole id or a prefix of at least eight hex digits,
+alone, or after `--resume` in a pasted line (`claude --resume <id>`), which ranks that session
+first; the switcher orders by fuzzy match quality, then recency. Opening from
 it uses the existing resume checks, and Ctrl+Enter opens the other-account menu.
 
 The Waiting filter is a hint, not a process signal. A live session is waiting if its newest

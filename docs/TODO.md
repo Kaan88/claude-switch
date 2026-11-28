@@ -114,8 +114,6 @@ as the second account, Windows Terminal, the desktop hand-over.
   Rewind to here…) and Branch does not exist per message (Open a copy forks the whole session with
   `--fork-session`). Item 12 of the redesign study (`docs/chat-redesign.md` on `design/chat-redesign`)
   drew the row; how Branch cuts the transcript at a message must be tried against Claude Code first.
-- Find a session by its id: a pasted session id (or a `claude --resume <id>` line, as handovers give
-  it) in the Sessions search matches that session, so it can be opened at once (owner, 2026-11-28).
 - Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
 - Reuse Conversation in Sessions details later. That view is currently a short read-only preview
   and has no independently scrollable transcript region.
