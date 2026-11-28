@@ -695,7 +695,12 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     tests over made-up transcripts: a rewind, a rewind to the first prompt, a fork's copy, tool results recorded
     against their own call, progress and hook records off the chain, sidechains and a subagent's transcript, a
     compaction boundary, the bounded slice and history paged in, records without links. Not checked: against a
-    live rewind in the app; the Tasks, Agents, Shells and Files pages still count the rewound turns.
+    live rewind in the app.
+    Done (2026-11-28): the Tasks, Agents, Shells and Files pages follow the active branch too (DESIGN.md,
+    "Rewind"); an agent, shell or MCP task from a replaced turn stays while it is known to run. Checked by
+    unit tests: a rewind (plan, ended and running shells, finished and running agents, a new plan after
+    it), a fork's copy, a compaction (and a rewind after it), the bounded slice with history paged in, and
+    the panel's sections through the worker (the written file, the plan and the ended shell go).
     Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
     its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
     the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown

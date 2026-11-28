@@ -393,7 +393,7 @@ fn subagent_without_meta_follows_activity_and_links_when_meta_appears() {
     let change = reader.poll().unwrap();
     assert!(change.subagents_changed);
     assert_eq!(change.updated, BTreeSet::from([spawn]));
-    assert_eq!(reader.subagents().len(), 0);
+    assert_eq!(reader.subagents().count(), 0);
 }
 
 #[test]

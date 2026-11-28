@@ -2016,7 +2016,10 @@ start): a recap or notice parented to the previous turn and written after a new 
 newest record without hiding that prompt. Records whose parents lead out of the loaded slice stay until history pages in,
 and records without a `uuid`, sidechains, a subagent's transcript, and records hanging off the chain
 that do not start with a prompt (tool results recorded against their call, progress, notices) are
-never left out. The Tasks, Agents, Shells and Files pages still read every record. Recorded from
+never left out. The Details pages follow the same branch: the plan is made from the branch's plan
+updates and task calls only, the changed files from the shown items, and an agent, background
+shell or MCP task started in a replaced turn is left out once it is known to have ended (a rewind
+stops no process, so a running one stays, with Stop). Recorded from
 Claude Code 2.1.332 (`rewind_*`).
 
 A Shift+Tab or Ctrl+B in flight is chat work like a send: the composer waits for it, a card click
