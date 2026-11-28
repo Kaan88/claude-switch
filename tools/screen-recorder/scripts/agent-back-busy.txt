@@ -1,0 +1,54 @@
+# Back from a shown agent while the main turn is still working, as Chat's Back does it right after
+# a pick: the list still has the keys with the highlight on the agent it shows, so ↑ to main
+# ("↑/↓ to select · enter to view"), Enter on main, then one Esc to give the input its keys back
+# from the list. The question is whether that Esc, with no agent shown and the list holding the
+# keys, leaves the running main turn alone (it must not interrupt it). The main turn runs a long
+# ping of its own in the foreground meanwhile.
+#
+# The first recording (20261128-132435) had the agent run its ping with the PowerShell tool, which
+# `allow-ping.json` does not allow: its permission prompt covered the input, and the unguarded ↓
+# moved the prompt's highlight. Both pings are allowed here (`allow-ping-any.json`), and every key
+# waits for the hint row that says the list takes it (`· ↓ to manage` is the hint row's, the
+# conversation's "(↓ to manage ·" is not). About six model requests.
+#: args --permission-mode default --settings {scripts}/allow-ping-any.json
+#: seconds 150
+start
+send Use the Agent tool once, with run_in_background true, subagent_type general-purpose, the description "Count slowly" and the task: "With the Bash tool, run the command ping -n 90 127.0.0.1, then reply with the word done." Then, yourself and not in the background, run the Bash command ping -n 45 127.0.0.1, and after it reply only with the word started.
+sleep 800
+send \r
+wait to manage 120000
+wait Bash(ping -n 45 60000
+need · ↓ to manage 30000
+sleep 1000
+snap busy
+send \e[B
+need ↑/↓ to select 5000
+send \e[B
+need enter to view · x to stop 5000
+send \r
+need Message @ 5000
+sleep 1000
+snap viewing
+# Back to main while the main turn's ping still runs: the highlight is on the agent, main above.
+need ↑/↓ to select 3000
+send \e[A
+need ↑/↓ to select · enter to view 5000
+snap back_list
+send \r
+gone Message @ 5000
+sleep 800
+snap back
+need ↑/↓ to select 3000
+send \e
+gone ↑/↓ to select 3000
+sleep 800
+snap back_closed
+sleep 3000
+snap after_esc
+# The main turn ends by itself, not interrupted: its answer row "● started". (The prompt's own
+# "…reply only with the word started." stays on the screen, so the word alone matches at once:
+# run 20261128-132937 snapped `done` and copied the transcript 13 s in, mid-ping.)
+wait ● started 120000
+sleep 3000
+snap done
+tscopy done_transcript

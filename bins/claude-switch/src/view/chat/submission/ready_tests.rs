@@ -1342,3 +1342,33 @@ fn a_numbered_message_makes_no_card_in_the_input_or_once_sent() {
     assert_ne!(reason, Some(Reason::Menu));
     assert!(f.chat().question.menu.is_none(), "no card");
 }
+
+/// Stop writes no Esc while Claude Code shows an agent (there Esc may stop the agent, not the
+/// turn), while Chat left it on one, or while the agent list has the keys (Esc would go to it).
+#[test]
+fn stop_sends_no_esc_while_an_agent_shows_or_the_agent_list_has_the_keys() {
+    use crate::view::chat::question::agent_send::{STOP_AGENT_SHOWN, STOP_LIST_KEYS};
+    use crate::view::chat::question::screens::recorded::{AGENT_MESSAGE_LIST, AGENT_MESSAGE_SENT};
+    let stop = |screen: &str, picked: bool| {
+        let mut f = Live::new();
+        f.show(PLAIN_IDLE);
+        f.pass(SECOND);
+        f.send(RESTORED);
+        f.writes();
+        f.turn();
+        f.show(WORKING_TOOL);
+        assert_eq!(f.pass(SECOND), (Gate::Running, None));
+        f.show(screen);
+        f.pass(SECOND / 10);
+        if picked {
+            f.chat().question.cli_agent = Some("a1".into());
+        }
+        let now = f.now;
+        AppState::chat_stop(f.tab(), now);
+        (f.writes(), f.chat().error)
+    };
+    assert_eq!(stop(AGENT_MESSAGE_SENT, false), (vec![], Some(STOP_AGENT_SHOWN)), "the agent shows");
+    assert_eq!(stop(WORKING_TOOL, true), (vec![], Some(STOP_AGENT_SHOWN)), "Chat left it on an agent");
+    assert_eq!(stop(AGENT_MESSAGE_LIST, false), (vec![], Some(STOP_LIST_KEYS)), "the list has the keys");
+    assert_eq!(stop(WORKING_TOOL, false).0, [b"\x1b".to_vec()], "the main turn alone: Stop goes");
+}

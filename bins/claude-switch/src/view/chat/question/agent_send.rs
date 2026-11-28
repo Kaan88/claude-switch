@@ -47,6 +47,21 @@ pub(in crate::view::chat) const INTERRUPTED_SEND: &str =
 /// Back could not bring Claude Code back to the main session.
 pub(in crate::view::chat) const STILL_AGENT: &str = "Claude Code still shows the agent: in the terminal, ↓ \
      and then Enter on main returns it to the main session. Messages wait until then.";
+/// The agent list holds the keys: a message for the main session would end on its row.
+pub(in crate::view::chat) const LIST_HAS_KEYS: &str = "The terminal's agent list has the keys, so this message \
+     waits until its input has them again. Check the terminal.";
+/// A pick stopped with the agent list still holding the keys.
+pub(in crate::view::chat) const LIST_LEFT: &str = "The terminal did not show what Chat expected, and its agent \
+     list still has the keys; nothing more was sent and the message is still here. Check the terminal.";
+/// Another send (to the agent or the main session) is still on its way.
+pub(in crate::view::chat) const BUSY: &str =
+    "Another message is still on its way to Claude Code, so this one waits here. Send it once that one went.";
+/// Stop while Claude Code shows an agent: Esc there may stop the agent, not the turn.
+pub(in crate::view::chat) const STOP_AGENT_SHOWN: &str = "Claude Code shows an agent, where Esc may stop the \
+     agent instead of the turn, so Stop sent nothing. ‹ Back to the main session first, then Stop.";
+/// Stop while the agent list has the keys: Esc would go to the list.
+pub(in crate::view::chat) const STOP_LIST_KEYS: &str =
+    "The terminal's agent list has the keys, so Esc would not stop the turn: Stop sent nothing. Check the terminal.";
 /// A message for the main session while Claude Code shows an agent would go to the agent.
 pub(in crate::view::chat) const SHOWS_AGENT: &str =
     "Claude Code shows an agent, so this message waits until it is back on the main session.";
@@ -172,6 +187,11 @@ fn plan(tab: &Tab, now: Instant) -> Result<Step, &'static str> {
         return Err(UNLISTED);
     }
     let bytes = crate::view::chat::submission::send_bytes(&[], text).ok_or(crate::view::chat::submission::BAD_TEXT)?;
+    // One send at a time: a message to the main session or to an agent still on its way, or a
+    // command Chat typed, would share the input with this one.
+    if chat.locked() || chat.waiting().is_some() || chat.enter_only() || chat.command_in_flight() {
+        return Err(BUSY);
+    }
     if !ready(tab) || screen_busy(tab) {
         return Err(NOT_READY);
     }
@@ -187,9 +207,15 @@ fn plan(tab: &Tab, now: Instant) -> Result<Step, &'static str> {
         due: now + STEP,
         epoch: chat.output_epoch,
     };
-    // Claude Code shows this agent already (Chat picked it, and its input says so): the message
-    // goes straight in.
+    // Claude Code shows this agent already: Chat picked it, its input's placeholder names its type,
+    // and its list's filled row is the one that is this agent (another of the same type is not).
+    let filled = screens::agent_list(screen).is_some_and(|list| {
+        (1..list.rows.len()).any(|i| {
+            list.rows[i].shown && background::row_agent(&pane.model, &list, i).is_some_and(|a| a.id == agent.id)
+        })
+    });
     let shown = chat.question.cli_agent.as_deref() == Some(agent.id.as_str())
+        && filled
         && screens::viewing_agent(screen).is_some_and(|shown| screens::names_agent(&shown, &step.name));
     if shown {
         step.stage = Stage::Pasted;
@@ -242,18 +268,40 @@ fn start_back(tab: &mut Tab, now: Instant) -> bool {
         tab.pane.as_mut().unwrap().chat.question.cli_agent = None;
         return true;
     }
-    let Some(list) = idle_list(screen) else { return false };
+    let epoch = pane.chat.output_epoch;
+    if let Some(list) = idle_list(screen) {
+        let step = Step {
+            agent: None,
+            name: String::new(),
+            row: 0,
+            names: owned(&list),
+            stage: Stage::Opening,
+            message: None,
+            due: now + STEP,
+            epoch,
+        };
+        return open(tab, step);
+    }
+    // Right after a pick the list still has the keys, its highlight on the agent it shows (a send
+    // that stopped there): ↑ towards main, the rest as from ↓ (`agent-back-busy`).
+    let Some(list) = screens::agent_list(screen).filter(|l| l.keys == ListKeys::Select) else { return false };
+    let Some(h) = list.highlight.filter(|&h| h > 0 && list.rows[h].shown) else { return false };
+    let up = moves(h, h - 1, screen);
     let step = Step {
         agent: None,
         name: String::new(),
         row: 0,
         names: owned(&list),
-        stage: Stage::Opening,
+        stage: Stage::Moving(h - 1),
         message: None,
         due: now + STEP,
-        epoch: pane.chat.output_epoch,
+        epoch,
     };
-    open(tab, step)
+    match write(tab, &up) {
+        Ok(()) => tab.pane.as_mut().unwrap().chat.question.agent_send = Some(step),
+        Err(error) => tab.pane.as_mut().unwrap().chat.error = Some(error),
+    }
+    true
 }
 
 enum Next {
@@ -354,7 +402,11 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
         return may_write && start_back(tab, now);
     };
     let epoch = pane.chat.output_epoch;
+    let to_agent = step.agent.is_some();
     let fail = |tab: &mut Tab, why: &'static str| {
+        // Said plainly when a message's pick left the list holding the keys (Back's own word says
+        // how to get back, which matters more there).
+        let why = if to_agent && screens::list_has_keys(&tab.term.screen) { LIST_LEFT } else { why };
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         chat.question.agent_send = None;
         chat.error = Some(why);

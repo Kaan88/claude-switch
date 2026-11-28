@@ -19,6 +19,19 @@
   record; running and stopped from the terminal's agent list. `?` is left only when nothing tells,
   and its tooltip says why.
 
+- Chat: Stop no longer writes Esc while Claude Code shows a subagent (there Esc may stop the
+  agent, not the turn) or while its agent list has the keys; the box says to go ‹ Back first.
+  Stop agent is not offered while a subagent is shown either.
+- Chat: a message for the main session waits while the agent list under Claude Code's input has
+  the keys (a pick that stopped, ↓ typed in the terminal) or while Claude Code shows a subagent by
+  any sign, instead of being typed where Enter would go to the list or the agent. A pick that
+  stops with the list open says so.
+- Chat: a message to a subagent waits while another message or command is on its way, and goes
+  straight into the shown agent only when the list's filled row is that agent (not another of the
+  same type); keys typed in the terminal make Chat forget which agent it picked.
+- Chat: ‹ Back also brings Claude Code back to the main session after a message to a subagent
+  stopped right after the pick, with the agent list still holding the keys on that agent (it
+  moves up to main instead of waiting for an input that never gets the keys back).
 - Chat: a question whose options have previews (mock-ups, code) shows the preview of the option
   under the pointer, or the one ↑ and ↓ move to, in the terminal's font, cell grid and colours:
   beside the choices in a wide card, under them in a narrow one, as tall as the tallest preview up

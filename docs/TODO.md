@@ -117,6 +117,11 @@ as the second account, Windows Terminal, the desktop hand-over.
   (`ended_transcript`; the first run's `wait completed` never matched 2.1.332's "Agent "Count
   slowly" finished · 1m 3s"). Still open: whether a named agent's placeholder gives its name
   rather than its type (Chat then holds the message, as the name does not match).
+- Record `agent-back-busy` once more for its end. Run 20261128-132937 recorded Back during the
+  running main turn: the Esc from the list on main left the turn running (`back_closed`,
+  `after_esc`: still working, no "Interrupted"). Its `done` and `done_transcript` were taken 13 s
+  in, mid-ping: `wait started` matched the prompt's own "…the word started.". The script now waits
+  for the answer row `● started`, and `done` expects the turn no longer working.
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.

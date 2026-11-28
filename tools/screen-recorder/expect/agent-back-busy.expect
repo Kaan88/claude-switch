@@ -1,0 +1,40 @@
+# Back from a shown agent while the main turn works (Chat's Back right after a pick: ↑ to main,
+# Enter, Esc from the list). Written from the `agent-message` recording; the first run of this
+# script (20261128-132435) stopped at an agent's PowerShell permission prompt. The Esc after Back
+# must leave the running main turn alone.
+
+[busy]
+working = yes
+agents = input
+
+# The agent shows; the list keeps the keys on it.
+[viewing]
+viewing = general-purpose
+agents = select · general-purpose Count slowly
+
+[back_list]
+agents = select · main
+viewing = general-purpose
+
+[back]
+viewing = -
+agents = select · main
+
+# The input has the keys again, and the main turn still works.
+[back_closed]
+agents = input
+working = yes
+hides = Interrupted
+
+[after_esc]
+working = yes
+hides = Interrupted
+
+# The turn's answer row, not the prompt's "word started.", and no turn working any more.
+[done]
+shows = ● started
+working = no
+hides = Interrupted
+
+[done_transcript]
+answers = *started*

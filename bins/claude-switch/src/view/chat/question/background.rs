@@ -89,6 +89,10 @@ fn idle_list(screen: &Screen) -> Option<AgentList> {
 /// The running background agents Chat can stop: each is in the transcript (its type and
 /// description, not known to have finished) and once in the CLI's list, as running.
 pub(super) fn agent_offers(model: &Model, screen: &Screen) -> Vec<AgentOffer> {
+    // Its last key is Esc, which while Claude Code shows an agent may stop that agent instead.
+    if screens::agent_shown(screen) {
+        return Vec::new();
+    }
     let Some(list) = idle_list(screen) else { return Vec::new() };
     list.rows
         .iter()
@@ -248,7 +252,9 @@ fn next(screen: &Screen, step: &AgentStep) -> Next {
         (Expect::Stopped, Some(list))
             if list.keys == ListKeys::Clear
                 && list.highlight == Some(row)
-                && list.rows[row].state == AgentState::Stopped =>
+                && list.rows[row].state == AgentState::Stopped
+                && list.rows[0].shown
+                && screens::viewing_agent(screen).is_none() =>
         {
             Next::Key(ESC.to_vec(), Expect::Closed)
         }
