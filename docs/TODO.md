@@ -1123,3 +1123,43 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     left (the new one, as the record catches up, or a third), the record naming the old session is
     no longer taken for the new one, so a later `/resume` of it is followed and the running-session
     guard sees it. While the record has never moved, such a return cannot be told apart.
+
+81. **Claude Code's /config in Settings** (owner, 2026-11-28: "expose Claude Code's advanced
+    configuration like /config, in a separate page, and maybe Status, Usage, Stats"). Done on
+    `feature/cc-advanced`: the entries, keys and defaults of 2.1.332 (DESIGN.md, "Claude Code's
+    /config"), Settings › Claude Code › Advanced. Tested: core writes against temporary folders
+    (master and sharing, nested keys and their neighbours, reset, a value changed meanwhile, a
+    running Claude Code of the account, Claude Code's lock folder, a broken file), the page in the
+    demo (search, change, Reset) and on a temporary folder (refused when changed meanwhile, then
+    saved; read-only while the test's own process poses as a running session), and every label and
+    help line fitting at 760 px, with values set and read-only, in both themes; the pictures were
+    looked at. Not tried: the running app against a real account, and the recording of `/config`
+    (`tools/screen-recorder/scripts/config-list.txt`, to be run by the owner with a scratch,
+    signed-in config folder). Open: read-only rows are a single selected segment (the toolkit has
+    no read-only or label/value row, "For the toolkit", item 4); entries Claude Code hides behind
+    flags are offered all the same (the files cannot tell which flags an account has); the newer
+    user-settings storage behind `storageV5` is not covered.
+    Settings › Claude Code › Status is done too (DESIGN.md, the same section): tested in core on
+    temporary folders (sign-in, MCP servers, memory, version folders, history counts, local days,
+    models from bounded transcript tails) and in the demo (rows, the link to Usage), pictures looked
+    at. Left out, as only a running Claude Code knows them (`/status` and `/stats` in a session):
+    the session's model and permission mode, MCP connection status, cost and context use, and
+    token totals per day or model (whole transcripts would have to be read; the design allows only
+    bounded slices). Usage was not repeated: the page links to Settings › Usage.
+    `tools/cli-compat.ps1` checks every key and label of the table in the installed `claude.exe`
+    (`-KeysOnly`, also a warning step in the daily GitHub Actions run); tried here on 2.1.332 (all
+    88 found) and on a copy of the table with a renamed key and label (both reported, exit 1).
+    The owner's `config-list` recording (2026-11-28, an ordinary terminal) found 34 of 43 labels.
+    The nine missing were all hidden by their show condition, none renamed: eight stay on the
+    page with a help line saying when they apply (`cc_config::WHEN`), and their expectation now
+    accepts "No settings match"; Auto-install IDE extension (only inside an IDE's own terminal) was
+    dropped. Re-checked on that recording without recording again: 43 of 43 as expected.
+    Review fixes (2026-11-28): the running check by the folder a record is in (a desktop session
+    of another account), an incomplete scan and the window's own tabs refuse, a missing
+    `.claude.json` is never made, a backup and a byte compare right before the rename, a lock left
+    behind is taken over after a minute, a sync failure is told apart from a failed save, saves
+    and reads in the background, key order kept (`preserve_order`; the usage shape probe sorts its
+    members itself so its output is as before), and the `config-list` script needs the empty search
+    box before each search (`need`, which ends the script in any run). Tested in core on temporary
+    folders; the tab check is not (a test cannot start a tab's program) and the background save
+    is tested through the page with a wait. Not re-recorded.

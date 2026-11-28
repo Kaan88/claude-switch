@@ -994,8 +994,10 @@ but a polling tick no longer redraws the window unless visible state changes.
 
 ## Settings pages
 
-The category list at left selects one page at right: Appearance, Terminal, Sessions, Chat, Usage,
-Handovers, OpenCode, or Notification area. Only the current page scrolls. Up and Down change
+The category list at left selects one page at right: Appearance, Terminal, Sessions, Chat,
+Claude Code (with its sub-pages Advanced and Status, indented under it), Usage, Handovers, OpenCode, or
+Notification area. A sub-page's name is "Parent › Name" in the code and its title; the rail shows
+"Name", indented. Only the current page scrolls. Up and Down change
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
 closing Settings. Each window remembers the last page while it runs; category selection is not saved.
 A category switch cross-fades the old page into the new one in 140 ms (the toolkit's
@@ -1027,6 +1029,213 @@ peek_event`), so nothing reaches the window under it; only the release of what s
 ends it: the left button anywhere (the press captured the mouse, so a release outside the window
 arrives too), or Space's key release, which the host does not reduce and the app reads in its raw
 winit hook. Losing the keyboard (Alt+Tab, a click in another window) ends any peek.
+
+## Claude Code's /config
+
+Claude Code keeps the choices of its `/config` panel (Settings › Config) in two files of the
+account's CLI folder: the user `settings.json` and the global `.claude.json` (for the first account
+`%USERPROFILE%\.claude.json`, beside the folder). Settings › Claude Code edits a few of them and
+Settings › Claude Code › Advanced the rest (below).
+
+**Where the list comes from.** Taken from Claude Code **2.1.332** (`claude --version`) on
+2026-11-28, read only: the `/config` panel's entry list in the bundled JavaScript of
+`%USERPROFILE%\.local\bin\claude.exe` (each entry's `id`, `label`, `value` expression, `options`
+and the writer its `onChange` calls: the user-settings writer for `settings.json`, the
+global-config writer for `.claude.json`), the global config's defaults (the function that builds
+a fresh `.claude.json`, which also drops keys that equal their default when it saves) and the
+settings schema's descriptions. Many entries only show when a feature flag, the plan or the
+terminal allows; "shown when" says so. `tools/screen-recorder/scripts/config-list.txt` (written by `tools/screen-recorder/config-list.py`)
+searches `/config` for each label Switch writes, so a recording shows which ones an account sees.
+`crates/core/src/cc_config.rs` holds the same table for the page, and `tools/cli-compat.ps1`
+checks that an installed Claude Code still has each of its keys and labels.
+
+Store: **S** `settings.json` (user scope), **G** `.claude.json`. Page: **CC** Settings › Claude
+Code, **Adv** Settings › Claude Code › Advanced, **—** left out (why, after the table). The default
+is in bold, or named.
+
+| # | Label in /config | Key | Store | Values | Shown when | Page |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Auto-compact | `autoCompactEnabled` | G | **true**, false | always | CC |
+| 2 | Idle compaction | `idleCompaction` | S | **true**, false | feature flag | Adv |
+| 3 | Continue automatically at usage limit | `autoContinueAtUsageLimit` | S | **true**, false | claude.ai plans | Adv |
+| 4 | Use this machine's settings in cloud sessions | `remoteHomeSettingsMode` | G | `forward` or not | remote sessions available | — |
+| 5 | Unattended commands from cloud sessions on this computer | (Claude Code's consent store) | — | Allowed, Not allowed | remote tools available | — |
+| 6 | Switch models when a message is flagged | `switchModelsOnFlag` | S | absent (not asked yet), true (switch automatically), false (ask each time) | flagged-message fallback available | Adv |
+| 7 | Show tips | `spinnerTipsEnabled` | S | **true**, false | always | Adv |
+| 8 | Claude-drafted feedback | `feedbackDrafts` | S | **notify**, quiet, off | feature flag | Adv |
+| 9 | Reduce motion | `prefersReducedMotion` | S | **false**, true | always | Adv |
+| 10 | Show Clawd carrying files | `clawdFileProgressEnabled` | S | **false**, true | internal flag, connectors | — |
+| 11 | Thinking mode | `alwaysThinkingEnabled` | S | **absent or true** (on), false | always (locked on for some models) | Adv |
+| 12 | Fast mode (model) | `fastMode` | S | **absent**, true | fast mode available | — |
+| 13 | Prompt suggestions | `promptSuggestionEnabled` | S | **absent or true** (on), false | feature flag | Adv |
+| 14 | Session recap | `awaySummaryEnabled` | S | **absent or true** (on), false | always | Adv |
+| 15 | Rewind code (checkpoints) | `fileCheckpointingEnabled` | G | **true**, false | checkpointing available | Adv |
+| 16 | Synced project memory (this directory; applies next session) | (per-folder memory state) | — | on, off | org memory available | — |
+| 17 | Synced project memory writes | (per-folder memory state) | — | on, off | org memory writes allowed | — |
+| 18 | Dynamic workflows | `enableWorkflows` (also removes `disableWorkflows`) | S | **absent** (by plan), true, false | workflows available | Adv |
+| 19 | Ultracode keyword trigger | `workflowKeywordTriggerEnabled` | S | **true**, false | workflows available | Adv |
+| 20 | Dynamic workflow size | `workflowSizeGuideline` | G | **absent** (small on Pro, else medium), small, medium, large, unrestricted | workflows available | Adv |
+| 21 | Artifacts | `enableArtifact` (also removes `disableArtifact`) | S | **absent** (on once available), true, false | artifacts available | Adv |
+| 22 | Verbose output | `verbose` | G | **false**, true | always | CC |
+| 23 | Terminal progress bar | `terminalProgressBarEnabled` | G | **true**, false | always | Adv |
+| 24 | Show status in terminal tab | `showStatusInTerminalTab` | G | **false**, true | feature flag (`tengu_terminal_sidebar`) | Adv* |
+| 25 | Show turn duration | `showTurnDuration` | G | **true**, false | always | Adv |
+| 26 | Precompute compaction | `precomputeCompactionEnabled` | S | **true**, false | feature flag | Adv |
+| 27 | Show message timestamps | `showMessageTimestamps` | G | **false**, true | feature flag (`tengu_silk_hinge`) | Adv* |
+| 28 | Time format | `timeFormat` | S | **auto**, 12-hour, 24-hour, 24-hour-utc | always | Adv |
+| 29 | Default permission mode | `permissions.defaultMode` | S | **absent**, default, plan, acceptEdits, auto, … | always | CC |
+| 30 | Worktree base ref | `worktree.baseRef` | S | **fresh**, head | always | Adv |
+| 31 | Use auto mode during plan | `useAutoModeDuringPlan` | S | **true**, false | always | Adv |
+| 32 | Respect .gitignore in file picker | `respectGitignore` | G | **true**, false | always | Adv |
+| 33 | Skip the /copy picker | `copyFullResponse` | G | **false**, true | always | Adv |
+| 34 | Copy on select | `copyOnSelect` | G | **true**, false | fullscreen renderer | Adv* |
+| 35 | Auto-scroll | `autoScrollEnabled` | G | **true**, false | fullscreen renderer | Adv* |
+| 36 | Agents view | `leftArrowOpensAgents`, `defaultToAgentsView` | G | shown, not changed there | agents view available | — |
+| 37 | Auto-update channel | `autoUpdatesChannel` | S | shown, not changed there | always | — |
+| 38 | Theme | `theme` | S | dark, light, … | always | CC |
+| 39 | Local notifications (Notifications) | `preferredNotifChannel` | G | **auto**, terminal_bell, iterm2, iterm2_with_bell, kitty, ghostty, notifications_disabled | always | Adv |
+| 40 | Push when actions required | `inputNeededNotifEnabled` | G | **false**, true | push notifications available | Adv |
+| 41 | Push when Claude decides | `agentPushNotifEnabled` | G | **false**, true | push notifications available | Adv |
+| 42 | Output style | `outputStyle` | the folder's `.claude/settings.local.json` | default, explanatory, learning, … | always | — |
+| 43 | Default view | `defaultView` | the folder's `.claude/settings.local.json` | **default**, transcript, chat | feature flag | — |
+| 44 | Language | `language` | S | **absent** (English), any language name | always | Adv |
+| 45 | Editor mode | `editorMode` | G | **normal**, vim (emacs reads as normal) | always | Adv |
+| 46 | Question auto-continue timeout | `askUserQuestionTimeout` | S | **never**, 60s, 5m, 10m | not set by policy | Adv |
+| 47 | Claude-proposed goals | `modelProposedGoals` | S | **auto**, alwaysAsk, disabled | feature flag (`tengu_propose_goal`) | Adv* |
+| 48 | Show last response in external editor | `externalEditorContext` | G | **false**, true | always | Adv |
+| 49 | Show PR status footer | `prStatusFooterEnabled` | G | **true**, false | always | Adv |
+| 50 | Model | `model` | S | **absent** (default), opus, sonnet, … | always | CC |
+| 51 | Diff tool | `diffTool` | G | **auto**, terminal | an IDE is connected | Adv* |
+| 52 | Auto-connect to IDE (external terminal) | `autoConnectIde` | G | **false**, true | outside an IDE terminal | Adv |
+| 53 | Auto-install IDE extension | `autoInstallIdeExtension` | G | **true**, false | inside an IDE's own terminal | — |
+| 54 | Claude in Chrome enabled by default | `claudeInChromeDefaultEnabled` | G | **false**, true | always | CC |
+| 55 | Teammate mode | `teammateMode` | G | auto, tmux, iterm2, **in-process** | agent teams on (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` or `--agent-teams`, and a flag) | Adv* |
+| 56 | Enable Remote Control for all sessions | `remoteControlAtStartup` | G | **absent** (default), true, false | Remote Control available | Adv |
+| 57 | Dialog expiry | `dialogExpiry` | S | **absent** (default), 60s, 5m, 10m, never | not set by policy | Adv |
+| 58 | Messages from your other sessions | `crossSessionInbound` | S | **absent** (default), accept, hold, refuse | cross-session messages on | Adv |
+| 59 | Always deliver in this session | (this session only) | — | off, mine, anyone | cross-session messages on | — |
+| 60 | Delivery notices to and from cloud and Remote Control sessions | `remoteMessageReceipts` | S | **on**, always, off | cross-session messages on and a feature flag (`tengu_toasty_phoenix`) | Adv* |
+| 61 | Show external CLAUDE.md includes dialog | (the folder's project entry in `.claude.json`) | G | true, false | a project with external includes | — |
+| 62 | Use custom API key | `customApiKeyResponses` | G | approved or not | `ANTHROPIC_API_KEY` set | — |
+
+The 46 entries an account saw in 2.1.332 begin with Auto-compact, Idle compaction, Continue
+automatically at usage limit, Switch models when a message is flagged, Show tips, Claude-drafted
+feedback, Reduce motion, Thinking mode, Fast mode, Prompt suggestions, Session recap, Rewind code,
+Dynamic workflows, Ultracode keyword trigger, Dynamic workflow size, Artifacts, Verbose output,
+Terminal progress bar, Show turn duration and Precompute compaction: the order above, less the
+entries its flags hide.
+
+**Adv\*** marks an entry `/config` lists only in some contexts. A recording of `/config` on
+2026-11-28 (a signed-in account, an ordinary terminal, the recorder's tab) found 34 of the 43
+labels; the nine missing were exactly the eight Adv\* rows and Auto-install IDE extension, each hidden by its
+condition, none renamed (the keys check finds every label in the bundle). They stay on the page
+because a Switch tab can be in that context (fullscreen mode, an IDE connected through Auto-connect
+to IDE, agent teams on) or Claude Code turns them on per account. Their help line ends with when
+they apply ("In fullscreen mode.", "With an IDE connected.", "With agent teams.", "If Claude
+Code enables it." or "If enabled." for a flag), from `cc_config::WHEN`, and the recording's
+expectation accepts "No settings match" for them.
+
+Left out of Switch, and why:
+
+- Fast mode: it changes the session's model and price and is only saved when the account may keep
+  it; `/fast` in a session decides.
+- Remote home settings, unattended commands and synced project memory: consent and identity
+  checks Claude Code makes itself, and memory state per folder.
+- Show Clawd carrying files: an internal flag.
+- Output style, Default view and the external includes dialog: per folder (the folder's
+  `.claude/settings.local.json` or its project entry), not per account.
+- Agents view and Auto-update channel: `/config` shows them but does not change them there.
+- Always deliver in this session: that session only. Custom API key: the approval of a key in the
+  environment, which Switch removes from what it starts.
+- Auto-install IDE extension: listed only inside an IDE's own terminal (VS Code and the like),
+  which a Switch tab never is.
+- Model, Effort, Permission mode, Theme, Chrome, Auto-compact, Verbose: on the Claude Code page.
+
+Claude Code 2.1.332 also has a newer storage for user settings behind a flag (`storageV5`); the
+page writes `settings.json` as the user-settings writer does without it. Seven of the G keys on
+the page are in `settings_sync::PREFS` (Rewind code, Terminal progress bar, Show turn duration,
+Local notifications, Editor mode, Diff tool and Auto-connect to IDE): they go to the sharing accounts
+at the next sync, as Chrome and Auto-compact do; the other G keys stay with their account.
+
+**Settings › Claude Code › Advanced** shows every **Adv** entry with a switch or a choice (a
+segmented control up to four options, else a drop-down), a short line on what it does, and
+"· default" after that line while the key is absent (Claude Code's default applies). A set key
+gets a row under it, "Claude Code's default: On" with **Reset**, which removes the key; a choice
+whose default depends on the plan or on what Claude Code asked has a "Default" option for that
+instead. A saved value the page does not know is shown as it is and kept. A few labels are
+shorter than `/config`'s so they fit beside the control at the narrowest Settings (the table
+keeps both). **Search** at the top filters by label, `/config`'s label, key and help, case aside.
+
+Two sections. "Shared · settings.json of <master>": saved in the master account and brought to the
+sharing accounts by the same sync as the Claude Code page (`settings.json` is backed up before it
+is replaced). "Per account · .claude.json": an **Account** choice (the master first time); only that
+account's file changes. Claude Code holds the whole of `.claude.json` in memory and writes it back
+while it runs and when it exits, so while the chosen account may run Claude Code its rows are
+read-only: each shows its value as a single option with "Close <account>'s sessions to change
+this.", and **Check again** reads again after they were closed. "May run" is any of
+(`cc_config::refuse_if_running`):
+
+- a live `sessions/<pid>.json` in the account's own CLI folder, whatever account the session is
+  shown under: a desktop app's session of a further account runs in the first account's
+  `%USERPROFILE%\.claude` and holds `%USERPROFILE%\.claude.json` (`running::live_folders` keeps
+  the folder each record was found in);
+- a running-session scan that could not read everything, or found a live process whose record
+  names no session yet (one that is starting): then nothing tells that the account is free;
+- a program in one of this window's tabs for that account (a Claude tab or a sign-in tab that
+  started seconds ago may not have written its record yet).
+
+The write checks all of it again, and also refuses when the account has no `.claude.json` yet:
+Claude Code makes it on first use, and the sharing seeds a further account's `mcpServers` only
+while there is none (`share::sync_mcp`), so a file of one key would stop that.
+
+Every write (`cc_config::save`) reads the file again and compares the key with the value the page
+showed; when another program changed it since, nothing is written, an error says so, and the
+page shows the current value. Otherwise only the key changes (and, for Dynamic workflows and
+Artifacts, the old `disable…` key `/config` removes too); every other key, known or not, is kept
+in its place (serde_json's `preserve_order`; a removed key is taken out with `shift_remove`).
+The file as read is kept in the backups folder (`settings-backups`, the newest 30 of each name,
+`…-settings.json` and `…-claude.json`). The new file is written beside it, then the file is read
+again and compared byte for byte with what was read, and only when equal renamed over it: the
+compare is the last step before the rename. A file that is not a JSON object is never replaced.
+
+For `.claude.json` the write holds Claude Code's own lock folder `.claude.json.lock`, which Claude
+Code takes with `proper-lockfile` when that lock is on (its call passes no `stale`, so the
+library's 10 s apply; a holder touches the folder every 5 s). A lock folder younger than a minute
+refuses the write with "try again"; an older one was left behind by a Claude Code that ended, and
+is taken over (only an empty folder is removed, and a racing taker makes the create fail), and the
+page says so. When a `settings.json` save reaches the master but the sync to the other accounts
+fails, the page says that the setting was saved in the master account and not shared yet.
+
+Reads and writes run off the window thread (a background job per page); the page shows the
+result when it ends, and a change made while one runs is not taken (the row shows its value
+again). The page reads the files when it opens, after every change, and on Check again or
+another account.
+
+**Settings › Claude Code › Status** shows, for the account chosen on it (the same choice as
+Advanced's), what `/status` and `/stats` show that files hold, so nothing is run
+(`core::cc_status`). Read off the window thread when the page opens and when another account is
+chosen; values are single-option rows, as the toolkit has no label/value row.
+
+- Claude Code: the installed version, the newest folder of `%USERPROFILE%\.local\share\claude\versions`
+  (the native installer's), with the version the Advanced table was taken from.
+- Account: the sign-in method (a claude.ai login when `.credentials.json` exists, which is never
+  opened, and `.claude.json` has `oauthAccount`; else an `apiKeyHelper` in `settings.json`; else a
+  `primaryApiKey` in `.claude.json`) and `oauthAccount`'s email, organization and plan.
+- Settings in effect: the user `settings.json` (how many keys, or not valid JSON) and a
+  machine-wide `%ProgramFiles%\ClaudeCode\managed-settings.json`; a folder's own settings depend on
+  the folder and are named only.
+- MCP servers in `.claude.json`'s user-scope `mcpServers`, name and transport (eight by name, then
+  a count); user memory, `CLAUDE.md` in the CLI folder, with its lines.
+- Stats from the account's `history.jsonl` (one line per prompt: `timestamp` in ms, `project`,
+  `sessionId`), only its last 8 MiB (the header says so when it is longer): prompts, sessions,
+  local days with a prompt, folders. Models used: the newest 40 of those sessions whose
+  transcript the session index knows, the last 64 KiB of each, the `message.model` of assistant
+  lines (`<synthetic>` skipped), counted once per session.
+- Usage is not repeated: a row opens the Usage page (plan usage shows in the top bar).
+
+Left out because only a running Claude Code knows them: the model and permission mode of a
+session, whether MCP servers connect, a session's cost and context use, and `/stats`' token totals
+(they would need whole transcripts, not the bounded reads above). See TODO.md, item 81.
 
 ## Recent sessions and local marks
 

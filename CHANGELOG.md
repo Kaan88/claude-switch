@@ -74,6 +74,21 @@
   jobs whose server has exited shown as "Owner gone". The selected job's output streams from its
   event log. **Cancel job…** ends the job's worker and the processes it started, after a confirm,
   and only while that process is still the job's; otherwise it says why it did not.
+- Settings › Claude Code › Advanced: the rest of Claude Code's `/config` (taken from 2.1.332), with a
+  search box, a short line on what each does, a "default" mark and Reset to Claude Code's default.
+  `settings.json` entries are saved in the master account and shared; `.claude.json` entries belong
+  to the chosen account and are read-only while it runs Claude Code. A value changed elsewhere since
+  the page read it is never overwritten. Entries Claude Code lists only in some contexts
+  (fullscreen mode, an IDE connected, agent teams, a feature flag) say so on their row.
+  `.claude.json` is changed only when no Claude Code can hold it (a desktop session of another
+  account in the same folder, a session still starting, a program in one of the window's tabs,
+  or a scan that could not read everything all count), never created, backed up first, and
+  replaced only if its bytes are still those read; a lock Claude Code left behind is taken over.
+  Saves and reads run in the background, and files keep the order of their keys.
+- Settings › Claude Code › Status: for a chosen account, the installed Claude Code version, the
+  sign-in method and account, the settings files in effect, user MCP servers and memory file, and
+  stats from its prompt history (prompts, sessions, days active, folders) and the models of its
+  newest sessions. Read from files only; plan usage links to the Usage page.
 - Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
   record and the transcripts (a `live` op records both), and whether Chat reads the screen after
   it as an idle input.

@@ -209,6 +209,21 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
             let read = dialogs_read(s);
             if read.is_empty() { "none".to_owned() } else { read.join(", ") }
         }
+        // Any one of the parts: an entry `/config` may not list in the recorded context.
+        "shows-any" => {
+            let all: String = (0..s.rows())
+                .map(|r| {
+                    s.row_text(r)
+                        + "
+"
+                })
+                .collect();
+            if want.split(" | ").any(|part| all.contains(part.trim())) {
+                want.to_owned()
+            } else {
+                format!("none shown: {want}")
+            }
+        }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
         "card" => card_first(s),
         "sent" => {
@@ -770,6 +785,9 @@ highlight = Reply with just the word charlie.",
     assert_eq!(first("one\r\n  Bash(ls)\r\n  more text"), "top: one", "nothing of a call under it");
     assert_eq!(first("one\r\n  see f(x)\r\n  \u{23bf}  a"), "top: one", "not a call's name");
     assert_eq!(first(""), NONE);
+    let either = format!("no such words here | {some}");
+    assert_eq!(fact(&idle, "shows-any", &either), either);
+    assert_eq!(fact(&idle, "shows-any", "no such words | here"), "none shown: no such words | here");
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
 }

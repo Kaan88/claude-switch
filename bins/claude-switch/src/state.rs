@@ -233,6 +233,10 @@ pub struct AppState {
     pub info: Option<InfoBar>,
     pub dialog: Option<Dialog>,
     pub settings_category: Option<&'static str>,
+    /// What Settings › Claude Code › Advanced read, and its search and account.
+    pub cc_page: crate::dialogs::CcPage,
+    /// What Settings › Claude Code › Status read.
+    pub cc_status: crate::dialogs::CcRead,
     pub confirm_scroll: f32,
     pub compact: crate::compact_dialog::Cache,
     pub opencode: crate::opencode_workers::Workers,
@@ -355,6 +359,8 @@ impl AppState {
             info: None,
             dialog: None,
             settings_category: None,
+            cc_page: Default::default(),
+            cc_status: Default::default(),
             confirm_scroll: 0.0,
             compact: Default::default(),
             opencode: Default::default(),

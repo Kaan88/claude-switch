@@ -10,6 +10,8 @@ use mdshared_ui::colour_picker::parse_hex;
 use mdshared_ui::settings::{Form, Outcome, Row, Value};
 
 mod appearance;
+mod cc_advanced;
+mod cc_status;
 mod chat_page;
 mod claude_code;
 mod meaning;
@@ -17,6 +19,8 @@ mod pages;
 pub(crate) mod peek;
 mod theme_editor;
 mod tiles;
+pub(crate) use cc_advanced::Page as CcPage;
+pub(crate) use cc_status::Read as CcRead;
 pub(crate) use chat_page::CHAT;
 pub(crate) use pages::Settings;
 
@@ -24,6 +28,7 @@ pub(crate) const TERMINAL: &str = "Terminal";
 pub(crate) const OPENCODE: &str = "OpenCode";
 pub(super) const HANDOVERS: &str = "Handovers";
 pub(super) const SESSIONS: &str = "Sessions";
+const USAGE: &str = "Usage";
 pub(crate) use meaning::refresh as refresh_sessions_page;
 
 type Page = (&'static str, fn(&AppState) -> Vec<Row>);
@@ -34,7 +39,9 @@ const PAGES: &[Page] = &[
     (SESSIONS, sessions),
     (CHAT, chat_page::rows),
     (claude_code::CLAUDE_CODE, claude_code::rows),
-    ("Usage", usage),
+    (cc_advanced::ADVANCED, cc_advanced::rows),
+    (cc_status::STATUS, cc_status::rows),
+    (USAGE, usage),
     (HANDOVERS, handovers),
     (OPENCODE, opencode),
     ("Notification area", notifications),
@@ -128,6 +135,11 @@ fn save_handover_prefs(st: &mut AppState, change: impl FnOnce(&mut claude_switch
     }
 }
 
+/// Shows what the Claude Code pages read or saved in the background. True when there was something.
+pub(crate) fn take_claude_code_jobs(st: &mut AppState) -> bool {
+    cc_advanced::take_job(st) | cc_status::take_job(st)
+}
+
 pub(crate) fn settings(st: &mut AppState, category: Option<&str>) -> Dialog {
     let category = category.or(st.settings_category);
     let index = PAGES.iter().position(|(name, _)| Some(*name) == category).unwrap_or(0);
@@ -139,6 +151,12 @@ pub(crate) fn settings(st: &mut AppState, category: Option<&str>) -> Dialog {
 /// Fresh data for a page that shows more than settings: the accounts' agents and the saved
 /// handover preferences (another window may have changed them).
 fn prepare_page(st: &mut AppState, index: usize) {
+    if PAGES[index].0 == cc_advanced::ADVANCED {
+        cc_advanced::load(st);
+    }
+    if PAGES[index].0 == cc_status::STATUS {
+        cc_status::load(st);
+    }
     if PAGES[index].0 == HANDOVERS {
         if let crate::source::Source::Real(roots) = &st.source {
             st.config.compact = claude_switch_core::config::load(roots).compact;
@@ -432,6 +450,14 @@ fn settings_outcome(st: &mut AppState, o: Outcome) {
             chat_page::apply(st, id, Some(value));
         }
         Outcome::Changed { id, value } if claude_code::owns(id) => claude_code::apply(st, id, value),
+        Outcome::Changed { id, value } if cc_advanced::owns(id) => cc_advanced::apply(st, id, Some(value)),
+        Outcome::Action(id) if cc_advanced::owns(id) => cc_advanced::apply(st, id, None),
+        Outcome::Action(cc_status::OPEN_USAGE) => {
+            if let Some(index) = PAGES.iter().position(|(name, _)| *name == USAGE) {
+                settings_event(st, SettingsEvent::Page(index));
+            }
+        }
+        Outcome::Changed { id, value } if cc_status::owns(id) => cc_status::apply(st, id, Some(value)),
         Outcome::Action(id) if chat_page::owns(id) => {
             chat_page::apply(st, id, None);
         }
@@ -710,7 +736,26 @@ mod tests {
 
     #[test]
     fn every_setting_has_exactly_one_page() {
-        let st = AppState::new(Source::Demo, None, WindowFile::default());
+        let mut st = AppState::new(Source::Demo, None, WindowFile::default());
+        use claude_switch_core::cc_config::{ENTRIES, Store};
+        let entries = |store| {
+            ENTRIES
+                .iter()
+                .enumerate()
+                .filter(move |(_, e)| e.store == store)
+                .map(|(i, _)| cc_advanced::FIRST + 2 * i as u32)
+        };
+        let advanced: Vec<u32> = std::iter::once(cc_advanced::SEARCH)
+            .chain(entries(Store::Settings))
+            .chain([cc_advanced::ACCOUNT])
+            .chain(entries(Store::Global))
+            .collect();
+        // The demo's status: version, sign-in, email, organization, plan, settings, managed,
+        // memory, two MCP servers, four counts and two models.
+        let status: Vec<u32> = std::iter::once(cc_status::ACCOUNT)
+            .chain(cc_status::INFO..cc_status::INFO + 16)
+            .chain([cc_status::OPEN_USAGE])
+            .collect();
         let expected: &[&[u32]] = &[
             &[
                 SET_THEME,
@@ -776,6 +821,8 @@ mod tests {
                 claude_code::SET_COMPACT,
                 claude_code::SET_VERBOSE,
             ],
+            &advanced,
+            &status,
             &[SET_USAGE, SET_USAGE_WARNINGS],
             &[
                 SET_CONTINUE_IN,
@@ -796,6 +843,7 @@ mod tests {
         ];
         assert_eq!(PAGES.len(), expected.len());
         for (index, ids) in expected.iter().enumerate() {
+            prepare_page(&mut st, index);
             let form = page_form(&st, index);
             assert_eq!(form.rows().iter().filter_map(Row::id).collect::<Vec<_>>(), *ids);
         }
@@ -803,6 +851,97 @@ mod tests {
             expected.iter().flat_map(|ids| ids.iter()).collect::<std::collections::HashSet<_>>().len(),
             expected.iter().map(|ids| ids.len()).sum::<usize>(),
         );
+    }
+
+    #[test]
+    fn advanced_page_searches_saves_and_resets_to_claude_codes_default() {
+        use claude_switch_core::cc_config::ENTRIES;
+        let mut st = AppState::new(Source::Demo, Some(true), WindowFile::default());
+        st.dialog = Some(settings(&mut st, Some(cc_advanced::ADVANCED)));
+        let ids = |st: &AppState| current(st).form.rows().iter().filter_map(Row::id).collect::<Vec<_>>();
+        let all = ids(&st).len();
+        assert_eq!(all, ENTRIES.len() + 2, "search, account and one row per entry");
+        let at = |key: &str| cc_advanced::FIRST + 2 * ENTRIES.iter().position(|e| e.key == key).unwrap() as u32;
+
+        // The search filters by label, key or help, case aside.
+        settings_outcome(&mut st, Outcome::Changed { id: cc_advanced::SEARCH, value: Value::Text("GITIGNORE".into()) });
+        assert_eq!(ids(&st), [cc_advanced::SEARCH, cc_advanced::ACCOUNT, at("respectGitignore")]);
+        settings_outcome(&mut st, Outcome::Changed { id: cc_advanced::SEARCH, value: Value::Text("baseref".into()) });
+        assert_eq!(ids(&st), [cc_advanced::SEARCH, at("worktree.baseRef")]);
+        settings_outcome(&mut st, Outcome::Changed { id: cc_advanced::SEARCH, value: Value::Text("zzz".into()) });
+        assert_eq!(ids(&st), [cc_advanced::SEARCH]);
+        settings_outcome(&mut st, Outcome::Changed { id: cc_advanced::SEARCH, value: Value::Text(String::new()) });
+        assert_eq!(ids(&st).len(), all);
+
+        // A change marks the row as set and offers a Reset back to Claude Code's default.
+        let tips = at("spinnerTipsEnabled");
+        settings_outcome(&mut st, Outcome::Changed { id: tips, value: Value::Bool(false) });
+        let rows = current(&st).form.rows();
+        let i = rows.iter().position(|r| r.id() == Some(tips)).unwrap();
+        assert!(matches!(&rows[i + 1], Row::Action { id, label, .. } if *id == tips + 1 && label.ends_with(": On")));
+        settings_outcome(&mut st, Outcome::Action(tips + 1));
+        assert_eq!(ids(&st).len(), all, "reset: the key is gone again");
+        assert!(format!("{:?}", current(&st).form.rows().iter().find(|r| r.id() == Some(tips))).contains("· default"));
+    }
+
+    #[test]
+    fn advanced_page_never_overwrites_a_value_changed_meanwhile_and_is_read_only_while_claude_code_runs() {
+        use claude_switch_core::Roots;
+        use claude_switch_core::cc_config::ENTRIES;
+        let scratch = crate::testing::Scratch::new("cs-settings-advanced-test");
+        let folder = scratch.to_path_buf();
+        let roots = Roots { home: folder.join("home"), appdata: folder.join("appdata") };
+        let mut st = AppState::new(Source::Real(roots.clone()), None, WindowFile::default());
+        let claude_json = roots.home.join(".claude.json");
+        std::fs::create_dir_all(&roots.home).unwrap();
+        std::fs::write(&claude_json, r#"{"numStartups":3}"#).unwrap();
+        st.dialog = Some(settings(&mut st, Some(cc_advanced::ADVANCED)));
+        cc_advanced::wait(&mut st);
+        let at = |key: &str| cc_advanced::FIRST + 2 * ENTRIES.iter().position(|e| e.key == key).unwrap() as u32;
+
+        // Changed by Claude Code after the page read it: refused, the file keeps its value.
+        std::fs::write(&claude_json, r#"{"numStartups":3,"showTurnDuration":false}"#).unwrap();
+        settings_outcome(&mut st, Outcome::Changed { id: at("showTurnDuration"), value: Value::Bool(true) });
+        cc_advanced::wait(&mut st);
+        assert!(st.info.take().is_some(), "the refusal is shown");
+        let now: serde_json::Value = serde_json::from_slice(&std::fs::read(&claude_json).unwrap()).unwrap();
+        assert_eq!(now["showTurnDuration"], false);
+        // The page read it again: now the change goes through and keeps the other keys.
+        settings_outcome(&mut st, Outcome::Changed { id: at("showTurnDuration"), value: Value::Bool(true) });
+        cc_advanced::wait(&mut st);
+        assert!(st.info.is_none());
+        let now: serde_json::Value = serde_json::from_slice(&std::fs::read(&claude_json).unwrap()).unwrap();
+        assert_eq!(now, serde_json::json!({"numStartups": 3, "showTurnDuration": true}));
+
+        // A running Claude Code of the account (this test's process) makes its rows read-only.
+        let pid = std::process::id();
+        let sessions = roots.home.join(".claude").join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::write(
+            sessions.join(format!("{pid}.json")),
+            serde_json::json!({"pid": pid, "sessionId": "0b4f5a64-1c0e-4a43-9a43-1f4c2b1f8f10", "cwd": "C:/x"})
+                .to_string(),
+        )
+        .unwrap();
+        settings_outcome(&mut st, Outcome::Action(cc_advanced::RECHECK));
+        cc_advanced::wait(&mut st);
+        let row = current(&st).form.rows().iter().find(|r| r.id() == Some(at("copyOnSelect"))).cloned();
+        let Some(Row::Choice { options, help, .. }) = row else { panic!("a read-only row is a single choice") };
+        assert_eq!((options.as_slice(), help.contains("Close")), (&["On".to_owned()][..], true));
+        settings_outcome(&mut st, Outcome::Changed { id: at("copyOnSelect"), value: Value::Choice(0) });
+        cc_advanced::wait(&mut st);
+        let now: serde_json::Value = serde_json::from_slice(&std::fs::read(&claude_json).unwrap()).unwrap();
+        assert!(now.get("copyOnSelect").is_none(), "nothing written while it runs");
+    }
+
+    #[test]
+    fn status_page_reads_the_account_and_links_to_usage() {
+        let mut st = AppState::new(Source::Demo, Some(true), WindowFile::default());
+        st.dialog = Some(settings(&mut st, Some(cc_status::STATUS)));
+        let text = format!("{:?}", current(&st).form.rows());
+        assert!(text.contains("Sign-in method") && text.contains("Days active"), "{text}");
+        settings_outcome(&mut st, Outcome::Action(cc_status::OPEN_USAGE));
+        assert_eq!(current(&st).category(), USAGE);
     }
 
     #[test]
@@ -956,8 +1095,8 @@ mod tests {
         assert!(!config::load(&roots).embedded_terminal);
         st.dialog = Some(settings(&mut st, Some(TERMINAL)));
         assert_eq!(current(&st).form.value(SET_TERM_FONT), Some(Value::Number(21)));
-        // Down the rail: Sessions, Chat, Claude Code, Usage.
-        for _ in 0..4 {
+        // Down the rail: Sessions, Chat, Claude Code, Advanced, Status, Usage.
+        for _ in 0..6 {
             navigate(&mut st, KeyName::Down);
         }
         assert_eq!(current(&st).form.value(SET_USAGE), Some(Value::Bool(false)));

@@ -52,6 +52,7 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `sleep MS` | |
 | `send TEXT` | Bytes to the terminal. Escapes: `\e` Esc, `\r` Enter, `\n`, `\t` Tab, `\s` space, `\xHH`, `\\`. Arrows `\e[A` `\e[B` `\e[C` `\e[D`, Shift+Tab `\e[Z`, Ctrl+C `\x03`, Ctrl+U `\x15`, a paste `\e[200~…\e[201~` with `\r` between its lines. |
 | `wait TEXT MS` | Until some row contains TEXT, at most MS. |
+| `need TEXT MS` | As `wait`, but when TEXT does not show in time the script ends there, before another key goes, in any run (a `wait` ends it only in `recorder compat`). For keys that would do harm on another screen. |
 | `gone TEXT MS` | Until no row contains TEXT. |
 | `quiet MS MAX` | Until the terminal sent nothing for MS. |
 | `snap NAME` | Writes `NAME.txt` (rows, first line `cursor ROW COL`) and `NAME.ansi` (the fixture form). |
@@ -107,6 +108,19 @@ unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and 
 where the terminal card's rows start (a running call in `working`, its bullet lit or not, and an
 answer's `●`/`⏺` bullet at column 0 in `context`).
 
+`config-list` is not about Chat: it searches `/config` for the label of every entry Settings ›
+Claude Code › Advanced writes (`crates/core/src/cc_config.rs`; after changing that table, write the
+script and its `expect` file again with `python -I tools/screen-recorder/config-list.py`) and checks
+that each still shows. Entries `/config` lists only in some contexts (the table's `WHEN`: fullscreen
+mode, an IDE, agent teams, a feature flag) may be missing: their expectation (`shows-any`) accepts
+`/config`'s "No settings match". It makes no model request
+and changes nothing, but Claude Code still writes its bookkeeping into the config folder, so run
+it with a scratch one that is signed in for this alone (`claude auth login` with
+`CLAUDE_CONFIG_DIR` set to an empty folder):
+`pwsh tools\cli-compat.ps1 -Only config-list -ConfigDir <scratch folder>`. An entry the account's
+plan or flags hide and that is not in `WHEN` shows as not shown; `docs/DESIGN.md` ("Claude Code's
+/config") says which can.
+
 Some of what Chat relies on is in Claude Code's files, not on its screen, and these scripts
 check those too:
 
@@ -151,8 +165,12 @@ check those too:
     pwsh tools\cli-compat.ps1 -ConfigDir $env:USERPROFILE\.claude-accounts\<name>\cli
 
 It builds the recorder and starts `recorder compat` with that account (`CLAUDE_CONFIG_DIR`; without
-`-ConfigDir`, the signed-in account whose `projects` folder was written least recently). Other
-switches: `-Only idle,plan` (some scripts), `-OnlyIfNewVersion` (do nothing when this Claude Code
+`-ConfigDir`, the signed-in account whose `projects` folder was written least recently). Before
+that, and without an account, it checks that the installed `claude.exe` still contains every key
+(`key:`) and label (`"Label"`) of `crates/core/src/cc_config.rs`, the `/config` entries Settings ›
+Claude Code › Advanced writes: `MISSING   /config key …` names one Claude Code renamed or dropped,
+and makes the run's exit code 1. `-KeysOnly` runs only that (a few seconds; GitHub Actions runs it
+too, as a warning). Other switches: `-Only idle,plan` (some scripts), `-OnlyIfNewVersion` (do nothing when this Claude Code
 version was already checked in full; the last one is kept in
 `%LOCALAPPDATA%\claude-switch-cli-compat\last-checked.txt`), `-Model`, `-Out`, `-Plain`. Run it from
 a terminal of at least 100 columns; with `CARGO_TARGET_DIR` set, both builds go there.
