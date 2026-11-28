@@ -932,3 +932,52 @@ fn the_real_menus_and_dialogs_are_still_read() {
     }
     assert!(agent_list(&recorded(AGENTS_OPEN)).is_some());
 }
+
+#[test]
+fn a_question_with_chat_about_this_highlighted_over_a_leftover_rule_is_no_input_box() {
+    // `❯ 5. Chat about this` sits right under the question's inner rule, and Claude Code may leave
+    // a plain rule under the dialog (seen at the review step): taken for the input box, no card.
+    let rule = "─".repeat(100);
+    for under in [format!("\n{rule}"), format!("\n\n\n{rule}"), rule.clone()] {
+        let screen = recorded(&format!("{ASK_SINGLE_OTHER}{under}"));
+        assert_eq!(input_box(&screen), None, "{under:?}");
+        let panel = panel(&screen).expect("the question");
+        assert!(panel.question, "{under:?}");
+        assert_eq!(panel.menu.expect("its choices").highlight(), Some(4));
+    }
+}
+
+#[test]
+fn a_quote_under_a_rule_in_the_conversation_is_no_input_box() {
+    // A `>` row of the conversation right under a rendered rule, the permission prompt's own top
+    // rule further down: taken for the input box and its closing rule, no prompt was read and no
+    // notification came.
+    let rule = "─".repeat(100);
+    let prompt = format!(
+        "{rule}\n Bash command\n mkdir x\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend"
+    );
+    for quote in ["  > a quoted line", "> a quoted line"] {
+        let screen = recorded(&format!(
+            "cursor 0 0\n● Here is the note:\n{rule}\n{quote}\n  and its second line\n\n● Bash(mkdir x)\n  ⎿  Waiting…\n\n{prompt}"
+        ));
+        assert_eq!(input_box(&screen), None, "{quote:?}");
+        assert!(crate::attention::screen_permission_prompt(&screen), "{quote:?}");
+        assert_eq!(permission(&screen).expect("the prompt").menu.texts(), ["Yes", "No"]);
+    }
+}
+
+#[test]
+fn choices_start_under_the_rule_over_the_menus_first_choice() {
+    // A full-width rule in the conversation above the user's numbered message: the message is
+    // still above the dialog's own rule, and a dialog with no numbered rows has no choices.
+    let rule = "─".repeat(100);
+    let screen = recorded(&format!(
+        "cursor 0 0\n● Done.\n{rule}\n❯ 1. say pong\n  2. nothing else\n\n● On it.\n\n{rule}\n Some dialog\n\n Its text\n\n Enter to confirm · Esc to cancel"
+    ));
+    assert_eq!(input_box(&screen), None);
+    assert!(menu(&screen).is_none());
+    assert!(panel(&screen).is_some_and(|p| p.menu.is_none()));
+    // A question's choices on both sides of its inner rule are one menu.
+    assert_eq!(menu(&recorded(ASK_SINGLE)).expect("the question").entries.len(), 5);
+    assert_eq!(menu(&recorded(ASK_SINGLE_OTHER)).expect("the question").entries.len(), 5);
+}

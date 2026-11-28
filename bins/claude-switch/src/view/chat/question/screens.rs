@@ -176,15 +176,23 @@ const INPUT_BOX_ROWS: usize = 40;
 /// name), a row starting with the input mark right under it, the rows of a longer input, and the
 /// solid rule closing it (rows of the top and the bottom rule). Whatever the input holds (a draft
 /// of numbered lines, `❯ 1. fix a`) is the user's text: a menu takes the input box's place and
-/// is never drawn inside it, and a menu's choice under a rule (`❯ 5. Chat about this`) is not
-/// closed by another rule.
+/// is never drawn inside it. The box's own shape tells it from a dialog or the conversation: the
+/// mark in the first column, and down to the closing rule only the input's further rows, blank or
+/// indented under its text (2.1.332). A question's highlighted `❯ 5. Chat about this` under its
+/// inner rule has the footer under it, whatever rule the CLI left below that; a `>` quoted in
+/// the conversation is indented, and has the conversation under it.
 pub(in crate::view::chat) fn input_box(screen: &Screen) -> Option<(usize, usize)> {
     let text = |r: usize| screen.row_text(r).trim().to_owned();
     let top_rule = |r: usize| solid_rule(&text(r)) || crate::view::chat::submission::screen::named_rule(&text(r));
-    (1..screen.rows()).rev().filter(|&r| text(r).starts_with(prompt_mark) && top_rule(r - 1)).find_map(|r| {
+    let mark = |r: usize| screen.row_text(r).starts_with(prompt_mark);
+    let input_row = |r: usize| {
+        let raw = screen.row_text(r);
+        raw.trim().is_empty() || raw.starts_with("  ") && !menu_footer(&raw)
+    };
+    (1..screen.rows()).rev().filter(|&r| mark(r) && top_rule(r - 1)).find_map(|r| {
         let end = (r + 1 + INPUT_BOX_ROWS).min(screen.rows());
         let bottom = (r + 1..end).find(|&b| rule(&text(b)))?;
-        solid_rule(&text(bottom)).then_some((r - 1, bottom))
+        (solid_rule(&text(bottom)) && (r + 1..bottom).all(input_row)).then_some((r - 1, bottom))
     })
 }
 
@@ -280,16 +288,29 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
     let texts: Vec<String> = rows.iter().map(|(_, text)| text.clone()).collect();
     let footer = footer_row(screen, &texts)?;
     let mut entries: Vec<Entry> = Vec::new();
-    // The CLI draws a menu under a full-width rule (a question may draw another between its
-    // choices): what is above the topmost one is the conversation, where the user's own message
-    // (`❯ 1. fix a` / `2. fix b`, echoed as sent) and Claude's numbered lists are no choices.
-    let first = footer.saturating_sub(MENU_ROWS);
-    let full = |row: &usize| {
-        let text = screen.row_text(*row);
+    // The CLI draws a menu under a full-width rule; a question draws another between its choices
+    // ("5. Chat about this" under it). The menu starts under the lowest such rule over its first
+    // choice: up from the footer, a rule is passed only while the first numbered row under it
+    // goes on from a choice above it. Above that is the conversation, where the user's own
+    // message (`❯ 1. fix a` / `2. fix b`, echoed as sent) and Claude's numbered lists are no
+    // choices, whatever rules the conversation has above them.
+    let window = footer.saturating_sub(MENU_ROWS);
+    let full = |row: usize| {
+        let text = screen.row_text(row);
         let text = text.trim_end();
         text.chars().count() >= screen.cols() && solid_rule(text.trim_start())
     };
-    let first = (first..footer).find(full).map_or(first, |top| top + 1);
+    let first_number = |from: usize| (from..footer).find_map(|row| numbered(&rows[row].1).map(|(n, _)| n));
+    let mut first = window;
+    let mut below = footer;
+    while let Some(top) = (window..below).rev().find(|&row| full(row)) {
+        first = top + 1;
+        if first_number(first).is_none_or(|n| n == 1) {
+            break;
+        }
+        first = window;
+        below = top;
+    }
     for (row, (highlighted, text)) in rows.iter().enumerate().take(footer).skip(first) {
         let Some((n, rest)) = numbered(text) else { continue };
         if n == 1 {
