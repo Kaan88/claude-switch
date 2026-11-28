@@ -30,8 +30,10 @@ hides = Interrupted
 working = yes
 hides = Interrupted
 
+# The turn's answer row, not the prompt's "word started.", and no turn working any more.
 [done]
-shows = started
+shows = ● started
+working = no
 hides = Interrupted
 
 [done_transcript]

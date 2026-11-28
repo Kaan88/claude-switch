@@ -2116,9 +2116,11 @@ it picked. An agent that ended, or that the list does not show running, gets not
 says so and keeps the text, as it does when the screen does not show the agent selected in time
 (saying so when the list is left holding the keys), a prompt holds the keys, or keys typed in the
 terminal interrupt. Shell commands and attachments go to the main session only. Recorded from Claude Code 2.1.332 by the `agent-message` compat script
-(`agent_message_*`, run 20261128-122040), with the agent's transcript (`agentcopy`); the Esc that
-closes the list after Back and the message in the agent's transcript after its end are in the
-script but not recorded yet.
+(`agent_message_*`, run 20261128-122040; the Esc after Back and the message in the agent's
+transcript after its end from run 20261128-132937), with the agent's transcript (`agentcopy`).
+`agent-back-busy` (run 20261128-132937) recorded Back during a running main turn: ↑ from the
+agent the pick left highlighted, Enter on main, and the Esc from the list, which left the turn
+running.
 
 **Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
 typed, in a tab with Chat, never over a subagent's transcript (refused there with a word). It goes through the CLI's own rewind list and never edits the transcript.

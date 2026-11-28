@@ -45,8 +45,10 @@ sleep 800
 snap back_closed
 sleep 3000
 snap after_esc
-# The main turn ends by itself, not interrupted.
-wait started 120000
+# The main turn ends by itself, not interrupted: its answer row "● started". (The prompt's own
+# "…reply only with the word started." stays on the screen, so the word alone matches at once:
+# run 20261128-132937 snapped `done` and copied the transcript 13 s in, mid-ping.)
+wait ● started 120000
 sleep 3000
 snap done
 tscopy done_transcript
