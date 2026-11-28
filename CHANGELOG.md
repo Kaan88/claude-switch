@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Chat: Ctrl+C copies the text selected in the conversation when the message box has no
+  selection of its own; it used to do nothing there.
 - Chat: a message typed while Claude works (in Chat or in the terminal) is shown as your message
   where Claude Code handed it in; it used to be missing, with its picture. Such a message is not
   offered for "Rewind to here…": Claude Code records it only as a queued message, which its rewind

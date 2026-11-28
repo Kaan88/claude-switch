@@ -802,3 +802,59 @@ fn the_details_panel_follows_what_it_has_to_show_until_the_user_chooses() {
     st.layout_chat(area);
     assert!(chat(&mut st, id).layout.side.w > 0.0, "opened by the user, it stays open");
 }
+
+#[test]
+fn ctrl_c_copies_the_conversations_selection_unless_the_message_box_has_one() {
+    use mdshared_text::bitmap::Bitmap;
+    use mdshared_ui::gfx::{Gfx, Painter};
+    use mdshared_ui::keys::{KeyName, Mods};
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let source = model::Source::File(demo.path().into());
+    let (wake, events) = std::sync::mpsc::channel();
+    let mut model = model::Model::new(source.clone(), demo.cwd().into(), move || {
+        let _ = wake.send(());
+    });
+    model.poll();
+    events.recv_timeout(Duration::from_secs(5)).expect("the transcript was read");
+    assert!(model.collect());
+    let mut app = demo_app_with_pane(source, demo.cwd().into());
+    let pane = app.tabs.shown_mut().unwrap().pane.as_mut().unwrap();
+    let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new(700, 500));
+    let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+    pane.ui.set_chat(true);
+    let area = Rect::new(0.0, 0.0, 700.0, 500.0);
+    pane.ui.draw(&mut p, &mdshared_ui::theme::DARK, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+    let ctrl = Mods { ctrl: true, ..Mods::default() };
+    let copy = |pane: &crate::view::Pane, name: char, mods: Mods| {
+        let mut copied = None;
+        let done = pane.copy_conversation(&KeyName::Char(name), mods, |text| {
+            copied = Some(text.to_owned());
+            true
+        });
+        (done, copied)
+    };
+    // Nothing selected in the conversation: the key is the box's, as before.
+    assert_eq!(copy(pane, 'c', ctrl), (false, None));
+    assert!(pane.ui.select_everything());
+    let (done, copied) = copy(pane, 'c', ctrl);
+    assert!(done && copied.is_some_and(|text| !text.is_empty()));
+    assert!(copy(pane, 'C', Mods { shift: true, ..ctrl }).0, "Ctrl+Shift+C too, as in the box");
+    assert_eq!(copy(pane, 'c', Mods { alt: true, ..ctrl }), (false, None));
+    assert_eq!(copy(pane, 'c', Mods::default()), (false, None));
+    assert_eq!(copy(pane, 'v', ctrl), (false, None));
+    // The box's own selection comes first.
+    pane.chat.editor.set("draft".into());
+    pane.chat.editor.select_all();
+    assert_eq!(copy(pane, 'c', ctrl), (false, None));
+    pane.chat.editor.set("draft".into());
+    assert!(pane.chat.editor.selection().is_empty());
+    assert!(copy(pane, 'c', ctrl).0, "a caret is no selection");
+}
+
+/// The demo window with a Chat pane over `source`.
+fn demo_app_with_pane(source: model::Source, cwd: std::path::PathBuf) -> crate::state::AppState {
+    let mut app = demo();
+    let pane = app.new_session_pane(source, cwd);
+    app.tabs.shown_mut().unwrap().pane = Some(pane);
+    app
+}

@@ -284,6 +284,12 @@ impl AppState {
             self.arm_chat_tick(cx);
             return true;
         }
+        if let Some(name) = k.name.as_ref()
+            && let Some(pane) = self.tabs.shown().and_then(|t| t.pane.as_ref())
+            && pane.copy_conversation(name, mods, platform::set_clipboard_text)
+        {
+            return true;
+        }
         // A card stands where the composer is: the hidden draft takes no keys, and Enter sends
         // nothing. The card's own field takes them once it was clicked (above).
         if self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.question.docked()) {
@@ -601,6 +607,26 @@ impl AppState {
             }
             chat.chip_page = chat.attachment_pages() - 1;
         }
+    }
+}
+
+impl crate::view::Pane {
+    /// Ctrl+C in Chat copies the conversation's selection when there is one and the message box
+    /// has none of its own (a hidden box, behind a card, has none): Chat's keys go to the box, so
+    /// the conversation's own Ctrl+C (`Ui::key`) is not reached. True when it copied; otherwise
+    /// the key goes on to the box as before.
+    pub(in crate::view) fn copy_conversation(
+        &self,
+        name: &KeyName,
+        mods: Mods,
+        set_clipboard: impl FnOnce(&str) -> bool,
+    ) -> bool {
+        let box_selection = !self.chat.question.docked() && !self.chat.editor.selection().is_empty();
+        matches!(name, KeyName::Char('c' | 'C'))
+            && mods.ctrl
+            && !mods.alt
+            && !box_selection
+            && self.ui.copy_selection_to(set_clipboard)
     }
 }
 

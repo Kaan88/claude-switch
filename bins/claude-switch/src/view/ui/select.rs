@@ -119,6 +119,16 @@ impl Ui {
         (!text.is_empty()).then_some(text)
     }
 
+    /// Copies the selection through `set_clipboard`; false when there is none to copy.
+    pub fn copy_selection_to(&self, set_clipboard: impl FnOnce(&str) -> bool) -> bool {
+        self.selected_text().is_some_and(|text| set_clipboard(&text))
+    }
+
+    #[cfg(test)]
+    pub(in crate::view) fn select_everything(&mut self) -> bool {
+        self.select_all()
+    }
+
     pub(super) fn select_all(&mut self) -> bool {
         self.selection = Selection::all(&self.rows);
         self.selection.is_some()

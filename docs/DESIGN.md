@@ -384,7 +384,7 @@ pictures; a group can be expanded independently of its rows.
 identity, so it survives an appended message) and a byte in that row's shown text, so a drag or
 Shift+click can cross messages; dragging past the top or bottom scrolls. A double click takes a
 word, a triple click the message. Ctrl+C copies the selection, the rows' parts joined by a blank
-line; Ctrl+A selects the whole loaded conversation. The right-click menu has Copy and Select all,
+line (in Chat, where keys go to the message box, when the box has no selection of its own); Ctrl+A selects the whole loaded conversation. The right-click menu has Copy and Select all,
 and over a message Copy message (its text as shown) and Copy as Markdown (its source). Each
 top-level code block of an answer has a **Copy** button for its code alone. The toolkit's
 `richtext` manages no selection, so this is the app's (`view/ui/select.rs`) over the renderer's
