@@ -131,6 +131,8 @@ pub struct Divider {
 /// The panes of a tab beyond its own terminal, how they are arranged and which has the keyboard.
 pub struct Panes {
     pub extra: Vec<(PaneId, Term)>,
+    /// The folder each shell pane was started in, kept for reopening the tab (`saved`).
+    pub folders: Vec<(PaneId, std::path::PathBuf)>,
     pub tree: Node,
     pub focus: PaneId,
     next: PaneId,
@@ -145,6 +147,7 @@ impl Default for Panes {
     fn default() -> Panes {
         Panes {
             extra: Vec::new(),
+            folders: Vec::new(),
             tree: Node::Leaf(MAIN),
             focus: MAIN,
             next: MAIN + 1,
@@ -205,6 +208,7 @@ impl Panes {
         }
         let i = self.extra.iter().position(|(p, _)| *p == id)?;
         let (_, term) = self.extra.remove(i);
+        self.folders.retain(|(p, _)| *p != id);
         if self.focus == id {
             // The pane before it in reading order, or the first.
             let left = self.ids();
@@ -362,26 +366,31 @@ impl AppState {
                 Axis::Down => (cols, (rows.saturating_sub(1) / 2).max(1)),
             }
         });
-        let term = if self.source.is_demo() {
-            let mut t = Term::empty(size);
-            t.feed(format!("Demo: no shell started in {}\r\n", cwd.display()).as_bytes());
-            t
-        } else {
-            let mut l = claude_switch_core::launch::shell(&cwd);
-            let spawned = crate::run::native_program(&l.program).and_then(|program| {
-                l.program = program;
-                Term::spawn(&crate::term::command(&l), size, self.term_wake())
-            });
-            match spawned {
-                Ok(t) => t,
-                Err(e) => return self.error("Could not start a shell", format!("{}: {e}", l.program.display())),
-            }
+        let term = match self.shell_term(&cwd, size) {
+            Ok(t) => t,
+            Err(e) => return self.error("Could not start a shell", e),
         };
         let before = self.tabs.get(id).map(|t| t.focused_pane());
         let Some(tab) = self.tabs.get_mut(id) else { return };
-        if tab.panes.split(axis, term).is_some() {
+        if let Some(pane) = tab.panes.split(axis, term) {
+            tab.panes.folders.push((pane, cwd));
             self.pane_focus_moved(id, before);
         }
+    }
+
+    /// A pane's shell in `cwd` (in the demo, a terminal with no program that says so).
+    pub(crate) fn shell_term(&self, cwd: &std::path::Path, size: (u16, u16)) -> Result<Term, String> {
+        if self.source.is_demo() {
+            let mut t = Term::empty(size);
+            t.feed(format!("Demo: no shell started in {}\r\n", cwd.display()).as_bytes());
+            return Ok(t);
+        }
+        let mut l = claude_switch_core::launch::shell(cwd);
+        let spawned = crate::run::native_program(&l.program).and_then(|program| {
+            l.program = program;
+            Term::spawn(&crate::term::command(&l), size, self.term_wake())
+        });
+        spawned.map_err(|e| format!("{}: {e}", l.program.display()))
     }
 
     /// Closes the focused pane of tab `id`, asking while its program runs. The last pane closes
@@ -511,6 +520,8 @@ impl AppState {
         self.tabs.shown_mut().and_then(|t| t.panes.drag.take()).is_some()
     }
 }
+
+pub mod saved;
 
 #[cfg(test)]
 mod tests;

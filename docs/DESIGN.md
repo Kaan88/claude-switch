@@ -427,7 +427,14 @@ closes only last (closing it under shells would leave Chat without its terminal)
 other pane it is "Close" of the tab, asking as before. Closing the tab or the window counts the
 panes' programs as running. In Chat's layout only pane 0 is shown (in the drawer) and has the
 keyboard; the other panes keep running, their size unchanged, and splitting waits for the
-terminal layout. Panes are not saved with the tabs.
+terminal layout. A split tab's row in `terminal-tabs.json` (Claude and OpenCode tabs; plain shell
+tabs are not saved) carries `panes` (`panes/saved.rs`): the tree with its ratios, numbered leaves
+(0 the tab's own pane, `k` the shell started in `folders[k - 1]`) and the focused leaf; no commands,
+names or screen contents. Reopening the tab puts the layout back and starts each shell again in its
+saved folder, or the tab's own folder when that one is gone. The folder is where the shell was
+started; a later `cd` inside it is not known to the app. A row it cannot read as a layout (shape,
+leaf numbers, ratios outside 0.02–0.98, relative folders) reopens the tab unsplit, as does a shell
+that cannot start; older builds ignore the field.
 
 **Not there:** links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host

@@ -155,8 +155,8 @@ as the second account, Windows Terminal, the desktop hand-over.
   running app (only tests and pictures): search in the scrollback (DESIGN.md, "Find in a terminal";
   not there yet: mouse selection and the right-click menu in its box, regular expressions, whole
   words) and splits (DESIGN.md, "Panes"; not there yet: keys to split or move between panes,
-  panes in saved and reopened tabs, splits shown in Chat's layout, closing the tab's own pane
-  while others are open, dragging a selection across panes).
+  splits shown in Chat's layout, closing the tab's own pane while others are open, dragging a
+  selection across panes). Panes come back with reopened tabs (2026-11-28).
 - Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.
 
 ## For the toolkit (what the app's authors had to work around)

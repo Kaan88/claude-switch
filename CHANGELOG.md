@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Terminal tabs: a split tab reopened with the saved tabs gets its panes back, in the same layout
+  and sizes, each shell started again in the folder it was started in.
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog
