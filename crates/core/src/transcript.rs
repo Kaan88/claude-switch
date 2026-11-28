@@ -270,8 +270,9 @@ impl Reader {
         &self.view.tasks
     }
 
-    /// The session's subagents. One whose call is in a turn a rewind replaced is left out unless it
-    /// is known to be still running (a rewind does not stop it).
+    /// The session's subagents. One whose call is in a turn a rewind replaced is left out once its
+    /// end is known ([`Subagent::end`], from a notification, its result, its sidecar or its own
+    /// transcript); a rewind does not stop it, so one nothing says has ended (it may run) stays.
     pub fn subagents(&self) -> impl Iterator<Item = &Subagent> {
         let replaced = |info: &Subagent| {
             info.tool_use_id
@@ -279,10 +280,7 @@ impl Reader {
                 .and_then(|tool| self.view.tools.get(tool))
                 .is_some_and(|at| self.view.active.hides(at.offset))
         };
-        self.agents
-            .values()
-            .map(|agent| &agent.info)
-            .filter(move |info| info.finished == Some(false) || !replaced(info))
+        self.agents.values().map(|agent| &agent.info).filter(move |info| info.end.is_none() || !replaced(info))
     }
 
     pub fn open_subagent(&self, id: &str, chunk_bytes: usize) -> io::Result<Self> {

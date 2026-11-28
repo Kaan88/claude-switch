@@ -163,6 +163,26 @@ fn after_a_rewind_the_pages_drop_what_the_replaced_turn_did_unless_it_still_runs
 }
 
 #[test]
+fn an_agent_of_a_replaced_turn_goes_once_its_end_is_known() {
+    let folder = Folder::new("rewind-agent-end");
+    let path = session(&folder);
+    let mut reader = Reader::open(&path, 1 << 20).unwrap();
+    append(&path, &prompt("u3", Some("a1"), "two again"));
+    reader.poll().unwrap();
+    // Nothing says the background agent ended (Claude Code never writes `finished: false`): it may
+    // still run, so it stays.
+    assert_eq!(agents(&reader), ["live"]);
+    assert_eq!(reader.subagents().next().unwrap().end, None);
+    // Its notification comes on the new branch: ended, and from a replaced turn, so it goes.
+    append(&path, &ended("n3", "u3", "live"));
+    let changes = reader.poll().unwrap();
+    assert!(changes.subagents_changed);
+    assert!(agents(&reader).is_empty());
+    let again = Reader::open(&path, 1 << 20).unwrap();
+    assert!(agents(&again).is_empty(), "the same read from the start");
+}
+
+#[test]
 fn a_forks_copy_keeps_everything_it_copied() {
     // `/fork` and `/branch` copy the active chain, each record linked to the one before it.
     let folder = Folder::new("fork");
