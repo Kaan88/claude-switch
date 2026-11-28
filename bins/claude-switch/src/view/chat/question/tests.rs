@@ -1651,7 +1651,7 @@ impl Fixture {
         let mut ids = Vec::new();
         for (i, text) in texts.iter().enumerate() {
             let id = ItemId { offset: 10 * (i as u64 + 1), block: 0 };
-            let kind = ItemKind::Prompt { text: (*text).into(), pictures: vec![], synthetic: false };
+            let kind = ItemKind::Prompt { text: (*text).into(), pictures: vec![], synthetic: false, queued: false };
             pane.model.items.insert(id, Item { kind, timestamp: None });
             ids.push(id);
         }
@@ -1751,6 +1751,38 @@ fn rewind_walks_the_list_to_the_prompt_and_chooses_only_on_a_click() {
     advance(f.tab(), now, true);
     assert!(f.rewind().is_none());
     assert_eq!(f.chat().error, Some(rewind::REWOUND));
+}
+
+#[test]
+fn a_message_sent_while_a_turn_ran_is_not_in_the_rewind_list() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    // Claude Code records it only as a queued_command, which its rewind list does not show.
+    let queued = ItemId { offset: 25, block: 0 };
+    let kind = ItemKind::Prompt { text: "Also say delta.".into(), pictures: vec![], synthetic: false, queued: true };
+    f.tab().pane.as_mut().unwrap().model.items.insert(queued, Item { kind, timestamp: None });
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, queued);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.rewind().and_then(|r| r.error), Some(rewind::NOT_PROMPT));
+    f.chat().question.rewind = None;
+    // An earlier prompt is still found: the list's rows under it are the later typed prompts.
+    rewind::start(f.tab(), now, ids[1]);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    let now = now + STEP / 10;
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now, true);
+    f.show(REWIND_UP1, now);
+    advance(f.tab(), now, true);
+    f.show(REWIND_UP2, now);
+    f.writes();
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "bravo, with charlie under it");
 }
 
 #[test]

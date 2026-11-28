@@ -93,30 +93,11 @@ as the second account, Windows Terminal, the desktop hand-over.
   double- (or triple-) click is ignored. Expected, as in other apps: the drag extends word by word (line
   by line after a triple-click). The message box has the same gap: `chat_press` sets `editor_drag` only
   for a single click.
-- **Chat loses messages sent while a turn runs, and their answers** (owner, 2026-11-28, seen in 0.1.4
-  and 0.1.5; cause found, not fixed). Three parts:
-  1. *The user's message is not shown.* Claude Code (2.1.332) records a message typed while a turn
-     runs only as `{"type":"attachment","attachment":{"type":"queued_command","prompt":…,
-     "commandMode":"prompt","origin":{"kind":"human"}}}`, never as a `user` record. `prompt` is a
-     string, or the usual text and image blocks when a picture was pasted. The reader skips every
-     attachment except three notice kinds (`notices::shown_attachment`, `View::line`'s
-     `LineKind::Attachment` arm). Show it as a prompt; it starts no new turn, so it must not move
-     `ChatInfo::prompt` (attention). Leave out the same record with `commandMode:
-     "task-notification"` or `origin.kind: "peer"`. A picture's blocks then sit under
-     `attachment.prompt`, not `message.content` (`Reader::load_picture`). In the newest 60
-     transcripts: 26 such messages, none also recorded as a `user` record.
-  2. *The answer is folded away.* With thinking shown as updates (`"thinkingDisplay":"updates"` on
-     the assistant record), Claude often answers through a thinking block's text. The terminal shows
-     it as an answer line ("● … · summary"); Chat files every thinking block as a `Thought` notice, so
-     the answer sits inside a run of steps. In the newest 40 transcripts all 277 thinking blocks with
-     text had `updates` and read as messages to the user. Show those as answer text; keep other
-     thinking as Thought.
-  3. *Only one message can wait.* A draft queued behind a running turn locks the box
-     (`Chat::locked`, `chat.queue` holds one); the terminal lets the user type several messages,
-     which Claude Code hands in mid-turn. To decide: let Send type a message straight into the CLI's
-     input while a turn runs (as the terminal does), or keep a list of queued drafts.
-  A started fix for 1 and 2 with reader tests is on the local branch `fix/chat-queued-and-updates`
-  (`ed19614`, not pushed, only the core transcript tests run; nothing for 3).
+- Try in a real session (built 2026-11-28 from recorded screens only): Send while a turn runs goes
+  into Claude Code's empty input and is handed in mid-turn; a message sent so is shown where the
+  transcript has it; Claude Code's rewind list leaves it out (Chat assumes so and offers no Rewind
+  for it; were it listed, a rewind to an earlier prompt would stop with "does not show the prompts
+  after this one").
 - Recheck the historical Claude Code white selection bar in a real session. The app now sets both
   selection colours. If Claude Code enables mouse reporting, use Shift+drag to test the terminal's own
   selection; a plain drag goes to the program. In the 760×480 `cmd.exe` demo, the same selection tint

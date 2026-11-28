@@ -396,7 +396,8 @@ hidden rather than shown wrongly:
 
 | Shown as | Record |
 | --- | --- |
-| Thought | an assistant `thinking` block `{thinking, signature}` with text; about half have none (omitted thinking) and are not shown; thoughts sit inside a tool group without counting as calls |
+| Thought | an assistant `thinking` block `{thinking, signature}` with text; about half have none (omitted thinking) and are not shown; thoughts sit inside a tool group without counting as calls. With `"thinkingDisplay":"updates"` on the record, the terminal shows the block's text as an answer line ("· …"), so Chat shows it as answer text |
+| Prompt | also an `attachment` `queued_command` with `commandMode: "prompt"` and `origin.kind: "human"`: a message typed while a turn ran, which Claude Code records only there (its `prompt` a string, or text and image blocks). It starts no turn, splits no turn's changed files and is not offered for Rewind (the CLI's rewind list is built from user records, so it is taken not to show it; not seen on a real screen); the same record from a task notification or another session is not shown |
 | Hook error | `system` `stop_hook_summary` with `hookErrors` (strings); an `attachment` `hook_non_blocking_error` (`hookName`, `stderr`) except for Stop hooks, whose summary already lists it |
 | Hook | an `attachment` `hook_system_message` (`hookName`, `content`), the hook's `systemMessage` |
 | Stop hook feedback | Claude Code's own user record starting "Stop hook feedback:"; a summary with `preventedContinuation` |
@@ -1168,7 +1169,10 @@ does not show an input at rest, and a newly observed `end_turn` still makes a qu
 screen ready. The OSC title is no protocol: explicit busy labels only veto a send. A successful
 write only means input was handed to the terminal, and there is still a race between observing the
 PTY and writing it.
-A draft that only has to wait is held, not refused: a running turn, a prompt the CLI is still
+While a turn runs and the CLI's input reads visibly empty, Send types the message into it as
+**Send now** does (below), and Claude Code hands it to the running turn as when typed in the
+terminal; the box is free for the next message at once. A draft that only has to wait is held, not
+refused: a running turn whose input does not read empty, a prompt the CLI is still
 drawing, a command's output, a new chat's transcript, a picture while the input is not empty. It is
 locked (text and attachments) until it sends or is cancelled, and goes out by itself, also in a
 hidden tab, once the input is idle (or a newer completion shows, where no screen can be read).

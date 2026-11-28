@@ -684,7 +684,7 @@ impl Rows<'_> {
             };
             for &id in ids {
                 let Some(item) = m.items.get(&id) else { continue };
-                if matches!(item.kind, ItemKind::Prompt { synthetic: false, .. }) {
+                if matches!(item.kind, ItemKind::Prompt { synthetic: false, queued: false, .. }) {
                     self.put_files(&mut writes);
                 }
                 writes.observe(id, item, m.files.get(&id));
@@ -1030,7 +1030,7 @@ fn output_cards(
     // Tool-only results sit under the next answer in the same turn, or their tool group
     // if the turn has not produced another answer. Prefer the assistant's link label.
     for (&id, item) in items.iter().rev() {
-        if matches!(item.kind, ItemKind::Prompt { synthetic: false, .. }) {
+        if matches!(item.kind, ItemKind::Prompt { synthetic: false, queued: false, .. }) {
             next_answer = None;
             current_turn = Some(id);
         }

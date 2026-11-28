@@ -266,13 +266,18 @@ impl AppState {
     pub(super) fn chat_send(tab: &mut Tab, now: Instant, force: bool) {
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
+        let running = || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running;
         let intent = if !force {
-            Intent::Draft
-        } else if chat.queue.is_some()
-            && (chat.demo
-                || clean_prompt(&tab.term.screen)
-                || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running)
-        {
+            // While a turn runs, a message goes into Claude Code's visibly empty input at once, as
+            // Send now does and as typing in the terminal would: Claude Code hands it to the
+            // running turn, and the box is free for the next one. Otherwise it is held.
+            let empty = clean_prompt(&tab.term.screen);
+            if chat.queue.is_none() && empty && running() && blocked(tab, now, Intent::Now).is_none() {
+                Intent::Now
+            } else {
+                Intent::Draft
+            }
+        } else if chat.queue.is_some() && (chat.demo || clean_prompt(&tab.term.screen) || running()) {
             // Into the visibly empty input, also while a turn runs.
             Intent::Now
         } else {

@@ -30,7 +30,8 @@ fn tool(name: &str, state: ToolState, card: Option<ToolCard>) -> Item {
 fn tool_only_outputs_follow_the_next_answer_and_repeated_links_use_its_label() {
     use crate::view::outputs::collect;
     use claude_switch_core::transcript::ResultDetails;
-    let prompt = || item(ItemKind::Prompt { text: "show outputs".into(), pictures: vec![], synthetic: false });
+    let prompt =
+        || item(ItemKind::Prompt { text: "show outputs".into(), pictures: vec![], synthetic: false, queued: false });
     let answer = item(ItemKind::Assistant { markdown: "[Named artifact](https://claude.ai/artifacts/1)".into() });
     let call = tool("Bash", ToolState::Ok, None);
     let result =
@@ -80,7 +81,7 @@ fn both_views_say_runs_in_words_show_edits_as_rows_and_put_only_successful_named
         patch: None,
     };
     let shell = ToolCard::Shell { command: "echo enter/leave".into(), result: vec!["enter/leave".into()] };
-    let prompt = || item(ItemKind::Prompt { text: "short".into(), pictures: vec![], synthetic: false });
+    let prompt = || item(ItemKind::Prompt { text: "short".into(), pictures: vec![], synthetic: false, queued: false });
     model.items = [
         prompt(),
         item(ItemKind::Assistant { markdown: "Here is the answer.".into() }),
@@ -244,7 +245,7 @@ fn a_run_reads_in_words_by_kind_and_a_call_a_card_asks_about_waits() {
         call
     };
     model.items = [
-        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false, queued: false }),
         call("Bash", "cargo test -p tiles", ToolState::Ok, Some(shell("cargo test -p tiles"))),
         item(ItemKind::Assistant { markdown: "Now the benchmark.".into() }),
         call("Bash", "cargo bench", ToolState::Running, Some(shell("cargo bench"))),
@@ -295,7 +296,7 @@ fn notices_are_compact_rows_that_expand_and_thoughts_are_steps_that_do_not_split
     let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
     let notice = |kind, text: &str| item(ItemKind::Notice { kind, text: text.into() });
     model.items = [
-        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false, queued: false }),
         notice(NoticeKind::Thought, "First I **read** the file.\nThen I edit it."),
         tool("Read", ToolState::Ok, None),
         notice(NoticeKind::Thought, "Now the edit."),
@@ -367,13 +368,13 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
         })
     };
     model.items = [
-        item(ItemKind::Prompt { text: "/model".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "/model".into(), pictures: vec![], synthetic: false, queued: false }),
         local("/model", "", "Set model to Opus 5.5", ToolState::Ok),
-        item(ItemKind::Prompt { text: "/context".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "/context".into(), pictures: vec![], synthetic: false, queued: false }),
         local("/context", "", "Context Usage\n⛁ ⛁ ⛀ 12k / 200k", ToolState::Ok),
         local("Shell", "! git status", "On branch main", ToolState::Ok),
         local("Shell", "! git lg", "git: 'lg' is not a git command.", ToolState::Failed),
-        item(ItemKind::Prompt { text: "next".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "next".into(), pictures: vec![], synthetic: false, queued: false }),
         local("Shell", "! true", "", ToolState::Ok),
     ]
     .into_iter()
@@ -436,7 +437,7 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         call
     };
     model.items = [
-        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false, queued: false }),
         denied(DenialKind::AutoMode, "Too risky."),
         denied(DenialKind::User, "The user doesn't want to proceed with this tool use."),
         tool("Read", ToolState::Failed, None),

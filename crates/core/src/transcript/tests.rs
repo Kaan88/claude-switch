@@ -555,3 +555,73 @@ fn shown_attachments_become_notices_and_context_attachments_are_skipped() {
         .collect();
     assert_eq!(kinds, [NoticeKind::Memory, NoticeKind::HookError, NoticeKind::Recap]);
 }
+
+#[test]
+fn a_message_sent_while_a_turn_ran_is_a_prompt_and_other_queued_records_are_not() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let queued = |mode: &str, origin: Value, prompt: Value| {
+        record(json!({"type":"attachment","uuid":"u","timestamp":"2026-11-28T01:42:27Z","attachment":{
+            "type":"queued_command","prompt":prompt,"commandMode":mode,"origin":origin,"humanTurn":true}}))
+    };
+    let lines = [
+        prompt("first"),
+        queued("prompt", json!({"kind":"human"}), json!("does this make sense?")),
+        queued(
+            "task-notification",
+            json!({"kind":"task-notification"}),
+            json!("<task-notification>x</task-notification>"),
+        ),
+        queued("prompt", json!({"kind":"peer"}), json!("from another session")),
+        queued("prompt", json!({"kind":"human"}), json!([{"type":"text","text":"[Image #1] look"}, image("aGk=")])),
+    ];
+    fs::write(&path, lines.concat()).unwrap();
+    let mut reader = Reader::open(&path, 4096).unwrap();
+    let items: Vec<_> = reader.items().map(|(_, item)| item.clone()).collect();
+    let texts: Vec<_> = items
+        .iter()
+        .map(|item| match &item.kind {
+            ItemKind::Prompt { text, synthetic: false, .. } => text.as_str(),
+            other => panic!("only prompts expected, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(texts, ["first", "does this make sense?", "[Image #1] look"]);
+    let queued: Vec<_> = items.iter().map(|item| matches!(item.kind, ItemKind::Prompt { queued: true, .. })).collect();
+    assert_eq!(queued, [false, true, true]);
+    // It starts no turn: the newest prompt is still the one typed at the idle input.
+    let first = reader.items().next().map(|(id, _)| id.offset);
+    assert_eq!(reader.chat().prompt, first);
+    assert_eq!(items[1].timestamp.as_deref(), Some("2026-11-28T01:42:27Z"));
+    let ItemKind::Prompt { pictures, .. } = &items[2].kind else { unreachable!() };
+    assert_eq!(pictures.len(), 1);
+    assert_eq!(reader.load_picture(&pictures[0]).unwrap(), b"hi");
+}
+
+#[test]
+fn thinking_shown_as_updates_is_an_answer_and_other_thinking_stays_a_thought() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let thinking = |display: Option<&str>, text: &str| {
+        let mut value = json!({"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use",
+            "content":[{"type":"thinking","thinking":text,"signature":"s"}]}});
+        if let Some(display) = display {
+            value["thinkingDisplay"] = json!(display);
+        }
+        record(value)
+    };
+    let lines = [
+        thinking(Some("updates"), ""),
+        thinking(Some("updates"), "Encrypting the database would not protect it."),
+        thinking(None, "a private thought"),
+    ];
+    fs::write(&path, lines.concat()).unwrap();
+    let reader = Reader::open(&path, 4096).unwrap();
+    let kinds: Vec<_> = reader.items().map(|(_, item)| item.kind.clone()).collect();
+    assert_eq!(
+        kinds,
+        [
+            ItemKind::Assistant { markdown: "Encrypting the database would not protect it.".into() },
+            ItemKind::Notice { kind: NoticeKind::Thought, text: "a private thought".into() },
+        ]
+    );
+}

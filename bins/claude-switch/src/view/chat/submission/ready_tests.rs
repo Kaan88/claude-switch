@@ -245,16 +245,34 @@ fn text_on_the_cli_input_is_never_an_idle_prompt_and_a_draft_waits_until_it_is_g
 }
 
 #[test]
-fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
+fn a_send_while_a_turn_runs_goes_into_the_empty_input_at_once_and_frees_the_box() {
     let mut f = Live::new();
     f.turn();
     f.show(WORKING_TOOL);
     assert_eq!(f.pass(SECOND), (Gate::Running, None));
-    f.send("next");
-    assert!(f.chat().queue.is_some() && f.writes().is_empty(), "queued behind the turn");
-    // Send now while the CLI's input holds text: no refusal, the request is kept.
+    // As Send now: typed into Claude Code's empty input, which hands it to the running turn.
+    f.send("one");
+    assert_eq!(f.writes(), message("one"));
+    let chat = f.chat();
+    assert!(chat.queue.is_none() && chat.editor.text.is_empty() && !chat.locked() && chat.error.is_none());
+    // The box takes the next message at once, and it goes the same way.
+    f.show(WORKING_TOOL);
+    assert_eq!(f.pass(SECOND).0, Gate::Running);
+    f.send("two");
+    assert_eq!(f.writes(), message("two"));
+    assert!(f.chat().queue.is_none() && f.chat().editor.text.is_empty());
+}
+
+#[test]
+fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
+    let mut f = Live::new();
+    f.turn();
+    // The CLI's input holds text while the turn runs: Send holds the draft behind the turn.
     f.show(PLAIN_WORKING_TYPED);
     assert_eq!(f.pass(SECOND).0, Gate::Running);
+    f.send("next");
+    assert!(f.chat().queue.is_some() && f.writes().is_empty(), "queued behind the turn");
+    // Send now while it still holds text: no refusal, the request is kept.
     let now = f.now;
     AppState::chat_send(f.tab(), now, true);
     assert!(f.chat().error.is_none() && f.chat().queue.as_ref().is_some_and(Queue::sends_now));
@@ -349,9 +367,14 @@ fn a_put_back_message_stays_on_the_cli_input_while_the_message_box_holds_a_draft
     f.send(RESTORED);
     assert_eq!(f.writes(), message(RESTORED));
     f.turn();
+    // Held, as the CLI's input does not read empty while it is sent (into an empty input it
+    // would go into the running turn at once).
+    f.show(PLAIN_WORKING_TYPED);
+    assert_eq!(f.pass(SECOND).0, Gate::Running);
+    f.send("and then this");
+    assert!(f.chat().queue.is_some() && f.writes().is_empty());
     f.show(WORKING_TOOL);
     assert_eq!(f.pass(SECOND), (Gate::Running, None));
-    f.send("and then this");
     assert!(f.chat().queue.is_some() && f.writes().is_empty());
     let now = f.now;
     AppState::chat_stop(f.tab(), now);

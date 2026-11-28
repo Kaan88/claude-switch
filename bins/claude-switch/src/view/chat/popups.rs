@@ -498,7 +498,7 @@ mod tests {
                 ItemId { offset, block: 0 },
                 Item {
                     timestamp: None,
-                    kind: ItemKind::Prompt { text: text.into(), pictures: Vec::new(), synthetic: false },
+                    kind: ItemKind::Prompt { text: text.into(), pictures: Vec::new(), synthetic: false, queued: false },
                 },
             );
         }

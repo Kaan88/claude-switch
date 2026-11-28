@@ -78,6 +78,9 @@ pub enum ItemKind {
         text: String,
         pictures: Vec<Picture>,
         synthetic: bool,
+        /// Sent while a turn ran (a `queued_command` record): Claude Code hands it to the running
+        /// turn, so it starts no turn and its rewind list does not show it.
+        queued: bool,
     },
     Assistant {
         markdown: String,
@@ -271,7 +274,10 @@ impl Reader {
         }
         let line = self.tail.read(picture.line_offset, picture.line_len as u64)?;
         let value: Value = serde_json::from_slice(&line).map_err(|_| invalid_picture("invalid picture line"))?;
-        let block = &value["message"]["content"][picture.block];
+        // A message sent while a turn ran keeps its blocks in its queued_command attachment.
+        let content =
+            if value["type"] == "attachment" { &value["attachment"]["prompt"] } else { &value["message"]["content"] };
+        let block = &content[picture.block];
         let block = match picture.result_block {
             Some(index) => &block["content"][index],
             None => block,
@@ -553,7 +559,7 @@ impl View {
                     self.add(
                         id(0),
                         timestamp,
-                        ItemKind::Prompt { text: texts.join("\n"), pictures, synthetic },
+                        ItemKind::Prompt { text: texts.join("\n"), pictures, synthetic, queued: false },
                         changes,
                     );
                 }
@@ -592,9 +598,18 @@ impl View {
                 if let Some(markdown) = content.as_str().filter(|s| !s.is_empty()) {
                     self.add(id(0), timestamp, ItemKind::Assistant { markdown: markdown.into() }, changes);
                 }
+                // With thinking shown as updates, Claude Code shows a thinking block's text as an answer
+                // line ("· summary"): it is what Claude says to the user, often the only answer to a
+                // message sent while a turn ran.
+                let updates = value["thinkingDisplay"] == "updates";
                 for (i, block) in blocks(content).enumerate() {
                     if let Some(text) = notices::thought(block) {
-                        self.add(id(i), timestamp, ItemKind::Notice { kind: NoticeKind::Thought, text }, changes);
+                        let kind = if updates {
+                            ItemKind::Assistant { markdown: text }
+                        } else {
+                            ItemKind::Notice { kind: NoticeKind::Thought, text }
+                        };
+                        self.add(id(i), timestamp, kind, changes);
                     } else if block["type"] == "text" {
                         if let Some(text) = block["text"].as_str().filter(|s| !s.is_empty()) {
                             self.add(id(i), timestamp, ItemKind::Assistant { markdown: text.into() }, changes);
@@ -633,7 +648,27 @@ impl View {
                 }
             }
             LineKind::Attachment => {
-                if let Some((kind, text)) = notices::attachment(&value["attachment"]) {
+                let attachment = &value["attachment"];
+                if let Some(prompt) = queued_prompt(attachment) {
+                    // A message the user sent while a turn ran: Claude Code records it only here and
+                    // hands it to Claude inside the running turn, so it starts no turn of its own.
+                    let mut texts = Vec::new();
+                    let mut pictures = Vec::new();
+                    texts.extend(prompt.as_str().and_then(prompt_text));
+                    for (i, block) in blocks(prompt).enumerate() {
+                        match block["type"].as_str() {
+                            Some("text") => texts.extend(block["text"].as_str().and_then(prompt_text)),
+                            Some("image") => pictures.extend(picture(i, None, block)),
+                            _ => (),
+                        }
+                    }
+                    if !texts.is_empty() || !pictures.is_empty() {
+                        self.chat.observe(offset, ChatPhase::Active);
+                        let item =
+                            ItemKind::Prompt { text: texts.join("\n"), pictures, synthetic: false, queued: true };
+                        self.add(id(0), timestamp, item, changes);
+                    }
+                } else if let Some((kind, text)) = notices::attachment(attachment) {
                     self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
                 }
             }
@@ -848,6 +883,16 @@ fn message_text(value: &Value) -> String {
         .filter_map(|block| block["text"].as_str())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The content of a message the user typed while a turn ran (`queued_command`, `commandMode:
+/// "prompt"`, `origin.kind: "human"`; recorded from Claude Code 2.1.332). Background task
+/// notifications and messages from other sessions use the same record and are not prompts.
+fn queued_prompt(attachment: &Value) -> Option<&Value> {
+    (attachment["type"] == "queued_command"
+        && attachment["commandMode"] == "prompt"
+        && attachment["origin"]["kind"] == "human")
+        .then(|| &attachment["prompt"])
 }
 
 pub(crate) fn prompt_text(text: &str) -> Option<&str> {

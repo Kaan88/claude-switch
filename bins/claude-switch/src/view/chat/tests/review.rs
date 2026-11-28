@@ -125,7 +125,9 @@ fn stop_releases_the_queue_only_after_working_disappears_and_the_input_is_clean(
     let now = Instant::now();
     running(tab, now);
     tab.term.feed("\r\n✻ Working… (esc to interrupt)\r\n❯ ".as_bytes());
+    tab.term.feed("typed".as_bytes());
     AppState::chat_send(tab, now, false);
+    tab.term.feed("\r\x1b[K❯ ".as_bytes());
     AppState::chat_stop(tab, now);
     tab.pane.as_mut().unwrap().chat.output(now, true, false);
     assert!(!AppState::advance_submission(tab, now + QUIET, true));
@@ -161,7 +163,7 @@ fn background_queue_and_image_respect_window_vetoes_but_still_progress_or_expire
                 AppState::chat_send(tab, now, true);
             } else {
                 running(tab, now);
-                AppState::chat_send(tab, now, false);
+                super::send_held(tab, now);
                 let pane = tab.pane.as_mut().unwrap();
                 pane.model.chat.latest = Some((120, ChatPhase::EndTurn));
                 pane.model.chat.prompt = Some(80);

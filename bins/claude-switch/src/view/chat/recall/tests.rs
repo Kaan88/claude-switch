@@ -14,7 +14,10 @@ fn fixture() -> Model {
 fn prompt(model: &mut Model, offset: u64, text: &str, synthetic: bool) {
     model.items.insert(
         ItemId { offset, block: 0 },
-        Item { timestamp: None, kind: ItemKind::Prompt { text: text.into(), pictures: Vec::new(), synthetic } },
+        Item {
+            timestamp: None,
+            kind: ItemKind::Prompt { text: text.into(), pictures: Vec::new(), synthetic, queued: false },
+        },
     );
 }
 
@@ -132,7 +135,11 @@ fn a_send_ends_recall_and_down_cannot_replace_the_next_draft() {
         prompt(&mut pane.model, 70, "previous", false);
         pane.chat.editor.set("draft A".into());
         assert!(pane.chat.recall_key(&pane.model, &KeyName::Up));
-        AppState::chat_send(tab, now, !cancelled);
+        if cancelled {
+            super::super::tests::send_held(tab, now);
+        } else {
+            AppState::chat_send(tab, now, true);
+        }
         let pane = tab.pane.as_mut().unwrap();
         if cancelled {
             assert!(pane.chat.queue.is_some());

@@ -451,6 +451,14 @@ pub(super) fn running(tab: &mut crate::tabs::Tab, now: Instant) {
     pane.chat.editor.insert("next");
 }
 
+/// Send while the turn runs and Claude Code's input does not read empty, so the draft is held
+/// (into an empty input it would go into the turn at once); then the input reads empty again.
+pub(super) fn send_held(tab: &mut crate::tabs::Tab, now: Instant) {
+    tab.term.feed("\r\x1b[K❯ typed".as_bytes());
+    crate::state::AppState::chat_send(tab, now, false);
+    tab.term.feed("\r\x1b[K❯ ".as_bytes());
+}
+
 #[test]
 fn queue_waits_for_a_newer_completion_then_sends_once_and_cancel_keeps_the_draft() {
     use crate::state::AppState;
@@ -459,7 +467,7 @@ fn queue_waits_for_a_newer_completion_then_sends_once_and_cancel_keeps_the_draft
         let tab = app.tabs.shown_mut().unwrap();
         let now = Instant::now();
         running(tab, now);
-        AppState::chat_send(tab, now, false);
+        send_held(tab, now);
         let pane = tab.pane.as_mut().unwrap();
         assert!(pane.chat.locked() && pane.chat.writes.is_empty());
         assert_eq!(pane.chat.notice(&pane.model.chat), Some("A turn is running. This will be sent when it ends."));
@@ -486,7 +494,7 @@ fn send_now_never_overrides_a_live_permission_question() {
     let tab = app.tabs.shown_mut().unwrap();
     let now = Instant::now();
     running(tab, now);
-    AppState::chat_send(tab, now, false);
+    send_held(tab, now);
     tab.term.feed(b"\r\nDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel");
     AppState::chat_send(tab, now, true);
     let chat = &tab.pane.as_ref().unwrap().chat;
@@ -621,7 +629,8 @@ fn undo_and_redo_walk_every_kind_of_draft_edit_with_its_caret_and_selection() {
     // A recalled prompt is a step too, and so is leaving it.
     let mut model =
         crate::view::model::Model::new(crate::view::model::Source::File(Default::default()), Default::default(), || {});
-    let kind = ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false };
+    let kind =
+        ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false, queued: false };
     model.items.insert(ItemId { offset: 1, block: 0 }, Item { timestamp: None, kind });
     assert!(chat.recall_key(&model, &KeyName::Up));
     assert_eq!(chat.editor.text, "an earlier prompt");
@@ -685,7 +694,8 @@ fn caret_keys_move_and_select_by_character_word_line_and_draft_like_a_windows_te
     let ctrl = Mods { ctrl: true, ..plain };
     let both = Mods { ctrl: true, shift: true, ..plain };
     let mut model = model::Model::new(model::Source::File(Default::default()), Default::default(), || {});
-    let kind = ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false };
+    let kind =
+        ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false, queued: false };
     model.items.insert(ItemId { offset: 1, block: 0 }, Item { timestamp: None, kind });
     let mut chat = Chat::default();
     chat.editor.history.clock = Some(Instant::now());
