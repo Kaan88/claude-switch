@@ -614,7 +614,7 @@ impl AppState {
         let wake = self.wake_fn();
         self.session_size.start(&session, self.source.is_demo(), wake);
         self.last_account = self.source.last_account(&self.config, &session).map(|account| (id.to_string(), account));
-        if let Some(reader) = self.details_reader.as_ref().filter(|r| r.id == id) {
+        if let Some(reader) = self.details_reader.as_ref().filter(|r| r.id == id && r.file == session.file) {
             // The same session again (a rescan): the reader goes on from where it read.
             if again {
                 reader.poll();
@@ -623,7 +623,7 @@ impl AppState {
         }
         let wake = self.wake_fn();
         self.details_reader = if self.source.is_demo() {
-            crate::view::reader::Reader::demo(id, &session.title, wake).ok()
+            crate::view::reader::Reader::demo(id, &session.file, &session.title, wake).ok()
         } else {
             Some(crate::view::reader::Reader::new(id, session.file.clone(), session.cwd.clone(), wake))
         };

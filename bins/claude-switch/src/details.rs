@@ -243,6 +243,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_details_conversation_lets_go_of_the_keys_when_the_keyboard_moves_away() {
+        use crate::state::Focus;
+        use mdshared_ui::keys::{KeyName, Mods};
+        let mut st = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+        st.apply_scan(crate::demo::scan(&st.config));
+        st.select_first();
+        let file = st.selected_session().unwrap().file.clone();
+        let reader = st.shown_reader().unwrap();
+        assert_eq!(reader.file, file, "keyed by the transcript as well as the id");
+        reader.focused = true;
+        let ctrl = Mods { ctrl: true, ..Default::default() };
+        st.focus = Focus::Search;
+        assert!(!st.session_key(800.0, &KeyName::Char('a'), ctrl), "Ctrl+A goes to the search field");
+        assert!(!st.shown_reader().unwrap().focused, "and the conversation let go");
+        st.focus = Focus::List;
+        assert!(!st.session_key(800.0, &KeyName::Char('a'), ctrl), "nor does it take them back by itself");
+    }
+
+    #[test]
     fn related_rows_never_include_the_selected_session_even_with_different_id_case() {
         assert!(!related_candidate(Some("A-123"), "a-123"));
         assert!(related_candidate(Some("A-123"), "A-124"));

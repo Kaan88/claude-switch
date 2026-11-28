@@ -18,8 +18,10 @@ use super::ui::{Release, Ui};
 pub const POLL: Duration = Duration::from_secs(1);
 
 pub struct Reader {
-    /// The session it reads.
+    /// The session it reads, and its transcript as the Sessions list names it: a rescan that
+    /// names another file for the same id gets a new reader.
     pub id: String,
+    pub file: PathBuf,
     model: Model,
     ui: Ui,
     area: Rect,
@@ -33,14 +35,18 @@ pub struct Reader {
 impl Reader {
     /// Reads `file`, the session `id`'s transcript, in `cwd`.
     pub fn new(id: &str, file: PathBuf, cwd: PathBuf, wake: impl Fn() + Send + 'static) -> Self {
-        Self::with(id, Source::File(file), cwd, None, wake)
+        let mut reader = Self::with(id, Source::File(file.clone()), cwd, None, wake);
+        reader.file = file;
+        reader
     }
 
     /// A made-up conversation for the demo, written to a temporary file that goes with it.
-    pub fn demo(id: &str, title: &str, wake: impl Fn() + Send + 'static) -> std::io::Result<Self> {
+    pub fn demo(id: &str, file: &Path, title: &str, wake: impl Fn() + Send + 'static) -> std::io::Result<Self> {
         let demo = DemoFile::write(title)?;
         let (path, cwd) = (demo.path.clone(), demo.dir.clone());
-        Ok(Self::with(id, Source::Demo(path), cwd, Some(demo), wake))
+        let mut reader = Self::with(id, Source::Demo(path), cwd, Some(demo), wake);
+        reader.file = file.to_owned();
+        Ok(reader)
     }
 
     fn with(id: &str, source: Source, cwd: PathBuf, demo: Option<DemoFile>, wake: impl Fn() + Send + 'static) -> Self {
@@ -48,7 +54,16 @@ impl Reader {
         model.poll();
         let mut ui = Ui::default();
         ui.set_embedded();
-        Self { id: id.to_owned(), model, ui, area: Rect::default(), focused: false, pressed: false, _demo: demo }
+        Self {
+            id: id.to_owned(),
+            file: PathBuf::new(),
+            model,
+            ui,
+            area: Rect::default(),
+            focused: false,
+            pressed: false,
+            _demo: demo,
+        }
     }
 
     /// Asks the reader for what was appended since.
@@ -296,7 +311,7 @@ mod tests {
 
     #[test]
     fn the_demo_conversation_lives_in_a_temporary_folder_of_its_own() {
-        let reader = Reader::demo("x", "Fix the scan", || {}).unwrap();
+        let reader = Reader::demo("x", Path::new("x.jsonl"), "Fix the scan", || {}).unwrap();
         let dir = reader._demo.as_ref().unwrap().dir.clone();
         assert!(dir.starts_with(std::env::temp_dir()) && dir.join("details.jsonl").is_file());
         drop(reader);

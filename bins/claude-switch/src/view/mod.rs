@@ -543,7 +543,14 @@ impl AppState {
     }
 
     pub fn session_key(&mut self, width: f32, name: &KeyName, mods: Mods) -> bool {
+        // The details conversation has the keys it was clicked for only while the Sessions page
+        // keeps the keyboard there: once Tab, Ctrl+F or typing moved it, the reader lets go.
+        let list = self.focus == crate::state::Focus::List;
         if let Some(reader) = self.shown_reader() {
+            if !list && !reader.overlay_open() {
+                reader.blur();
+                return false;
+            }
             return reader.key(name, mods);
         }
         (self.session_view.text_focus || self.picture_overlay())
@@ -565,6 +572,7 @@ impl AppState {
         if let Some(reader) = self.shown_reader() {
             if reader.press(x, y, clicks, mods) {
                 self.pressed = None;
+                self.focus = crate::state::Focus::List;
                 return true;
             }
             return false;
