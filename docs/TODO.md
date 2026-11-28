@@ -106,6 +106,17 @@ as the second account, Windows Terminal, the desktop hand-over.
   keyboard, as 0.1.6 does for questions). Chat still never types into a screen it cannot read. Not on
   Tab: Tab completes in the message box. The screen reports (`%APPDATA%\claude-switch\screen-reports`)
   show which prompts come up; frequent ones can become real cards, as the trust question did.
+- **Question previews and tabbed forms in Chat's card** (owner, 2026-11-28; after the queue job and the
+  command-output renderer). Claude Code's question tool can give each option a `preview` (monospace
+  text: mock-ups, code, layouts); the terminal shows the options on the left and the highlighted
+  option's preview in a box on the right. Chat's card squeezes each preview into the option's row, so
+  boxes break and lines run together. Read the previews from the question call's input in the
+  transcript (not the screen), draw the preview of the option under the pointer or keyboard with the
+  terminal grid renderer (font, cell grid, theme colours), beside the list, or under it in a narrow
+  window. A form with several questions (tabs such as "History box · What to tell · PR #7 · Submit")
+  currently falls back to "Choose in Claude Code's menu above"; show its tabs in the card so it can
+  be answered in Chat, with the Submit step. Check with a compat script that asks a question with
+  previews and one with several questions.
 - **Command output in Chat drawn like the terminal** (owner, 2026-11-28; doable). Output of commands such
   as `/context`, `/mcp` or `/cost` shows in Chat as plain grey text: no colours, and the cell glyphs
   (⛁ ⛀ ⛶) come from a fallback font with other widths, so the grid and the columns beside it go out of
