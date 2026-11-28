@@ -428,6 +428,12 @@ impl Ui {
         self.follow.latest();
     }
 
+    /// The Agents page, for its pictures.
+    #[cfg(test)]
+    pub(in crate::view) fn show_agents(&mut self) {
+        self.show(Page::Agents);
+    }
+
     pub(in crate::view) fn open_agent(&mut self, id: &str, model: &Model) {
         if model.agent.as_deref() != Some(id) {
             self.agent_origin = Some(self.page);

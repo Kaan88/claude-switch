@@ -558,6 +558,125 @@ fn session_view_shots() {
     }
 }
 
+/// The demo's agents under Claude Code's input: one running, one stopped. The demo's third agent
+/// (finished) is not listed, as Claude Code drops a finished agent from its list.
+const AGENTS_LISTED: &str = "cursor 25 2
+@size 100 40
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ? for shortcuts · ↓ to manage
+
+  ● main
+  ◯ reviewer  Review the plate caption                                       12s · ↓ 3.1k tokens
+  ◯ reviewer  Trace the ridge contour                              stopped · 8s · ↓ 2.0k tokens
+";
+
+/// Subagents in each state, the same words everywhere: Chat's Details › Background (the
+/// terminal's agent list says which runs), a subagent's conversation with its state in the header,
+/// and the Session view's Agents page. A fourth agent whose end nothing records shows `?`. Into
+/// `CS_CHAT_SHOTS`.
+#[test]
+#[ignore = "writes pictures of the subagents' states; run by hand"]
+fn agent_state_shots() {
+    use mdshared_ui::gfx::{Gfx, Painter, Rect};
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = std::env::var_os("CS_CHAT_SHOTS").map(|d| workspace.join(PathBuf::from(d)));
+    let scratch = crate::testing::Scratch::created("cs-agent-shots");
+    let dir = dir.as_deref().unwrap_or(&scratch);
+    std::fs::create_dir_all(dir).unwrap();
+    let unknown = claude_switch_core::transcript::Subagent {
+        id: "legend".into(),
+        agent_type: Some("reviewer".into()),
+        description: Some("Check the map legend".into()),
+        tool_calls: 2,
+        ..Default::default()
+    };
+    let demo = Transcript::new().unwrap();
+    for (dark, theme) in [(true, "dark"), (false, "light")] {
+        let now = Instant::now() + Duration::from_secs(1);
+        let (mut st, id) = shots::chat_window(dark, &demo);
+        pane(&mut st, id).model.agents.push(unknown.clone());
+        let later = shots::show(&mut st, id, AGENTS_LISTED, now);
+        let model = &pane(&mut st, id).model;
+        let words: Vec<_> = model.agents.iter().map(|a| model.agent_status(a).word).collect();
+        assert_eq!(words, ["Running", "Finished", "Stopped", "Unknown"], "caption, colour, contour, legend");
+        shots::settled_at(&mut st, later, WIDE).write_png(&dir.join(format!("10-agents-details-{theme}.png"))).unwrap();
+        // The running agent's conversation: its state beside its task over the conversation.
+        let viewed = pane(&mut st, id);
+        viewed.ui.open_agent("caption", &viewed.model);
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(20));
+            viewed.model.collect();
+            if viewed.model.agent.as_deref() == Some("caption") {
+                break;
+            }
+        }
+        assert_eq!(viewed.model.agent.as_deref(), Some("caption"));
+        let later = shots::show(&mut st, id, AGENTS_LISTED, later);
+        shots::settled_at(&mut st, later, NARROW).write_png(&dir.join(format!("10-agent-view-{theme}.png"))).unwrap();
+        // The stopped agent's conversation: the box names it, and a message is refused with a word.
+        let stopped = pane(&mut st, id);
+        stopped.ui.open_agent("contour", &stopped.model);
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(20));
+            stopped.model.collect();
+            if stopped.model.agent.as_deref() == Some("contour") {
+                break;
+            }
+        }
+        stopped.chat.editor.set("Check the second ridge too".into());
+        let later = shots::show(&mut st, id, AGENTS_LISTED, later);
+        AppState::chat_send(shots::tab(&mut st, id), later, false);
+        assert_eq!(pane(&mut st, id).chat.error, Some(super::question::agent_send::ENDED));
+        shots::settled_at(&mut st, later, NARROW).write_png(&dir.join(format!("10-agent-ended-{theme}.png"))).unwrap();
+    }
+    // The Session view's Agents page, from the files alone: no list, so the caption's end is unknown.
+    for (pal, theme) in [(mdshared_ui::theme::DARK, "dark"), (mdshared_ui::theme::LIGHT, "light")] {
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = crate::view::model::Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(Duration::from_secs(5)).expect("the transcript was read");
+        assert!(model.collect());
+        model.listed.insert("legend".into(), crate::view::agent_status::Listed::Running);
+        model.agents.push(claude_switch_core::transcript::Subagent { id: "legend".into(), ..unknown.clone() });
+        let mut ui = crate::view::ui::Ui::default();
+        ui.show_agents();
+        let (w, h, scale) = (380.0, 640.0, 1.5);
+        let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new((w * scale) as u32, (h * scale) as u32));
+        let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+        ui.draw(&mut p, &pal, Rect::new(0.0, 0.0, w, h), &mut model, (-1.0, -1.0), Instant::now(), false);
+        bmp.write_png(&dir.join(format!("10-agents-page-{theme}.png"))).unwrap();
+    }
+}
+
 /// The Sessions page with the selected session's conversation in its details (the shared
 /// conversation view, read-only), the details scrolled to their end: into `CS_CHAT_SHOTS`.
 #[test]

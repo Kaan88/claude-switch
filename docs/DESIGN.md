@@ -495,8 +495,28 @@ strip come into view as the conversation reaches its end, where it follows again
 by a viewport. Earlier history is loaded on request. Agent transcripts are reachable from expanded
 tool details and the Agents page. A cursor checkpoint detects a replacement or truncate-and-regrow near the
 read position. Transcript lines over 48 MiB are skipped, picture reads respect the same containing-line
-limit, and sidecar metadata over 1 MiB is ignored. The reported agent state comes from the sidecar, so a missing
-completion flag is shown as unknown rather than guessed.
+limit, and sidecar metadata over 1 MiB is ignored.
+
+**Subagent states.** Every place agents show (Details › Background, the header of a subagent's
+conversation, the Agents page) says one of running, finished or stopped (the word "Interrupted"
+or "Failed" when that is how it stopped) in a word beside its mark (◉, ✓, ■), and `?` Unknown only
+when nothing tells; the row's tooltip (on the Agents page, its card) says where the state was read
+or why nothing tells. Claude Code 2.1.332 marks only an end: its sidecar (`agent-<id>.meta.json`)
+gets `finished: true` when the agent ends (also when it is stopped) and `stoppedByUser` or
+`sweptByStop` for a stop, never `finished: false`, and an agent stopped from its list or cut off by
+a closed session may get no mark at all. The reader takes an agent's end from, first to last: a
+`<task-notification>` whose `<task-id>` is the agent's id (`completed`, `failed`, `killed` or
+`stopped`; a user record, a `task_notification` system record, or a `queued_command` attachment
+when it came while a turn ran), the result of the Agent call that ran it in the foreground (not a
+background launch, `status: "async_launched"`; an `is_error` result reading "[Request interrupted
+by user for tool use]" is an interruption), the sidecar, and the newest record of the agent's own
+transcript (an answer with `stop_reason` `end_turn` or `stop_sequence` and no tool call, or Claude
+Code's "[Request interrupted by user]"). History paged in later can settle an agent. None of these
+says an agent still runs: while the session runs in a tab, the terminal's agent list under the
+input does, read on every screen Chat reads (a row whose status starts with its running time is
+running, "stopped …" stopped), and it outranks the files. A row counts only when it is the list's
+only one with its type and description and the transcript knows exactly one such agent. The input
+with no list under it clears what the list said; a screen that covers the input keeps it.
 
 Chat and Session view use the same conversation projection, painting and input. Prompts sit in
 right-aligned tinted bubbles; cardless answers use a palette-accent Claude mark and body-size prose
@@ -2015,6 +2035,37 @@ row at a time to the agent (the hint then reads "enter to view · x to stop"), `
 turn alone. Left is never sent: at the input it opens "Background this session?". After a stop
 the hint row reads "↓ to resume subagent" and other agents are no longer offered until it offers
 "↓ to manage" again. Recorded from Claude Code 2.1.332 (`bg_*`, `agents_*`).
+
+**Messages to a subagent.** With a subagent's conversation open ("‹ Back · its task"), the
+message box is that agent's: its edge and placeholder take the agent's colour (the one its sidecar
+names, else one of Claude Code's eight subagent colours picked by its type) and name ("Message
+general-purpose…"), and Send goes to the agent the way Claude Code does when an agent is picked in
+its list. Claude Code 2.1.332 has this: Enter on an agent's row in the list shows that agent, its
+input's placeholder then reads "Message @<name>…" (cut to 20 columns) and what is typed there goes
+to it; Enter on `main` returns to the main session; Esc while an agent is shown may stop it, so
+Chat never sends one there. The keys, each only once newer output shows what the one before led
+to: at an empty input whose hint row offers "↓ to manage", ↓ (the list takes the keys, highlight
+on main), ↓ one row at a time to the agent's row, which must read running and be the transcript's
+one agent with that type and description ("enter to view · x to stop"), Enter (the input's dim
+placeholder names the agent's type; the list keeps the keys, its highlight on that agent, now
+marked `●` with `◯ main`), the message as a paste, Enter once the input shows it; done when the
+input is empty again. While the agent runs, Claude Code holds the message ("· 1 queued" on its
+row) and writes it into the agent's own transcript only when it hands it in at the agent's next
+step, as a `queued_command` without `commandMode`, which the reader takes as a prompt there; it is
+never in the main transcript. A second message while Claude Code still shows that agent goes
+straight in. ‹ Back returns Claude Code to the main session the same way: ↓ (highlight on main,
+"↑/↓ to select · enter to view"), Enter on main; main shows again with the list still holding
+the keys on it, and one Esc, only with no agent shown and main highlighted, gives them to the
+input. The hint row ends with the effort after a gap ("◐ medium · /effort"), also while the list
+has the keys; the reader cuts it off. While Claude Code shows
+an agent, a message for the main session waits in the box (it would reach the agent). An agent
+that ended, or that the list does not show running, gets nothing: the box says so and keeps the
+text, as it does when the screen does not show the agent selected in time, a turn or a prompt
+holds the keys, or keys typed in the terminal interrupt. Shell commands and attachments go to the
+main session only. Recorded from Claude Code 2.1.332 by the `agent-message` compat script
+(`agent_message_*`, run 20261128-122040), with the agent's transcript (`agentcopy`); the Esc that
+closes the list after Back and the message in the agent's transcript after its end are in the
+script but not recorded yet.
 
 **Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
 typed, in a tab with Chat, never over a subagent's transcript (refused there with a word). It goes through the CLI's own rewind list and never edits the transcript.

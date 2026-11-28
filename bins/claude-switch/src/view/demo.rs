@@ -466,10 +466,12 @@ fn seed(demo: &Transcript, file: &mut File) -> io::Result<()> {
         tool("notes", "Read", json!({"file_path":"field-notes.md"})),
         tool("proof", "Read", json!({"file_path":"ridge-proof.png"})),
     ];
-    for (id, desc, finished, note) in [
-        ("colour", "Compare the sky colours", Some(true), "Copper and slate keep their contrast at pocket size."),
-        ("contour", "Trace the ridge contour", Some(false), "Checking where the two ridges cross."),
-        ("caption", "Review the plate caption", None, "The caption should tell the reader which way to face."),
+    // Claude Code marks only an end beside an agent's transcript (`finished`, `stoppedByUser`):
+    // one finished, one stopped, and one whose end nothing records.
+    for (id, desc, end, note) in [
+        ("colour", "Compare the sky colours", "finished", "Copper and slate keep their contrast at pocket size."),
+        ("contour", "Trace the ridge contour", "stoppedByUser", "Checking where the two ridges cross."),
+        ("caption", "Review the plate caption", "", "The caption should tell the reader which way to face."),
     ] {
         let spawn = format!("spawn-{id}");
         calls.push(tool(&spawn, "Agent", json!({"description":desc})));
@@ -479,8 +481,11 @@ fn seed(demo: &Transcript, file: &mut File) -> io::Result<()> {
         record(&mut child, 4, "assistant", json!([tool("read", "Read", json!({"file_path":"field-notes.md"}))]))?;
         record(&mut child, 5, "user", json!([result("read", json!("Look west at dusk."))]))?;
         record(&mut child, 6, "assistant", json!(note))?;
-        let meta = json!({"agentType":"reviewer", "description":desc, "model":"demo",
-            "finished":finished, "toolUseId":spawn, "spawnDepth":1});
+        let mut meta = json!({"agentType":"reviewer", "description":desc, "model":"demo",
+            "toolUseId":spawn, "spawnDepth":1});
+        if !end.is_empty() {
+            meta[end] = json!(true);
+        }
         fs::write(side.with_extension("meta.json"), meta.to_string())?;
     }
     record(file, 2, "assistant", json!(calls))?;
@@ -618,7 +623,7 @@ fn image(bytes: &[u8]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use claude_switch_core::transcript::{ItemKind, Reader, TaskStatus};
+    use claude_switch_core::transcript::{AgentEnd, ItemKind, Reader, TaskStatus};
 
     #[test]
     fn demo_uses_real_reader_shapes_and_streams_more_records() {
@@ -637,8 +642,8 @@ mod tests {
         for picture in pictures {
             assert!(reader.load_picture(&picture).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
         }
-        let states: Vec<_> = reader.subagents().map(|agent| agent.finished).collect();
-        assert_eq!(states, [None, Some(true), Some(false)]);
+        let states: Vec<_> = reader.subagents().map(|agent| agent.end.map(|(end, _)| end)).collect();
+        assert_eq!(states, [None, Some(AgentEnd::Finished), Some(AgentEnd::Stopped)]);
         assert_eq!(
             reader.tasks().iter().map(|task| task.status).collect::<Vec<_>>(),
             [TaskStatus::Completed, TaskStatus::InProgress, TaskStatus::Pending]

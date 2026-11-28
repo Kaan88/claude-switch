@@ -273,6 +273,10 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
     if screen::menu(&tab.term.screen) {
         return Some(MENU_OPEN);
     }
+    // Claude Code shows an agent: what goes into its input goes to that agent.
+    if super::question::screens::viewing_agent(&tab.term.screen).is_some() {
+        return Some(super::question::agent_send::SHOWS_AGENT);
+    }
     if pane.model.error.is_some() && !chat.demo {
         return Some(Reason::Identity.label());
     }
@@ -333,6 +337,10 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
 
 impl AppState {
     pub(super) fn chat_send(tab: &mut Tab, now: Instant, force: bool) {
+        // Over a subagent's conversation the box sends to that agent.
+        if super::question::agent_send::send(tab, now) {
+            return;
+        }
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
         let running = || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running;
@@ -425,7 +433,7 @@ impl AppState {
         // goes out once the CLI's input is ready. So does one the CLI's input still holds text
         // for: never cleared by Chat, it goes once that text was sent or cleared in the terminal.
         let waits = matches!(error, Some(e) if e == CHECK || e == NO_TRANSCRIPT || e == INPUT_HAS_TEXT
-            || e == Reason::Slash.label() || e == OWNED_PENDING);
+            || e == Reason::Slash.label() || e == OWNED_PENDING || e == super::question::agent_send::SHOWS_AGENT);
         // A picture needs the visibly empty input for its marker, whoever asked for the send.
         let picture_waits =
             chat.clipboard_sequence().is_some() && error.is_none() && !chat.demo && !clean_prompt(&tab.term.screen);

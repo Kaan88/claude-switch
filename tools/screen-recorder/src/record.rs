@@ -709,6 +709,30 @@ impl Recorder {
                 }
                 None => self.note("tscopy: no transcript"),
             },
+            Step::AgentCopy(name) => match self.newest_transcript()? {
+                Some(path) => {
+                    let to = self.out.join(format!("{name}.jsonl"));
+                    std::fs::copy(&path, &to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+                    let agents = path.with_extension("").join("subagents");
+                    let into = self.out.join(&name).join("subagents");
+                    std::fs::create_dir_all(&into).map_err(|e| Abort::Io(format!("{}: {e}", into.display())))?;
+                    let mut copied = 0;
+                    for entry in std::fs::read_dir(&agents).into_iter().flatten().filter_map(Result::ok) {
+                        let file = entry.file_name();
+                        let wanted = file.to_str().is_some_and(|f| {
+                            f.starts_with("agent-") && (f.ends_with(".jsonl") || f.ends_with(".meta.json"))
+                        });
+                        if wanted && entry.path().is_file() {
+                            let target = into.join(&file);
+                            std::fs::copy(entry.path(), &target)
+                                .map_err(|e| Abort::Io(format!("{}: {e}", target.display())))?;
+                            copied += 1;
+                        }
+                    }
+                    self.note(&format!("agentcopy {name}: the transcript and {copied} agent files"));
+                }
+                None => self.note("agentcopy: no transcript"),
+            },
             // A picture on the clipboard, for Alt+V (as Chat sends a pasted picture). The text the
             // clipboard held is kept and put back when the script ends.
             Step::ClipImage(file) => {
@@ -803,6 +827,9 @@ enum Step {
     },
     Snap(String),
     TsCopy(String),
+    /// The newest transcript as `NAME.jsonl`, with its agents' transcripts and sidecars in
+    /// `NAME/subagents/` (where the app's reader looks for them beside a transcript).
+    AgentCopy(String),
     /// A picture file in the work folder, put on the clipboard.
     ClipImage(String),
     /// `claude --help` into `NAME.help.txt`.
@@ -1012,6 +1039,8 @@ impl Step {
                 Step::Send(long_paste(number(units, "a number of characters")?, text))
             }
             "tscopy" => Step::TsCopy(rest.to_owned()),
+            "agentcopy" if !rest.is_empty() => Step::AgentCopy(rest.to_owned()),
+            "agentcopy" => return Err("agentcopy needs NAME".to_owned()),
             "clipimage" if !rest.is_empty() => Step::ClipImage(rest.to_owned()),
             "clipimage" => return Err("clipimage needs FILE".to_owned()),
             "help" => Step::Help(rest.to_owned()),
@@ -1128,6 +1157,7 @@ mod tests {
         assert_eq!(Step::read("send hi\\r"), Ok(Step::Send(b"hi\r".to_vec())));
         assert_eq!(Step::read("clipimage dot.png"), Ok(Step::ClipImage("dot.png".into())));
         assert_eq!(Step::read("help cli"), Ok(Step::Help("cli".into())));
+        assert_eq!(Step::read("agentcopy sent"), Ok(Step::AgentCopy("sent".into())));
         assert_eq!(
             Step::read("handover new Reply with kilo"),
             Ok(Step::Handover { name: "new".into(), text: "Reply with kilo".into() })
@@ -1147,6 +1177,7 @@ mod tests {
             "resize 80 lots",
             "send \\x4",
             "clipimage",
+            "agentcopy",
             "reopen",
             "handover new",
             "branch cut",

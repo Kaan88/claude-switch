@@ -460,9 +460,19 @@ impl Ui {
             && let Some(agent) = &m.agent
         {
             self.button(p, pal, Rect::new(x, top, 64.0, 26.0), "‹  Back", Action::Back, false);
-            let title =
-                m.agents.iter().find(|a| a.id == *agent).and_then(|a| a.description.as_deref()).unwrap_or(agent);
-            p.text(Face::Semibold, 13.0, x + 72.0, top + 13.0, title, pal.text, (width - 72.0).max(1.0));
+            let shown = m.agents.iter().find(|a| a.id == *agent);
+            let title = shown.and_then(|a| a.description.as_deref()).unwrap_or(agent);
+            // The agent's state after its task, in the same words as Details and the Agents page.
+            let state = shown.map(|a| m.agent_status(a));
+            let room = (width - 72.0).max(1.0);
+            let word = state.map_or(0.0, |s| p.measure(Face::Ui, 12.0, &format!("{}  {}", s.mark(), s.word)) + 14.0);
+            let used = p.measure(Face::Semibold, 13.0, title).min((room - word).max(room * 0.5));
+            p.text(Face::Semibold, 13.0, x + 72.0, top + 13.0, title, pal.text, used);
+            if let Some(s) = state.filter(|_| word < room) {
+                let ink = if s.running() { pal.accent } else { pal.muted };
+                let label = format!("{}  {}", s.mark(), s.word);
+                p.text(Face::Ui, 12.0, x + 72.0 + used + 14.0, top + 13.0, &label, ink, room - used - 14.0);
+            }
             top += 34.0;
         }
         if let Some(error) = &m.error {
@@ -623,7 +633,7 @@ impl Ui {
                         );
                     }
                 }
-                Page::Agents => r.agents(&m.agents),
+                Page::Agents => r.agents(&m.agents, |a| m.agent_status(a)),
                 Page::Tasks => r.tasks(&m.tasks),
                 Page::Details(_) => unreachable!("shared Details draws outside transcript rows"),
             }

@@ -39,6 +39,11 @@
 //! - `activity`: the name of another snapshot of the script whose rows down to the input box's
 //!   bottom rule are the same ([`screen::activity_digest`]): what redraws under it (the list of
 //!   background agents and their timers) is no activity, and keeps no screen from going quiet.
+//! - `agents`: the agent list under the input as Chat reads it: who has its keys (`input`,
+//!   `select`, `stop` with "x to stop", `clear` with "x to clear") and the highlighted row (`main`
+//!   or `type description`), as `select · main`; `-` when Chat reads no list. `viewing`: the agent
+//!   the empty input's placeholder names while Claude Code shows one ("Message @name…"), `-` for
+//!   none.
 //! - `card`: the first row the terminal card would show (`view/chat/terminal_card.rs`):
 //!   `call: ` and the call's text (`Bash(…)`) when it starts at a tool call, whether its bullet
 //!   (`●` or `⏺` at column 0, which blinks while the call runs) is lit or not; `bullet: ` and
@@ -56,7 +61,10 @@
 //!   `end-turn`, `unknown`, `-` for none; after a local command such as `/cost` typed at rest,
 //!   `end-turn` when its output ended it), `outputs` (each command output row as `name: colours`
 //!   when the reader kept colour codes (SGR) beside its text, which Chat draws as the terminal
-//!   does, or `name: plain`; `-` for none).
+//!   does, or `name: plain`; `-` for none). With `agentcopy` (the `subagents` folder kept beside
+//!   the copy): `agents` (each agent as `type: description: end`, the end as the reader reads it,
+//!   `Finished from Notification` or `-`) and `agent-prompts` (the prompts of the agents' own
+//!   transcripts, their tasks and the messages sent to them).
 //! - A branch (`branch`, `<state>.json` and `<state>.id`): `resumed` (`yes` when Claude Code
 //!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
@@ -225,6 +233,20 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
         }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
         "card" => card_first(s),
+        "agents" => agent_list(s).map_or(NONE.to_owned(), |list| {
+            let keys = match list.keys {
+                ListKeys::Input => "input",
+                ListKeys::Select => "select",
+                ListKeys::Stop => "stop",
+                ListKeys::Clear => "clear",
+            };
+            match list.highlight.and_then(|h| list.rows.get(h)) {
+                Some(row) if row.name == "main" => format!("{keys} · main"),
+                Some(row) => format!("{keys} · {} {}", row.name, row.description),
+                None => keys.to_owned(),
+            }
+        }),
+        "viewing" => viewing_agent(s).unwrap_or_else(|| NONE.to_owned()),
         "sent" => {
             let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
             shown(typed || screen::shows_lines(s, want), "the input's rows do not read it")
@@ -369,6 +391,38 @@ fn transcript_fact(path: &Path, key: &str) -> String {
                 })
                 .collect(),
         ),
+        // Its agents (`agentcopy` keeps the `subagents` folder beside the copy) and their ends.
+        "agents" => joined(
+            reader
+                .subagents()
+                .map(|a| {
+                    let end = a.end.map_or(NONE.to_owned(), |(end, source)| format!("{end:?} from {source:?}"));
+                    format!(
+                        "{}: {}: {end}",
+                        a.agent_type.as_deref().unwrap_or(NONE),
+                        a.description.as_deref().unwrap_or(NONE)
+                    )
+                })
+                .collect(),
+        ),
+        // The prompts of each agent's own transcript, the agent's task first.
+        "agent-prompts" => {
+            let ids: Vec<String> = reader.subagents().map(|a| a.id.clone()).collect();
+            joined(
+                ids.iter()
+                    .filter_map(|id| reader.open_subagent(id, 64 << 20).ok())
+                    .flat_map(|agent| {
+                        agent
+                            .items()
+                            .filter_map(|(_, item)| match &item.kind {
+                                ItemKind::Prompt { text, .. } => Some(text.replace('\n', " ")),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect(),
+            )
+        }
         "thinking" => {
             let mut seen: Vec<String> = Vec::new();
             for line in std::fs::read_to_string(path).unwrap_or_default().lines() {
@@ -654,8 +708,10 @@ fn cli_compat() {
 #[test]
 #[ignore = "a tool: prints the facts of the recordings in CS_COMPAT_RECORDINGS"]
 fn compat_facts() {
-    const KEYS: [&str; 20] = [
+    const KEYS: [&str; 22] = [
         "kind",
+        "agents",
+        "viewing",
         "input",
         "send",
         "working",
@@ -740,6 +796,19 @@ fn the_fixtures_read_as_the_states_the_check_names() {
         (MENU_MODEL, "kind = menu\ncount = 5\nesc = yes"),
         (MENU_CONFIG, "kind = panel\nrows = *Search settings*"),
         (REWIND_OPEN, "kind = rewind\nhighlight = (current)"),
+        (AGENTS_IDLE, "agents = input\nviewing = -"),
+        (AGENTS_OPEN, "agents = select · main"),
+        (AGENTS_SECOND, "agents = stop · general-purpose Second pinger"),
+        (AGENTS_STOPPED, "agents = clear · general-purpose Second pinger"),
+        (AGENT_MESSAGE_IDLE, "kind = idle\nagents = input\nviewing = -"),
+        (AGENT_MESSAGE_LIST, "agents = select · main"),
+        (AGENT_MESSAGE_HIGHLIGHTED, "agents = stop · general-purpose Count slowly"),
+        (AGENT_MESSAGE_VIEWING, "viewing = general-purpose\nagents = select · general-purpose Count slowly"),
+        (AGENT_MESSAGE_TYPED, "input = Reply with the word kilo when you are done."),
+        (AGENT_MESSAGE_SENT, "viewing = general-purpose\nagents = input"),
+        (AGENT_MESSAGE_BACK_LIST, "agents = select · main"),
+        (AGENT_MESSAGE_BACK, "viewing = -\nagents = select · main"),
+        (AGENT_MESSAGE_ENDED, "shows = Agent \"Count slowly\" finished"),
         (
             super::recorded::REWIND_ACTIONS,
             "kind = rewind-actions
@@ -844,6 +913,21 @@ fn transcripts_branches_and_help_read_as_the_check_names_them() {
     let commands = dir.join("commands.jsonl");
     std::fs::write(&commands, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
     assert_eq!(transcript_fact(&commands, "outputs"), "/context: colours | /cost: plain | /mcp: plain");
+    // A copy with its agents beside it (`agentcopy`): each agent's end and its own prompts.
+    let agents = dir.join("agents").join("subagents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let task = json!({"type":"user","isSidechain":true,"message":{"role":"user","content":"Count slowly"}});
+    let message = json!({"type":"user","isSidechain":true,"message":{"role":"user","content":"Reply with kilo"}});
+    std::fs::write(agents.join("agent-a1.jsonl"), format!("{task}\n{message}\n")).unwrap();
+    std::fs::write(agents.join("agent-a1.meta.json"), r#"{"agentType":"general-purpose","description":"Count"}"#)
+        .unwrap();
+    let notified = json!({"type":"user","message":{"role":"user","content":
+        "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>"}});
+    let first = json!({"type":"user","uuid":"u1","message":{"role":"user","content":"ping it"}});
+    std::fs::write(dir.join("agents.jsonl"), format!("{first}\n{notified}\n")).unwrap();
+    let copy = dir.join("agents.jsonl");
+    assert_eq!(transcript_fact(&copy, "agents"), "general-purpose: Count: Finished from Notification");
+    assert_eq!(transcript_fact(&copy, "agent-prompts"), "Count slowly | Reply with kilo");
     let branch = dir.join("branched.json");
     std::fs::write(dir.join("branched.id"), "0a1b2c3d-1111-4222-8333-444455556666\n").unwrap();
     let answer = json!({"is_error":false,"session_id":"0a1b2c3d-1111-4222-8333-444455556666","result":"Alpha"});

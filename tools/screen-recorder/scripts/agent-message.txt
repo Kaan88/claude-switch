@@ -1,0 +1,63 @@
+# A message to a background agent through the agent list under the input, as Chat sends one
+# from a subagent's conversation: ↓ gives the list the keys (highlight on main), ↓ moves it to the
+# agent ("enter to view · x to stop"), Enter shows that agent (the input's dim placeholder reads
+# "Message @name…", the list keeps the keys on the agent), and a pasted message and Enter go to
+# the agent, not the main session. Then back to the main session the same way: ↓, Enter on main,
+# and Esc to give the input its keys back from the list. Esc is never sent while an agent is
+# shown: there it may stop the agent (Claude Code 2.1.332's "stop-viewed-agent"). `need` guards
+# each Enter, so a screen other than the expected one ends the script before it. About eight
+# model requests.
+#: args --permission-mode default --settings {scripts}/allow-ping.json
+#: seconds 150
+start
+send Use the Agent tool once, with run_in_background true, subagent_type general-purpose, the description "Count slowly" and the task: "Run the Bash command ping -n 60 127.0.0.1. Then reply with the word done and, if the user sent you a message meanwhile, the word it asks for." Then reply only with the word started.
+sleep 800
+send \r
+wait to manage 120000
+sleep 2000
+snap idle
+tscopy before_transcript
+send \e[B
+need ↑/↓ to select 5000
+snap list
+send \e[B
+need enter to view 5000
+snap highlighted
+send \r
+need Message @ 5000
+snap viewing
+sleep 1500
+snap viewing_later
+# As Chat types it: a bracketed paste, while the list still has the keys on the agent.
+send \e[200~Reply with the word kilo when you are done.\e[201~
+need Reply with the word kilo 3000
+sleep 800
+snap typed
+send \r
+sleep 3000
+snap sent
+# The message waits in Claude Code's memory ("· 1 queued" on the agent's row) until the agent's
+# next step: it is not on disk yet.
+agentcopy sent_transcript
+# Back to the main session through the same list: Enter only with the highlight on main.
+send \e[B
+sleep 800
+snap back_list
+need ↑/↓ to select 3000
+send \r
+gone Message @ 5000
+sleep 1000
+snap back
+# Main shows again and the list keeps the keys on it: one Esc gives them to the input (no agent
+# is shown, so Esc cannot stop one).
+need ↑/↓ to select 3000
+send \e
+gone ↑/↓ to select 3000
+sleep 800
+snap back_closed
+# The agent ends by itself ("Agent "Count slowly" finished · 1m 3s" in 2.1.332); its notification
+# and its transcript, which now holds the message, say how.
+wait slowly" finished 180000
+sleep 3000
+snap ended
+agentcopy ended_transcript

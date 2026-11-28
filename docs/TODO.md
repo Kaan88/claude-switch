@@ -102,6 +102,20 @@ as the second account, Windows Terminal, the desktop hand-over.
   further account's window, both when that window is closed and when it is open.
 - Try Branch from the running app (2026-11-28: `recorder compat` resumes the app's cut copies in
   print mode and in the terminal, but the app's own button, tab and mark were not used for real).
+- Try subagent states with real sessions (2026-11-28; the shapes are from Claude Code 2.1.332's
+  bundle and the recorded agent list, not from a recorded transcript): a background agent running,
+  finished and stopped from the list, a foreground agent finished and interrupted with Esc, and a
+  closed session reopened. Check that Running shows only while the list shows it, and whether an
+  agent stopped from the list gets `stoppedByUser` or no mark (Claude Code's own note says a stop
+  "via the UI leaves no transcript marker"; that one then reads Unknown once the list drops it).
+- Record `agent-message` again (`pwsh tools\cli-compat.ps1 -Only agent-message`). Run
+  20261128-122040 recorded the walk up to Back (the `agent_message_*` fixtures); not yet
+  recorded: the Esc that gives the input its keys back after Back (`back_closed`, Chat's walk
+  sends it), the message typed as a bracketed paste while the list has the keys (the first run
+  typed it as plain keys), and the agent's end with the message in its own transcript
+  (`ended_transcript`; the first run's `wait completed` never matched 2.1.332's "Agent "Count
+  slowly" finished · 1m 3s"). Still open: whether a named agent's placeholder gives its name
+  rather than its type (Chat then holds the message, as the name does not match).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.
@@ -115,24 +129,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Later (the owner's list)
 
-- **Running and finished subagents are not told apart** (owner, 2026-11-28, screenshot: Details ›
-  Background lists agents with `?`, among them one that has finished). `?` is drawn when
-  `agent.finished` is `None` (`view/chat/side/paint.rs`, Side::Agents): Chat found the agent's call but
-  no result. Find which shapes leave it unknown (the result outside the loaded slice, a background
-  agent that reports through a `<task-notification>` instead of a tool result, an interrupted or
-  stopped agent, the agent's own transcript ended) and settle each from what is there: the
-  notification, the agent's transcript end, the agent list under Claude Code's input (running or
-  stopped). Show three plain states (running, finished, stopped or interrupted) with a word, not only a
-  mark, and keep `?` only when nothing can tell, with a tooltip saying why.
-- **The message box talks to the subagent Chat shows** (owner, 2026-11-28). With a subagent's
-  conversation open in Chat ("‹ Back · <agent's task>"), the box still sends to the main session.
-  It should send to that agent, the way Claude Code does when an agent is picked in the list under its
-  input (`↓ to manage`, then the agent: typed text goes to it). Chat picks the agent through that list
-  and sends only once the screen shows that agent selected; otherwise it holds the message and says
-  why. Make the target plain: the box's edge and placeholder take the agent's colour and name
-  ("Message general-purpose…"), and Back returns the box to the main session. An agent that has
-  ended or is not in the list can't be messaged: the box says so instead of sending to main. Record
-  the agent list's selection and a message to an agent with a compat script first.
 - **Question previews and tabbed forms in Chat's card** (owner, 2026-11-28; after the queue job and the
   command-output renderer). Claude Code's question tool can give each option a `preview` (monospace
   text: mock-ups, code, layouts); the terminal shows the options on the left and the highlighted

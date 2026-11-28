@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Chat: with a subagent's conversation open, the message box talks to that agent: its edge and
+  placeholder take the agent's colour and name ("Message general-purpose…"), and Send picks the
+  agent in the list under Claude Code's input and types the message there, each key only once the
+  screen shows the one before worked. ‹ Back returns the box, and Claude Code, to the main session.
+  An agent that ended or is not listed running gets no message: the box says so instead of
+  sending to the main session.
+
+- Chat and the Session view: subagents are told apart in plain words wherever they show (Details ›
+  Background, a subagent's conversation header, the Agents page): Running, Finished, or Stopped
+  (Interrupted, Failed). Before, an agent Claude Code had not marked showed `?` even when it was
+  done, and a running one never showed as running. The end is read from the agent's
+  notification, its call's result, the mark beside its transcript or its transcript's last
+  record; running and stopped from the terminal's agent list. `?` is left only when nothing tells,
+  and its tooltip says why.
+
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
   light theme), an edge only just lighter than the box, and focus firms it only a little.
 - Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog

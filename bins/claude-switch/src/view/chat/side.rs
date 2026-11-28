@@ -43,6 +43,10 @@ impl Hit {
     pub(in crate::view::chat) fn side(&self) -> Side {
         self.side
     }
+
+    pub(in crate::view::chat) fn tab(&self) -> u64 {
+        self.tab
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -164,6 +168,16 @@ impl Details {
             || !model.mcp_tasks.is_empty()
             || !self.files.is_empty()
             || !model.output_list.is_empty()
+    }
+
+    /// The tooltip of an agent's row: its state and where that was read, or why nothing tells.
+    pub(in crate::view) fn tip(model: &Model, hit: Hit) -> Option<String> {
+        if hit.side != Side::Agents || hit.revision != model.revision || !matches!(hit.part, Part::Expand | Part::Open)
+        {
+            return None;
+        }
+        let status = model.agent_status(model.agents.get(hit.index)?);
+        Some(format!("{}. {}", status.word, status.why))
     }
 
     fn action(&self, model: &Model, tab: u64, side: Side, hit: Hit) -> Option<Action> {
