@@ -31,7 +31,8 @@ impl Ui {
     }
 
     pub(super) fn paint_rows(&mut self, p: &mut Painter, pal: &Palette, m: &mut Model) {
-        let body = self.body;
+        // Rows are laid out in the whole body, and drawn above the jump button's foot.
+        let body = self.shown_body();
         let clip = p.clip(body);
         let start = self.rows.partition_point(|r| r.top + r.h < self.offset);
         let mouse = self.mouse;

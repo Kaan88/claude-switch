@@ -38,7 +38,6 @@ built by one agent (merge `d2deea0`) and released at the owner's word before a r
 
 - A correctness review of the branch (`main` b71f1a4 to `ee3500a`) for behaviour that changed beyond
   the look: sending, queueing, Send now, card answering, Stop, undo, prompt recall.
-- The round "jump to latest" button covers the last line of text while scrolled up.
 - Never tried in the running app or in a real session: the banner read on the empty state, the
   patch on real edits (diff line numbers), "Run in background" on the working line.
 - Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind and

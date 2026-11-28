@@ -360,7 +360,9 @@ not yet routed, marked seen or restored.
 Session view has six pages over the incremental transcript reader: Conversation, Tasks, Agents,
 Shells, Files and Outputs. Chat shows the same five beside the conversation in its Details panel. Conversation
 opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
-following. Both Chat and Session view support wheel scrolling, thumb drag, and track clicks that page
+following. In Chat that is a round button at the foot of the conversation while it is scrolled back,
+in a strip of its own: no text is drawn (or taken by the pointer) under it, and the rows below the
+strip come into view as the conversation reaches its end, where it follows again and the strip goes. Both Chat and Session view support wheel scrolling, thumb drag, and track clicks that page
 by a viewport. Earlier history is loaded on request. Agent transcripts are reachable from expanded
 tool details and the Agents page. A cursor checkpoint detects a replacement or truncate-and-regrow near the
 read position. Transcript lines over 48 MiB are skipped, picture reads respect the same containing-line

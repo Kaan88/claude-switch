@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Chat: the round "jump to latest" button no longer covers the last line of text while you are
+  scrolled back; the text ends above it.
 - Chat: buttons under your messages and under Claude's answer to each turn, shown while you point
   at the message and always under the newest answer: Copy (the message as shown), Rewind (the
   same as the right-click "Rewind to here…") under your own messages, and Branch, which starts a

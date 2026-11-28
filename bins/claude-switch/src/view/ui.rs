@@ -99,6 +99,9 @@ pub struct Ui {
     menu_row: Option<Id>,
     /// The message with buttons the pointer is over (or over its buttons): they show.
     pointed: Option<ItemId>,
+    /// The foot of the conversation kept for the round "jump to latest" button while it shows:
+    /// no text is drawn (or taken by the pointer) under it.
+    covered: f32,
     dragging: bool,
     /// What a double click (a word) or a triple click (a whole row) took: a drag from it goes
     /// by whole words (`false`) or whole rows (`true`).
@@ -428,6 +431,7 @@ impl Ui {
             let body = Rect::new(content.x, top, (content.w - GUTTER).max(0.0), content.h);
             self.body = if self.chat { self.chat_reading.place(body) } else { body };
             self.layout(m, pal, p.scale);
+            self.covered = if self.jump_shown() { JUMP + 20.0 } else { 0.0 };
             self.offer_rect = None;
             self.progress_rect = None;
             if self.chat
@@ -582,7 +586,7 @@ impl Ui {
             return;
         }
         let Some(work) = &self.working else { return };
-        let body = self.body;
+        let body = self.shown_body();
         let y = body.y + self.rows_end() - self.offset;
         let clip = p.clip(body);
         let cy = y + super::working::CHAT_LINE / 2.0 + 2.0;
@@ -638,6 +642,18 @@ impl Ui {
 
     /// Chat's "jump to latest": a round button over the foot of the conversation, only while the
     /// view does not follow; a dot on it once newer messages arrived.
+    /// The round "jump to latest" button shows: Chat's conversation, scrolled back, tall enough.
+    fn jump_shown(&self) -> bool {
+        self.page == Page::Conversation && self.chat && !self.follow.active() && self.body.h >= JUMP + 24.0
+    }
+
+    /// The conversation's area where rows are drawn: the body without the foot the jump button
+    /// keeps while it shows.
+    pub(super) fn shown_body(&self) -> Rect {
+        let body = self.body;
+        Rect::new(body.x, body.y, body.w, (body.h - self.covered).max(0.0))
+    }
+
     fn jump_button(&mut self, p: &mut Painter, pal: &Palette, m: &Model, visible: bool) {
         let newest = m.items.keys().next_back().copied();
         if self.follow.active() || !visible {
@@ -645,7 +661,7 @@ impl Ui {
             return;
         }
         let body = self.body;
-        if body.h < JUMP + 24.0 {
+        if !self.jump_shown() {
             return;
         }
         let r = Rect::new((body.cx() - JUMP / 2.0).round(), body.bottom() - JUMP - 10.0, JUMP, JUMP);

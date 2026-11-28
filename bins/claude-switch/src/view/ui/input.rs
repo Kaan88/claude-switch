@@ -13,7 +13,7 @@ impl Ui {
     }
 
     fn text_at(&self, x: f32, y: f32) -> Option<(&Row, usize, Option<&str>)> {
-        if self.overlay_open() || !self.body.contains(x, y) {
+        if self.overlay_open() || !self.shown_body().contains(x, y) {
             return None;
         }
         let yy = y - self.body.y + self.offset;
@@ -207,7 +207,7 @@ impl Ui {
 
     /// The message with buttons under it that `(x, y)` is over, with the room for its buttons.
     fn pointed_message(&self, x: f32, y: f32) -> Option<ItemId> {
-        if self.overlay_open() || !self.body.contains(x, y) {
+        if self.overlay_open() || !self.shown_body().contains(x, y) {
             return None;
         }
         let yy = y - self.body.y + self.offset;
@@ -939,5 +939,42 @@ mod tests {
             assert_eq!(ui.release(r.cx(), r.cy(), Mods::default(), &mut model), Release::Branch(prompt));
             assert!(action == Action::Branch(prompt));
         }
+    }
+
+    #[test]
+    fn no_text_is_drawn_or_taken_under_the_jump_button() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(model.collect());
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(700, 420);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        let area = Rect::new(0.0, 0.0, 700.0, 420.0);
+        let pal = &mdshared_ui::theme::DARK;
+        let mut ui = Ui::default();
+        ui.set_chat(true);
+        ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+        assert!(ui.max > 200.0, "a conversation longer than the window");
+        assert_eq!(ui.covered, 0.0, "following: no button, nothing kept");
+        ui.wheel(ui.body.cx(), ui.body.cy(), 150.0);
+        ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+        assert!(!ui.follow.active() && ui.covered > JUMP);
+        let button = ui.hits.iter().find(|(_, a)| *a == Action::Latest).map(|(r, _)| *r).unwrap();
+        let foot = ui.shown_body().bottom();
+        assert!(button.y >= foot, "the button stands in the kept foot");
+        // Nothing else is there to point at, and no text is found under it.
+        assert!(ui.hits.iter().filter(|(_, a)| *a != Action::Latest).all(|(r, _)| r.bottom() <= foot + 0.5));
+        let x = ui.body.x + 24.0;
+        assert!((foot as u32..ui.body.bottom() as u32).all(|y| ui.text_at(x, y as f32).is_none()));
+        // Back at the end it follows again: the foot is the conversation's once more.
+        ui.wheel(ui.body.cx(), ui.body.cy(), -10_000.0);
+        ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+        assert!(ui.follow.active() && ui.covered == 0.0);
     }
 }
