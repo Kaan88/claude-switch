@@ -96,11 +96,19 @@ pub struct CliRename {
     pub tries: u8,
     /// Its keys went; what became of them is still to be seen.
     pub sent: bool,
+    /// After a handover: it waits for Chat to read the new session's first prompt, until then.
+    pub prompt_by: Option<std::time::Instant>,
 }
 
 impl CliRename {
     pub fn new(session: impl Into<String>, name: impl Into<String>) -> Self {
-        Self { session: session.into(), name: name.into(), tries: 0, sent: false }
+        Self { session: session.into(), name: name.into(), tries: 0, sent: false, prompt_by: None }
+    }
+
+    /// The rename a handover queues: it goes once Chat has read the new session's first prompt,
+    /// which it waits for until `by`.
+    pub fn after_handover(session: impl Into<String>, name: impl Into<String>, by: std::time::Instant) -> Self {
+        Self { prompt_by: Some(by), ..Self::new(session, name) }
     }
 }
 

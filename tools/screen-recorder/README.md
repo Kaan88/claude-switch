@@ -58,6 +58,7 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `idle MS NAME` | Logs every burst of output for MS (is the screen quiet?), then snaps. |
 | `watch MS NAME` | Snaps `NAME-001`, `NAME-002`, … once a second while the screen changes. |
 | `resize COLS ROWS` | |
+| `longpaste UNITS TEXT` | A bracketed paste as Chat sends a message of several lines (CR between them): TEXT, then numbered filler lines up to UNITS characters. |
 | `tscopy NAME` | Copies the newest transcript of the work folder (`REC_PROJECT`; in `recorder compat` the run's own) to `NAME.jsonl`, as it is on disk now. |
 | `clipimage FILE` | Writes a small PNG as `FILE` in the work folder and puts it on the clipboard, for `send \ev` (Alt+V, as Chat sends a pasted picture). It refuses, and ends the script, when the clipboard holds anything but plain text (a picture, files, formatted text): that could not be put back. The text is put back when the script ends (the clipboard is emptied when it held none), unless something was copied meanwhile (the clipboard's sequence number changed): then it is left as it is. Uses Windows PowerShell. |
 | `help NAME` | `claude --help`, with the same account, into `NAME.help.txt`. |
@@ -129,6 +130,9 @@ those too:
   (the app allows exactly that file); and a command typed during a turn and not entered stays on
   the input after the answer, and one Ctrl+U takes it off (what Chat relies on to take a command
   of its own off again).
+- `long-paste`: a handover continued in place is pasted as one message of many lines, up to
+  15,000 characters (a longer one is read from its file). Claude Code shows it as its paste
+  marker within the 5 seconds Chat waits for it before Enter, and answers it once entered.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),

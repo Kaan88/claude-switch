@@ -2,12 +2,13 @@
 //! to the Chat view's slash gate (`chat_confirm_slash`), which refuses a running turn, a menu, a
 //! full-screen view or a prompt that is not idle and empty. The app never edits the transcript.
 //!
-//! It goes once Chat has read the session's own first prompt (after a handover's `/clear` the
-//! gate cannot tell the new session's first turn from an idle input before that, and keys typed
-//! then were left on the input under a permission prompt), and it is followed until Claude Code
+//! A handover's rename goes once Chat has read the new session's own first prompt (after `/clear`
+//! the gate cannot tell that first turn from an idle input before that, and keys typed then were
+//! left on the input under a permission prompt), waited for at most `PROMPT_WAIT`; then the box
+//! says to rename in the terminal. Every rename is followed until Claude Code
 //! took it: a line that was not entered comes off the input again (`submission::follow_owned`)
 //! and is typed again, at most `TRIES` times; then the box says to rename in the terminal.
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::submission::{COMMAND_INTERRUPTED, COMMAND_LEFT, COMMAND_TIMEOUT, COMMAND_WITHDRAWN, CommandResult};
 use crate::state::AppState;
@@ -16,6 +17,11 @@ use crate::state::AppState;
 const TRIES: u8 = 3;
 pub(super) const GAVE_UP: &str =
     "Claude Code did not take the session's new name. Type /rename and the name in the terminal to set it.";
+/// How long a handover's rename waits for Chat to read the new session's first prompt (the
+/// transcript's tail Chat reads may hold none, after a first turn of many records).
+pub(crate) const PROMPT_WAIT: Duration = Duration::from_secs(120);
+pub(super) const NO_PROMPT: &str = "Chat could not read the new session's first message, so it did not set Claude \
+    Code's name for it. Type /rename and the name in the terminal to set it.";
 
 pub(super) fn line(name: &str) -> String {
     format!("/rename {}", name.trim())
@@ -69,9 +75,20 @@ impl AppState {
             tab.cli_rename = next.map(|r| crate::tabs::CliRename { sent: false, ..r });
             return false;
         }
-        // The session's own transcript is read: until its first prompt is, a first turn that
-        // runs reads as an idle input to the gate.
-        if !pane.model.loaded || pane.model.chat.prompt.is_none() {
+        // After a handover's `/clear`, the session's own transcript is read: until its first
+        // prompt is, a first turn that runs reads as an idle input to the gate. Not for ever: the
+        // tail Chat reads may hold no prompt at all.
+        if let Some(by) = rename.prompt_by
+            && (!pane.model.loaded || pane.model.chat.prompt.is_none())
+        {
+            if now >= by {
+                tab.cli_rename = None;
+                pane.chat.error = Some(NO_PROMPT);
+                pane.chat.retry = None;
+            }
+            return false;
+        }
+        if !pane.model.loaded {
             return false;
         }
         if !pane.chat.enabled || pane.chat.locked() || pane.chat.error.is_some() {
@@ -160,7 +177,8 @@ mod tests {
     fn a_rename_waits_for_the_sessions_first_prompt_then_is_followed_until_taken() {
         let mut f = live();
         f.tab().pane.as_mut().unwrap().model.chat.prompt = None;
-        f.tab().cli_rename = Some(CliRename::new("s-1", "Notes"));
+        let by = f.now + PROMPT_WAIT;
+        f.tab().cli_rename = Some(CliRename::after_handover("s-1", "Notes", by));
         assert!(!tick(&mut f, SECOND));
         assert!(f.writes().is_empty(), "not before Chat has read the session's first prompt");
         f.tab().pane.as_mut().unwrap().model.chat.prompt = Some(10);
@@ -175,6 +193,28 @@ mod tests {
         tick(&mut f, SECOND / 10);
         assert!(f.tab().cli_rename.is_none(), "taken");
         assert!(f.chat().error.is_none() && f.writes().is_empty());
+    }
+
+    #[test]
+    fn a_handovers_rename_gives_up_with_a_word_when_no_first_prompt_is_read_in_time() {
+        let mut f = live();
+        f.tab().pane.as_mut().unwrap().model.chat.prompt = None;
+        let by = f.now + PROMPT_WAIT;
+        f.tab().cli_rename = Some(CliRename::after_handover("s-1", "Notes", by));
+        assert!(!tick(&mut f, PROMPT_WAIT / 2));
+        assert!(f.tab().cli_rename.is_some(), "still waiting");
+        assert!(!tick(&mut f, PROMPT_WAIT));
+        assert!(f.writes().is_empty() && f.tab().cli_rename.is_none(), "given up, nothing typed");
+        assert_eq!(f.chat().error, Some(NO_PROMPT), "the box says to rename in the terminal");
+    }
+
+    #[test]
+    fn a_tab_rename_does_not_wait_for_a_first_prompt() {
+        let mut f = live();
+        f.tab().pane.as_mut().unwrap().model.chat.prompt = None;
+        f.tab().cli_rename = Some(CliRename::new("s-1", "Notes"));
+        assert!(tick(&mut f, SECOND));
+        assert_eq!(f.writes(), [b"/rename Notes".to_vec()]);
     }
 
     #[test]

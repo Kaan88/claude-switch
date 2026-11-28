@@ -17,7 +17,7 @@ pub(super) use stages::CommandResult;
 pub(super) use stages::Staging;
 use stages::{
     CommandWait, Completion, EchoWait, EnterOnly, LinesWait, Owned, OwnedStep, Recovery, Sent, Stamp, Takeback,
-    can_confirm, recovery_ready, shown_exactly, shows_sent,
+    can_confirm, can_withdraw, recovery_ready, shown_exactly, shows_sent,
 };
 
 /// Claude Code reads the clipboard's picture through a helper process on Windows, which can take
@@ -165,6 +165,11 @@ impl Chat {
     pub(super) fn interrupt_staging(&mut self) {
         // Whatever the CLI's input holds now may be the user's own.
         (self.staging.takeback, self.staging.command) = (None, None);
+        // A command Chat typed on its own is no longer followed (and never cleared): the input
+        // may hold the user's own text now, or belong to another session.
+        if self.staging.owned.take().is_some() {
+            self.staging.result = Some(CommandResult::Left);
+        }
         self.staging.sent.clear();
         self.staging.stopped = false;
         if let Some(wait) = self.image_wait.take() {
@@ -518,7 +523,8 @@ impl AppState {
                         let epoch = chat.output_epoch.wrapping_sub(1);
                         let step = OwnedStep::Withdraw { presses: 0 };
                         let (due, last) = (now, now + OWNED_LIMIT);
-                        chat.staging.owned = Some(Owned { line: wait.line, step, epoch, due, last });
+                        let stamp = wait.stamp;
+                        chat.staging.owned = Some(Owned { line: wait.line, stamp, step, epoch, due, last });
                         chat.error = None;
                         chat.retry = None;
                     }
@@ -535,7 +541,7 @@ impl AppState {
                         chat.refused(error, None);
                     }
                     Ok(()) => {
-                        let (line, from_editor) = (wait.line.clone(), wait.from_editor);
+                        let (line, from_editor, stamp) = (wait.line.clone(), wait.from_editor, wait.stamp);
                         submit_enter(
                             tab,
                             EnterOnly {
@@ -553,7 +559,8 @@ impl AppState {
                         } else if !from_editor && chat.staging.retry.is_none() {
                             // Enter went: the input must let go of the line.
                             let (epoch, due, last) = (chat.output_epoch, now + ENTER_CONFIRM, now + OWNED_LIMIT);
-                            chat.staging.owned = Some(Owned { line, step: OwnedStep::Entered, epoch, due, last });
+                            let step = OwnedStep::Entered;
+                            chat.staging.owned = Some(Owned { line, stamp, step, epoch, due, last });
                         }
                     }
                 }
@@ -817,12 +824,15 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     true
 }
 
-/// A command Chat typed on its own, after its keys. Entered: taken once the input lets go of it;
-/// still exactly on the input after `ENTER_CONFIRM`, Enter was lost and the line is withdrawn.
-/// Withdrawn: Ctrl+U, one press at a time and only while the input shows exactly the line, until
-/// it reads empty. Text of anyone else's on the input is never cleared, and an input Chat cannot
-/// read (under a prompt, which a card answers meanwhile) is waited for until `OWNED_LIMIT`.
-/// However it ends, Claude Code's command tracking ends with it and the box says what happened.
+/// A command Chat typed on its own, after its keys. Entered: taken once the input lets go of it
+/// (another text at rest, or an empty input); still exactly on the input after `ENTER_CONFIRM`,
+/// Enter was lost and the line is withdrawn. An input Chat cannot read (a panel the command
+/// opened, a prompt a card answers) is waited for until `OWNED_LIMIT`: the line still read there
+/// is left (said), else the command ran and following ends without a word.
+/// Withdrawn: Ctrl+U, one press at a time, only while the input shows exactly the line at rest and
+/// the gate would let a key go (`can_withdraw`), until it reads empty. Text of anyone else's on
+/// the input is never cleared; terminal input ends the following (`interrupt_staging`). A command
+/// that does not run ends Claude Code's command tracking with it, and the box says what happened.
 fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
     let chat = &pane.chat;
@@ -849,11 +859,18 @@ fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     };
     match owned.step {
         OwnedStep::Entered => {
-            if fresh && readable && !exactly {
+            // One reading caught half way through a redraw is not enough: the input at rest, or
+            // read empty.
+            if fresh && readable && !exactly && (resting || clean_prompt(screen)) {
                 return end(tab, CommandResult::Taken, None);
             }
             if now >= owned.last {
-                return end(tab, CommandResult::Left, Some(COMMAND_LEFT));
+                if exactly {
+                    return end(tab, CommandResult::Left, Some(COMMAND_LEFT));
+                }
+                // The line was not read on the input: a command that opens a panel (`/config`,
+                // `/mcp`, a bare `/model`) hides it, and ran. Following ends without a word.
+                return end(tab, CommandResult::Taken, None);
             }
             if now < owned.due || !(exactly && resting) {
                 return false;
@@ -876,7 +893,7 @@ fn follow_owned(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
                 // Someone else's text: never cleared.
                 return end(tab, CommandResult::Left, Some(COMMAND_LEFT));
             }
-            if !may_write || !fresh || !exactly || !resting {
+            if !may_write || !fresh || !exactly || !resting || !can_withdraw(tab, now, owned.stamp) {
                 return false;
             }
             tab.pane.as_mut().unwrap().note_composer_input();

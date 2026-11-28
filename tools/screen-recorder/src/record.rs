@@ -905,6 +905,23 @@ fn run_for_output(
     output
 }
 
+/// A bracketed paste as Chat sends a message of several lines (CR between them): `text`, then
+/// numbered filler lines until the text is `units` characters long (ASCII, so as many UTF-16
+/// units as the app's limits count).
+fn long_paste(units: usize, text: &str) -> Vec<u8> {
+    let mut body = text.to_owned();
+    let mut n = 0;
+    while body.len() < units {
+        n += 1;
+        body.push_str(&format!("\rFiller line {n}: these lines only make the message long; ignore them."));
+    }
+    body.truncate(units.max(text.len()));
+    let mut bytes = b"\x1b[200~".to_vec();
+    bytes.extend(body.as_bytes());
+    bytes.extend(b"\x1b[201~");
+    bytes
+}
+
 fn number<T: std::str::FromStr>(text: &str, what: &str) -> Result<T, String> {
     text.trim().parse().map_err(|_| format!("{text:?} is not {what}"))
 }
@@ -935,6 +952,10 @@ impl Step {
                 Step::Resize { cols: number(cols, "a number of columns")?, rows: number(rows, "a number of rows")? }
             }
             "snap" => Step::Snap(rest.to_owned()),
+            "longpaste" => {
+                let (units, text) = two("UNITS TEXT")?;
+                Step::Send(long_paste(number(units, "a number of characters")?, text))
+            }
             "tscopy" => Step::TsCopy(rest.to_owned()),
             "clipimage" if !rest.is_empty() => Step::ClipImage(rest.to_owned()),
             "clipimage" => return Err("clipimage needs FILE".to_owned()),
@@ -1022,6 +1043,16 @@ mod tests {
         assert_eq!(unescape(r"a\sb\r").unwrap(), b"a b\r");
         assert_eq!(unescape(r"\e[A\x03\\").unwrap(), b"\x1b[A\x03\\");
         assert!(unescape(r"\x4").is_err() && unescape(r"\xzz").is_err(), "no panic on a short or bad \\x");
+    }
+
+    #[test]
+    fn a_long_paste_is_one_bracketed_paste_of_exactly_the_length_asked_for() {
+        let Ok(Step::Send(bytes)) = Step::read("longpaste 15000 Reply: lima.") else { panic!() };
+        let body = bytes.strip_prefix(b"\x1b[200~").and_then(|b| b.strip_suffix(b"\x1b[201~")).unwrap();
+        assert_eq!(body.len(), 15000);
+        assert!(body.starts_with(b"Reply: lima.\rFiller line 1: "));
+        assert!(!body.contains(&b'\n') && !body.contains(&0x1b));
+        assert!(Step::read("longpaste many Reply").is_err());
     }
 
     #[test]

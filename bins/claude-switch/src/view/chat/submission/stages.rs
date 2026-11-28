@@ -37,6 +37,8 @@ pub(super) struct EchoWait {
 /// after its keys until Claude Code took it; else exactly its text is taken off the input again.
 pub(super) struct Owned {
     pub line: String,
+    /// The session and prompt the keys went to: a Ctrl+U goes only while they are the same.
+    pub stamp: Stamp,
     pub step: OwnedStep,
     /// The output epoch of the last key: a reading of the screen counts once it is newer.
     pub epoch: u64,
@@ -227,12 +229,22 @@ pub(super) fn recovery_ready(tab: &Tab, now: Instant, recovery: Recovery) -> boo
 }
 
 pub(super) fn can_confirm(tab: &Tab, now: Instant, stamp: Stamp, into_turn: bool) -> bool {
+    confirms(tab, now, stamp, into_turn, false)
+}
+
+/// As [`can_confirm`], for a Ctrl+U that takes a command Chat typed on its own off the input: the
+/// command's own tracking (`Reason::Slash`, set once its Enter went) does not stop it.
+pub(super) fn can_withdraw(tab: &Tab, now: Instant, stamp: Stamp) -> bool {
+    confirms(tab, now, stamp, false, true)
+}
+
+fn confirms(tab: &Tab, now: Instant, stamp: Stamp, into_turn: bool, slash: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
     let modes = tab.term.screen.modes();
     let (gate, reason) = pane.chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
     stamp.matches(tab)
         && pane.model.error.is_none()
-        && reason.is_none()
+        && (reason.is_none() || slash && reason == Some(super::Reason::Slash))
         && gate != super::Gate::Ended
         && !modes.alt_screen
         && (pane.chat.demo || modes.bracketed_paste)

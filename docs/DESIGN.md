@@ -566,14 +566,15 @@ new UUID for `marks.json` provenance. It never resumes or modifies the source tr
 
 The new session name is independent of the OpenCode run title (“Claude Switch handover”) and
 of the Markdown, whose first heading stays `## Goal`. The suggested name is the source's
-Switch display name (local custom name, then indexed title) plus ` · continued`, then the
-lowest free suffix starting at ` 2`. Suggestions compare indexed display names and very recent
-unindexed handover launches case-insensitively, ignoring whitespace runs. The preview can edit
-the name; an untouched suggestion is recomputed from the current index before opening.
-Claude Code's documented `--name` carries the title as one native option before `--`; Switch
-uses it as the initial tab label and reads native custom-title records on scan. The two-minute
-launch reservation in `marks.json` avoids reusing names before the transcript appears; it is
-not a permanent Switch rename. A failed spawn rolls it back with the new UUID's provenance.
+Switch display name (local custom name, then indexed title), kept as it is: the new session keeps
+the session's name, and the old one is marked as handed over, so the list still tells the two
+apart. Endings ` · continued` and ` · continued N` that earlier versions added are removed
+(`compact_open::names::suggest`), so they no longer pile up; no number is added and no other name
+is consulted. The preview can edit the name; an untouched suggestion is recomputed from the
+current display name before opening. Claude Code's documented `--name` carries the title as one
+native option before `--`; Switch uses it as the initial tab label and reads native custom-title
+records on scan. `marks.json` records the launch name under the new UUID with the provenance (a
+failed spawn rolls both back); suggestions do not read it, as two sessions may share a name.
 
 **Settings → Handovers** holds, in order: **Where it continues** (This tab, the default, or A new
 tab; `compact.continueIn`), **Summary written by**, **Default focus text**, **New chat starts as**
@@ -812,9 +813,13 @@ the first message), then puts the handover in the empty composer and sends it wi
 composer's own send as that new chat's first message, so its checks, refusals and staging apply:
 a handover of several lines is entered by the gate once the input line shows it, and a staging
 the gate gives up on stops the handover with the draft left for the gate's recovery (up to 60
-seconds). A draft in the composer is never replaced. The handover goes whole, however long: a
-running session takes it through its input, where no command line limits it, so it has no file
-outside the project folder to read (which a new tab's long handover is allowed instead). When the message is taken, the
+seconds). A draft in the composer is never replaced. Up to the same 15,000 UTF-16 units as a new
+tab's first message the handover goes whole, pasted on the input (script `long-paste` of
+`recorder compat` checks that Claude Code shows such a paste within the gate's five-second echo
+wait); above it the first message asks the session to read the saved file, as for a new tab, since
+a longer paste could be slow to show and the wait would end after `/clear` already ran. The
+running session has no rule for that file, which lies outside the project folder: in manual mode
+Claude Code asks first, and Chat's card answers. When the message is taken, the
 new session gets the handover provenance and continuation name, and the old one is marked handed
 over; then, once the new transcript exists and at the next idle prompt, `/rename <continuation
 name>` goes through the same slash gate (which re-checks the session right before writing), so Claude Code's own name follows as for a tab rename. A step that does not happen in time,
@@ -1033,18 +1038,23 @@ Claude Code's own name through `/rename <name>`. That command is never typed dir
 on the tab until the tab is shown in the Chat view and is handed to the Chat view's slash gate,
 which refuses a running turn, a pending tool, a menu, a full-screen view or a prompt that is not
 idle and empty, and shows why; its own retry clears the refusal once the prompt is idle, and
-the next tick sends. It goes only once Chat has read the session's own first prompt: after a
+the next tick sends. A handover's rename goes only once Chat has read the new session's first prompt: after a
 handover's `/clear` the gate cannot tell the new session's first turn from an idle input before
 that, and a `/rename` typed then was left on the input when a permission prompt took the screen
 before its Enter. It is followed until Claude Code took it, like every command Chat types on its
 own (a button's, a handover's `/clear`): after Enter the input must let go of the line within
-three seconds; a line that was not entered (its echo never came, a prompt was drawn over it, or
-Enter did not take) comes off again with Ctrl+U, one press at a time and only while the input
-shows exactly that line (once the input can be read again: a prompt over it is answered from its
-card meanwhile); text of anyone else's is never cleared. The `/rename` is then typed again, at
-most three times, after which the box says to rename in the terminal. However it ends, the
-command's tracking ends with it, so no line left on the input holds every later message without a
-word. The demo has no CLI to follow. A tab that starts running another session drops the waiting rename. A blank
+three seconds (other text read at rest, or an empty input; one reading of a redraw caught half
+way is not enough); a line that was not entered (its echo never came, a prompt was drawn over it,
+or Enter did not take) comes off again with Ctrl+U, one press at a time and only while the input
+shows exactly that line at rest and the gate would let a key go (no running turn, menu, pending
+call or other session; once the input can be read again: a prompt over it is answered from its
+card meanwhile); text of anyone else's is never cleared, and terminal input or another session
+ends the following without a key. An input Chat cannot read for a minute after Enter (a panel the
+command opened, as `/config` or a bare `/model` do) means the command ran: following ends without
+a word. The `/rename` is then typed again, at most three times, after which the box says to rename
+in the terminal. A command that did not run ends its tracking with it, so no line left on the
+input holds every later message without a word. A handover's `/rename` waits for the new
+session's first prompt at most two minutes; then the box says to rename in the terminal. The demo has no CLI to follow. A tab that starts running another session drops the waiting rename. A blank
 name clears the mark and sends nothing (a bare `/rename` would make Claude Code generate a name).
 Claude Code's docs say a session answers to the name set with `/rename` or `--name` in
 cross-session messaging; its per-process record (`~/.claude/sessions/<pid>.json`, `name`,
@@ -1650,8 +1660,9 @@ which the fixtures had not shown. It also checks what Chat reads from Claude Cod
 flags: messages sent while a turn runs as the transcript records them, what Esc does with messages
 waiting in Claude Code's queue, thinking shown as updates, and branches cut at a turn's end resumed
 under their new ids in print mode and in the terminal (scripts `queued`, `queued-text`,
-`queued-esc` and `branch`), and a new handover session reading its file without a prompt and a
-command left typed on the input taken off with Ctrl+U (script `handover`).
+`queued-esc` and `branch`), a new handover session reading its file without a prompt and a
+command left typed on the input taken off with Ctrl+U (script `handover`), and a handover-sized
+paste shown on the input in time (script `long-paste`).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat

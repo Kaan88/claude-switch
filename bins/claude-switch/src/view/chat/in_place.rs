@@ -333,7 +333,10 @@ mod tests {
         assert!(r.st.in_place_tick(now));
         let tab = r.tab();
         assert!(tab.in_place.is_none(), "done");
-        assert_eq!(tab.cli_rename, Some(crate::tabs::CliRename::new(NEW, "Old · continued")));
+        let rename = tab.cli_rename.clone().unwrap();
+        assert!(rename.prompt_by.is_some(), "waits for the new session's first prompt, for a while");
+        let rename = crate::tabs::CliRename { prompt_by: None, ..rename };
+        assert_eq!(rename, crate::tabs::CliRename::new(NEW, "Old · continued"));
 
         // 4. `/rename` waits while the new transcript does not exist yet, then goes through the gate.
         r.chat().writes.clear();
