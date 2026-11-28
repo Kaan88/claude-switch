@@ -9,7 +9,7 @@ fn preview_names_the_continuation_without_editing_markdown_and_refuses_a_blank_n
     assert!(st.marks.rename(&source.id, &source.file, "Custom source"));
     let mut dialog = Compact::new(&st, source, None);
     dialog.apply(&mut st, Ok(Update::Preview("## Goal\n\nContinue the work.".into())));
-    assert_eq!(dialog.new_name.text(), "Custom source · continued");
+    assert_eq!(dialog.new_name.text(), "Custom source");
     dialog.key(&KeyName::Tab, Mods::default(), None);
     dialog.text_input("My edited name 😺");
     assert_eq!(dialog.new_name.text(), "My edited name 😺");

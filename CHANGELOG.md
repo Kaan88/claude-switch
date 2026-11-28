@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Handover: the new session keeps the old one's name instead of adding " · continued" each time
+  (which piled up as "… · continued · continued"); such endings from earlier handovers are
+  removed. The old session is marked as handed over, so the list still tells the two apart.
+
 ## 0.1.6 (2026-11-28)
 
 - Chat: a long message (pasted or typed) is shown as its text; Claude Code records it inside

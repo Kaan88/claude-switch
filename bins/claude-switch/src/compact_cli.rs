@@ -416,7 +416,7 @@ pub fn load(roots: &Roots, args: Handoff) -> Result<Loaded, String> {
     let marks = Marks::load(roots).map_err(|e| e.to_string())?;
     let from = names::displayed(&marks, session).to_owned();
     let automatic = name.is_none();
-    let name = name.unwrap_or_else(|| names::suggest(&marks, &sessions, &from));
+    let name = name.unwrap_or_else(|| names::suggest(&from));
     let text = std::fs::read_to_string(&file).map_err(|_| "Could not read the saved handover.")?;
     Ok(Loaded {
         session: session.clone(),

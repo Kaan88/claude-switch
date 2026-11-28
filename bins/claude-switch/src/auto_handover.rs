@@ -353,7 +353,7 @@ impl AppState {
         crate::compact_open::validate_prompt(text)?;
         let saved =
             compact::save(&roots, &session.id, text).map_err(|e| format!("Could not keep the handover: {e}"))?;
-        let name = crate::compact_open::names::suggest(&self.marks, &self.sessions, from);
+        let name = crate::compact_open::names::suggest(from);
         // In place by default: the same tab and process continue (`handover_in_place`).
         if let Some(tab) = self.in_place_target(&session.id, Some(account)) {
             self.continue_in_place(tab, session, (from.to_owned(), name), text, (saved, basis))?;

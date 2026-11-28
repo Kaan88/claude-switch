@@ -352,7 +352,7 @@ impl Compact {
         let account = account.unwrap_or(&st.current().slug);
         let account = accounts.iter().position(|(slug, _)| slug == account).unwrap_or(0);
         let name = st.title_of(&session).to_owned();
-        let suggested_name = names::suggest(&st.marks, &st.sessions, &name);
+        let suggested_name = names::suggest(&name);
         let mut new_name = TextField::new();
         new_name.set_text(&suggested_name);
         let mut this = Self {
@@ -565,7 +565,7 @@ impl Compact {
         }
         let Some((account, _)) = self.accounts.get(self.account) else { return Err("Choose an account.".into()) };
         let name = if self.new_name.text() == self.suggested_name {
-            names::suggest(&st.marks, &st.sessions, &self.name)
+            names::suggest(&self.name)
         } else {
             names::validate(self.new_name.text())?.to_owned()
         };
