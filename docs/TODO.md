@@ -153,8 +153,7 @@ as the second account, Windows Terminal, the desktop hand-over.
   swatch ("For the toolkit", item 1).
 - Font-family settings, tab reordering, restoring tabs. Done 2026-11-28, not yet tried in the
   running app (only tests and pictures): search in the scrollback (DESIGN.md, "Find in a terminal";
-  not there yet: mouse selection and the right-click menu in its box, regular expressions, whole
-  words) and splits (DESIGN.md, "Panes"; not there yet: keys to split or move between panes,
+  with mouse selection and the menu in its box, whole words and regular expressions) and splits (DESIGN.md, "Panes"; not there yet: keys to split or move between panes,
   splits shown in Chat's layout, closing the tab's own pane while others are open, dragging a
   selection across panes). Panes come back with reopened tabs (2026-11-28).
 - Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.

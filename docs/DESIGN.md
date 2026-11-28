@@ -403,6 +403,17 @@ and the cursor is drawn unfocused; a press on the grid gives the keyboard back t
 leaves the bar open; Escape or its × closes it. A pane that loses the keyboard also takes it from
 its bar (still open), so coming back to the pane types into the program.
 
+Beside Aa are two more toggles: whole word ("ab" over a bar, Alt+W), where a match needs no letter,
+digit or underscore just before or after it, and regular expression (".*", Alt+R), compiled with
+`regex-automata`'s meta engine (already in the build through syntect; its syntax, Unicode classes,
+case-insensitive unless Aa); with both on the pattern is wrapped in `\b(?:…)\b`. A pattern is
+compiled once per query and options; matches of nothing are skipped. One that does not compile
+finds nothing, says "Invalid pattern" in the danger colour and edges the bar in it, until the text
+or the toggle changes. The Alt keys work only while the box has the keyboard. The box is a text
+field of `fieldmouse` like the others (`FieldId::TermFind`, its own hit target inside the card):
+press places the caret, drag, double and triple click select, the I-beam shows over it, and a
+right click opens Cut, Copy, Paste, Select all; an edit through that menu finds again.
+
 **Panes.** A tab can be split into up to four panes (`panes.rs`), as a small tree: each split is
 side by side ("Split right", a vertical divider) or stacked ("Split down"), half and half at first,
 and divides the focused pane. The commands are in the tab's menu and the palette (with "Close pane"

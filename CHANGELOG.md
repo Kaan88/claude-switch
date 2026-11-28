@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Terminal find: whole word (Alt+W) and regular expression (Alt+R) toggles beside "Aa"; a pattern
+  that does not compile says "Invalid pattern". The box takes mouse selection (drag, double and
+  triple click) and its right-click menu (Cut, Copy, Paste, Select all) like the app's other fields.
 - Terminal tabs: a split tab reopened with the saved tabs gets its panes back, in the same layout
   and sizes, each shell started again in the folder it was started in.
 - Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a

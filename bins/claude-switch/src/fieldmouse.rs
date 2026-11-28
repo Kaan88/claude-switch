@@ -38,6 +38,8 @@ pub enum FieldId {
     CompactName,
     /// A text row of the Settings form, by its setting id.
     Settings(u32),
+    /// The find bar's box over the terminal shown.
+    TermFind,
 }
 
 /// The menu's items in the order the toolkit lists them; a menu id is an index here.
@@ -164,6 +166,7 @@ impl AppState {
         let target = self.front_target_at(x, y)?;
         match (&self.dialog, target) {
             (None, Target::Search) => Some(FieldId::Search),
+            (None, Target::Find(crate::termfind::FindControl::Text)) => Some(FieldId::TermFind),
             (Some(Dialog::Name { .. }), Target::Dialog(dialogs::FIELD)) => Some(FieldId::Name),
             (Some(Dialog::NewSession(_)), Target::Dialog(dialogs::FIELD)) => Some(FieldId::NewSession),
             (Some(Dialog::Session(panel)), Target::Dialog(id)) => panel.field_of(id),
@@ -179,6 +182,7 @@ impl AppState {
     fn with_field<R>(&mut self, id: FieldId, f: impl FnOnce(&mut TextField, Option<FieldHit>) -> R) -> Option<R> {
         match (id, &mut self.dialog) {
             (FieldId::Search, None) => Some(f(&mut self.search, self.search_hit)),
+            (FieldId::TermFind, None) => self.find_field().map(|(field, hit)| f(field, hit)),
             (FieldId::Name, Some(Dialog::Name { field, hit, .. })) => Some(f(field, *hit)),
             (FieldId::NewSession, Some(Dialog::NewSession(picker))) => {
                 let (field, hit) = picker.field_parts();
@@ -200,6 +204,7 @@ impl AppState {
     fn focus_field(&mut self, id: FieldId) {
         match (id, &mut self.dialog) {
             (FieldId::Search, None) => self.focus = Focus::Search,
+            (FieldId::TermFind, None) => self.find_press(crate::termfind::FindControl::Text),
             (FieldId::NewSession, Some(Dialog::NewSession(picker))) => picker.focus_folder(),
             (FieldId::SessionName | FieldId::SessionTopic, Some(Dialog::Session(panel))) => {
                 panel.focus_topic(id == FieldId::SessionTopic);
@@ -213,6 +218,7 @@ impl AppState {
     fn field_edited(&mut self, id: FieldId) {
         match id {
             FieldId::Search => self.after_search(),
+            FieldId::TermFind => self.find_edited(),
             FieldId::NewSession | FieldId::SessionName | FieldId::SessionTopic => {
                 let Some(mut dialog) = self.dialog.take() else { return };
                 match &mut dialog {

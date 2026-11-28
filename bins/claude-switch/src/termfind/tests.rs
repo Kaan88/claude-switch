@@ -240,3 +240,136 @@ fn output_searches_again_only_below_the_old_screen_top_and_agrees_with_a_full_se
     s.resize(7, 3);
     check(&s, &mut f, "resized");
 }
+
+fn found(s: &Screen, query: &str, o: Options) -> Vec<((u64, usize), (u64, usize))> {
+    let m = Matcher::new(query, o).unwrap();
+    spans(&search_from(s, s.first_line(), m.as_ref()))
+}
+
+#[test]
+fn whole_words_and_regular_expressions_find_what_they_say() {
+    let s = screen(12, 4, "error errors\r\nmy_error 42\r\nnaïve café x\r\n".as_bytes());
+    let word = Options { whole_word: true, ..Options::default() };
+    assert_eq!(found(&s, "error", word), [((0, 0), (0, 4))], "not inside errors or my_error");
+    assert_eq!(found(&s, "error", Options::default()).len(), 3);
+    let re = Options { regex: true, ..Options::default() };
+    assert_eq!(found(&s, r"\d+", re), [((1, 9), (1, 10))]);
+    // Case-insensitive unless asked; multibyte characters map back to their cells.
+    assert_eq!(found(&s, "CAF.", re), [((2, 6), (2, 9))]);
+    assert!(found(&s, "CAF.", Options { match_case: true, ..re }).is_empty());
+    assert_eq!(found(&s, "errors?", Options { whole_word: true, ..re }).len(), 2);
+    // A pattern that matches nothing in a cell (empty matches) finds nothing.
+    assert!(found(&s, "x*", Options { regex: true, ..Options::default() }).len() == 1);
+    // Across a wrap, as plain text does.
+    let wrapped = screen(10, 3, b"abcdefghijkl");
+    assert_eq!(found(&wrapped, "i.k", re), [((0, 8), (1, 0))]);
+}
+
+#[test]
+fn an_invalid_pattern_says_so_finds_nothing_and_recovers() {
+    let s = screen(20, 3, b"a(b) c\r\n");
+    let mut f = Find::new();
+    f.options.regex = true;
+    f.field.set_text("a(b");
+    assert_eq!(f.update(&s, 1, 3), None);
+    assert!(f.invalid().is_some());
+    assert_eq!(f.count(), "Invalid pattern");
+    assert!(f.matches.is_empty());
+    f.field.set_text(r"a\(b");
+    assert!(f.update(&s, 1, 3).is_some());
+    assert!(f.invalid().is_none());
+    assert_eq!(f.count(), "1 of 1");
+    // Off, the same text is plain characters.
+    f.options.regex = false;
+    f.field.set_text("a(b");
+    f.update(&s, 1, 3);
+    assert_eq!(f.count(), "1 of 1");
+}
+
+fn drawn(st: &mut AppState, window: Rect, scale: f32) -> mdshared_text::Bitmap {
+    let mut bmp = mdshared_text::Bitmap::new((window.w * scale) as u32, (window.h * scale) as u32);
+    let mut gfx = mdshared_ui::gfx::Gfx::new();
+    st.hits.clear();
+    {
+        let mut p = Painter::new(&mut bmp, &mut gfx, scale);
+        st.layout_terminals(window, window, scale);
+        st.draw_terminal_still(&mut p, window);
+    }
+    bmp
+}
+
+#[test]
+fn the_box_takes_mouse_selection_its_menu_and_the_toggles_their_keys() {
+    let now = std::time::Instant::now();
+    let mut st = app_with_output(true);
+    let window = Rect::new(0.0, 0.0, 700.0, 220.0);
+    st.open_find();
+    for c in "error".chars() {
+        st.find_key(&KeyName::Char(c), Mods::default(), Some(&c.to_string()));
+    }
+    drawn(&mut st, window, 1.0);
+    let hit = st.tabs.shown().unwrap().term.find.as_ref().unwrap().hit.unwrap();
+    let (x0, y) = (hit.area.x + 1.0, hit.area.cy());
+    // A press in the box goes through fieldmouse: caret at the start, then a drag selects.
+    st.term_press(10.0, 150.0, mdshared_ui::host::Button::Left, 1, Mods::default());
+    assert!(!st.find_focused());
+    assert_eq!(st.field_under(x0, y), Some(crate::fieldmouse::FieldId::TermFind));
+    assert!(st.field_press(x0, y, Mods::default(), now));
+    assert!(st.find_focused(), "the press gave the box the keyboard");
+    assert_eq!(st.field_drag(hit.area.right() - 1.0, y, now), Some(true));
+    st.field_release(0.0, 0.0, now);
+    let field = |st: &AppState| st.tabs.shown().unwrap().term.find.as_ref().unwrap().field.selected_text().to_string();
+    assert_eq!(field(&st), "error");
+    // Its right-click menu: Cut, Copy, Paste, Select all.
+    assert!(st.field_menu(x0, y, now));
+    assert!(matches!(st.menu, Some((crate::state::MenuKind::Field(crate::fieldmouse::FieldId::TermFind), _))));
+    st.menu = None;
+    // Toggles by key while the box has the keyboard.
+    let alt = Mods { alt: true, ..Mods::default() };
+    let options = |st: &AppState| st.tabs.shown().unwrap().term.find.as_ref().unwrap().options;
+    st.find_key(&KeyName::Char('w'), alt, None);
+    st.find_key(&KeyName::Char('r'), alt, None);
+    assert_eq!(options(&st), Options { match_case: false, whole_word: true, regex: true });
+    let count = |st: &AppState| st.tabs.shown().unwrap().term.find.as_ref().unwrap().count();
+    assert_eq!(count(&st), "3 of 3", "error, error[E0308] and ERROR are words");
+    st.find_press(FindControl::Word);
+    st.find_press(FindControl::Regex);
+    assert_eq!(options(&st), Options::default());
+}
+
+/// The bar with its toggles on and with an invalid pattern, in both themes. `CS_SHOT_DIR`
+/// keeps the pictures.
+#[test]
+fn the_toggles_and_the_invalid_state_are_drawn_in_both_themes() {
+    for dark in [true, false] {
+        let mut st = app_with_output(dark);
+        let window = Rect::new(0.0, 0.0, 700.0, 220.0);
+        st.open_find();
+        for c in r"err\w+".chars() {
+            st.find_key(&KeyName::Char(c), Mods::default(), Some(&c.to_string()));
+        }
+        st.find_press(FindControl::Regex);
+        st.find_press(FindControl::Word);
+        let on = drawn(&mut st, window, 2.0);
+        let pal = *st.pal();
+        let bar = Bar::layout(window);
+        let px = |b: &mdshared_text::Bitmap, x: f32, y: f32| {
+            let i = ((y * 2.0) as usize * b.width as usize + (x * 2.0) as usize) * 4;
+            [b.pixels[i + 2], b.pixels[i + 1], b.pixels[i]]
+        };
+        let lit = mix(pal.popup, pal.accent, 0.28);
+        assert_eq!(px(&on, bar.regex.x + 3.0, bar.regex.y + 4.0), lit, "regex on");
+        assert_eq!(px(&on, bar.word.x + 3.0, bar.word.y + 4.0), lit, "whole word on");
+        assert_ne!(px(&on, bar.case.x + 3.0, bar.case.y + 4.0), lit, "case off");
+        st.find_key(&KeyName::Char('('), Mods::default(), Some("("));
+        let bad = drawn(&mut st, window, 2.0);
+        if let Ok(dir) = std::env::var("CS_SHOT_DIR") {
+            let theme = if dark { "dark" } else { "light" };
+            for (name, b) in [("toggles", &on), ("invalid", &bad)] {
+                b.write_png(&std::path::Path::new(&dir).join(format!("cs-term-find-{name}-{theme}.png"))).unwrap();
+            }
+        }
+        assert_eq!(st.tabs.shown().unwrap().term.find.as_ref().unwrap().count(), "Invalid pattern");
+        assert_eq!(px(&bad, bar.card.cx(), bar.card.y + 0.2), pal.danger, "the edge says invalid");
+    }
+}
