@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.6 (2026-11-28)
+
 - Chat: a long message (pasted or typed) is shown as its text; Claude Code records it inside
   `<pasted_content>` tags, and Chat used to leave it out.
 - Chat: a message into a running turn is no longer stopped when the turn records a tool call
