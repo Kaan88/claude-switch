@@ -154,9 +154,11 @@ as the second account, Windows Terminal, the desktop hand-over.
 - Font-family settings, tab reordering, restoring tabs. Done 2026-11-28, not yet tried in the
   running app (only tests and pictures): search in the scrollback (DESIGN.md, "Find in a terminal";
   with mouse selection and the menu in its box, whole words and regular expressions) and splits
-  (DESIGN.md, "Panes"; not there yet: keys to split or move between panes, splits shown in Chat's
-  layout). Panes come back with reopened tabs; a drag selects within its own pane; closing the
-  tab's own pane under others asks to close the tab (2026-11-28).
+  (DESIGN.md, "Panes"; not there yet: splits shown in Chat's layout, below). Panes come back with
+  reopened tabs; a drag selects within its own pane; closing the tab's own pane under others asks
+  to close the tab (2026-11-28). No keys to split or move between panes: the owner wants no new
+  shortcuts (2026-11-28); the tab's menu and the palette (Split right/down, Close pane, Next pane)
+  stay the way.
 - **Split panes in Chat's layout** (designed 2026-11-28, not built). Today Chat's drawer shows only
   the Claude pane and the shells wait, unchanged, for the terminal layout. Design: a small switcher in
   the drawer's header, "Claude · Shell 1 · Shell 2" (shell labels from their folder), shown only

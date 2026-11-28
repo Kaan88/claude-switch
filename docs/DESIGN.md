@@ -417,8 +417,9 @@ right click opens Cut, Copy, Paste, Select all; an edit through that menu finds 
 **Panes.** A tab can be split into up to four panes (`panes.rs`), as a small tree: each split is
 side by side ("Split right", a vertical divider) or stacked ("Split down"), half and half at first,
 and divides the focused pane. The commands are in the tab's menu and the palette (with "Close pane"
-and "Next pane"); no key was added, since Windows Terminal's Alt+Shift+plus/minus and Alt+arrows
-would be taken from the programs. Pane 0 is the tab's own terminal (`Tab::term`): Chat, the session
+and "Next pane"). There are no keys for them, by the owner's choice (no new shortcuts,
+2026-11-28); Windows Terminal's Alt+Shift+plus/minus and Alt+arrows would also be taken from the
+programs. Pane 0 is the tab's own terminal (`Tab::term`): Chat, the session
 view, attention, the send gate, identity, saved tabs and the safeguard keep reading only it. A new
 pane is a plain shell (`launch::shell`, the same sanitized environment as a shell tab) started in
 the tab's launch folder (`Tab::folder`), else its session's, else its OpenCode folder, else the
