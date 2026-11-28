@@ -52,6 +52,14 @@ pub fn draw(st: &mut AppState, cx: &mut Cx<'_, Msg>, p: &mut Painter) {
         let rects = st.splitter.rects(area, Axis::Horizontal);
         list::draw(st, cx, p, rects.0);
         details::draw(st, p, rects.2);
+        if let Some(reader) = st.shown_reader() {
+            let deadline = reader.scroll_deadline();
+            let at = *st.feed_poll.get_or_insert(cx.now() + crate::view::reader::POLL);
+            cx.wake_at(at);
+            if let Some(at) = deadline {
+                cx.wake_at(at);
+            }
+        }
         let (x, y) = st.background_pointer();
         let hot = st.splitter.hit(area, Axis::Horizontal, x, y);
         splitter::draw(p, &pal, rects, Axis::Horizontal, hot);

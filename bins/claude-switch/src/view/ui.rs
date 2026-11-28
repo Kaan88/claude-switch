@@ -145,6 +145,8 @@ pub struct Ui {
     /// What Chat says in place of an empty conversation: a quiet line, or nothing (a new
     /// session's greeting is the host's).
     empty_line: Option<&'static str>,
+    /// The Sessions details' read-only conversation: no heading, no page tabs, no shell button.
+    embedded: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -192,6 +194,17 @@ impl Ui {
             self.cache = None;
             self.scroll_drag = None;
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn offset(&self) -> f32 {
+        self.offset
+    }
+
+    /// Draws the conversation alone, for the Sessions details: no heading, no Attach, no pages.
+    pub fn set_embedded(&mut self) {
+        self.embedded = true;
+        self.cache = None;
     }
 
     pub fn set_chat_reading(&mut self, reading: Reading) {
@@ -345,7 +358,7 @@ impl Ui {
         let pad = self.pad();
         let x = area.x + pad;
         let width = (area.w - 2.0 * pad).max(1.0);
-        if !self.chat {
+        if !self.chat && !self.embedded {
             p.text(Face::Semibold, 17.0, x, area.y + 22.0, "Session view", pal.text, (width - 116.0).max(1.0));
             self.button(
                 p,
@@ -357,7 +370,7 @@ impl Ui {
             );
         }
         let tabs_y = area.y + 44.0;
-        if !self.chat {
+        if !self.chat && !self.embedded {
             let mut bx = x;
             use super::chat::Side;
             let tabs = [
@@ -385,7 +398,13 @@ impl Ui {
             p.restore(clip);
             return;
         }
-        let mut top = if self.chat { area.y + 7.0 } else { tabs_y + 38.0 };
+        let mut top = if self.chat {
+            area.y + 7.0
+        } else if self.embedded {
+            area.y + 4.0
+        } else {
+            tabs_y + 38.0
+        };
         // Lines above and below the conversation start where its text does.
         self.column = self.text_column(x, width);
         let (cx, cw) = self.column;
@@ -403,8 +422,11 @@ impl Ui {
             top += 24.0;
         }
         // The track must retain its length when paging or dragging toggles follow.
-        let shell_count =
-            if self.page == Page::Conversation && !self.chat && m.agent.is_none() { m.running_shells() } else { 0 };
+        let shell_count = if self.page == Page::Conversation && !self.chat && !self.embedded && m.agent.is_none() {
+            m.running_shells()
+        } else {
+            0
+        };
         let shell_h = if shell_count > 0 { 26.0 } else { 0.0 };
         let footer = area.bottom() - self.footer_height(area.w, m.agent.is_none()) - shell_h;
         if self.page == Page::Conversation && m.has_earlier && !(self.markdown.is_some() && width < 640.0) {
@@ -438,6 +460,10 @@ impl Ui {
                 && self.rows.is_empty()
                 && let Some(line) = self.empty_line
             {
+                p.text(Face::Ui, 13.0, self.body.x, self.body.y + 14.0, line, pal.muted, self.body.w);
+            }
+            if self.embedded && self.rows.is_empty() {
+                let line = if m.loaded { "No messages to show." } else { "Reading the conversation\u{2026}" };
                 p.text(Face::Ui, 13.0, self.body.x, self.body.y + 14.0, line, pal.muted, self.body.w);
             }
             self.paint_rows(p, pal, m);
@@ -540,7 +566,7 @@ impl Ui {
             match self.page {
                 Page::Conversation => {
                     r.conversation(m, &self.expanded, &self.tool_expanded);
-                    if r.list.is_empty() && !self.chat {
+                    if r.list.is_empty() && !self.chat && !self.embedded {
                         r.empty(
                             "Waiting for messages",
                             "The conversation appears here when its transcript is available.",

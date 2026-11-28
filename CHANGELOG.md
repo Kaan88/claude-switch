@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Sessions: the details show the selected session's conversation as Chat draws it (answers in
+  Markdown, code blocks, tool rows that open), read-only, in a region that scrolls on its own and
+  follows new messages; it replaces the short "Last messages" list. Earlier history loads on
+  request.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

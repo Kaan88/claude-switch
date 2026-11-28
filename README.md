@@ -24,7 +24,7 @@ while the CLI keeps running underneath.
 ## Why you'd want it
 
 **🔎 Never lose a session again.** Every CLI and Desktop session on the computer is listed with
-its folder, branch, size and last messages. Search titles, prompts and whole conversations; pin,
+its folder, branch, size and its conversation. Search titles, prompts and whole conversations; pin,
 rename, group by project or thread, hide or archive. With search by meaning on, find a session by
 what it was about ("where we fixed push").
 

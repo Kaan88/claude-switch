@@ -132,27 +132,25 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
     y = crate::compact_dialog::draw_history_row(st, p, &s.id, x, y, w, area);
     y = related(st, p, area, Rect::new(x, y, w, 0.0));
 
-    // The last messages.
+    // The conversation, drawn as Chat draws it, in a region that scrolls on its own: as tall as
+    // the pane less its heading, so scrolling the details to their end shows it whole.
     p.fill(Rect::new(x, y - 12.0, w, p.px()), pal.line);
-    p.text(Face::Semibold, 13.0, x, y + 8.0, "Last messages", pal.text, w);
-    y += 26.0;
-    match &st.preview {
-        Some((id, lines)) if *id == s.id => {
-            if lines.is_empty() {
-                p.text(Face::Ui, 13.0, x, y + 8.0, "Nothing to show.", pal.muted, w);
-            }
-            for line in lines {
-                let (who, c) = if line.from_user { ("You", pal.accent) } else { ("Claude", pal.muted) };
-                p.text(Face::Semibold, 12.0, x, y + 8.0, who, c, w);
-                y += 18.0;
-                y += p.paragraph_wrapped(Face::Ui, 13.0, x, y, w, &line.text, pal.text, Wrap::Anywhere) + 12.0;
-            }
+    p.text(Face::Semibold, 13.0, x, y + 8.0, "Conversation", pal.text, w);
+    y += 22.0;
+    let region = Rect::new(area.x + PAD - 12.0, y, area.w - 2.0 * (PAD - 12.0) - 8.0, conversation_height(area.h));
+    match st.details_reader.as_mut().filter(|r| r.id == s.id) {
+        Some(reader) => {
+            let diff = crate::view::look::Diff::from_ansi(&st.term_colours.0.ansi);
+            let now = std::time::Instant::now();
+            let mouse = if st.dialog.is_none() { st.mouse } else { (-1.0, -1.0) };
+            reader.draw(p, &pal, (region, area), diff, mouse, now, false);
         }
-        _ => {
-            p.text(Face::Ui, 13.0, x, y + 8.0, "Reading the conversation\u{2026}", pal.muted, w);
+        None => {
+            p.text(Face::Ui, 13.0, x, y + 8.0, "The conversation could not be read.", pal.muted, w);
         }
     }
-    let content = (y + offset + 34.0 - area.y).max(0.0);
+    y = region.bottom();
+    let content = (y + offset + 8.0 - area.y).max(0.0);
     st.details_scroll.max = (content - area.h).max(0.0);
     for (r, _) in &mut st.hits[first_hit..] {
         let bottom = r.bottom().min(area.bottom());
@@ -163,6 +161,33 @@ pub fn draw(st: &mut AppState, p: &mut Painter, area: Rect) {
         mdshared_ui::scroll::draw_scrollbar(p, &pal, track, thumb, false);
     }
     p.restore(old);
+}
+
+/// The details conversation's height in a pane `h` tall: the pane less the room of its heading,
+/// and never so short that a message does not fit.
+fn conversation_height(h: f32) -> f32 {
+    (h - 44.0).max(280.0)
+}
+
+impl AppState {
+    /// The selected session's conversation, while the Sessions page shows it.
+    pub(crate) fn shown_reader(&mut self) -> Option<&mut crate::view::reader::Reader> {
+        if self.terminal_shown() {
+            return None;
+        }
+        let selected = self.selected.as_deref()?;
+        self.details_reader.as_mut().filter(|r| r.id == selected)
+    }
+
+    /// Reads the shown conversation again (on the window's one-second feed timer).
+    pub(crate) fn poll_details(&mut self) -> bool {
+        self.shown_reader().map(|r| r.poll()).is_some()
+    }
+
+    /// The wheel over the details conversation: true when it scrolled.
+    pub(crate) fn details_wheel(&mut self, x: f32, y: f32, dy: f32) -> bool {
+        self.shown_reader().is_some_and(|r| r.wheel(x, y, dy))
+    }
 }
 
 fn related_candidate(selected: Option<&str>, id: &str) -> bool {

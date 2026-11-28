@@ -437,20 +437,20 @@ impl Ui {
         }
     }
 
-    pub fn wheel(&mut self, x: f32, y: f32, dy: f32) {
+    /// Scrolls what is under the pointer: true when it moved.
+    pub fn wheel(&mut self, x: f32, y: f32, dy: f32) -> bool {
         if self.overlay_open() {
-            return;
+            return false;
         }
         if let Some(pane) = &self.markdown {
             if pane.bounds.contains(x, y) {
-                self.scroll_to(Surface::Markdown, pane.offset() - dy);
-                return;
+                return self.scroll_to(Surface::Markdown, pane.offset() - dy);
             }
             if self.body.w == 0.0 {
-                return;
+                return false;
             }
         }
-        self.scroll_to(Surface::Conversation, self.offset - dy);
+        self.scroll_to(Surface::Conversation, self.offset - dy)
     }
 
     pub fn key(&mut self, name: &KeyName, mods: Mods) -> bool {

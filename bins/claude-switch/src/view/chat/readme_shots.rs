@@ -49,8 +49,14 @@ pub(super) fn window(dark: bool) -> AppState {
 /// Waits for the selected session's last messages, size and related sessions.
 fn read_details(st: &mut AppState) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    while st.preview.is_none() || st.session_size.pending || st.grouping.pending.is_some() {
+    while st.details_reader.as_ref().is_some_and(|r| !r.loaded())
+        || st.session_size.pending
+        || st.grouping.pending.is_some()
+    {
         st.take_jobs();
+        if let Some(reader) = &st.details_reader {
+            reader.poll();
+        }
         assert!(Instant::now() < deadline, "the selected session's details were read");
         std::thread::sleep(Duration::from_millis(10));
     }

@@ -115,7 +115,10 @@ impl App for AppState {
                     self.sections.scroll = self.sections.clamp_scroll(self.sections.scroll - f64::from(dy));
                     self.moved(cx, x, y);
                 } else if self.details_scroll.area.contains(x, y) {
-                    self.details_scroll.wheel(dy);
+                    // The conversation scrolls first; at its end the details around it do.
+                    if !self.details_wheel(x, y, dy) {
+                        self.details_scroll.wheel(dy);
+                    }
                     self.moved(cx, x, y);
                 }
             }
@@ -201,6 +204,12 @@ impl App for AppState {
                     self.save_marks();
                     if self.info.is_some() {
                         cx.request_redraw_all();
+                    }
+                }
+                if self.feed_poll.is_some_and(|t| t <= now) {
+                    self.feed_poll = None;
+                    if cx.window().is_minimized() != Some(true) && self.poll_details() {
+                        self.feed_poll = Some(now + crate::view::reader::POLL);
                     }
                 }
                 if self.next_poll.is_some_and(|t| t <= now) {

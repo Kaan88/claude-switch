@@ -1839,6 +1839,17 @@ prompt words. Each full scan builds one immutable prompt index off the window th
 runs on a cancellable selection-scoped worker against that snapshot, then current visibility
 and thread membership are applied before showing results. Related sends nothing to a model.
 
+Under Related the details end with the selected session's **Conversation**: the shared conversation
+view (`view::ui::Ui` over `view::model::Model`, as Chat and the Session view draw it) in its
+embedded form, with no heading, page tabs, Attach or shell button, and read-only: no message
+buttons, Stop, Rewind, Branch or right-click menu. It reads the transcript through the same
+incremental reader, so the newest records first and earlier ones only on **Load earlier**, and
+follows appends on the window's one-second feed timer while the Sessions page shows it. The region
+is as tall as the pane less its heading (at least 280 px) and scrolls on its own: the wheel over it
+scrolls the conversation, and once that reaches an end, the details around it. A click in it takes
+Ctrl+C, Ctrl+A and Escape. Changing the selection drops the reader (its worker ends with it). The
+demo reads a made-up conversation written to a temporary folder of its own that goes with it.
+
 **Include topics when suggesting names** is off by default in Settings → Sessions. If enabled,
 the existing confirmed naming request adds existing short topic labels and asks for an optional
 topic beside each title. Its transcript excerpts and request count are unchanged. Review keeps

@@ -51,6 +51,10 @@ built by one agent (merge `d2deea0`) and released at the owner's word before a r
 
 ## Completed follow-ups
 
+- The Sessions details show the conversation with the shared view, read-only, in a region that
+  scrolls on its own (2026-11-28, branch `feature/workers-tab`; DESIGN.md, "Session organization").
+  Seen in the picture test `sessions_details_shots` in both themes; not tried in the running app
+  with a real, long transcript.
 - Open a copy is in the palette and under "Open elsewhere"; the Desktop and cold-cache warnings
   share one confirmation. Both are documented in `DESIGN.md`.
 - Shell and Desktop launches strip the CLI config, login and session variables. Confirm dialogs use
@@ -123,8 +127,6 @@ as the second account, Windows Terminal, the desktop hand-over.
   itself does (owner, 2026-11-28). Blocked on the toolkit: drop-down items cannot carry a colour
   swatch ("For the toolkit", item 1).
 - Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
-- Reuse Conversation in Sessions details later. That view is currently a short read-only preview
-  and has no independently scrollable transcript region.
 - Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.
 
 ## For the toolkit (what the app's authors had to work around)

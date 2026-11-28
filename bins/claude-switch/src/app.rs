@@ -51,6 +51,7 @@ impl AppState {
     fn timers(&self, cx: &mut Cx<'_, Msg>) {
         for at in [
             self.next_poll,
+            self.feed_poll,
             self.conversation_search.due.filter(|_| self.scanned),
             self.tip.deadline(),
             self.toasts.deadline(),
