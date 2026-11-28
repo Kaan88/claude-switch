@@ -35,7 +35,10 @@ pub enum Control {
     Effort,
     Context,
     Mode,
+    /// The Compact chip running Claude Code's `/compact`.
     Compact,
+    /// The Compact chip running Switch's handover, as "Compact and open…" does.
+    Handover,
     Clear,
     Commands,
     /// Own command `n` from Settings › Chat.
@@ -49,11 +52,48 @@ pub enum Control {
     /// The CLI's suggested next prompt.
     NextPrompt,
     Stop,
+    /// Send now on the messages waiting in Claude Code's queue.
+    SendQueued,
+    /// The composer's `!` mark: back from shell mode to a message.
+    ShellMode,
     Remove(usize),
     MoreChips,
     Question(super::question::Hit),
     /// A start under a new session's message box: it fills the box and sends nothing.
     Start(super::welcome::Start),
+    /// A button of the card that shows the terminal screen Chat cannot read.
+    Screen(super::terminal_card::Hit),
+}
+
+/// The slash command a chip sends as a direct command (with its checks and confirmation).
+pub(super) fn chip_slash(control: Control) -> Option<&'static str> {
+    match control {
+        Control::Context => Some("/context"),
+        Control::Compact => Some("/compact"),
+        Control::Clear => Some("/clear"),
+        _ => None,
+    }
+}
+
+/// What a key does while a card stands in the composer's place.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Docked {
+    /// What the card's own "Esc to …" button does, under the same checks.
+    Escape,
+    /// A key that would have edited or sent the hidden draft: the card says once where typing goes.
+    TypedAway,
+    Nothing,
+}
+
+/// Escape does what the card's "Esc to …" button does, only while the card draws that button
+/// (`hits` is the last frame's); Enter, Backspace and Delete go nowhere, and say so.
+pub(super) fn docked_key(hits: &[(mdshared_ui::gfx::Rect, Target)], name: Option<&KeyName>, mods: Mods) -> Docked {
+    let escape = Target::Chat(Control::Question(super::question::Hit::Escape));
+    match name {
+        Some(KeyName::Escape) if mods.none() && hits.iter().any(|(_, t)| *t == escape) => Docked::Escape,
+        Some(KeyName::Enter | KeyName::Backspace | KeyName::Delete) => Docked::TypedAway,
+        _ => Docked::Nothing,
+    }
 }
 
 impl AppState {
@@ -73,6 +113,14 @@ impl AppState {
         } else {
             pane.ui.show_details(Side::Shells);
         }
+    }
+
+    /// The tooltip of a control of the shown tab's session view.
+    pub(crate) fn session_tip(&self, target: Target) -> Option<String> {
+        let Target::Chat(Control::Detail(hit)) = target else { return None };
+        let tab = self.tabs.shown()?;
+        let pane = tab.pane.as_ref()?;
+        (hit.tab() == tab.id).then(|| super::side::Details::tip(&pane.model, hit)).flatten()
     }
 
     fn detail_control(&mut self, hit: super::side::Hit) {
@@ -128,11 +176,29 @@ impl AppState {
     /// alone. True when it changed.
     pub fn set_shown_tab_chat(&mut self, enabled: bool) -> bool {
         self.clear_session_text_focus();
+        let window_focused = self.window_focused;
         let Some(tab) = self.tabs.shown_mut() else { return false };
-        let Some(pane) = &mut tab.pane else { return false };
-        if pane.chat.enabled != enabled {
-            tab.term.stop_pointer();
+        if tab.pane.as_ref().is_none_or(|pane| pane.chat.enabled == enabled) {
+            return false;
+        }
+        // Chat shows only the tab's own pane: a shell pane that had the keyboard loses it, and
+        // gets it back with the terminal layout. Programs that asked are told, as on a click.
+        let before = tab.focused_pane();
+        tab.focused_term_mut().stop_pointer();
+        if let Some(pane) = &mut tab.pane {
             pane.chat.enabled = enabled;
+        }
+        let after = tab.focused_pane();
+        if window_focused && before != after {
+            for (id, on) in [(before, false), (after, true)] {
+                if let Some(t) = tab.term_of(id)
+                    && let Some(b) = mdshared_term::input::encode_focus(on, &t.screen.modes())
+                {
+                    t.write(&b);
+                }
+            }
+        }
+        if let Some(pane) = &mut tab.pane {
             pane.chat.drawer_focus = false;
             pane.chat.resizing = None;
             pane.chat.commands.open = false;
@@ -143,9 +209,8 @@ impl AppState {
             } else {
                 pane.ui.set_chat(false);
             }
-            return true;
         }
-        false
+        true
     }
 
     pub fn chat_input_tick(&mut self, cx: &mut Cx<'_, Msg>) {
@@ -230,12 +295,20 @@ impl AppState {
             let suggested = shown && chat.popups.read_next_prompt(&tab.term.screen);
             // The card first: the gate asks it whether it answers the pending call's menu.
             let card = chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
-            chat.settle(chat.screen_idle(&tab.term, now));
+            // What the terminal's agent list says about the agents, for every place they show.
+            let listed = super::question::listed_agents(&pane.model, &tab.term.screen);
+            let card = card | listed.is_some_and(|listed| pane.model.set_listed(listed));
+            let idle = chat.screen_idle(&tab.term, now);
+            chat.settle(idle);
+            let queued = chat.reconcile_queued(&pane.model, idle, now);
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
+            // An ended program has no queue left: its bubbles (and the poll for them) end too.
+            let queued = queued | (decision.0 == super::Gate::Ended && chat.forget_queued());
             let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
             chat.set_selection(pane.ui.has_selection());
             let changed =
                 card | chat.react_at(decision.1, now) | (chat.last_gate.replace(decision.0) != Some(decision.0));
+            let changed = changed | super::terminal_card::observe(chat, &tab.term.screen);
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
@@ -244,15 +317,20 @@ impl AppState {
                 // Chat says Claude Code may be waiting and cannot show why: keep what it read.
                 super::screen_report::save(tab, now, super::Reason::Tool.label());
             }
-            redraw |= shown && (changed || catalog || suggested || reported || advanced || collected || recalled);
+            redraw |=
+                shown && (changed || catalog || suggested || reported || advanced || collected || recalled || queued);
         }
         redraw
     }
 
-    fn has_chat_work(tab: &Tab) -> bool {
-        tab.pane
-            .as_ref()
-            .is_some_and(|pane| pane.chat.enabled && (pane.chat.queue.is_some() || pane.chat.waiting().is_some()))
+    pub(super) fn has_chat_work(tab: &Tab) -> bool {
+        tab.pane.as_ref().is_some_and(|pane| {
+            pane.chat.enabled
+                && (pane.chat.queue.is_some()
+                    || pane.chat.waiting().is_some()
+                    || pane.chat.command_in_flight()
+                    || !pane.chat.queued.is_empty())
+        })
     }
 
     pub(in crate::view) fn arm_chat_tick(&self, cx: &mut Cx<'_, Msg>) {
@@ -289,6 +367,19 @@ impl AppState {
             self.arm_chat_tick(cx);
             return true;
         }
+        // Ctrl+C over a selection in a question's preview copies it (plain text).
+        if matches!(k.name, Some(KeyName::Char('c' | 'C')))
+            && mods.ctrl
+            && !mods.alt
+            && let Some(text) = self
+                .tabs
+                .shown()
+                .and_then(|t| t.pane.as_ref())
+                .and_then(|pane| pane.chat.question.previews.copy_text(true))
+        {
+            platform::set_clipboard_text(&text);
+            return true;
+        }
         if let Some(name) = k.name.as_ref()
             && let Some(pane) = self.tabs.shown().and_then(|t| t.pane.as_ref())
             && pane.copy_conversation(name, mods, platform::set_clipboard_text)
@@ -296,8 +387,18 @@ impl AppState {
             return true;
         }
         // A card stands where the composer is: the hidden draft takes no keys, and Enter sends
-        // nothing. The card's own field takes them once it was clicked (above).
+        // nothing. The card's own field takes them once it was clicked (above). Escape does what
+        // the card's own "Esc to …" button does, under the same checks, while the card offers it.
         if self.tabs.shown().and_then(|t| t.pane.as_ref()).is_some_and(|p| p.chat.question.docked()) {
+            match docked_key(&self.hits, k.name.as_ref(), mods) {
+                Docked::Escape => self.chat_control(cx, Control::Question(super::question::Hit::Escape)),
+                Docked::TypedAway => {
+                    if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+                        pane.chat.question.note_typed_away();
+                    }
+                }
+                Docked::Nothing => {}
+            }
             return true;
         }
         if mods.none()
@@ -316,6 +417,7 @@ impl AppState {
         let pane = tab.pane.as_mut().expect("Chat pane");
         let chat = &mut pane.chat;
         let changed = match k.name.as_ref() {
+            Some(KeyName::Backspace) if mods.none() && chat.editor.text.is_empty() && chat.leave_shell() => false,
             Some(KeyName::Enter) if !mods.shift && !mods.ctrl && !mods.alt => {
                 self.chat_control(cx, Control::Send);
                 false
@@ -334,7 +436,18 @@ impl AppState {
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
         chat.typed_at = Some(cx.now());
-        if super::question::text(chat, text) || chat.question.docked() || chat.popup_text(text) {
+        if super::question::text(chat, text) {
+            return true;
+        }
+        if chat.question.docked() {
+            // Typing goes nowhere while a card stands in the composer's place: said once.
+            chat.question.note_typed_away();
+            return true;
+        }
+        if chat.popup_text(text) {
+            return true;
+        }
+        if chat.shell_key(text) {
             return true;
         }
         if !chat.locked() {
@@ -344,8 +457,10 @@ impl AppState {
         true
     }
 
+    /// Input to the tab's own terminal; keys for a shell pane beside it are not Claude's.
     pub fn note_chat_terminal_input(&mut self) {
-        if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+        let shown = self.tabs.shown_mut().filter(|t| t.focused_pane() == crate::panes::MAIN);
+        if let Some(pane) = shown.and_then(|t| t.pane.as_mut()) {
             pane.note_terminal_input();
         }
     }
@@ -380,6 +495,7 @@ impl AppState {
             Some(Target::Chat(Control::Grip)) => {
                 chat.resizing = Some((y, chat.layout.drawer.h));
                 chat.drawer_focus = true;
+                super::terminal_card::keep(chat);
                 true
             }
             Some(Target::Chat(Control::Editor)) => {
@@ -399,6 +515,10 @@ impl AppState {
                 true
             }
             Some(Target::Chat(Control::CommandBackground)) => true,
+            Some(Target::Chat(Control::Question(super::question::Hit::Preview))) => {
+                chat.question.previews.press(x, y);
+                true
+            }
             Some(Target::Chat(_)) => {
                 self.pressed = target;
                 true
@@ -417,6 +537,9 @@ impl AppState {
         }
         if chat.editor_drag {
             return Some(chat.editor_drag_to(x, y));
+        }
+        if chat.question.previews.drag_to(x, y) {
+            return Some(true);
         }
         if chat.commands.open && chat.layout.suggestions.contains(x, y) {
             return Some(false);
@@ -451,15 +574,39 @@ impl AppState {
         true
     }
 
+    /// The Compact chip as Switch's handover (Settings › Chat): started as "Compact and open…" in
+    /// the menus and the palette starts it, the handover dialog for the shown tab with its checks
+    /// (it continues in place where it can).
+    pub(in crate::view) fn handover_chip(&mut self, now: Instant) {
+        self.command(now, crate::compact_dialog::COMMAND, None);
+    }
+
     pub fn chat_control(&mut self, cx: &mut Cx<'_, Msg>, control: Control) {
         match control {
-            Control::Stop => return self.stop_conversation(cx, None),
+            Control::Stop => {
+                // The turn the button was drawn for: the same check as the working line's Stop.
+                let expected = self.tabs.shown().and_then(|t| t.pane.as_ref()).and_then(|p| p.chat.stop_turn);
+                if expected.is_some() {
+                    self.stop_conversation(cx, expected);
+                }
+                return;
+            }
             Control::Detail(hit) => return self.detail_control(hit),
             Control::Shells => {
                 self.select_shell(None);
                 return;
             }
             Control::Model | Control::Effort => return self.chat_choice_menu(control),
+            Control::Question(super::question::Hit::CopyPreview) => {
+                let text = self.tabs.shown().and_then(|t| t.pane.as_ref()).and_then(|pane| {
+                    let previews = &pane.chat.question.previews;
+                    previews.copy_text(true).or_else(|| previews.copy_text(false))
+                });
+                if let Some(text) = text {
+                    platform::set_clipboard_text(&text);
+                }
+                return;
+            }
             Control::Question(hit) => {
                 // As Send: read the newest screen before matching the question on it.
                 self.term_woke(cx);
@@ -469,7 +616,15 @@ impl AppState {
                 }
                 return self.arm_chat_tick(cx);
             }
-            Control::Context => return self.chat_run_slash(cx, "/context".into(), false),
+            Control::SendQueued => {
+                // As Send: read the newest screen before the checks.
+                self.term_woke(cx);
+                if let Some(tab) = self.tabs.shown_mut().filter(|tab| tab.pane.as_ref().is_some_and(|p| p.chat.enabled))
+                {
+                    AppState::chat_send_queued(tab, cx.now());
+                }
+                return self.arm_chat_tick(cx);
+            }
             Control::Mode => {
                 // As Send: read the newest screen before the checks.
                 self.term_woke(cx);
@@ -479,8 +634,13 @@ impl AppState {
                 }
                 return self.arm_chat_tick(cx);
             }
-            Control::Compact => return self.chat_run_slash(cx, "/compact".into(), false),
-            Control::Clear => return self.chat_run_slash(cx, "/clear".into(), false),
+            // The same path as the menu and palette entry: the handover dialog for this tab, with
+            // its checks, which continues in place where it can.
+            Control::Handover => return self.handover_chip(cx.now()),
+            Control::Context | Control::Compact | Control::Clear => {
+                let line = chip_slash(control).unwrap_or_default();
+                return self.chat_run_slash(cx, line.into(), false);
+            }
             Control::Own(n) => {
                 let Some(line) = self.config.chat.commands.get(n).filter(|c| !c.is_empty()).cloned() else { return };
                 return self.chat_run_slash(cx, line, false);
@@ -530,6 +690,10 @@ impl AppState {
             Control::Drawer => chat.toggle_drawer(),
             Control::Open if chat.drawer == Drawer::Closed => chat.open_drawer(),
             Control::Open => chat.drawer_focus = true,
+            Control::Screen(hit) => super::terminal_card::press(chat, hit, cx.now()),
+            // A window too narrow for the panel cannot show it: the click is not taken as a choice
+            // that would keep the panel closed (or open) once the window is wide again.
+            Control::Panel if !chat.layout.panel_room => {}
             Control::Panel => {
                 // The user's own choice: it holds whatever the panel has to show.
                 chat.side_choice = Some(chat.side_hidden);
@@ -547,6 +711,9 @@ impl AppState {
                 }
             }
             Control::MoreChips => chat.chip_page = (chat.chip_page + 1) % chat.attachment_pages(),
+            Control::ShellMode => {
+                chat.leave_shell();
+            }
             Control::Attach if !chat.locked() => self.chat_attach_menu(),
             Control::CancelSend => chat.stop_waiting(),
             Control::Send | Control::Override | Control::SendNow
@@ -708,7 +875,8 @@ impl Chat {
             }
         }
         self.editor_words = None;
-        self.resizing.take().is_some() | std::mem::take(&mut self.editor_drag)
+        let preview = self.question.previews.release(point);
+        self.resizing.take().is_some() | std::mem::take(&mut self.editor_drag) | preview
     }
 
     /// A drag in the message box: by characters, or by whole words after a double click.
@@ -774,6 +942,6 @@ impl Chat {
 
     pub(super) fn editor_point(&self, x: f32, y: f32) -> (f32, f32) {
         let rect = self.layout.editor;
-        (x - rect.x - 8.0, y - rect.y)
+        (x - rect.x - super::composer::editor_left(self.shell_mode), y - rect.y)
     }
 }

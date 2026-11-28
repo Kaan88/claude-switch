@@ -11,6 +11,7 @@ pub(crate) mod handover;
 const MAX_PICTURE: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_LINE: usize = 48 * 1024 * 1024;
 const MAX_SIDECAR: u64 = 1024 * 1024;
+mod active;
 mod background;
 mod chat;
 pub use background::{BackgroundShell, McpStatus, McpTask, ResultDetails, ShellStatus};
@@ -18,6 +19,7 @@ mod decode;
 mod denial;
 pub use denial::{Denial, DenialKind};
 mod local;
+pub use local::escape_len;
 mod native_tasks;
 mod notices;
 pub use chat::{ChatInfo, Hunk, Patch, Phase as ChatPhase, Question, QuestionOption, ToolCard};
@@ -136,14 +138,45 @@ pub struct Subagent {
     pub agent_type: Option<String>,
     pub description: Option<String>,
     pub model: Option<String>,
-    /// Unknown when no usable sidecar has been written yet.
-    pub finished: Option<bool>,
+    /// Claude Code's colour for it (`red`, `blue`, `green`, `yellow`, `purple`, `orange`, `pink`,
+    /// `cyan`), when its sidecar names one.
+    pub color: Option<String>,
+    /// How it ended and where that was read; `None` while nothing in the files says it ended
+    /// (it may run, or have ended without a record: see [`AgentEnd`]).
+    pub end: Option<(AgentEnd, EndSource)>,
     pub spawn_depth: Option<u64>,
     pub tool_use_id: Option<String>,
     pub started_at: Option<String>,
     pub last_activity_at: Option<String>,
     pub tool_calls: usize,
     pub last_tool_summary: Option<String>,
+}
+
+/// How a subagent's work ended. Claude Code 2.1.332 writes `finished: true` into the agent's
+/// sidecar when it ends (also when it was stopped) and never `false`, so a running agent and one
+/// whose end went unrecorded (a closed or crashed session) read the same here: no end. What the
+/// terminal's agent list shows tells them apart while the session runs in a tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentEnd {
+    Finished,
+    /// Stopped by the user (the agent list's `x`, TaskStop) or by Claude Code.
+    Stopped,
+    /// Esc during its turn: its transcript, or its foreground call's result, says so.
+    Interrupted,
+    Failed,
+}
+
+/// Where an agent's end was read, the most direct first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndSource {
+    /// The `<task-notification>` a background agent reports through.
+    Notification,
+    /// The result of the Agent call that ran it in the foreground.
+    Result,
+    /// Claude Code's `agent-<id>.meta.json` (`finished`, `stoppedByUser`, `sweptByStop`).
+    Sidecar,
+    /// The agent's own transcript ends with its final answer or an interruption.
+    Transcript,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -156,6 +189,8 @@ pub struct Changes {
     pub tasks_changed: bool,
     pub subagents_changed: bool,
     pub background_changed: bool,
+    /// Items left or joined the active branch (a prompt after a rewind): show `items()` afresh.
+    pub branch_changed: bool,
 }
 
 pub struct Reader {
@@ -183,17 +218,25 @@ impl Reader {
         Ok(reader)
     }
 
-    pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> + ExactSizeIterator {
-        self.view.items.iter().map(|(&id, item)| (id, item))
+    /// The items on the conversation's active branch, in transcript order.
+    pub fn items(&self) -> impl DoubleEndedIterator<Item = (ItemId, &Item)> {
+        self.view.items.iter().filter(|(id, _)| !self.view.active.hides(id.offset)).map(|(&id, item)| (id, item))
     }
 
+    /// The session's background shells. One started in a turn a rewind replaced is left out once it
+    /// is known to have ended; a rewind stops no process, so a running one stays (with Stop).
     pub fn background_shells(&self) -> Vec<BackgroundShell> {
-        self.view.background.shells()
+        let mut shells = self.view.background.shells();
+        shells.retain(|s| s.status == ShellStatus::Running || !self.view.active.hides(s.tool.offset));
+        shells
     }
 
-    /// The session's background MCP tasks, as far as the transcript records them.
+    /// The session's background MCP tasks, as far as the transcript records them; as for shells,
+    /// one from a replaced turn only while it runs.
     pub fn mcp_tasks(&self) -> Vec<McpTask> {
-        self.view.background.mcp_tasks()
+        let mut tasks = self.view.background.mcp_tasks();
+        tasks.retain(|t| t.status == McpStatus::Running || !self.view.active.hides(t.tool.offset));
+        tasks
     }
 
     pub fn result_details(&self, id: ItemId) -> Option<&ResultDetails> {
@@ -204,6 +247,9 @@ impl Reader {
     pub fn chat(&self) -> ChatInfo {
         let mut info = self.view.chat.clone();
         info.generation = self.view.generation;
+        let newest = self.view.active.newest();
+        info.continued_in =
+            self.view.continued.as_ref().filter(|(at, _)| newest.is_none_or(|n| n < *at)).map(|(_, id)| id.clone());
         info.pending = self
             .view
             .items
@@ -217,15 +263,24 @@ impl Reader {
     }
 
     pub fn item(&self, id: ItemId) -> Option<&Item> {
-        self.view.items.get(&id)
+        self.view.items.get(&id).filter(|_| !self.view.active.hides(id.offset))
     }
 
     pub fn tasks(&self) -> &[Task] {
         &self.view.tasks
     }
 
-    pub fn subagents(&self) -> impl ExactSizeIterator<Item = &Subagent> {
-        self.agents.values().map(|agent| &agent.info)
+    /// The session's subagents. One whose call is in a turn a rewind replaced is left out once its
+    /// end is known ([`Subagent::end`], from a notification, its result, its sidecar or its own
+    /// transcript); a rewind does not stop it, so one nothing says has ended (it may run) stays.
+    pub fn subagents(&self) -> impl Iterator<Item = &Subagent> {
+        let replaced = |info: &Subagent| {
+            info.tool_use_id
+                .as_ref()
+                .and_then(|tool| self.view.tools.get(tool))
+                .is_some_and(|at| self.view.active.hides(at.offset))
+        };
+        self.agents.values().map(|agent| &agent.info).filter(move |info| info.end.is_none() || !replaced(info))
     }
 
     pub fn open_subagent(&self, id: &str, chunk_bytes: usize) -> io::Result<Self> {
@@ -246,6 +301,7 @@ impl Reader {
         let view = &mut self.view;
         self.tail.earlier(|offset, line| view.line(offset, line, &mut changes))?;
         view.finish(&mut changes);
+        self.settle_agents(&mut changes);
         Ok(changes)
     }
 
@@ -333,30 +389,26 @@ impl Reader {
                     Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
                     Err(err) => return Err(err),
                 };
-                self.agents.insert(
-                    id.to_owned(),
-                    AgentFollow { tail, info: Subagent { id: id.into(), ..Subagent::default() } },
-                );
+                self.agents.insert(id.to_owned(), AgentFollow::new(tail, id));
                 changes.subagents_changed = true;
             }
             seen.insert(id.to_owned());
             let agent = self.agents.get_mut(id).expect("agent was inserted");
             let before = agent.info.clone();
             if agent.tail.replaced()? {
-                *agent = AgentFollow {
-                    tail: Tail::open(&path, 0)?,
-                    info: Subagent { id: id.into(), ..Subagent::default() },
-                };
+                *agent = AgentFollow::new(Tail::open(&path, 0)?, id);
             }
             let meta = read_sidecar(&path.with_extension("meta.json"))?;
             agent.info.agent_type = string(&meta["agentType"]);
             agent.info.description = string(&meta["description"]);
             agent.info.model = string(&meta["model"]);
-            agent.info.finished = meta["finished"].as_bool();
+            agent.info.color = string(&meta["color"]);
+            agent.sidecar_end = sidecar_end(&meta);
             agent.info.spawn_depth = meta["spawnDepth"].as_u64();
             agent.info.tool_use_id = string(&meta["toolUseId"]);
-            let info = &mut agent.info;
-            agent.tail.append(|_, line| agent_line(info, line))?;
+            let (info, end) = (&mut agent.info, &mut agent.transcript_end);
+            agent.tail.append(|_, line| agent_line(info, end, line))?;
+            agent.info.end = agent.end(&self.view);
             changes.subagents_changed |= before != agent.info;
         }
         let count = self.agents.len();
@@ -370,13 +422,55 @@ impl Reader {
                 .collect();
             self.view.set_links(links, changes);
         }
+        self.settle_agents(changes);
         Ok(())
+    }
+
+    /// The agents' ends again, after the session's own records changed (a notification, a result).
+    fn settle_agents(&mut self, changes: &mut Changes) {
+        for agent in self.agents.values_mut() {
+            let end = agent.end(&self.view);
+            changes.subagents_changed |= agent.info.end != end;
+            agent.info.end = end;
+        }
     }
 }
 
 struct AgentFollow {
     tail: Tail,
     info: Subagent,
+    sidecar_end: Option<AgentEnd>,
+    /// What the newest record of the agent's own transcript says: its final answer, an Esc, or
+    /// nothing (it was mid-step).
+    transcript_end: Option<AgentEnd>,
+}
+
+impl AgentFollow {
+    fn new(tail: Tail, id: &str) -> Self {
+        let info = Subagent { id: id.into(), ..Subagent::default() };
+        Self { tail, info, sidecar_end: None, transcript_end: None }
+    }
+
+    /// The session's notification first (a background agent's own report), then its foreground
+    /// call's result, then the sidecar, then the end of its own transcript.
+    fn end(&self, view: &View) -> Option<(AgentEnd, EndSource)> {
+        let result = || view.agent_results.get(self.info.tool_use_id.as_deref()?).map(|(_, end)| *end);
+        view.background
+            .agent_end(&self.info.id)
+            .map(|end| (end, EndSource::Notification))
+            .or_else(|| result().map(|end| (end, EndSource::Result)))
+            .or(self.sidecar_end.map(|end| (end, EndSource::Sidecar)))
+            .or(self.transcript_end.map(|end| (end, EndSource::Transcript)))
+    }
+}
+
+/// Claude Code writes `stoppedByUser`, `sweptByStop` and `finished` only as `true`.
+fn sidecar_end(meta: &Value) -> Option<AgentEnd> {
+    if meta["stoppedByUser"] == true || meta["sweptByStop"] == true {
+        Some(AgentEnd::Stopped)
+    } else {
+        (meta["finished"] == true).then_some(AgentEnd::Finished)
+    }
 }
 
 fn read_sidecar(path: &Path) -> io::Result<Value> {
@@ -410,7 +504,13 @@ struct View {
     native_calls: BTreeMap<ItemId, (String, native_tasks::Call)>,
     native_results: HashMap<String, (ItemId, native_tasks::Outcome)>,
     chat: ChatInfo,
+    /// The active branch, so a rewind's replaced turns are not shown.
+    active: active::Active,
+    /// The newest `continued-in` record: its offset and the session it names.
+    continued: Option<(u64, String)>,
     background: background::Background,
+    /// How foreground Agent calls ended, by tool use id: from their results.
+    agent_results: HashMap<String, (ItemId, AgentEnd)>,
     /// The newest slash command, for the output record that follows it.
     last_command: Option<String>,
     /// The newest shell-mode row, which its output record fills.
@@ -430,17 +530,28 @@ struct ToolResult {
 
 impl View {
     fn line(&mut self, offset: u64, line: &[u8], changes: &mut Changes) {
-        // Most attachments are large context records; parse only the kinds that are shown.
-        if decode::line_kind(line) == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
+        let line_kind = decode::line_kind(line);
+        // Most attachments are large context records; parse only the kinds that are shown. Each
+        // line is parsed once: those not parsed further give the active branch their links alone.
+        if line_kind.is_none() || line_kind == Some(LineKind::Attachment) && !notices::shown_attachment(line) {
+            // A `continued-in` record has no links; anything else may (progress, attachments).
+            if !self.is_agent && !(line_kind.is_none() && self.continued_in(offset, line)) {
+                self.active.line(offset, line);
+            }
             return;
         }
         let Some((kind, value)) = message_line_with_meta(line) else { return };
+        if !self.is_agent {
+            self.active.value(offset, &value);
+        }
         if flag(&value, "isSidechain") && !self.is_agent {
             return;
         }
         let timestamp = value["timestamp"].as_str();
         let id = |block| ItemId { offset, block };
-        if matches!(kind, LineKind::User | LineKind::System) && self.background.notification(id(0), &value) {
+        if matches!(kind, LineKind::User | LineKind::System | LineKind::Attachment)
+            && self.background.notification(id(0), &value)
+        {
             changes.background_changed = true;
             return;
         }
@@ -589,6 +700,9 @@ impl View {
                     }
                     if self.results.get(tool).is_none_or(|(previous, _)| *previous < at) {
                         self.background.result(tool, at, &result.details, structured, result.state == ToolState::Ok);
+                        if let Some(end) = self.background.agent_result(tool, &result.lines, structured, result.state) {
+                            self.agent_results.insert(tool.into(), (at, end));
+                        }
                         changes.background_changed = true;
                         self.results.insert(tool.into(), (at, result));
                         self.update_tool(tool, changes);
@@ -660,7 +774,7 @@ impl View {
             }
             LineKind::Attachment => {
                 let attachment = &value["attachment"];
-                if let Some(prompt) = queued_prompt(attachment) {
+                if let Some(prompt) = queued_prompt(attachment, self.is_agent) {
                     // A message the user sent while a turn ran: Claude Code records it only here and
                     // hands it to Claude inside the running turn, so it starts no turn of its own.
                     let mut texts = Vec::new();
@@ -684,6 +798,26 @@ impl View {
                 }
             }
         }
+    }
+
+    /// Claude Code's record that the conversation goes on in another session (written last in the
+    /// transcript a session left, seen right after a `/fork` from 2.1.325 and once from 2.1.332).
+    /// True when the line is such a record, whatever it names.
+    fn continued_in(&mut self, offset: u64, line: &[u8]) -> bool {
+        if !line.windows(14).any(|w| w == b"\"continued-in\"") {
+            return false;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(line) else { return false };
+        if value["type"] != "continued-in" {
+            return false;
+        }
+        if let Some(id) = value["continuedInSessionId"].as_str()
+            && crate::launch::validate_session_id(id).is_ok()
+            && self.continued.as_ref().is_none_or(|(at, _)| *at < offset)
+        {
+            self.continued = Some((offset, id.to_owned()));
+        }
+        true
     }
 
     /// Command output and shell mode as finished rows; true when the record was one of them. The CLI
@@ -712,21 +846,21 @@ impl View {
             found = true;
             let key = format!("local:{offset}:{block}");
             match record {
-                local::Local::Output { text, failed } => {
+                local::Local::Output { text, ansi, failed } => {
                     let name = self.last_command.take().unwrap_or_else(|| "Command output".to_owned());
-                    let item = local::item(key, &name, String::new(), text, failed);
+                    let item = local::item(key, &name, String::new(), text, ansi, failed);
                     self.add(id, timestamp, item, changes);
                 }
                 local::Local::Shell(input) => {
-                    let item = local::item(key, "Shell", format!("! {input}"), String::new(), false);
+                    let item = local::item(key, "Shell", format!("! {input}"), String::new(), None, false);
                     self.add(id, timestamp, item, changes);
                     self.last_shell = Some(id);
                 }
-                local::Local::ShellOutput { text, failed } => match self.last_shell.take() {
+                local::Local::ShellOutput { text, ansi, failed } => match self.last_shell.take() {
                     Some(shell) if self.items.contains_key(&shell) => {
                         if let Some(Item { kind: ItemKind::Tool { card, state, .. }, .. }) = self.items.get_mut(&shell)
                         {
-                            *card = Some(ToolCard::Output(text));
+                            *card = Some(ToolCard::Output { text, ansi });
                             *state = if failed { ToolState::Failed } else { ToolState::Ok };
                         }
                         if !changes.added.contains(&shell) {
@@ -734,7 +868,7 @@ impl View {
                         }
                     }
                     _ => {
-                        let item = local::item(key, "Shell", String::new(), text, failed);
+                        let item = local::item(key, "Shell", String::new(), text, ansi, failed);
                         self.add(id, timestamp, item, changes);
                     }
                 },
@@ -812,11 +946,22 @@ impl View {
     }
 
     fn finish(&mut self, changes: &mut Changes) {
+        if self.active.finish() {
+            changes.branch_changed = true;
+            changes.added.retain(|id| !self.active.hides(id.offset));
+            changes.updated.retain(|id| !self.active.hides(id.offset));
+            // The pages read the branch too: the plan again, the agents and shells afresh.
+            self.plans_dirty = true;
+            changes.subagents_changed = true;
+            changes.background_changed = true;
+        }
         if !std::mem::take(&mut self.plans_dirty) {
             return;
         }
         // A later snapshot supersedes all earlier snapshots and actions, including paged-in history.
-        let mut plans = self.plans.values().rev();
+        // Only the active branch's plan updates and task calls count (a rewind's replaced turns do not).
+        let active = &self.active;
+        let mut plans = self.plans.iter().filter(|(id, _)| !active.hides(id.offset)).map(|(_, plan)| plan).rev();
         let mut actions = Vec::new();
         let mut tasks = loop {
             match plans.next() {
@@ -831,7 +976,7 @@ impl View {
         // Native tasks replace the plan's list when they changed after its last update, as in a
         // handover.
         if let Some((native, at)) = self.native_tasks()
-            && self.plans.keys().next_back().is_none_or(|plan| *plan < at)
+            && self.plans.keys().rfind(|id| !self.active.hides(id.offset)).is_none_or(|plan| *plan < at)
         {
             tasks = native;
         }
@@ -850,9 +995,11 @@ impl View {
             Outcome(&'a native_tasks::Outcome),
         }
         let mut events = Vec::new();
-        for (at, (tool, call)) in &self.native_calls {
+        for (at, (tool, call)) in self.native_calls.iter().filter(|(at, _)| !self.active.hides(at.offset)) {
             events.push((*at, Event::Call(tool, call)));
-            if let Some((when, outcome)) = self.native_results.get(tool) {
+            if let Some((when, outcome)) =
+                self.native_results.get(tool).filter(|(when, _)| !self.active.hides(when.offset))
+            {
                 events.push((*when, Event::Outcome(outcome)));
             }
         }
@@ -899,10 +1046,15 @@ fn message_text(value: &Value) -> String {
 /// The content of a message the user typed while a turn ran (`queued_command`, `commandMode:
 /// "prompt"`, `origin.kind: "human"`; recorded from Claude Code 2.1.332). Background task
 /// notifications and messages from other sessions use the same record and are not prompts.
-fn queued_prompt(attachment: &Value) -> Option<&Value> {
-    (attachment["type"] == "queued_command"
-        && attachment["commandMode"] == "prompt"
-        && attachment["origin"]["kind"] == "human")
+///
+/// A message the user sent to a running subagent (its conversation shown, the "· 1 queued" on its
+/// row) waits in Claude Code's memory and is written into the agent's own transcript when it is
+/// handed in at the agent's next step, as a `queued_command` without `commandMode` (2.1.332's
+/// bundle; `recorder compat`'s `agent-message`): in an agent's transcript that is a prompt too.
+fn queued_prompt(attachment: &Value, agent: bool) -> Option<&Value> {
+    let mode = &attachment["commandMode"];
+    let human = attachment["origin"]["kind"] == "human" || agent && attachment["origin"].is_null();
+    (attachment["type"] == "queued_command" && (mode == "prompt" || agent && mode.is_null()) && human)
         .then(|| &attachment["prompt"])
 }
 
@@ -992,5 +1144,9 @@ fn one_line(text: &str) -> String {
         .join(" ")
 }
 
+#[cfg(test)]
+mod active_pages_tests;
+#[cfg(test)]
+mod active_tests;
 #[cfg(test)]
 mod tests;

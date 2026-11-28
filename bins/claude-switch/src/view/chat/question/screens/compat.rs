@@ -4,7 +4,9 @@
 //!
 //! An expectation file has a `[state]` section per snapshot of its script and `key = value` lines
 //! under it; `#` starts a comment. Only the keys a section names are compared. In a value `*`
-//! stands for any text, runs of blanks count as one, and `\n` is a line break. The keys:
+//! stands for any text, runs of blanks count as one, and `\n` is a line break; ` || ` between
+//! values accepts any of them (for what Claude Code does one way or the other from run to run,
+//! said in a comment beside it). The keys:
 //!
 //! - `kind`: what the screen is to Chat, the first that fits of `full-screen`, `blocked` (the
 //!   list of calls auto mode blocked), `plan`,
@@ -13,7 +15,10 @@
 //!   (the empty input), `input` (the input holds text), `unknown`.
 //! - `input`: the one-row input's text (`-` when it is not read), `send`: `yes` when a message may
 //!   be sent now, `working`, `attention` (the tab asks for a permission), `esc`: `yes` or `no`;
-//!   `mode`: the permission mode under the input (`-` for none).
+//!   `mode`: the permission mode under the input (`-` for none); `queue`: `yes` when messages
+//!   wait in Claude Code's queue under its "Queued · ctrl+x ctrl+s to send now" row (Chat's
+//!   Send now writes that key only then); `shell`: the command on the input in Claude Code's shell
+//!   mode, read as `! command` on the cursor's row (`-` when the row is no such input).
 //! - `title`: the question asked (a question, a permission prompt, the plan approval), a panel's
 //!   title, the prompt a rewind quotes. `choices`: the rows joined with ` | `, `count`: how many,
 //!   `highlight`: the highlighted row's text, `body`: a permission prompt's rows above its
@@ -31,6 +36,24 @@
 //!   running turn (as typed, wrapped, or as Claude Code's paste marker).
 //! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
 //!   or none is (a resumed branch shows the turns before its cut and none after).
+//! - `dialog`: the readers of menus, questions and dialogs that find one on the screen (`menu`,
+//!   `panel`, `permission`, `review`, `attention`, …, commas between), `none` when none does.
+//! - `activity`: the name of another snapshot of the script whose rows down to the input box's
+//!   bottom rule are the same ([`screen::activity_digest`]): what redraws under it (the list of
+//!   background agents and their timers) is no activity, and keeps no screen from going quiet.
+//! - `agents`: the agent list under the input as Chat reads it: who has its keys (`input`,
+//!   `select`, `stop` with "x to stop", `clear` with "x to clear") and the highlighted row (`main`
+//!   or `type description`), as `select · main`; `-` when Chat reads no list. `viewing`: the agent
+//!   the empty input's placeholder names while Claude Code shows one ("Message @name…"), `-` for
+//!   none.
+//! - `side`: `yes` when a box stands beside a question's choices (an option's preview), which
+//!   Chat leaves out when it reads the question: every key but `shows`, `hides` and `side` is
+//!   read from the screen without it.
+//! - `card`: the first row the terminal card would show (`view/chat/terminal_card.rs`):
+//!   `call: ` and the call's text (`Bash(…)`) when it starts at a tool call, whether its bullet
+//!   (`●` or `⏺` at column 0, which blinks while the call runs) is lit or not; `bullet: ` and
+//!   the text after it for a message's bullet; `top: ` and its text when the card falls back to
+//!   the bottom rows; `-` for an empty screen.
 //!
 //! A state can also be a file the script wrote instead of a snapshot, and its keys are about that:
 //!
@@ -39,11 +62,28 @@
 //!   `pictures` (`yes` when every picture of such a message loads, `none` when it has none),
 //!   `turn` (the prompt that started the newest turn: a message sent during a turn starts none),
 //!   `answers` (Claude's answers), `thinking` (the `thinkingDisplay` values of records with
-//!   thinking, `-` for none).
+//!   thinking, `-` for none), `phase` (the newest record's phase as the app reads it: `active`,
+//!   `end-turn`, `unknown`, `-` for none; after a local command such as `/cost` typed at rest,
+//!   `end-turn` when its output ended it), `asked` (each `AskUserQuestion` call as
+//!   `headers (N previews, M multi-select, state)`, the state `running` while it waits: whether
+//!   the transcript holds a question while the terminal asks it; `-` for none), `outputs` (each command output row as `name: colours`
+//!   when the reader kept colour codes (SGR) beside its text, which Chat draws as the terminal
+//!   does, or `name: plain`; `-` for none). With `agentcopy` (the `subagents` folder kept beside
+//!   the copy): `agents` (each agent as `type: description: end`, the end as the reader reads it,
+//!   `Finished from Notification` or `-`) and `agent-prompts` (the prompts of the agents' own
+//!   transcripts, their tasks and the messages sent to them).
 //! - A branch (`branch`, `<state>.json` and `<state>.id`): `resumed` (`yes` when Claude Code
 //!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
 //! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
 //!   listed, else the missing ones).
+//! - A live record (`live`, `<state>.live.json` and `<state>.transcripts/`), compared with the
+//!   script's `before` state; read from it even when the state also has a screen: `session` (what
+//!   the record names now: the `same` session as before, the one the earlier transcript's
+//!   `continued-in` names (`continued`), another (`new`), `none`), `continued-in` (`yes` when the
+//!   app's reader finds that record in the earlier transcript), `forks` (how each transcript whose
+//!   `derived-from` names the earlier session came from it, ` | ` between, `-` for none),
+//!   `prompts` (the prompts of the transcript of the session the record names, as for a transcript
+//!   copy) and `fork-prompts` (the same of the one derived transcript).
 //!
 //! `cargo test -p claude-switch cli_compat -- --ignored --nocapture` with `CS_COMPAT_RECORDINGS`
 //! (a folder per script, `<script>/<state>.ansi`; absolute, as the test runs in the crate's
@@ -142,6 +182,8 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
         "input" => screen::prompt(s).unwrap_or_else(|| NONE.to_owned()),
         "send" => yes(screen::idle_slash_prompt(s, true)),
         "working" => yes(screen::working(s)),
+        "queue" => yes(screen::send_now_offered(s)),
+        "shell" => crate::view::chat::shell::shell_input(s).unwrap_or_else(|| NONE.to_owned()),
         "attention" => yes(crate::attention::screen_permission_prompt(s)),
         "mode" => mode(s).unwrap_or(NONE).to_owned(),
         "title" => title(s),
@@ -183,7 +225,36 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
                 _ => format!("shown: {}", wrong.join(" | ")),
             }
         }
+        "dialog" => {
+            let read = dialogs_read(s);
+            if read.is_empty() { "none".to_owned() } else { read.join(", ") }
+        }
+        // Any one of the parts: an entry `/config` may not list in the recorded context.
+        "shows-any" => {
+            let all: String = (0..s.rows()).map(|r| s.row_text(r) + "\n").collect();
+            if want.split(" | ").any(|part| all.contains(part.trim())) {
+                want.to_owned()
+            } else {
+                format!("none shown: {want}")
+            }
+        }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
+        "card" => card_first(s),
+        "agents" => agent_list(s).map_or(NONE.to_owned(), |list| {
+            let keys = match list.keys {
+                ListKeys::Input => "input",
+                ListKeys::Select => "select",
+                ListKeys::Stop => "stop",
+                ListKeys::Clear => "clear",
+            };
+            match list.highlight.and_then(|h| list.rows.get(h)) {
+                Some(row) if row.name == "main" => format!("{keys} · main"),
+                Some(row) => format!("{keys} · {} {}", row.name, row.description),
+                None => keys.to_owned(),
+            }
+        }),
+        "viewing" => viewing_agent(s).unwrap_or_else(|| NONE.to_owned()),
+        "side" => yes(side_box(s).is_some()),
         "sent" => {
             let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
             shown(typed || screen::shows_lines(s, want), "the input's rows do not read it")
@@ -192,8 +263,13 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
     }
 }
 
-/// `text` matches `pattern`, where `*` is any text; blanks are collapsed on both sides.
+/// `text` matches one of the patterns ` || ` separates (see [`matches_one`]).
 fn matches(pattern: &str, text: &str) -> bool {
+    pattern.split(" || ").any(|one| matches_one(one, text))
+}
+
+/// `text` matches `pattern`, where `*` is any text; blanks are collapsed on both sides.
+fn matches_one(pattern: &str, text: &str) -> bool {
     let (pattern, text) = (collapse(pattern), collapse(text));
     let parts: Vec<&str> = pattern.split('*').collect();
     let Some((first, rest)) = parts.split_first() else { return false };
@@ -221,9 +297,39 @@ fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
     out
 }
 
+/// The first row the terminal card shows, and whether it starts at a bullet (see the module).
+fn card_first(s: &Screen) -> String {
+    use crate::view::chat::terminal_card;
+    let rows = terminal_card::rows(s);
+    if rows.is_empty() {
+        return NONE.to_owned();
+    }
+    let text = s.row_text(rows.start);
+    let rest = text.strip_prefix(|c| terminal_card::BULLETS.contains(&c)).unwrap_or(&text).trim();
+    if !terminal_card::starts(s, rows.start) {
+        format!("top: {}", text.trim())
+    } else if terminal_card::call_shape(rest) {
+        format!("call: {rest}")
+    } else {
+        format!("bullet: {rest}")
+    }
+}
+
+/// The output has a colour code: an SGR sequence that sets a foreground or background colour.
+fn coloured(ansi: &str) -> bool {
+    ansi.split('\u{1b}').skip(1).filter_map(|rest| rest.strip_prefix('[')).any(|rest| {
+        let end = rest.find(|c: char| !(c.is_ascii_digit() || c == ';' || c == ':')).unwrap_or(rest.len());
+        rest[end..].starts_with('m')
+            && rest[..end]
+                .split([';', ':'])
+                .filter_map(|p| p.parse::<u16>().ok())
+                .any(|p| matches!(p, 30..=38 | 40..=48 | 90..=97 | 100..=107))
+    })
+}
+
 /// What the app's transcript reader makes of a transcript copy.
 fn transcript_fact(path: &Path, key: &str) -> String {
-    use claude_switch_core::transcript::{ItemKind, Reader};
+    use claude_switch_core::transcript::{ChatPhase, ItemKind, Reader, ToolCard};
     let Ok(mut reader) = Reader::open(path, 64 << 20) else { return "the transcript does not read".to_owned() };
     let items: Vec<_> = reader.items().map(|(id, item)| (id, item.clone())).collect();
     let joined = |parts: Vec<String>| if parts.is_empty() { NONE.to_owned() } else { parts.join(" | ") };
@@ -279,6 +385,78 @@ fn transcript_fact(path: &Path, key: &str) -> String {
                 })
                 .collect(),
         ),
+        "phase" => match reader.chat().latest {
+            Some((_, ChatPhase::Active)) => "active",
+            Some((_, ChatPhase::EndTurn)) => "end-turn",
+            Some((_, ChatPhase::Unknown)) => "unknown",
+            None => NONE,
+        }
+        .to_owned(),
+        "outputs" => joined(
+            items
+                .iter()
+                .filter_map(|(_, item)| match &item.kind {
+                    ItemKind::Tool { name, card: Some(ToolCard::Output { ansi, .. }), .. } => {
+                        let colours = ansi.as_deref().is_some_and(coloured);
+                        Some(format!("{name}: {}", if colours { "colours" } else { "plain" }))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        ),
+        // Its agents (`agentcopy` keeps the `subagents` folder beside the copy) and their ends.
+        "agents" => joined(
+            reader
+                .subagents()
+                .map(|a| {
+                    let end = a.end.map_or(NONE.to_owned(), |(end, source)| format!("{end:?} from {source:?}"));
+                    format!(
+                        "{}: {}: {end}",
+                        a.agent_type.as_deref().unwrap_or(NONE),
+                        a.description.as_deref().unwrap_or(NONE)
+                    )
+                })
+                .collect(),
+        ),
+        // The prompts of each agent's own transcript, the agent's task first.
+        "agent-prompts" => {
+            let ids: Vec<String> = reader.subagents().map(|a| a.id.clone()).collect();
+            joined(
+                ids.iter()
+                    .filter_map(|id| reader.open_subagent(id, 64 << 20).ok())
+                    .flat_map(|agent| {
+                        agent
+                            .items()
+                            .filter_map(|(_, item)| match &item.kind {
+                                ItemKind::Prompt { text, .. } => Some(text.replace('\n', " ")),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect(),
+            )
+        }
+        "asked" => joined(
+            items
+                .iter()
+                .filter_map(|(_, item)| match &item.kind {
+                    ItemKind::Tool { name, state, card, .. } if name == "AskUserQuestion" => {
+                        let state = format!("{state:?}").to_lowercase();
+                        Some(match card {
+                            Some(ToolCard::Questions(questions)) => {
+                                let headers: Vec<&str> = questions.iter().map(|q| q.header.as_str()).collect();
+                                let previews =
+                                    questions.iter().flat_map(|q| &q.options).filter(|o| !o.preview.is_empty()).count();
+                                let multi = questions.iter().filter(|q| q.multi_select).count();
+                                format!("{} ({previews} previews, {multi} multi-select, {state})", headers.join(" · "))
+                            }
+                            _ => format!("unread input ({state})"),
+                        })
+                    }
+                    _ => None,
+                })
+                .collect(),
+        ),
         "thinking" => {
             let mut seen: Vec<String> = Vec::new();
             for line in std::fs::read_to_string(path).unwrap_or_default().lines() {
@@ -317,6 +495,68 @@ fn branch_fact(json: &Path, key: &str) -> String {
     }
 }
 
+/// The keys of a live record (`live`): see the module's notes.
+const LIVE_KEYS: [&str; 5] = ["session", "continued-in", "forks", "prompts", "fork-prompts"];
+
+/// What a live record (`live`, `<state>.live.json` beside `<state>.transcripts/`) says, compared
+/// with the first one the script wrote (`before.live.json`).
+fn live_fact(live: &Path, key: &str) -> String {
+    use claude_switch_core::transcript::Reader;
+    let read = |path: &Path| {
+        std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    };
+    let id = |path: &Path| read(path).and_then(|v| v["record"]["sessionId"].as_str().map(str::to_owned));
+    let folder = live.parent().unwrap_or(Path::new("."));
+    let name = live.file_name().unwrap_or_default().to_string_lossy();
+    let transcripts = folder.join(format!("{}.transcripts", name.trim_end_matches(".live.json")));
+    let now = id(live);
+    let Some(before) = id(&folder.join("before.live.json")) else { return "no record before".to_owned() };
+    let transcript = |id: &str| transcripts.join(format!("{id}.jsonl"));
+    // The session the earlier transcript says the conversation went on in, as Chat reads it.
+    let continued = Reader::open(transcript(&before), 64 << 20).ok().and_then(|reader| reader.chat().continued_in);
+    // Sessions derived from the earlier one (Claude Code's `derived-from`), with how.
+    let derived: Vec<(String, String)> = std::fs::read_dir(&transcripts)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let text = std::fs::read_to_string(&path).ok()?;
+            let via = text.lines().find_map(|line| {
+                let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+                (value["type"] == "derived-from").then_some(())?;
+                value["sessions"].as_array()?.iter().find_map(|s| {
+                    s["id"]
+                        .as_str()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(&before))
+                        .then(|| s["via"].as_str().unwrap_or("?").to_owned())
+                })
+            })?;
+            Some((path.file_stem()?.to_string_lossy().into_owned(), via))
+        })
+        .collect();
+    match key {
+        "session" => match now.as_deref() {
+            None => "none".to_owned(),
+            Some(now) if now.eq_ignore_ascii_case(&before) => "same".to_owned(),
+            Some(now) if continued.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(now)) => "continued".to_owned(),
+            Some(_) => "new".to_owned(),
+        },
+        "continued-in" => yes(continued.is_some()),
+        "forks" => {
+            let mut vias: Vec<String> = derived.iter().map(|(_, via)| via.clone()).collect();
+            vias.sort();
+            if vias.is_empty() { NONE.to_owned() } else { vias.join(" | ") }
+        }
+        "prompts" => now.map_or_else(|| "no record".to_owned(), |id| transcript_fact(&transcript(&id), "prompts")),
+        "fork-prompts" => match derived.as_slice() {
+            [(id, _)] => transcript_fact(&transcript(id), "prompts"),
+            other => format!("{} derived sessions", other.len()),
+        },
+        _ => format!("unknown key {key}"),
+    }
+}
+
 /// Whether `claude --help` lists every flag in `want`.
 fn help_fact(help: &Path, key: &str, want: &str) -> String {
     let text = std::fs::read_to_string(help).unwrap_or_default();
@@ -329,6 +569,20 @@ fn help_fact(help: &Path, key: &str, want: &str) -> String {
     }
 }
 
+/// `other` itself when the snapshot `other` in `folder` has the same rows as `screen` down to the
+/// input box's bottom rule.
+fn activity_as(folder: &Path, screen: &Screen, other: &str) -> String {
+    let Ok(text) = std::fs::read_to_string(folder.join(format!("{other}.ansi"))) else {
+        return format!("no snapshot {other}");
+    };
+    let theirs = screen::activity_digest(&recorded(&text.replace("\r\n", "\n")));
+    if theirs == screen::activity_digest(screen) {
+        other.to_owned()
+    } else {
+        format!("other rows than {other} down to the input's bottom rule")
+    }
+}
+
 /// What a state's file says for a key, given the expected value.
 type Reads = dyn Fn(&str, &str) -> String;
 
@@ -336,10 +590,23 @@ type Reads = dyn Fn(&str, &str) -> String;
 /// state is a snapshot (`<state>.ansi`) or a file the script wrote instead (see the module).
 fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<(String, String, String)>, String> {
     let file = |extension: &str| Some(folder.join(format!("{state}.{extension}"))).filter(|p| p.is_file());
+    // A state can have a screen and a live record (`snap` and `live` under one name): the live
+    // record's keys are read from it, the others from the screen.
+    let live = file("live.json");
     let read: Box<Reads> = if let Some(path) = file("ansi") {
         let text = std::fs::read_to_string(&path).map_err(|_| "no recording".to_owned())?;
         let screen = recorded(&text.replace("\r\n", "\n"));
-        Box::new(move |key, want| fact(&screen, key, want))
+        // Chat reads a question without the preview box beside its choices; what shows on the
+        // screen is the screen's.
+        let view = question_view(&screen).into_owned();
+        let folder = folder.to_owned();
+        Box::new(move |key, want| match key {
+            "activity" => activity_as(&folder, &screen, want),
+            "shows" | "hides" | "shows-any" | "side" => fact(&screen, key, want),
+            _ => fact(&view, key, want),
+        })
+    } else if let Some(path) = live.clone() {
+        Box::new(move |key, _| live_fact(&path, key))
     } else if let Some(path) = file("jsonl") {
         Box::new(move |key, _| transcript_fact(&path, key))
     } else if let Some(path) = file("json") {
@@ -352,10 +619,36 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
     Ok(wanted
         .iter()
         .filter_map(|(key, want)| {
-            let got = read(key, want);
+            let got = match &live {
+                Some(path) if LIVE_KEYS.contains(&key.as_str()) => live_fact(path, key),
+                _ => read(key, want),
+            };
             (!matches(want, &got)).then(|| (key.clone(), want.clone(), got))
         })
         .collect())
+}
+
+/// For `recorder compat`'s `handover`: a handover that starts with `CS_HANDOVER_TEXT`, long enough
+/// to be read from its file, written to `CS_HANDOVER_DIR`, and the arguments the app gives a new
+/// handover session for it (`compact_open::first_args`), as JSON to `CS_HANDOVER_OUT`.
+#[test]
+#[ignore = "a tool for recorder compat: writes a handover file and its session's arguments"]
+fn cli_handover_args() {
+    let dir = std::path::PathBuf::from(std::env::var("CS_HANDOVER_DIR").expect("CS_HANDOVER_DIR"));
+    let mut text = format!("{}\n\n", std::env::var("CS_HANDOVER_TEXT").expect("CS_HANDOVER_TEXT"));
+    for n in 1.. {
+        if crate::compact_open::uses_file(&text) {
+            break;
+        }
+        text.push_str(&format!("Background note {n}: nothing in it is a task.\n"));
+    }
+    std::fs::create_dir_all(&dir).expect("the handover folder");
+    let saved = dir.join("handover.md");
+    std::fs::write(&saved, &text).expect("the handover file");
+    let id = crate::compact_open::session_id().expect("a new id");
+    let args = crate::compact_open::first_args(&id, &text, &saved).expect("the arguments");
+    let out = std::env::var("CS_HANDOVER_OUT").expect("CS_HANDOVER_OUT");
+    std::fs::write(out, serde_json::to_string(&args).unwrap()).expect("the arguments' file");
 }
 
 /// For `recorder compat`'s `branch`: writes a branch of the transcript `CS_BRANCH_SOURCE` with the
@@ -453,8 +746,10 @@ fn cli_compat() {
 #[test]
 #[ignore = "a tool: prints the facts of the recordings in CS_COMPAT_RECORDINGS"]
 fn compat_facts() {
-    const KEYS: [&str; 20] = [
+    const KEYS: [&str; 22] = [
         "kind",
+        "agents",
+        "viewing",
         "input",
         "send",
         "working",
@@ -510,20 +805,30 @@ fn a_pattern_matches_whole_texts_with_stars_for_any_text() {
     assert!(matches("a  b", "a b") && matches("*", "") && matches("*b*", "abc") && matches("a*", "a"));
     assert!(!matches("a", "ab") && !matches("a*c", "ab") && !matches("*b", "abc") && !matches("", "a"));
     assert!(matches("ab*ab", "abab") && !matches("ab*ab", "ab"));
+    // Either of two values; a single bar is part of a value.
+    assert!(matches("- || A (1 previews, running)", "-") && matches("- || A*", "A (1 previews, running)"));
+    assert!(!matches("- || A", "B") && !matches("a | b", "a"));
 }
 
 #[test]
 fn the_fixtures_read_as_the_states_the_check_names() {
     for (fixture, wanted) in [
-        (PROMPT_IDLE, "kind = idle\ninput =\nsend = yes\nworking = no"),
+        (PROMPT_IDLE, "kind = idle\ninput =\nsend = yes\nworking = no\ndialog = none"),
         (PLAIN_TYPED, "kind = input\ninput = Reply with just the word: pong\nsend = no"),
         (WORKING_TOOL, "kind = working\nsend = no"),
-        (PLAIN_PASTED_LINES, "kind = input\ninput = -\nlines = line one\\nline two\\nline three"),
+        (PLAIN_PASTED_LINES, "kind = input\ninput = -\nlines = line one\\nline two\\nline three\ndialog = none"),
         (ASK_SINGLE, "kind = question\ntitle = Which colour do you prefer?\nhighlight = Red (warm)\ncount = 5"),
         (ASK_OTHER_TYPED, "kind = question\nanswer = my own answer"),
         (FORM_MULTI, "kind = question\nchoices = [ ] Apple | [ ] Pear | [ ] Plum | [ ] Type something | Next | *"),
         (ASK_REVIEW, "kind = review\nanswers = Which size? = Small | Which speed? = Slow\nhighlight = Submit answers"),
-        (PERM_BASH, "kind = permission\ntitle = Do you want to proceed?\ncount = 4\ntell = -\nattention = yes"),
+        (
+            PERM_BASH,
+            "kind = permission\ntitle = Do you want to proceed?\ncount = 4\ntell = -\nattention = yes\ndialog = *permission*",
+        ),
+        (
+            PERM_READ_OUTSIDE,
+            "kind = permission\ncount = 3\nhighlight = Yes\nattention = yes\nbody = Read file | Read(*h.md)",
+        ),
         (PERM_AGENT_BASH, "kind = permission\nrequest = Bash command * from the general-purpose agent | *"),
         (PERM_TWO_AFTER, "kind = permission\nattention = yes\nbody = Bash command*| mkdir par_b"),
         (BLOCKED_ONE, "kind = blocked\nmarks = none\npending = -\nesc-does = close\nbody = mkdir probe_blocked_two"),
@@ -532,7 +837,29 @@ fn the_fixtures_read_as_the_states_the_check_names() {
         (MENU_MODEL, "kind = menu\ncount = 5\nesc = yes"),
         (MENU_CONFIG, "kind = panel\nrows = *Search settings*"),
         (REWIND_OPEN, "kind = rewind\nhighlight = (current)"),
-        (super::recorded::REWIND_ACTIONS, "kind = rewind-actions"),
+        (AGENTS_IDLE, "agents = input\nviewing = -"),
+        (AGENTS_OPEN, "agents = select · main"),
+        (AGENTS_SECOND, "agents = stop · general-purpose Second pinger"),
+        (AGENTS_STOPPED, "agents = clear · general-purpose Second pinger"),
+        (AGENT_MESSAGE_IDLE, "kind = idle\nagents = input\nviewing = -"),
+        (AGENT_MESSAGE_LIST, "agents = select · main"),
+        (AGENT_MESSAGE_HIGHLIGHTED, "agents = stop · general-purpose Count slowly"),
+        (AGENT_MESSAGE_VIEWING, "viewing = general-purpose\nagents = select · general-purpose Count slowly"),
+        (AGENT_MESSAGE_TYPED, "input = Reply with the word kilo when you are done."),
+        (AGENT_MESSAGE_SENT, "viewing = general-purpose\nagents = input"),
+        (AGENT_MESSAGE_BACK_LIST, "agents = select · main"),
+        (AGENT_MESSAGE_BACK, "viewing = -\nagents = select · main"),
+        (AGENT_MESSAGE_ENDED, "shows = Agent \"Count slowly\" finished"),
+        (
+            super::recorded::REWIND_ACTIONS,
+            "kind = rewind-actions
+title = Reply with just the word bravo.",
+        ),
+        (
+            super::recorded::REWIND_UP1,
+            "kind = rewind
+highlight = Reply with just the word charlie.",
+        ),
     ] {
         let wanted = sections(&format!("[state]\n{wanted}")).remove(0).1;
         let screen = recorded(fixture);
@@ -548,6 +875,28 @@ fn the_fixtures_read_as_the_states_the_check_names() {
     assert_eq!(fact(&idle, "hides", "no such words here"), "no such words here");
     assert_eq!(fact(&idle, "hides", &some), format!("shown: {some}"));
     assert_eq!(fact(&idle, "shows", "no such words here"), "not shown: no such words here");
+    // The terminal card starts at the call, its bullet lit or not.
+    assert_eq!(
+        fact(&recorded(WORKING_TOOL), "card", ""),
+        "call: Bash(python -c \"import time; time.sleep(25); print('done25')\")"
+    );
+    let first = |bytes: &str| {
+        let mut t = crate::term::Term::empty((40, 6));
+        t.feed(bytes.as_bytes());
+        card_first(&t.screen)
+    };
+    assert_eq!(first("one\r\n  two"), "top: one");
+    assert_eq!(first("one\r\n\u{23fa} message\r\n  two"), "bullet: message");
+    assert_eq!(first("one\r\n x \u{25cf} not at column 0"), "top: one");
+    // The bullet off: the call's shape, with its ⎿ row or the working line under it.
+    assert_eq!(first("one\r\n  Bash(ls)\r\n  \u{23bf}  a.txt"), "call: Bash(ls)");
+    assert_eq!(first("one\r\n  Read(a.rs)\r\n\r\n\u{2722} Working\u{2026} (3s)"), "call: Read(a.rs)");
+    assert_eq!(first("one\r\n  Bash(ls)\r\n  more text"), "top: one", "nothing of a call under it");
+    assert_eq!(first("one\r\n  see f(x)\r\n  \u{23bf}  a"), "top: one", "not a call's name");
+    assert_eq!(first(""), NONE);
+    let either = format!("no such words here | {some}");
+    assert_eq!(fact(&idle, "shows-any", &either), either);
+    assert_eq!(fact(&idle, "shows-any", "no such words | here"), "none shown: no such words | here");
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
 }
@@ -575,6 +924,51 @@ fn transcripts_branches_and_help_read_as_the_check_names_them() {
     assert_eq!(read("turn"), "ping it");
     assert_eq!(read("answers"), "delta");
     assert_eq!(read("thinking"), "updates");
+    assert_eq!(read("phase"), "end-turn");
+    // A local command typed after the turn ended, with its output: it ends with it.
+    let command = [
+        json!({"type":"user","message":{"content":"<command-name>/cost</command-name>\n<command-message>cost</command-message>\n<command-args></command-args>"}}),
+        json!({"type":"user","message":{"content":"<local-command-stdout>Total cost: $0.00</local-command-stdout>"}}),
+    ];
+    let after = dir.join("after.jsonl");
+    let text: String = lines.iter().chain(&command).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&after, text).unwrap();
+    assert_eq!(transcript_fact(&after, "phase"), "end-turn");
+    let without_output = dir.join("without.jsonl");
+    let text: String = lines.iter().chain(&command[..1]).map(|l| format!("{l}\n")).collect();
+    std::fs::write(&without_output, text).unwrap();
+    assert_eq!(transcript_fact(&without_output, "phase"), "active");
+    assert_eq!(read("outputs"), NONE);
+    // Command output: kept with its colour codes, or plain (bold alone is no colour).
+    let local = |text: &str| json!({"type":"user","message":{"role":"user","content":text}});
+    let lines = [
+        local("<command-name>/context</command-name>\n<command-args></command-args>"),
+        local(
+            "<local-command-stdout>\u{1b}[1mContext Usage\u{1b}[22m\n\u{1b}[38;2;153;153;153m⛁ ⛀\u{1b}[39m 12k</local-command-stdout>",
+        ),
+        local("<command-name>/cost</command-name>"),
+        local("<local-command-stdout>\u{1b}[1mTotal cost\u{1b}[22m: $0.01</local-command-stdout>"),
+        local("<command-name>/mcp</command-name>"),
+        local("<local-command-stdout>No MCP servers configured</local-command-stdout>"),
+    ];
+    let commands = dir.join("commands.jsonl");
+    std::fs::write(&commands, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    assert_eq!(transcript_fact(&commands, "outputs"), "/context: colours | /cost: plain | /mcp: plain");
+    // A copy with its agents beside it (`agentcopy`): each agent's end and its own prompts.
+    let agents = dir.join("agents").join("subagents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let task = json!({"type":"user","isSidechain":true,"message":{"role":"user","content":"Count slowly"}});
+    let message = json!({"type":"user","isSidechain":true,"message":{"role":"user","content":"Reply with kilo"}});
+    std::fs::write(agents.join("agent-a1.jsonl"), format!("{task}\n{message}\n")).unwrap();
+    std::fs::write(agents.join("agent-a1.meta.json"), r#"{"agentType":"general-purpose","description":"Count"}"#)
+        .unwrap();
+    let notified = json!({"type":"user","message":{"role":"user","content":
+        "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>"}});
+    let first = json!({"type":"user","uuid":"u1","message":{"role":"user","content":"ping it"}});
+    std::fs::write(dir.join("agents.jsonl"), format!("{first}\n{notified}\n")).unwrap();
+    let copy = dir.join("agents.jsonl");
+    assert_eq!(transcript_fact(&copy, "agents"), "general-purpose: Count: Finished from Notification");
+    assert_eq!(transcript_fact(&copy, "agent-prompts"), "Count slowly | Reply with kilo");
     let branch = dir.join("branched.json");
     std::fs::write(dir.join("branched.id"), "0a1b2c3d-1111-4222-8333-444455556666\n").unwrap();
     let answer = json!({"is_error":false,"session_id":"0a1b2c3d-1111-4222-8333-444455556666","result":"Alpha"});
@@ -588,4 +982,25 @@ fn transcripts_branches_and_help_read_as_the_check_names_them() {
     let wanted = vec![("pictures".to_owned(), "yes".to_owned())];
     assert_eq!(check(&dir, "transcript", &wanted), Ok(Vec::new()));
     assert!(check(&dir, "nothing", &wanted).is_err());
+}
+
+#[test]
+fn activity_compares_the_rows_down_to_the_input_box_with_another_snapshot() {
+    let dir = crate::testing::Scratch::created("cs-compat-activity");
+    let rule = "─".repeat(20);
+    let snap = |name: &str, above: &str, timer: &str| {
+        let text = format!(
+            "cursor 2 2\n{above}\n{rule}\n❯ \n{rule}\n  ⏵⏵ auto mode on · 2 background tasks\n  ◯ general-purpose  {timer}"
+        );
+        std::fs::write(dir.join(format!("{name}.ansi")), text).unwrap();
+    };
+    snap("agents", "Done.", "1m 02s");
+    snap("agents_later", "Done.", "1m 05s");
+    snap("changed", "Done!", "1m 05s");
+    let wanted = |other: &str| vec![("activity".to_owned(), other.to_owned())];
+    assert_eq!(check(&dir, "agents_later", &wanted("agents")), Ok(Vec::new()));
+    let diffs = check(&dir, "changed", &wanted("agents")).unwrap();
+    assert_eq!(diffs.len(), 1, "{diffs:?}");
+    assert!(diffs[0].2.starts_with("other rows than agents"), "{diffs:?}");
+    assert_eq!(check(&dir, "agents", &wanted("gone")).unwrap()[0].2, "no snapshot gone");
 }

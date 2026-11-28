@@ -1,16 +1,32 @@
 use super::*;
 
-pub(super) fn agent_line(info: &mut Subagent, bytes: &[u8]) {
+/// One record of an agent's own transcript. `end` follows its newest message: an answer that
+/// ended its turn (`stop_reason` `end_turn` or `stop_sequence`, no tool call) is its final report,
+/// Claude Code's "[Request interrupted by user]" an Esc; anything else means it was mid-step.
+pub(super) fn agent_line(info: &mut Subagent, end: &mut Option<AgentEnd>, bytes: &[u8]) {
     let Some((kind, line)) = message_line(bytes) else { return };
     if let Some(time) = line["timestamp"].as_str() {
         info.started_at.get_or_insert_with(|| time.into());
         info.last_activity_at = Some(time.into());
     }
-    if kind == LineKind::Assistant {
-        for (_, name, input) in blocks(&line["message"]["content"]).filter_map(tool_use) {
-            info.tool_calls += 1;
-            info.last_tool_summary = Some(tool_summary(name, input));
+    let content = &line["message"]["content"];
+    match kind {
+        LineKind::Assistant => {
+            let mut calls = 0;
+            for (_, name, input) in blocks(content).filter_map(tool_use) {
+                info.tool_calls += 1;
+                info.last_tool_summary = Some(tool_summary(name, input));
+                calls += 1;
+            }
+            let stop = line["message"]["stop_reason"].as_str();
+            *end = (calls == 0 && matches!(stop, Some("end_turn" | "stop_sequence"))).then_some(AgentEnd::Finished);
         }
+        LineKind::User => {
+            let texts = content.as_str().into_iter().chain(blocks(content).filter_map(|b| b["text"].as_str()));
+            let esc = texts.into_iter().any(interrupted);
+            *end = esc.then_some(AgentEnd::Interrupted);
+        }
+        LineKind::System | LineKind::Attachment => {}
     }
 }
 

@@ -9,7 +9,7 @@ name = "claude_switch_core"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["arbitrary_precision", "raw_value"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order", "raw_value"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -24,6 +24,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Registry",
     "Win32_System_IO",
     "Win32_System_Threading",

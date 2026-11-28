@@ -78,7 +78,7 @@ impl AppState {
                 if !shown || !pane.chat.enabled || pane.chat.locked() || pane.chat.error.is_some() {
                     return Step::Wait; // The gate's own retry clears a refusal once the prompt is idle.
                 }
-                if !pane.chat.editor.text.trim().is_empty() || !pane.chat.chips.is_empty() {
+                if pane.chat.has_draft() {
                     // A draft would become the cleared session's first message: never /clear under
                     // it; wait for it to go (the deadline says why if it stays).
                     return Step::Wait;
@@ -135,7 +135,7 @@ impl AppState {
                 if !shown || !chat.enabled || chat.locked() || chat.error.is_some() {
                     return Step::Wait;
                 }
-                if !chat.editor.text.trim().is_empty() || !chat.chips.is_empty() {
+                if chat.has_draft() {
                     return Step::Wait; // Never replace the user's draft; the deadline says why.
                 }
                 let prompt = tab.in_place.as_ref().map(|j| j.prompt.clone()).unwrap_or_default();
@@ -316,6 +316,12 @@ mod tests {
         assert_eq!(r.chat().editor.text, "A draft of mine");
         assert!(r.chat().writes.is_empty());
         r.chat().editor.set(String::new());
+        // Nor is shell mode turned on with no command yet: the handover would have gone as a
+        // shell command, refused as several lines, with the session already cleared.
+        r.chat().shell_mode = true;
+        assert!(!r.st.in_place_tick(now));
+        assert!(r.chat().editor.text.is_empty() && r.chat().writes.is_empty() && r.chat().shell_mode);
+        r.chat().shell_mode = false;
 
         // 3. The handover as the new session's genuine first message: an ordinary Send of several
         // lines, staged until the input line shows them, then entered by the gate.
@@ -333,7 +339,10 @@ mod tests {
         assert!(r.st.in_place_tick(now));
         let tab = r.tab();
         assert!(tab.in_place.is_none(), "done");
-        assert_eq!(tab.cli_rename, Some((NEW.into(), "Old · continued".into())));
+        let rename = tab.cli_rename.clone().unwrap();
+        assert!(rename.prompt_by.is_some(), "waits for the new session's first prompt, for a while");
+        let rename = crate::tabs::CliRename { prompt_by: None, ..rename };
+        assert_eq!(rename, crate::tabs::CliRename::new(NEW, "Old · continued"));
 
         // 4. `/rename` waits while the new transcript does not exist yet, then goes through the gate.
         r.chat().writes.clear();
@@ -344,11 +353,21 @@ mod tests {
         r.tab().apply_live_identity(Some(NEW));
         assert_eq!(r.tab().session.as_deref(), Some(NEW));
         r.chat().last_output = Some(now - super::super::QUIET);
+        // Not before Chat has read the new session's own first prompt: until then its first
+        // turn reads as an idle input to the gate.
+        assert!(!r.st.send_cli_rename(now));
+        assert!(r.chat().writes.is_empty());
+        let model = &mut r.tab().pane.as_mut().unwrap().model;
+        (model.loaded, model.chat.prompt) = (true, Some(1));
         let sent = r.st.send_cli_rename(now);
         let error = r.chat().error;
         assert!(sent, "{error:?}");
         assert_eq!(r.chat().writes.first().map(Vec::as_slice), Some(b"/rename Old \xc2\xb7 continued".as_slice()));
-        assert!(r.tab().cli_rename.is_none());
+        assert!(r.tab().cli_rename.as_ref().is_some_and(|c| c.sent), "followed until Claude Code took it");
+        r.settle(now);
+        assert!(r.chat().writes.iter().any(|w| w == b"\r"));
+        assert!(!r.st.send_cli_rename(now));
+        assert!(r.tab().cli_rename.is_none(), "taken");
     }
 
     #[test]

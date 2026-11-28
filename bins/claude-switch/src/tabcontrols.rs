@@ -8,7 +8,6 @@ use mdshared_ui::menu::{Item, Menu};
 
 use crate::dialogs::{self, Dialog, NameFor, Pending};
 use crate::state::{AppState, MenuKind, Target};
-use crate::tabs::SESSIONS;
 
 const RENAME: u32 = 0;
 const CLOSE: u32 = 1;
@@ -17,6 +16,10 @@ const COMPACT: u32 = 3;
 const COPY_BASE: u32 = 4;
 /// Above every `COPY_BASE + account` id.
 const OPEN_FOLDER: u32 = 100_000;
+const FIND: u32 = 100_001;
+const SPLIT_RIGHT: u32 = 100_002;
+const SPLIT_DOWN: u32 = 100_003;
+const CLOSE_PANE: u32 = 100_004;
 
 #[derive(Clone, Copy)]
 pub struct Drag {
@@ -42,7 +45,7 @@ pub fn number(name: &KeyName, mods: Mods, terminal: bool) -> Option<usize> {
 
 impl AppState {
     pub fn begin_tab_drag(&mut self, id: u64, x: f32, y: f32) {
-        self.tabs.drag = (id != SESSIONS).then_some(Drag { id, from: (x, y), started: false });
+        self.tabs.drag = (!crate::tabs::fixed(id)).then_some(Drag { id, from: (x, y), started: false });
     }
 
     pub fn move_tab_drag(&mut self, x: f32, y: f32) -> bool {
@@ -94,7 +97,11 @@ impl AppState {
         let folder = self.tab_folder(id).is_some();
         items.extend([
             Item::new(COMPACT, "Compact and open as…").enabled(tab.resume_id.is_some()),
-            Item::new(OPEN_FOLDER, "Open working folder").enabled(folder).sep(),
+            Item::new(OPEN_FOLDER, "Open working folder").enabled(folder),
+            Item::new(FIND, "Find…").hint("Ctrl+Shift+F"),
+            Item::new(SPLIT_RIGHT, "Split right").enabled(self.can_split(id)),
+            Item::new(SPLIT_DOWN, "Split down").enabled(self.can_split(id)),
+            Item::new(CLOSE_PANE, "Close pane").enabled(tab.shows_panes()).sep(),
             Item::new(RENAME, "Rename tab…").sep(),
             Item::new(CLOSE, "Close"),
             Item::new(CLOSE_OTHERS, "Close others").enabled(self.tabs.list.len() > 1),
@@ -120,6 +127,19 @@ impl AppState {
                 self.dialog = Some(dialogs::name_dialog("Rename tab", title, NameFor::Tab(id)));
             }
             CLOSE => self.ask_close_tab(id),
+            FIND => {
+                self.show_tab(id);
+                self.open_find();
+            }
+            SPLIT_RIGHT | SPLIT_DOWN => {
+                self.show_tab(id);
+                let axis = if item == SPLIT_RIGHT { crate::panes::Axis::Right } else { crate::panes::Axis::Down };
+                self.split_pane(now, id, axis);
+            }
+            CLOSE_PANE => {
+                self.show_tab(id);
+                self.ask_close_pane(id);
+            }
             OPEN_FOLDER => {
                 if let Some(folder) = self.tab_folder(id) {
                     self.open_working_folder(now, &folder);
@@ -129,7 +149,7 @@ impl AppState {
                 self.ask_tab_compact(id, None);
             }
             CLOSE_OTHERS => {
-                if self.tabs.list.iter().any(|tab| tab.id != id && tab.term.running()) {
+                if self.tabs.list.iter().any(|tab| tab.id != id && tab.any_running()) {
                     self.dialog = Some(Dialog::Confirm {
                         title: "Close the other tabs?".into(),
                         text: "Their running programs will end.".into(),
@@ -180,7 +200,7 @@ impl AppState {
         let live = !name.is_empty() && self.recheck_tab_identity(id).as_deref() == Some(session.as_str());
         let Some(tab) = self.tabs.get_mut(id) else { return };
         tab.rename = None;
-        tab.cli_rename = live.then(|| (session, name.to_owned()));
+        tab.cli_rename = live.then(|| crate::tabs::CliRename::new(session, name));
         if live {
             self.toast("Renamed. Claude Code gets /rename from the Chat view when its prompt is idle.".into(), now);
         }
@@ -264,7 +284,7 @@ mod tests {
         assert!(app.move_tab_drag(144.0, 60.0));
         assert_eq!(app.tabs.numbered(2), Some(a));
         assert!(app.move_tab_drag(245.0, 60.0));
-        assert_eq!(app.tabs.numbered(1), Some(SESSIONS));
+        assert_eq!(app.tabs.numbered(1), Some(crate::tabs::SESSIONS));
         assert_eq!(app.tabs.numbered(2), Some(b));
         assert_eq!(app.tabs.numbered(4), Some(a));
         assert_eq!(app.tabs.active, Some(a));
@@ -289,7 +309,7 @@ mod tests {
         assert_eq!(app.marks.name(&session.id), Some("toolkit"), "the list and search use the mark");
         let t = app.tabs.get(tab).unwrap();
         assert_eq!(t.rename, None, "the label follows the mark, which also survives a restart");
-        assert_eq!(t.cli_rename, Some((session.id.clone(), "toolkit".into())));
+        assert_eq!(t.cli_rename, Some(crate::tabs::CliRename::new(session.id.clone(), "toolkit")));
         app.rename_tab(now, tab, "");
         assert_eq!(app.marks.name(&session.id), None, "blank goes back to the derived name");
         assert_eq!(app.tabs.get(tab).unwrap().cli_rename, None, "and asks Claude Code for nothing");
@@ -306,7 +326,7 @@ mod tests {
         let marks = app.marks.clone();
         app.rename_tab(Instant::now(), shell, "build");
         let t = app.tabs.get(shell).unwrap();
-        assert_eq!((t.rename.as_deref(), t.cli_rename.as_ref()), (Some("build"), None));
+        assert_eq!((t.rename.as_deref(), t.cli_rename.is_some()), (Some("build"), false));
         assert_eq!(app.marks.name(&session), marks.name(&session));
     }
 

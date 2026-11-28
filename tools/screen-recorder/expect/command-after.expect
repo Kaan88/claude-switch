@@ -1,0 +1,11 @@
+# A local command after a turn ends with its output. `active` here means the turn before it had
+# no `end_turn` record (or the command wrote no output): Chat then relies on the idle screen
+# (the `blocked` Slash arm), and a command chip still goes once the screen is quiet.
+[after]
+kind = idle
+input =
+send = yes
+working = no
+
+[after_transcript]
+phase = end-turn

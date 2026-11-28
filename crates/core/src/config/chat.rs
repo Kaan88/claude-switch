@@ -1,10 +1,10 @@
-//! Settings › Chat: the quick-command chips under the message box and whether Chat answers the
-//! CLI's menus. Stored under `chat` in the settings file:
+//! Settings › Chat: the quick-command chips under the message box, what the Compact chip runs and
+//! whether Chat answers the CLI's menus. Stored under `chat` in the settings file:
 //!
 //! ```json
 //! "chat": {"chips": ["model", "effort", "context", "mode", "compact", "clear", "commands"],
 //!          "commands": ["/review --strict", "", ""],
-//!          "answerMenus": true}
+//!          "compactChip": "handover", "answerMenus": true}
 //! ```
 //!
 //! Every key is optional; a missing or wrong one gives its default. A chip key this version does
@@ -34,6 +34,9 @@ pub struct ChatPrefs {
     pub chips: Vec<String>,
     /// [`OWN_COMMANDS`] slots, each empty or a valid command line ("/name args").
     pub commands: Vec<String>,
+    /// The Compact chip runs Switch's handover (`"handover"`, the default) or Claude Code's own
+    /// `/compact` (`"cli"`).
+    pub compact_handover: bool,
     /// Show the CLI's menus, pickers and permission prompts as cards Chat can answer.
     pub answer_menus: bool,
 }
@@ -43,6 +46,7 @@ impl Default for ChatPrefs {
         Self {
             chips: QUICK_CHIPS.iter().map(|(key, _)| (*key).to_owned()).collect(),
             commands: vec![String::new(); OWN_COMMANDS],
+            compact_handover: true,
             answer_menus: true,
         }
     }
@@ -69,11 +73,22 @@ impl ChatPrefs {
             .map(|c| c.as_str().and_then(command_line).unwrap_or_default())
             .collect();
         commands.resize(OWN_COMMANDS, String::new());
-        Self { chips, commands, answer_menus: v.get("answerMenus").and_then(Value::as_bool).unwrap_or(d.answer_menus) }
+        let compact_handover = match v.get("compactChip").and_then(Value::as_str) {
+            Some("cli") => false,
+            Some("handover") => true,
+            _ => d.compact_handover,
+        };
+        Self {
+            chips,
+            commands,
+            compact_handover,
+            answer_menus: v.get("answerMenus").and_then(Value::as_bool).unwrap_or(d.answer_menus),
+        }
     }
 
     pub(super) fn json(&self) -> Value {
-        json!({"chips": self.chips, "commands": self.commands, "answerMenus": self.answer_menus})
+        let compact = if self.compact_handover { "handover" } else { "cli" };
+        json!({"chips": self.chips, "commands": self.commands, "compactChip": compact, "answerMenus": self.answer_menus})
     }
 
     /// The known chips that are shown, in order.
@@ -163,7 +178,21 @@ mod tests {
         assert_eq!(p.shown().collect::<Vec<_>>(), ["clear", "model"]);
         assert_eq!(p.commands, ["/review --strict", "", "/skill:go"]);
         assert!(!p.answer_menus);
+        assert!(p.compact_handover, "the Compact chip runs Switch's handover by default");
         assert_eq!(ChatPrefs::read(&p.json()), p);
+    }
+
+    #[test]
+    fn the_compact_chip_choice_is_saved_and_a_wrong_value_gives_the_handover() {
+        assert!(ChatPrefs::default().compact_handover);
+        let cli = ChatPrefs::read(&json!({"compactChip": "cli"}));
+        assert!(!cli.compact_handover);
+        assert_eq!(cli.json()["compactChip"], "cli");
+        assert_eq!(ChatPrefs::read(&cli.json()), cli);
+        assert_eq!(ChatPrefs::default().json()["compactChip"], "handover");
+        for wrong in [json!("CLI"), json!(false), json!(null)] {
+            assert!(ChatPrefs::read(&json!({"compactChip": wrong})).compact_handover);
+        }
     }
 
     #[test]

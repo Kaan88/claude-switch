@@ -52,15 +52,20 @@ does not read (an unknown op, a number that is not one) ends the script before a
 | `sleep MS` | |
 | `send TEXT` | Bytes to the terminal. Escapes: `\e` Esc, `\r` Enter, `\n`, `\t` Tab, `\s` space, `\xHH`, `\\`. Arrows `\e[A` `\e[B` `\e[C` `\e[D`, Shift+Tab `\e[Z`, Ctrl+C `\x03`, Ctrl+U `\x15`, a paste `\e[200~…\e[201~` with `\r` between its lines. |
 | `wait TEXT MS` | Until some row contains TEXT, at most MS. |
+| `need TEXT MS` | As `wait`, but when TEXT does not show in time the script ends there, before another key goes, in any run (a `wait` ends it only in `recorder compat`). For keys that would do harm on another screen. |
 | `gone TEXT MS` | Until no row contains TEXT. |
 | `quiet MS MAX` | Until the terminal sent nothing for MS. |
 | `snap NAME` | Writes `NAME.txt` (rows, first line `cursor ROW COL`) and `NAME.ansi` (the fixture form). |
 | `idle MS NAME` | Logs every burst of output for MS (is the screen quiet?), then snaps. |
 | `watch MS NAME` | Snaps `NAME-001`, `NAME-002`, … once a second while the screen changes. |
 | `resize COLS ROWS` | |
+| `longpaste UNITS TEXT` | A bracketed paste as Chat sends a message of several lines (CR between them): TEXT, then numbered filler lines up to UNITS characters. |
 | `tscopy NAME` | Copies the newest transcript of the work folder (`REC_PROJECT`; in `recorder compat` the run's own) to `NAME.jsonl`, as it is on disk now. |
+| `agentcopy NAME` | As `tscopy`, and its agents' transcripts and sidecars (`agent-*.jsonl`, `agent-*.meta.json`) into `NAME/subagents/`, where the app's reader finds them beside `NAME.jsonl`. For `agent-message`: whether a message sent while an agent is shown lands in the agent's transcript. |
+| `live NAME` | What the recorded Claude Code's live record (`sessions/<pid>.json` in its config folder) names, into `NAME.live.json` (the pid and the record, `null` when there is none), and a copy of every transcript of the work folder in `NAME.transcripts/`, as they are now. For `fork`: whether `/fork` moves the record and when the new session's transcript is written. |
 | `clipimage FILE` | Writes a small PNG as `FILE` in the work folder and puts it on the clipboard, for `send \ev` (Alt+V, as Chat sends a pasted picture). It refuses, and ends the script, when the clipboard holds anything but plain text (a picture, files, formatted text): that could not be put back. The text is put back when the script ends (the clipboard is emptied when it held none), unless something was copied meanwhile (the clipboard's sequence number changed): then it is left as it is. Uses Windows PowerShell. |
 | `help NAME` | `claude --help`, with the same account, into `NAME.help.txt`. |
+| `handover NAME TEXT` | Only in `recorder compat`: ends the recorded Claude Code and starts it again as the app starts a new handover session, with the app's own arguments (`compact_open::first_args`, through the check's test program `cli_handover_args`) for a handover that starts with TEXT and is long enough to be read from its file, written to a `handover` folder beside the work folder (outside it, as the app's is). `NAME.args.json` holds the arguments. |
 | `reopen NAME` | Ends the recorded Claude Code and starts it again with `--resume` and the id of the branch `NAME` wrote (as the app's Branch opens it), then waits for its input as `start` does. |
 | `branch NAME prompt\|answer TEXT` | Only in `recorder compat`: a branch as the app makes one at a message (the first prompt or the last answer that contains TEXT). The newest transcript is copied up to the end of that message's turn, under a new id, by the app's own code (`view::model::branch_cut` and `core::branch`, through the check's test program `cli_branch_write`, which never sees the API key); then `claude -p --resume <id> --output-format json` asks which of the words alpha, bravo and charlie it has replied with. `NAME.id` holds the id, `NAME.json` the answer. |
 
@@ -100,10 +105,33 @@ The scripts cover every state Chat reads: the idle input at the start, after a t
 turn and right after a send; a question, a typed answer, a form and its review; permission
 prompts (Bash, Write, a subagent's, two calls of one message), a prompt answered No, a call a
 deny rule refuses, a call auto mode blocks and the list of blocked calls with a call marked and
-unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`.
+unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`;
+where the terminal card's rows start (a running call in `working`, its bullet lit or not, and an
+answer's `●`/`⏺` bullet at column 0 in `context`).
 
-Some of what Chat relies on is in Claude Code's files, not on its screen, and two scripts check
-those too:
+`preview` and `preview-form` (added and first recorded 2026-11-28) ask a question whose options have
+previews, and a form of three questions (one with previews, a multi-select with a typed answer, a
+single choice) through its review to Submit. They snap every step and copy the transcript while
+the question waits and after: the check's `asked` key says whether Claude Code holds the call in
+the transcript while it asks (Chat's preview pane and form tabs are built from that call), and
+`side` whether the preview box beside the choices was found. Claude Code holds the call in the
+transcript while it asks in some runs and not in others, so `asked` accepts either (` || `).
+
+`config-list` is not about Chat: it searches `/config` for the label of every entry Settings ›
+Claude Code › Advanced writes (`crates/core/src/cc_config.rs`; after changing that table, write the
+script and its `expect` file again with `python -I tools/screen-recorder/config-list.py`) and checks
+that each still shows. Entries `/config` lists only in some contexts (the table's `WHEN`: fullscreen
+mode, an IDE, agent teams, a feature flag) may be missing: their expectation (`shows-any`) accepts
+`/config`'s "No settings match". It makes no model request
+and changes nothing, but Claude Code still writes its bookkeeping into the config folder, so run
+it with a scratch one that is signed in for this alone (`claude auth login` with
+`CLAUDE_CONFIG_DIR` set to an empty folder):
+`pwsh tools\cli-compat.ps1 -Only config-list -ConfigDir <scratch folder>`. An entry the account's
+plan or flags hide and that is not in `WHEN` shows as not shown; `docs/DESIGN.md` ("Claude Code's
+/config") says which can.
+
+Some of what Chat relies on is in Claude Code's files, not on its screen, and these scripts
+check those too:
 
 - `queued`: a message sent while a turn runs, as Chat's Send does it then (a picture from the
   clipboard with Alt+V, the text pasted after its marker, Enter). The input holds it, then reads
@@ -123,6 +151,26 @@ those too:
   does not put them back on its input: it sends them as the next turn (ordinary prompts), and the
   input reads empty, so Chat's take-back has nothing to do. Its
   `[Request interrupted by user for tool use]` user text is read as a notice, not a prompt.
+- `handover`: a new handover session started with the app's own arguments reads its long
+  handover from its file outside the project folder without a permission prompt, in manual mode
+  (the app allows exactly that file); and a command typed during a turn and not entered stays on
+  the input after the answer, and one Ctrl+U takes it off (what Chat relies on to take a command
+  of its own off again).
+- `long-paste`: a handover continued in place is pasted as one message of many lines, up to
+  15,000 characters (a longer one is read from its file). Claude Code shows it as its paste
+  marker within the 5 seconds Chat waits for it before Enter, and answers it once entered.
+- `context`: `/context` after one turn. The transcript still records its output inside
+  `<local-command-stdout>` with the colour codes (SGR) of its grid, which Chat draws as the
+  terminal does (command output in the grid renderer); output without them would show as plain
+  text.
+- `queued-now`: two messages waiting in Claude Code's queue, then Ctrl+X Ctrl+S (Chat's Send now
+  on a queued message). The screen names that key under the queue ("Queued · ctrl+x ctrl+s to
+  send now"); the key hands both to the running turn at once (moving the running command to the
+  background) and stops nothing: the transcript records both as messages during the turn, in
+  order, and the turn stays the first prompt's.
+- `shell-paste`: `!echo shellcheck` pasted into the empty input, as the composer's `!` toggle sends
+  a command, then Enter. Not recorded yet: whether the input then shows shell mode as
+  `! echo shellcheck` on the cursor's row, which Chat waits for before Enter.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),
@@ -134,8 +182,12 @@ those too:
     pwsh tools\cli-compat.ps1 -ConfigDir $env:USERPROFILE\.claude-accounts\<name>\cli
 
 It builds the recorder and starts `recorder compat` with that account (`CLAUDE_CONFIG_DIR`; without
-`-ConfigDir`, the signed-in account whose `projects` folder was written least recently). Other
-switches: `-Only idle,plan` (some scripts), `-OnlyIfNewVersion` (do nothing when this Claude Code
+`-ConfigDir`, the signed-in account whose `projects` folder was written least recently). Before
+that, and without an account, it checks that the installed `claude.exe` still contains every key
+(`key:`) and label (`"Label"`) of `crates/core/src/cc_config.rs`, the `/config` entries Settings ›
+Claude Code › Advanced writes: `MISSING   /config key …` names one Claude Code renamed or dropped,
+and makes the run's exit code 1. `-KeysOnly` runs only that (a few seconds; GitHub Actions runs it
+too, as a warning). Other switches: `-Only idle,plan` (some scripts), `-OnlyIfNewVersion` (do nothing when this Claude Code
 version was already checked in full; the last one is kept in
 `%LOCALAPPDATA%\claude-switch-cli-compat\last-checked.txt`), `-Model`, `-Out`, `-Plain`. Run it from
 a terminal of at least 100 columns; with `CARGO_TARGET_DIR` set, both builds go there.
@@ -201,7 +253,7 @@ from what cargo and the check's test program see, so no build script or proc mac
 
 ### What a run costs
 
-The scripts make about 31 model requests (14 of the 16 scripts talk to the model; a failed script
+The scripts make about 32 model requests (15 of the 17 scripts talk to the model; a failed script
 is recorded once more before it counts). A full run with Haiku 5.5 on Claude Code 2.1.332 takes
 four to six minutes and comes to about $0.13 at API prices (measured: 31 requests in 4:15, no
 script recorded twice; the four scripts about messages sent mid-turn and Branch are about $0.04 of
@@ -257,13 +309,16 @@ runs of blanks count as one and `\n` is a line break.
 | `answer`, `lines`, `wrapped` | This text reads back exactly on the highlighted row; the input shows this text of several lines; this long line |
 | `sent` | The input shows this message as Chat's echo check before Enter takes it (as typed, wrapped, or as the paste marker) |
 | `shows`, `hides` | Every text of the value (` \| ` between them) is somewhere on the screen, or none is |
+| `activity` | The name of another snapshot of the script with the same rows down to the input box's bottom rule (Chat's activity digest: what redraws under the rule, such as the list of background agents, is no activity) |
+| `dialog` | The readers of menus, questions and dialogs that find one on the screen, commas between; `none` when none does |
+| `card` | The first row the terminal card shows: `call: TEXT` at a tool call (`Bash(…)`), whether its bullet (`●` or `⏺` at column 0, which blinks while the call runs) is lit or not; `bullet: TEXT` at a message's bullet; `top: TEXT` when the card falls back to the bottom rows; `-` for none |
 
 A section can also name a file the script wrote instead of a snapshot (the check looks for
 `<state>.ansi`, then these):
 
 | File | Keys |
 | --- | --- |
-| `<state>.jsonl` (`tscopy`), read by the app's transcript reader | `prompts` (each prompt joined with ` \| `, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`), `pictures` (`yes` when every picture of such a message loads, `none` for none), `turn` (the prompt that started the newest turn), `answers`, `thinking` (the `thinkingDisplay` values of records with thinking) |
+| `<state>.jsonl` (`tscopy`), read by the app's transcript reader | `prompts` (each prompt joined with ` \| `, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`), `pictures` (`yes` when every picture of such a message loads, `none` for none), `turn` (the prompt that started the newest turn), `answers`, `thinking` (the `thinkingDisplay` values of records with thinking), `phase` (the newest record's phase: `active`, `end-turn`, `unknown`; `end-turn` after a local command typed at rest whose output ended it), `outputs` (each command output row as `NAME: colours` or `NAME: plain`: whether the reader kept colour codes beside its text) |
 | `<state>.json` and `.id` (`branch`) | `resumed` (`yes`: answered under the copy's id), `words` (which of alpha, bravo, charlie the answer names) |
 | `<state>.help.txt` (`help`) | `flags` (the value itself when `claude --help` lists every flag of it) |
 

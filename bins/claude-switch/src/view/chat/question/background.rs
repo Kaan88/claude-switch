@@ -7,8 +7,13 @@
 //! keys with the highlight on the main session; ↓ moves it one row at a time to the agent; `x`
 //! stops it ("x to stop" under that row); Esc gives the keys back once the row reads "stopped".
 //! Esc there leaves a running turn alone (recorded with one running).
+use std::collections::BTreeMap;
+
+use claude_switch_core::transcript::Subagent;
+
 use super::screens::{AgentList, AgentState, ListKeys};
 use super::*;
+use crate::view::agent_status::Listed;
 
 pub(super) const NOT_BACKGROUND: &str = "The command did not move to the background. Check the terminal.";
 pub(super) const NO_HINT: &str = "The terminal no longer offers to run this command in the background.";
@@ -85,23 +90,49 @@ fn idle_list(screen: &Screen) -> Option<AgentList> {
 /// description, not known to have finished) and once in the CLI's list, as running.
 pub(super) fn agent_offers(model: &Model, screen: &Screen) -> Vec<AgentOffer> {
     let Some(list) = idle_list(screen) else { return Vec::new() };
-    let names = list.names();
     list.rows
         .iter()
         .enumerate()
         .skip(1)
         .filter(|(_, row)| row.state == AgentState::Running)
-        .filter(|(_, row)| names.iter().filter(|n| **n == (row.name.as_str(), row.description.as_str())).count() == 1)
-        .filter(|(_, row)| {
-            let known = |a: &&claude_switch_core::transcript::Subagent| {
-                a.agent_type.as_deref() == Some(row.name.as_str())
-                    && a.description.as_deref() == Some(row.description.as_str())
-            };
-            let mut known = model.agents.iter().filter(known);
-            known.next().is_some_and(|a| a.finished != Some(true)) && known.next().is_none()
-        })
+        .filter(|&(i, _)| row_agent(model, &list, i).is_some_and(|a| a.end.is_none()))
         .map(|(i, row)| AgentOffer { name: row.name.clone(), description: row.description.clone(), row: i })
         .collect()
+}
+
+/// The transcript's agent a row of the list is: the row is the list's only one with its type and
+/// description, and the transcript knows one agent with both.
+pub(super) fn row_agent<'a>(model: &'a Model, list: &AgentList, i: usize) -> Option<&'a Subagent> {
+    let row = list.rows.get(i).filter(|_| i > 0)?;
+    let names = list.names();
+    if names.iter().filter(|n| **n == (row.name.as_str(), row.description.as_str())).count() != 1 {
+        return None;
+    }
+    let mut known = model.agents.iter().filter(|a| {
+        a.agent_type.as_deref() == Some(row.name.as_str()) && a.description.as_deref() == Some(row.description.as_str())
+    });
+    known.next().filter(|_| known.next().is_none())
+}
+
+/// The agents the CLI's list shows, by id, running or stopped: `None` when the screen cannot tell
+/// (something covers the input, or the list is in a state Chat does not read), empty when the
+/// input shows with no list under it.
+pub(super) fn listed(model: &Model, screen: &Screen) -> Option<BTreeMap<String, Listed>> {
+    let Some(list) = screens::agent_list(screen) else {
+        return screens::no_agent_list(screen).then(BTreeMap::new);
+    };
+    let mut listed = BTreeMap::new();
+    for (i, row) in list.rows.iter().enumerate().skip(1) {
+        let state = match row.state {
+            AgentState::Running => Listed::Running,
+            AgentState::Stopped => Listed::Stopped,
+            AgentState::Other => continue,
+        };
+        if let Some(agent) = row_agent(model, &list, i) {
+            listed.insert(agent.id.clone(), state);
+        }
+    }
+    Some(listed)
 }
 
 fn owned(list: &AgentList) -> Vec<(String, String)> {
@@ -283,13 +314,15 @@ impl Card {
     }
 }
 
-/// The card's height for the background controls, without its padding, field and status rows.
+/// The height of the background controls' card inside its padding.
 pub(super) fn height(card: &Card) -> Option<f32> {
-    // The offer alone is on the command's line in the conversation, not in a card.
-    let offered = card.background.is_some() && card.background_inline().is_none();
-    let shell = if offered { LINE + 6.0 } else { 0.0 };
+    // The offer alone is on the command's line in the conversation, not in a card; while that
+    // line is out of view (scrolled away, folded into a group) the card offers it.
+    let inline = card.background_inline().is_some() && card.offer_inline;
+    let offered = card.background.is_some() && !inline;
+    let shell = if offered { LINE + 8.0 } else { 0.0 };
     let agents = card.agents.len() as f32 * (CHOICE + 4.0);
-    (offered || !card.agents.is_empty()).then_some(HEADER + shell + agents)
+    (offered || !card.agents.is_empty()).then_some(cards::HEAD + 10.0 + shell + agents + 4.0 + cards::FOOT)
 }
 
 impl Draw<'_> {
@@ -301,31 +334,22 @@ impl Draw<'_> {
         let shell = card.background.clone();
         let mut y = inner.y;
         let title = if shell.is_some() { "Running a shell command" } else { "Background agents" };
-        p.text(Face::Semibold, 11.5, inner.x, y + HEADER / 2.0, title, pal.muted, inner.w);
-        y += HEADER;
+        self.head(p, hits, Rect::new(inner.x, y, inner.w, cards::HEAD), title, ("", ""), "", false);
+        y += cards::HEAD + 10.0;
         if let Some(shell) = &shell {
-            p.text(Face::Mono, 11.5, inner.x, y + LINE / 2.0, &shell.command, pal.text, inner.w);
-            y += LINE + 6.0;
+            p.text(Face::Mono, 12.0, inner.x, y + LINE / 2.0, &shell.command, pal.text, inner.w);
+            y += LINE + 8.0;
         }
         for (i, agent) in card.agents.iter().enumerate() {
             let row = Rect::new(inner.x, y, inner.w, CHOICE);
             let label = format!("{} · {}", agent.name, agent.description);
-            p.text(Face::Ui, 12.0, row.x, row.cy(), &label, pal.text, (row.w - 130.0).max(0.0));
-            let r = Rect::new(row.right() - 120.0, row.y, 120.0, row.h);
-            let target = Target::Chat(Control::Question(Hit::StopAgent(i)));
-            super::super::paint::button(p, pal, r, "Stop agent", self.hover == Some(target), false);
-            hits.push((r, target));
+            let w = self.plain(p, hits, row.right() + 8.0, row.cy(), "Stop agent", Hit::StopAgent(i), true);
+            p.text(Face::Ui, 12.5, row.x, row.cy(), &label, pal.text, (row.w - w - 8.0).max(0.0));
             y += CHOICE + 4.0;
         }
-        let row = Rect::new(inner.x, y, inner.w, FIELD - 4.0);
+        y += 4.0;
         let status = card.error.or_else(|| chat.question_notice()).unwrap_or("");
-        let room = if shell.is_some() { 160.0 } else { 0.0 };
-        p.text(Face::Ui, 11.5, row.x, row.cy(), status, pal.muted, (row.w - room).max(0.0));
-        if shell.is_some() {
-            let r = Rect::new(row.right() - 150.0, row.y, 150.0, row.h);
-            let target = Target::Chat(Control::Question(Hit::Background));
-            super::super::paint::button(p, pal, r, "Run in background", self.hover == Some(target), false);
-            hits.push((r, target));
-        }
+        let right: &[(&str, Hit)] = if shell.is_some() { &[("Run in background", Hit::Background)] } else { &[] };
+        self.foot(p, hits, Rect::new(inner.x, y, inner.w, cards::FOOT), &[], status, right);
     }
 }

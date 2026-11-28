@@ -1,0 +1,21 @@
+# What Chat reads from scripts/handover.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+# The handover file outside the project folder was read without a permission prompt, and the
+# session answered from it.
+[read]
+kind = idle
+send = yes
+shows = kilo
+hides = Do you want to proceed
+
+# A command typed during the turn and not entered is still on the input after the answer.
+[left_typed]
+kind = input
+input = /rename Notes
+send = no
+
+# One Ctrl+U takes it off: the input reads empty and ready again.
+[cleared]
+kind = idle
+input =
+send = yes

@@ -1,0 +1,15 @@
+# Claude Code's shell mode reached by a paste, as Chat's `!` toggle sends a command: `!` and the
+# command pasted into the empty input, then Enter once the input shows it. Claude Code's source
+# switches the input to shell mode when text starting with `!` reaches an empty input; this
+# records how the screen shows it (Chat expects `! command` on the cursor's row). No model
+# request: a shell command runs in Claude Code alone.
+#: seconds 20
+start
+send \e[200~!echo shellcheck\e[201~
+sleep 1000
+snap typed
+send \r
+sleep 1500
+quiet 1500 15000
+snap after
+tscopy transcript

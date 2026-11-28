@@ -1,0 +1,139 @@
+# The labels scripts/config-list.txt searches /config for. Written by ../config-list.py from
+# crates/core/src/cc_config.rs.
+
+[cfg-idlecompaction]
+shows = Idle compaction
+
+[cfg-autocontinueatusagelimit]
+shows = Continue automatically at usage limit
+
+[cfg-switchmodelsonflag]
+shows = Switch models when a message is flagged
+
+[cfg-spinnertipsenabled]
+shows = Show tips
+
+[cfg-feedbackdrafts]
+shows = Claude-drafted feedback
+
+[cfg-prefersreducedmotion]
+shows = Reduce motion
+
+[cfg-alwaysthinkingenabled]
+shows = Thinking mode
+
+[cfg-promptsuggestionenabled]
+shows = Prompt suggestions
+
+[cfg-awaysummaryenabled]
+shows = Session recap
+
+[cfg-filecheckpointingenabled]
+shows = Rewind code (checkpoints)
+
+[cfg-enableworkflows]
+shows = Dynamic workflows
+
+[cfg-workflowkeywordtriggerenabled]
+shows = Ultracode keyword trigger
+
+[cfg-workflowsizeguideline]
+shows = Dynamic workflow size
+
+[cfg-enableartifact]
+shows = Artifacts
+
+[cfg-terminalprogressbarenabled]
+shows = Terminal progress bar
+
+[cfg-showstatusinterminaltab]
+# Listed only in some contexts (If Claude Code enables it): missing is fine.
+shows-any = Show status in terminal tab | No settings match
+
+[cfg-showturnduration]
+shows = Show turn duration
+
+[cfg-precomputecompactionenabled]
+shows = Precompute compaction
+
+[cfg-showmessagetimestamps]
+# Listed only in some contexts (If Claude Code enables it): missing is fine.
+shows-any = Show message timestamps | No settings match
+
+[cfg-timeformat]
+shows = Time format
+
+[cfg-worktree-baseref]
+shows = Worktree base ref
+
+[cfg-useautomodeduringplan]
+shows = Use auto mode during plan
+
+[cfg-respectgitignore]
+shows = Respect .gitignore in file picker
+
+[cfg-copyfullresponse]
+shows = Skip the /copy picker
+
+[cfg-copyonselect]
+# Listed only in some contexts (In fullscreen mode): missing is fine.
+shows-any = Copy on select | No settings match
+
+[cfg-autoscrollenabled]
+# Listed only in some contexts (In fullscreen mode): missing is fine.
+shows-any = Auto-scroll | No settings match
+
+[cfg-preferrednotifchannel]
+shows = Local notifications
+
+[cfg-inputneedednotifenabled]
+shows = Push when actions required
+
+[cfg-agentpushnotifenabled]
+shows = Push when Claude decides
+
+[cfg-language]
+shows = Language
+
+[cfg-editormode]
+shows = Editor mode
+
+[cfg-askuserquestiontimeout]
+shows = Question auto-continue timeout
+
+[cfg-modelproposedgoals]
+# Listed only in some contexts (If enabled): missing is fine.
+shows-any = Claude-proposed goals | No settings match
+
+[cfg-externaleditorcontext]
+shows = Show last response in external editor
+
+[cfg-prstatusfooterenabled]
+shows = Show PR status footer
+
+[cfg-difftool]
+# Listed only in some contexts (With an IDE connected): missing is fine.
+shows-any = Diff tool | No settings match
+
+[cfg-autoconnectide]
+shows = Auto-connect to IDE (external terminal)
+
+[cfg-teammatemode]
+# Listed only in some contexts (With agent teams): missing is fine.
+shows-any = Teammate mode | No settings match
+
+[cfg-remotecontrolatstartup]
+shows = Enable Remote Control for all sessions
+
+[cfg-dialogexpiry]
+shows = Dialog expiry
+
+[cfg-crosssessioninbound]
+shows = Messages from your other sessions
+
+[cfg-remotemessagereceipts]
+# Listed only in some contexts (If enabled): missing is fine.
+shows-any = Delivery notices to and from cloud and Remote Control sessions | No settings match
+
+[config-closed]
+kind = idle

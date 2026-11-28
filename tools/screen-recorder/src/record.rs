@@ -487,6 +487,49 @@ impl Recorder {
         self.run_for(Duration::from_millis(1500))
     }
 
+    /// What the live record of the recorded process names (Claude Switch follows a tab's session by
+    /// it), with a copy of every transcript of the work folder: `NAME.live.json` holds the pid and
+    /// the record (`null` when there is none), `NAME.transcripts/<id>.jsonl` the transcripts.
+    fn live(&mut self, name: &str) -> Result<(), Abort> {
+        self.pump();
+        let config = self
+            .env
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("CLAUDE_CONFIG_DIR"))
+            .map(|(_, value)| PathBuf::from(value))
+            .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".claude")))
+            .ok_or_else(|| Abort::Script("live: no CLAUDE_CONFIG_DIR and no USERPROFILE".into()))?;
+        let pid = self.pty.pid();
+        let record = std::fs::read(config.join("sessions").join(format!("{pid}.json")))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let dir = match &self.project {
+            Some(dir) => dir.clone(),
+            None => PathBuf::from(
+                std::env::var("REC_PROJECT").map_err(|_| Abort::Script("this op needs REC_PROJECT".into()))?,
+            ),
+        };
+        let to = self.out.join(format!("{name}.transcripts"));
+        std::fs::create_dir_all(&to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+        let mut copied = 0;
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().filter_map(Result::ok) {
+            let path = entry.path();
+            if path.extension().is_some_and(|x| x == "jsonl") && path.is_file() {
+                let target = to.join(entry.file_name());
+                std::fs::copy(&path, &target).map_err(|e| Abort::Io(format!("{}: {e}", target.display())))?;
+                copied += 1;
+            }
+        }
+        let live = serde_json::json!({ "pid": pid, "record": record });
+        let file = self.out.join(format!("{name}.live.json"));
+        std::fs::write(&file, serde_json::to_string_pretty(&live).unwrap_or_default())
+            .map_err(|e| Abort::Io(format!("{}: {e}", file.display())))?;
+        let id = live["record"]["sessionId"].as_str().unwrap_or("none").to_owned();
+        self.note(&format!("live {name}: record names {id}, {copied} transcripts"));
+        Ok(())
+    }
+
     /// The newest transcript in the work folder's transcript folder, other than the copies
     /// `branch` wrote (resuming one makes it the newest).
     fn newest_transcript(&self) -> Result<Option<PathBuf>, Abort> {
@@ -528,6 +571,49 @@ impl Recorder {
         run_for_output(command, Duration::from_secs(120), self.stop.clone())
     }
 
+    /// Ends the recorded Claude Code and starts it again with its own arguments and `extra`.
+    fn respawn(&mut self, extra: &[String]) -> Result<(), Abort> {
+        self.pump();
+        let _ = self.pty.kill();
+        let mut args = self.args.clone();
+        args.extend(extra.iter().cloned());
+        let launch = Launch {
+            program: &self.program,
+            cwd: &self.cwd,
+            cols: self.size.0,
+            rows: self.size.1,
+            args: &args,
+            env: &self.env,
+            plain: self.plain,
+        };
+        let pty = Pty::spawn(&Self::command(&launch, &args), self.size.0, self.size.1, || {})
+            .map_err(|e| Abort::Start(format!("restart: {e}")))?;
+        self.pty = pty;
+        self.screen = Screen::new(self.size.0.into(), self.size.1.into(), 2000);
+        Ok(())
+    }
+
+    /// The arguments the app gives a new handover session whose handover starts with `text` and is
+    /// long enough to be read from its file (the app's own code, through its test program): the
+    /// file goes to a `handover` folder beside the work folder, outside it as the app's is.
+    fn handover_args(&mut self, name: &str, text: &str) -> Result<Vec<String>, Abort> {
+        let helper = self.helper.as_ref().ok_or_else(|| Abort::Script("handover needs `recorder compat`".into()))?;
+        let dir = self.cwd.parent().unwrap_or(&self.cwd).join("handover");
+        let out = self.out.join(format!("{name}.args.json"));
+        let mut command = std::process::Command::new(&helper.program);
+        for var in &helper.remove {
+            command.env_remove(var);
+        }
+        command.args(["cli_handover_args", "--ignored", "--nocapture"]).stdin(std::process::Stdio::null());
+        command.env("CS_HANDOVER_DIR", &dir).env("CS_HANDOVER_TEXT", text).env("CS_HANDOVER_OUT", &out);
+        let made = run_for_output(command, Duration::from_secs(60), self.stop.clone())?;
+        let args = std::fs::read_to_string(&out).ok().and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok());
+        match args {
+            Some(args) if made.status.success() => Ok(args),
+            _ => Err(Abort::Io(format!("handover {name}: {}", String::from_utf8_lossy(&made.stdout).trim()))),
+        }
+    }
+
     /// A branch as the app makes one at a message (`at`: `prompt TEXT` or `answer TEXT`): the
     /// newest transcript copied up to the end of that message's turn under a new id, by the app's
     /// own code through its test program, then that id resumed in print mode with a question.
@@ -565,11 +651,17 @@ impl Recorder {
                 self.pump();
                 self.write(&bytes);
             }
-            Step::Wait { text, want, max } => {
+            Step::Wait { text, want, max, must } => {
                 if !self.until(max, |r| r.has(&text) == want)? {
-                    let op = if want { "wait" } else { "gone" };
+                    let op = if must {
+                        "need"
+                    } else if want {
+                        "wait"
+                    } else {
+                        "gone"
+                    };
                     self.note(&format!("TIMEOUT {op} {text}"));
-                    if self.strict {
+                    if self.strict || must {
                         return Err(Abort::Timeout(format!("{op} {text}")));
                     }
                 }
@@ -617,6 +709,30 @@ impl Recorder {
                 }
                 None => self.note("tscopy: no transcript"),
             },
+            Step::AgentCopy(name) => match self.newest_transcript()? {
+                Some(path) => {
+                    let to = self.out.join(format!("{name}.jsonl"));
+                    std::fs::copy(&path, &to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+                    let agents = path.with_extension("").join("subagents");
+                    let into = self.out.join(&name).join("subagents");
+                    std::fs::create_dir_all(&into).map_err(|e| Abort::Io(format!("{}: {e}", into.display())))?;
+                    let mut copied = 0;
+                    for entry in std::fs::read_dir(&agents).into_iter().flatten().filter_map(Result::ok) {
+                        let file = entry.file_name();
+                        let wanted = file.to_str().is_some_and(|f| {
+                            f.starts_with("agent-") && (f.ends_with(".jsonl") || f.ends_with(".meta.json"))
+                        });
+                        if wanted && entry.path().is_file() {
+                            let target = into.join(&file);
+                            std::fs::copy(entry.path(), &target)
+                                .map_err(|e| Abort::Io(format!("{}: {e}", target.display())))?;
+                            copied += 1;
+                        }
+                    }
+                    self.note(&format!("agentcopy {name}: the transcript and {copied} agent files"));
+                }
+                None => self.note("agentcopy: no transcript"),
+            },
             // A picture on the clipboard, for Alt+V (as Chat sends a pasted picture). The text the
             // clipboard held is kept and put back when the script ends.
             Step::ClipImage(file) => {
@@ -647,6 +763,7 @@ impl Recorder {
                 self.note(&format!("help {name}: {} bytes", output.stdout.len()));
             }
             Step::Branch { name, at } => self.branch(&name, &at)?,
+            Step::Live(name) => self.live(&name)?,
             // Claude Code again, resuming the session `branch` wrote, as the app's Branch opens it.
             Step::Reopen(name) => {
                 let id = std::fs::read_to_string(self.out.join(format!("{name}.id"))).unwrap_or_default();
@@ -654,24 +771,15 @@ impl Recorder {
                 if id.len() != 36 {
                     return Err(Abort::Start(format!("reopen: no branch {name} was written")));
                 }
-                self.pump();
-                let _ = self.pty.kill();
-                let mut args = self.args.clone();
-                args.extend(["--resume".to_owned(), id.clone()]);
-                let launch = Launch {
-                    program: &self.program,
-                    cwd: &self.cwd,
-                    cols: self.size.0,
-                    rows: self.size.1,
-                    args: &args,
-                    env: &self.env,
-                    plain: self.plain,
-                };
-                let pty = Pty::spawn(&Self::command(&launch, &args), self.size.0, self.size.1, || {})
-                    .map_err(|e| Abort::Start(format!("reopen: {e}")))?;
-                self.pty = pty;
-                self.screen = Screen::new(self.size.0.into(), self.size.1.into(), 2000);
                 self.note(&format!("reopen {name}: claude --resume {id}"));
+                self.respawn(&["--resume".to_owned(), id])?;
+                self.start()?;
+            }
+            // Claude Code again, started as the app starts a new handover session.
+            Step::Handover { name, text } => {
+                let args = self.handover_args(&name, &text)?;
+                self.note(&format!("handover {name}: claude {}", args.join(" ")));
+                self.respawn(&args)?;
                 self.start()?;
             }
             Step::Start => self.start()?,
@@ -694,10 +802,12 @@ enum Step {
     Sleep(Duration),
     Send(Vec<u8>),
     /// `wait` (`want`) or `gone` (not `want`): until the screen shows `text`, or no longer does.
+    /// `need` is a `wait` whose timeout always ends the script, before any further key.
     Wait {
         text: String,
         want: bool,
         max: Duration,
+        must: bool,
     },
     Quiet {
         time: Duration,
@@ -717,12 +827,23 @@ enum Step {
     },
     Snap(String),
     TsCopy(String),
+    /// The newest transcript as `NAME.jsonl`, with its agents' transcripts and sidecars in
+    /// `NAME/subagents/` (where the app's reader looks for them beside a transcript).
+    AgentCopy(String),
     /// A picture file in the work folder, put on the clipboard.
     ClipImage(String),
     /// `claude --help` into `NAME.help.txt`.
     Help(String),
     /// Claude Code started again with `--resume` and the id of the branch `NAME`.
     Reopen(String),
+    /// Claude Code started again as a new handover session whose handover starts with `text`.
+    Handover {
+        name: String,
+        text: String,
+    },
+    /// The recorded process's live record (`sessions/<pid>.json`) into `NAME.live.json` and every
+    /// transcript of the work folder into `NAME.transcripts/`, as they are now.
+    Live(String),
     /// A branch at a message: `prompt TEXT` or `answer TEXT`.
     Branch {
         name: String,
@@ -866,6 +987,23 @@ fn run_for_output(
     output
 }
 
+/// A bracketed paste as Chat sends a message of several lines (CR between them): `text`, then
+/// numbered filler lines until the text is `units` characters long (ASCII, so as many UTF-16
+/// units as the app's limits count).
+fn long_paste(units: usize, text: &str) -> Vec<u8> {
+    let mut body = text.to_owned();
+    let mut n = 0;
+    while body.len() < units {
+        n += 1;
+        body.push_str(&format!("\rFiller line {n}: these lines only make the message long; ignore them."));
+    }
+    body.truncate(units.max(text.len()));
+    let mut bytes = b"\x1b[200~".to_vec();
+    bytes.extend(body.as_bytes());
+    bytes.extend(b"\x1b[201~");
+    bytes
+}
+
 fn number<T: std::str::FromStr>(text: &str, what: &str) -> Result<T, String> {
     text.trim().parse().map_err(|_| format!("{text:?} is not {what}"))
 }
@@ -878,9 +1016,9 @@ impl Step {
         Ok(match op {
             "sleep" => Step::Sleep(ms(rest)?),
             "send" => Step::Send(unescape(rest)?),
-            "wait" | "gone" => {
+            "wait" | "gone" | "need" => {
                 let (text, max) = rest.rsplit_once(' ').ok_or_else(|| format!("{op} needs TEXT MS"))?;
-                Step::Wait { text: text.to_owned(), want: op == "wait", max: ms(max)? }
+                Step::Wait { text: text.to_owned(), want: op != "gone", max: ms(max)?, must: op == "need" }
             }
             "quiet" => {
                 let (time, max) = two("MS MAX")?;
@@ -896,11 +1034,21 @@ impl Step {
                 Step::Resize { cols: number(cols, "a number of columns")?, rows: number(rows, "a number of rows")? }
             }
             "snap" => Step::Snap(rest.to_owned()),
+            "longpaste" => {
+                let (units, text) = two("UNITS TEXT")?;
+                Step::Send(long_paste(number(units, "a number of characters")?, text))
+            }
             "tscopy" => Step::TsCopy(rest.to_owned()),
+            "agentcopy" if !rest.is_empty() => Step::AgentCopy(rest.to_owned()),
+            "agentcopy" => return Err("agentcopy needs NAME".to_owned()),
             "clipimage" if !rest.is_empty() => Step::ClipImage(rest.to_owned()),
             "clipimage" => return Err("clipimage needs FILE".to_owned()),
             "help" => Step::Help(rest.to_owned()),
             "reopen" if !rest.is_empty() => Step::Reopen(rest.to_owned()),
+            "handover" => {
+                let (name, text) = two("NAME TEXT")?;
+                Step::Handover { name: name.to_owned(), text: text.to_owned() }
+            }
             "reopen" => return Err("reopen needs NAME".to_owned()),
             "branch" => {
                 let (name, at) = two("NAME prompt|answer TEXT")?;
@@ -910,6 +1058,8 @@ impl Step {
                 }
                 Step::Branch { name: name.to_owned(), at: at.to_owned() }
             }
+            "live" if !rest.is_empty() => Step::Live(rest.to_owned()),
+            "live" => return Err("live needs NAME".to_owned()),
             "start" => Step::Start,
             _ => return Err(format!("unknown op {op}")),
         })
@@ -982,17 +1132,36 @@ mod tests {
     }
 
     #[test]
+    fn a_long_paste_is_one_bracketed_paste_of_exactly_the_length_asked_for() {
+        let Ok(Step::Send(bytes)) = Step::read("longpaste 15000 Reply: lima.") else { panic!() };
+        let body = bytes.strip_prefix(b"\x1b[200~").and_then(|b| b.strip_suffix(b"\x1b[201~")).unwrap();
+        assert_eq!(body.len(), 15000);
+        assert!(body.starts_with(b"Reply: lima.\rFiller line 1: "));
+        assert!(!body.contains(&b'\n') && !body.contains(&0x1b));
+        assert!(Step::read("longpaste many Reply").is_err());
+    }
+
+    #[test]
     fn a_script_line_that_does_not_read_is_an_error_not_a_panic() {
         let ms = Duration::from_millis;
         assert_eq!(Step::read("sleep 250"), Ok(Step::Sleep(ms(250))));
         assert_eq!(
             Step::read("wait for shortcuts 9000"),
-            Ok(Step::Wait { text: "for shortcuts".into(), want: true, max: ms(9000) })
+            Ok(Step::Wait { text: "for shortcuts".into(), want: true, max: ms(9000), must: false })
+        );
+        assert_eq!(
+            Step::read("need ⌕ 3000"),
+            Ok(Step::Wait { text: "⌕".into(), want: true, max: ms(3000), must: true })
         );
         assert_eq!(Step::read("resize 80 24"), Ok(Step::Resize { cols: 80, rows: 24 }));
         assert_eq!(Step::read("send hi\\r"), Ok(Step::Send(b"hi\r".to_vec())));
         assert_eq!(Step::read("clipimage dot.png"), Ok(Step::ClipImage("dot.png".into())));
         assert_eq!(Step::read("help cli"), Ok(Step::Help("cli".into())));
+        assert_eq!(Step::read("agentcopy sent"), Ok(Step::AgentCopy("sent".into())));
+        assert_eq!(
+            Step::read("handover new Reply with kilo"),
+            Ok(Step::Handover { name: "new".into(), text: "Reply with kilo".into() })
+        );
         assert_eq!(
             Step::read("branch cut answer alpha"),
             Ok(Step::Branch { name: "cut".into(), at: "answer alpha".into() })
@@ -1008,7 +1177,9 @@ mod tests {
             "resize 80 lots",
             "send \\x4",
             "clipimage",
+            "agentcopy",
             "reopen",
+            "handover new",
             "branch cut",
             "branch cut alpha",
         ] {

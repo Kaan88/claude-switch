@@ -27,7 +27,7 @@ use crate::view::model;
 
 /// A window's size and display scale for a drawn frame.
 #[derive(Clone, Copy)]
-pub(super) struct Size {
+pub(crate) struct Size {
     pub w: f32,
     pub h: f32,
     pub scale: f32,
@@ -38,7 +38,7 @@ const README: Size = Size { w: 1400.0, h: 880.0, scale: 2.0 };
 
 /// The demo window: its accounts, sessions and marks, the first session selected and its
 /// details read.
-pub(super) fn window(dark: bool) -> AppState {
+pub(crate) fn window(dark: bool) -> AppState {
     let mut st = AppState::new(Source::Demo, Some(dark), Default::default());
     st.apply_scan(crate::demo::scan(&st.config));
     st.select_first();
@@ -49,8 +49,14 @@ pub(super) fn window(dark: bool) -> AppState {
 /// Waits for the selected session's last messages, size and related sessions.
 fn read_details(st: &mut AppState) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    while st.preview.is_none() || st.session_size.pending || st.grouping.pending.is_some() {
+    while st.details_reader.as_ref().is_some_and(|r| !r.loaded())
+        || st.session_size.pending
+        || st.grouping.pending.is_some()
+    {
         st.take_jobs();
+        if let Some(reader) = &st.details_reader {
+            reader.poll();
+        }
         assert!(Instant::now() < deadline, "the selected session's details were read");
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -62,7 +68,7 @@ fn frame(st: &mut AppState, anim: &mut Animator, now: Instant) -> Bitmap {
 }
 
 /// [`frame`] for a window of another size.
-pub(super) fn frame_at(st: &mut AppState, anim: &mut Animator, now: Instant, size: Size) -> Bitmap {
+pub(crate) fn frame_at(st: &mut AppState, anim: &mut Animator, now: Instant, size: Size) -> Bitmap {
     let Size { w, h, scale } = size;
     let window = Rect::new(0.0, 0.0, w, h);
     let mut gfx = Gfx::new();
@@ -91,6 +97,8 @@ pub(super) fn frame_at(st: &mut AppState, anim: &mut Animator, now: Instant, siz
         } else {
             st.draw_terminal_still(&mut p, term_area);
         }
+    } else if st.tabs.workers_shown() {
+        crate::workers_tab::draw(st, &mut p, area);
     } else {
         let rects = st.splitter.rects(area, Axis::Horizontal);
         crate::list::draw_with(st, anim, &mut p, rects.0, now);
@@ -108,7 +116,7 @@ fn settled(st: &mut AppState, now: Instant) -> Bitmap {
 }
 
 /// [`settled`] for a window of another size.
-pub(super) fn settled_at(st: &mut AppState, now: Instant, size: Size) -> Bitmap {
+pub(crate) fn settled_at(st: &mut AppState, now: Instant, size: Size) -> Bitmap {
     let mut anim = Animator::new();
     for k in 0..15 {
         frame_at(st, &mut anim, now + Duration::from_millis(16 * k), size);

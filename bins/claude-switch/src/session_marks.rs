@@ -304,7 +304,7 @@ impl AppState {
             if self.selected.as_deref().is_some_and(|id| self.entry_of(id).is_none()) {
                 if self.filter == Filter::Unseen {
                     self.selected = None;
-                    self.preview = None;
+                    self.details_reader = None;
                     self.session_size.cancel();
                     self.cancel_related();
                 } else {

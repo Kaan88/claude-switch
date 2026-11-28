@@ -1,0 +1,29 @@
+# Two messages waiting in Claude Code's queue (sent while a tool runs, as Chat sends them), then
+# Claude Code's own Send now, Ctrl+X Ctrl+S, as Chat's Send now writes it. Claude Code 2.1.332
+# names that key under the queue ("Queued · ctrl+x ctrl+s to send now"), hands both messages to
+# the running turn at once (the running command moves to the background) and does not stop the
+# turn. Two model requests.
+#: args --permission-mode default --settings {scripts}/allow-ping.json
+#: seconds 45
+start
+send Run exactly this with the Bash tool and nothing else: ping -n 30 127.0.0.1
+sleep 800
+send \r
+wait ctrl+b to run in background 60000
+sleep 1500
+send \e[200~Also reply with the word echo.\e[201~
+sleep 1000
+send \r
+sleep 1500
+send \e[200~Then reply with the word foxtrot.\e[201~
+sleep 1000
+send \r
+sleep 1500
+snap waiting
+send \x18\x13
+sleep 1500
+snap sent
+gone esc to interrupt 60000
+quiet 1500 30000
+snap after
+tscopy transcript

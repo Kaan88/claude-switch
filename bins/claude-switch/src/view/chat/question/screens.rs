@@ -45,6 +45,8 @@ const LIST_SELECT: &str = "↑/↓ to select";
 const LIST_VIEW: &str = "enter to view";
 const LIST_STOP: &str = "x to stop";
 const LIST_CLEAR: &str = "x to clear";
+/// The empty input's placeholder while Claude Code shows an agent, before its name.
+const VIEWING: &str = "Message @";
 /// How many rows above its footer a panel's card copies when it cannot tell where the panel
 /// starts.
 const PANEL_ROWS: usize = 14;
@@ -136,8 +138,13 @@ const UNDER_FOOTER: usize = 6;
 /// cleaned rows; the last row is found on the screen itself, where an empty input (`❯`) counts.
 /// A menu takes the input box's place, so while no input row is under it a footer a few rows up
 /// still counts, whatever the CLI or a redraw left under it (a rule, a notice): the
-/// conversation's own words are above the input row, never under it.
+/// conversation's own words are above the input row, never under it. While the live input box
+/// shows there is no menu at all: above it is the conversation (the user's message as sent, a
+/// numbered list of Claude's), in it the user's own text, under it the input's status lines.
 fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
+    if input_box(screen).is_some() {
+        return None;
+    }
     let last = (0..screen.rows()).rposition(|row| !screen.row_text(row).trim().is_empty())?;
     let footer = if menu_footer(&rows[last]) {
         last
@@ -155,7 +162,7 @@ fn footer_row(screen: &Screen, rows: &[String]) -> Option<usize> {
             footer
         }
     };
-    (!input_box_above(screen, footer)).then_some(footer)
+    Some(footer)
 }
 
 /// The row of the footer of a menu, picker or dialog that has the screen, if one shows.
@@ -164,20 +171,38 @@ pub(in crate::view) fn live_footer(screen: &Screen) -> Option<usize> {
     footer_row(screen, &rows)
 }
 
-/// The CLI's input box (a `❯` row right under a solid rule, closed by another rule) sits just above
-/// `row`: `row` is then a status line under the idle input (a custom status line or a tip that
-/// happens to read like a menu hint), not a menu's footer.
-pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> bool {
+/// How many rows the input box's text may take between its rules.
+const INPUT_BOX_ROWS: usize = 40;
+
+/// The CLI's live input box, the lowest on the screen: its top rule (plain or with the session's
+/// name), a row starting with the input mark right under it, the rows of a longer input, and the
+/// solid rule closing it (rows of the top and the bottom rule). Whatever the input holds (a draft
+/// of numbered lines, `❯ 1. fix a`) is the user's text: a menu takes the input box's place and
+/// is never drawn inside it. The box's own shape tells it from a dialog or the conversation: the
+/// mark in the first column, and down to the closing rule only the input's further rows, blank or
+/// indented under its text (2.1.332). A question's highlighted `❯ 5. Chat about this` under its
+/// inner rule has the footer under it, whatever rule the CLI left below that; a `>` quoted in
+/// the conversation is indented, and has the conversation under it.
+pub(in crate::view::chat) fn input_box(screen: &Screen) -> Option<(usize, usize)> {
     let text = |r: usize| screen.row_text(r).trim().to_owned();
-    let Some(bottom) = (row.saturating_sub(8)..row).rev().find(|&r| solid_rule(&text(r))) else {
-        return false;
-    };
     let top_rule = |r: usize| solid_rule(&text(r)) || crate::view::chat::submission::screen::named_rule(&text(r));
-    let Some(top) = (bottom.saturating_sub(12)..bottom).rev().find(|&r| top_rule(r)) else {
-        return false;
+    let mark = |r: usize| screen.row_text(r).starts_with(prompt_mark);
+    let input_row = |r: usize| {
+        let raw = screen.row_text(r);
+        raw.trim().is_empty() || raw.starts_with("  ") && !menu_footer(&raw)
     };
-    let first = text(top + 1);
-    first.starts_with(prompt_mark) && numbered(first.trim_start_matches(prompt_mark).trim()).is_none()
+    (1..screen.rows()).rev().filter(|&r| mark(r) && top_rule(r - 1)).find_map(|r| {
+        let end = (r + 1 + INPUT_BOX_ROWS).min(screen.rows());
+        let bottom = (r + 1..end).find(|&b| rule(&text(b)))?;
+        (solid_rule(&text(bottom)) && (r + 1..bottom).all(input_row)).then_some((r - 1, bottom))
+    })
+}
+
+/// `row` is inside the CLI's input box or under it: there it is the user's own text or a status
+/// line under the input (a custom status line or a tip that happens to read like a menu hint,
+/// the agent list's hints), never a menu's row or footer.
+pub(in crate::view::chat) fn input_box_above(screen: &Screen, row: usize) -> bool {
+    input_box(screen).is_some_and(|(top, _)| row > top)
 }
 
 pub(super) fn numbered(text: &str) -> Option<(usize, &str)> {
@@ -265,7 +290,37 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
     let texts: Vec<String> = rows.iter().map(|(_, text)| text.clone()).collect();
     let footer = footer_row(screen, &texts)?;
     let mut entries: Vec<Entry> = Vec::new();
-    for (row, (highlighted, text)) in rows.iter().enumerate().take(footer).skip(footer.saturating_sub(MENU_ROWS)) {
+    // The CLI draws a menu under a full-width rule; a question draws another between its choices
+    // ("5. Chat about this" under it). The menu starts under the lowest such rule over its first
+    // choice: up from the footer, a rule is passed only while the first numbered row under it
+    // goes on from a choice above it. Above that is the conversation, where the user's own
+    // message (`❯ 1. fix a` / `2. fix b`, echoed as sent) and Claude's numbered lists are no
+    // choices, whatever rules the conversation has above them.
+    let window = footer.saturating_sub(MENU_ROWS);
+    let full = |row: usize| {
+        let text = screen.row_text(row);
+        let text = text.trim_end();
+        text.chars().count() >= screen.cols() && solid_rule(text.trim_start())
+    };
+    let first_number = |from: usize| (from..footer).find_map(|row| numbered(&rows[row].1).map(|(n, _)| n));
+    // Under the rule of a question whose options have previews there is only an unnumbered
+    // "Chat about this" (Claude Code 2.1.332, recorded `preview_*`): the choices are above it.
+    let only_chat = |from: usize| {
+        let mut texts = (from..footer).map(|row| rows[row].1.as_str()).filter(|t| !t.is_empty());
+        texts.next() == Some(CHAT_ABOUT) && texts.next().is_none()
+    };
+    let mut first = window;
+    let mut below = footer;
+    while let Some(top) = (window..below).rev().find(|&row| full(row)) {
+        first = top + 1;
+        let passed = first_number(first).is_none() && only_chat(first);
+        if !passed && first_number(first).is_none_or(|n| n == 1) {
+            break;
+        }
+        first = window;
+        below = top;
+    }
+    for (row, (highlighted, text)) in rows.iter().enumerate().take(footer).skip(first) {
         let Some((n, rest)) = numbered(text) else { continue };
         if n == 1 {
             entries.clear();
@@ -275,6 +330,13 @@ pub(super) fn menu(screen: &Screen) -> Option<Menu> {
         } else {
             entries.clear();
         }
+    }
+    // That unnumbered "Chat about this" is the menu's last row the arrow keys reach.
+    if let Some(last) = entries.last().map(|e| e.row)
+        && let Some(row) = (last + 1..footer).find(|&row| rows[row].1 == CHAT_ABOUT)
+        && only_chat(row)
+    {
+        entries.push(Entry { row, highlighted: rows[row].0, text: CHAT_ABOUT.to_owned() });
     }
     if entries.is_empty() {
         entries = trust_choices(&rows, footer);
@@ -445,7 +507,7 @@ pub(super) fn walk_menu(screen: &Screen) -> Option<Menu> {
 fn review_panel(screen: &Screen) -> Option<Panel> {
     let review = review(screen)?;
     let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
-    let last = rows.iter().rposition(|(_, text)| !text.is_empty())?;
+    let last = review_last(&rows)?;
     let entries = (last - 1..=last)
         .map(|row| Entry { row, highlighted: rows[row].0, text: numbered(&rows[row].1).map_or("", |n| n.1).to_owned() })
         .collect();
@@ -760,12 +822,15 @@ pub(super) enum AgentState {
     Other,
 }
 
-/// One row of the agent list: `● main` first, then `◯ type  description  status`.
+/// One row of the agent list: `● main` first, then `◯ type  description  status`. The filled mark
+/// is on the row Claude Code shows: main, or the agent picked with Enter (`◯ main`, `● type …`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentRow {
     pub name: String,
     pub description: String,
     pub state: AgentState,
+    /// Its mark is filled: Claude Code shows this one.
+    pub shown: bool,
 }
 
 /// The agent list the CLI draws under its input box while background agents exist (Claude Code
@@ -789,9 +854,10 @@ fn agent_row(row: &str) -> Option<(bool, AgentRow)> {
     let row = row.trim();
     let highlighted = row.starts_with(prompt_mark);
     let row = row.trim_start_matches(prompt_mark).trim_start();
+    let shown = row.starts_with('●');
     let rest = row.strip_prefix(['●', '◯'])?.strip_prefix(' ')?;
     if rest == "main" {
-        let main = AgentRow { name: "main".into(), description: String::new(), state: AgentState::Other };
+        let main = AgentRow { name: "main".into(), description: String::new(), state: AgentState::Other, shown };
         return Some((highlighted, main));
     }
     let parts: Vec<&str> = rest.split("  ").map(str::trim).filter(|p| !p.is_empty()).collect();
@@ -803,17 +869,23 @@ fn agent_row(row: &str) -> Option<(bool, AgentRow)> {
     } else {
         AgentState::Other
     };
-    Some((highlighted, AgentRow { name: name.into(), description: description.into(), state }))
+    Some((highlighted, AgentRow { name: name.into(), description: description.into(), state, shown }))
 }
 
 /// The agent list under the input box, and where its keys are; `None` for anything else.
 pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
     let input = input_row(screen)?;
-    let hint = screen.row_text(input + 2).trim().to_owned();
+    // The hint row ends with the effort ("◐ medium · /effort") after a gap, also while the list
+    // has the keys (2.1.332, `agent-message`): only what comes before the gap is the hint.
+    let row = screen.row_text(input + 2);
+    let hint = row.trim().split("   ").next().unwrap_or_default().trim().to_owned();
     let parts: Vec<String> = hint.split(" · ").map(collapse).collect();
     let has = |part: &str| parts.iter().any(|p| p == part);
     let keys = match () {
-        _ if hint == LIST_SELECT => ListKeys::Select,
+        // With the highlight on main; "· enter to view" after it while Claude Code shows an agent.
+        _ if hint == LIST_SELECT || parts.len() == 2 && parts[0] == LIST_SELECT && parts[1] == LIST_VIEW => {
+            ListKeys::Select
+        }
         _ if parts.first().is_some_and(|p| p == LIST_VIEW) && has(LIST_STOP) => ListKeys::Stop,
         _ if parts.first().is_some_and(|p| p == LIST_VIEW) && has(LIST_CLEAR) => ListKeys::Clear,
         // The input's hint row ends with the effort, after a gap.
@@ -841,11 +913,41 @@ pub(super) fn agent_list(screen: &Screen) -> Option<AgentList> {
     }
     let fits = match keys {
         ListKeys::Input => highlight.is_none(),
-        ListKeys::Select => highlight == Some(0),
+        // On main, or right after Enter on the agent Claude Code now shows.
+        ListKeys::Select => highlight.is_some_and(|h| h == 0 || rows[h].shown),
         ListKeys::Stop => highlight.is_some_and(|h| h > 0 && rows[h].state == AgentState::Running),
         ListKeys::Clear => highlight.is_some_and(|h| h > 0),
     };
     (fits && rows.len() > 1).then_some(AgentList { keys, rows, highlight })
+}
+
+/// The agent Claude Code shows instead of the main session, by the name its empty input's
+/// placeholder gives ("Message @general-purpose…": the agent's name or type, cut to 20 columns);
+/// `None` when the input is not empty or shows no such placeholder. From Claude Code 2.1.332's
+/// bundle; the `agent-message` compat script records it.
+pub(in crate::view::chat) fn viewing_agent(screen: &Screen) -> Option<String> {
+    let input = input_row(screen)?;
+    let row = screen.row_text(input);
+    let rest = row.trim().trim_start_matches(prompt_mark).trim();
+    let name = rest.strip_prefix(VIEWING)?.trim_end_matches('…').trim();
+    (!name.is_empty() && !name.contains("  ")).then(|| name.to_owned())
+}
+
+/// The placeholder's name is this agent type's, whole or cut.
+pub(in crate::view::chat) fn names_agent(shown: &str, agent_type: &str) -> bool {
+    shown == agent_type || agent_type.starts_with(shown) && shown.chars().count() >= 8
+}
+
+/// The input shows and no agent list is under it: its hint row offers no "↓ to manage" and no
+/// `● main` row follows (Claude Code draws the list only while background agents exist).
+pub(super) fn no_agent_list(screen: &Screen) -> bool {
+    let Some(input) = input_row(screen) else { return false };
+    let hint = collapse(&screen.row_text(input + 2));
+    !hint.contains(LIST_MANAGE)
+        && !hint.starts_with(LIST_SELECT)
+        && !hint.starts_with(LIST_VIEW)
+        && !(input + 3..(input + 6).min(screen.rows()))
+            .any(|r| agent_row(&screen.row_text(r)).is_some_and(|(_, row)| row.name == "main"))
 }
 
 /// The rewind list Esc Esc opens at an idle prompt (Claude Code 2.1.332, `rewind_*`): its prompts
@@ -859,6 +961,8 @@ pub(super) struct RewindList {
 
 /// The last row reading `title` with `next` under it (blank rows between): the row after `next`.
 fn titled(screen: &Screen, title: &str, next: &str) -> Option<usize> {
+    // The rewind's screens take the input box's place: with it on screen, a title is text.
+    input_box(screen).is_none().then_some(())?;
     let text = |r: usize| clean(&screen.row_text(r)).1;
     let under = |r: usize| (r + 1..screen.rows()).find(|&n| !text(n).is_empty());
     let top = (0..screen.rows()).rev().find(|&r| text(r) == title && under(r).is_some_and(|n| text(n) == next))?;
@@ -1030,12 +1134,22 @@ pub(super) struct Review {
     pub highlight: Option<usize>,
 }
 
+/// The last row the review draws: under "Cancel" Claude Code may leave blank rows and the input
+/// box's rule, plain or with the session's name (2.1.332).
+fn review_last(rows: &[(bool, String)]) -> Option<usize> {
+    rows.iter().rposition(|(_, text)| {
+        !text.is_empty() && !rule(text) && !crate::view::chat::submission::screen::named_rule(text)
+    })
+}
+
 pub(super) fn review(screen: &Screen) -> Option<Review> {
     let rows: Vec<(bool, String)> = (0..screen.rows()).map(|row| clean(&screen.row_text(row))).collect();
-    let last = rows.iter().rposition(|(_, text)| !text.is_empty())?;
+    let last = review_last(&rows)?;
     let first = last.checked_sub(1)?;
     let entry = |at: usize, n: usize| numbered(&rows[at].1) == Some((n + 1, REVIEW_ENTRIES[n]));
     (entry(first, 0) && entry(last, 1)).then_some(())?;
+    // With the input box on screen these rows are the user's text or the conversation.
+    input_box(screen).is_none().then_some(())?;
     let anchor = rows[..first].iter().rposition(|(_, text)| text == REVIEW)?;
     let above = rows[..anchor].iter().rev().find(|(_, text)| !text.is_empty())?;
     (tab_bar(&above.1) && !rows[anchor].0).then_some(())?;
@@ -1066,6 +1180,97 @@ pub(super) fn review(screen: &Screen) -> Option<Review> {
         _ => None,
     };
     Some(Review { answers, highlight })
+}
+
+/// The row under a question's preview box about notes (Claude Code 2.1.332).
+const NOTES: &str = "Notes:";
+
+/// How far right a box beside a question's choices starts at least: the choices' own column
+/// (`❯ 1. `) and a short label come first.
+const SIDE_BOX_LEFT: usize = 12;
+
+/// A box Claude Code draws beside a question's choices: the highlighted option's `preview`
+/// (recorded from 2.1.332, fixtures `preview_*`: column 34 of 100). Its column and its rows, top
+/// and bottom edges included, and the "Notes: press n to add notes" row under it when there is
+/// one: a top-left corner (`┌` or `╭`) followed by a rule at column [`SIDE_BOX_LEFT`] or further
+/// right, the same column's side (`│`) on every row down to a bottom-left corner (`└` or `╰`),
+/// text left of it on one of those rows, and a menu footer under it. The lowest such box counts.
+pub(super) fn side_box(screen: &Screen) -> Option<(usize, std::ops::Range<usize>)> {
+    let footer = (0..screen.rows()).rposition(|r| menu_footer(&screen.row_text(r)))?;
+    let ch = |r: usize, c: usize| screen.cell(r, c).ch;
+    let mut found = None;
+    for top in 0..footer {
+        for col in SIDE_BOX_LEFT..screen.cols().saturating_sub(2) {
+            if !matches!(ch(top, col), '┌' | '╭') || ch(top, col + 1) != '─' {
+                continue;
+            }
+            let mut bottom = None;
+            for r in top + 1..footer {
+                match ch(r, col) {
+                    '│' | '┃' => {}
+                    '└' | '╰' => {
+                        bottom = Some(r);
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            let Some(bottom) = bottom.filter(|&b| b > top + 1) else { continue };
+            let beside = (top..=bottom).any(|r| (0..col).any(|c| !ch(r, c).is_whitespace()));
+            // Under the box, in its column, a row about the notes the terminal takes with the
+            // answer ("Notes: press n to add notes"): the box's too.
+            let from_col = |r: usize| (col..screen.cols()).map(|c| ch(r, c)).collect::<String>();
+            let notes = (bottom + 1..(bottom + 3).min(footer))
+                .find(|&r| !screen.row_text(r).trim().is_empty())
+                .filter(|&r| from_col(r).trim_start().starts_with(NOTES) && (0..col).all(|c| ch(r, c) == ' '));
+            if beside {
+                found = Some((col, top..notes.unwrap_or(bottom) + 1));
+            }
+            break;
+        }
+    }
+    found
+}
+
+/// The screen as a question is read from it: without the box [`side_box`] finds beside the
+/// choices, whose rows would otherwise run into the choices' and the question's text. Every
+/// other cell, the cursor and the modes the keys are encoded for are as they were.
+pub(in crate::view::chat) fn question_view(screen: &Screen) -> std::borrow::Cow<'_, Screen> {
+    use crate::view::chat::terminal_card::sgr;
+    let Some((col, rows)) = side_box(screen) else { return std::borrow::Cow::Borrowed(screen) };
+    let modes = screen.modes();
+    let mut feed = String::new();
+    if modes.app_cursor {
+        feed.push_str("\x1b[?1h");
+    }
+    if modes.bracketed_paste {
+        feed.push_str("\x1b[?2004h");
+    }
+    for r in 0..screen.rows() {
+        let Some(line) = screen.line(r) else { continue };
+        let end = if rows.contains(&r) { col } else { screen.cols() };
+        let cells = &line.cells()[..end.min(line.cells().len())];
+        let end = cells.iter().rposition(|c| c.ch != ' ' || c.bg != mdshared_term::Color::Default).map_or(0, |i| i + 1);
+        feed.push_str(&format!("\x1b[{};1H", r + 1));
+        let mut pen = None;
+        for cell in cells[..end].iter().filter(|c| !c.is_spacer()) {
+            let look = (cell.fg, cell.bg, cell.attrs);
+            if pen != Some(look) {
+                feed.push_str(&sgr(look));
+                pen = Some(look);
+            }
+            feed.push(if cell.ch.is_control() { ' ' } else { cell.ch });
+        }
+        feed.push_str("\x1b[0m");
+    }
+    let cursor = screen.cursor();
+    feed.push_str(&format!("\x1b[{};{}H", cursor.row + 1, cursor.col + 1));
+    if !modes.cursor_visible {
+        feed.push_str("\x1b[?25l");
+    }
+    let mut view = Screen::new(screen.cols(), screen.rows(), 0);
+    view.feed(feed.as_bytes());
+    std::borrow::Cow::Owned(view)
 }
 
 #[cfg(test)]

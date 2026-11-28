@@ -33,6 +33,44 @@ pub(super) struct EchoWait {
     pub from_editor: bool,
 }
 
+/// A command Chat typed on its own (a button's, a handover's `/clear`, a `/rename`), followed
+/// after its keys until Claude Code took it; else exactly its text is taken off the input again.
+pub(super) struct Owned {
+    pub line: String,
+    /// The session and prompt the keys went to: a Ctrl+U goes only while they are the same.
+    pub stamp: Stamp,
+    pub step: OwnedStep,
+    /// The output epoch of the last key: a reading of the screen counts once it is newer.
+    pub epoch: u64,
+    /// The step's own deadline (`Entered`), and the latest moment for the whole of it.
+    pub due: Instant,
+    pub last: Instant,
+    /// When it was last looked at: time a turn runs meanwhile does not count against `last`.
+    pub seen: Instant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OwnedStep {
+    /// Enter went: the input must let go of the line.
+    Entered,
+    /// The line is to be taken off the input (Ctrl+U), only while the input shows exactly it.
+    Withdraw { presses: u8 },
+}
+
+/// What became of the last command Chat typed on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::view::chat) enum CommandResult {
+    /// Claude Code took it: the input let go of it after Enter.
+    Taken,
+    /// It was not entered, and nothing of it is left on the input.
+    Withdrawn,
+    /// It may be left on the input (the input shows other text, or could not be read).
+    Left,
+    /// Following stopped after its Enter (terminal input, another session): most likely taken,
+    /// but nobody saw it go.
+    Unknown,
+}
+
 /// A message of several lines, pasted and waiting to show on the input line before Enter.
 pub(super) struct LinesWait {
     pub stamp: Stamp,
@@ -41,6 +79,8 @@ pub(super) struct LinesWait {
     pub text: String,
     pub picture: bool,
     pub into_turn: bool,
+    /// A command for Claude Code's shell mode: the input shows it as `! command`.
+    pub shell: bool,
 }
 
 pub(super) struct EnterOnly {
@@ -127,6 +167,13 @@ pub(in crate::view::chat) struct Staging {
     pub(super) stopped: bool,
     pub(super) takeback: Option<Takeback>,
     pub(super) command: Option<CommandWait>,
+    /// A command Chat typed on its own, followed until Claude Code took it or it is withdrawn.
+    pub(super) owned: Option<Owned>,
+    /// A command whose following ended while the input could not be read (taken for run): should
+    /// the input later show exactly its line at rest, the box says so.
+    pub(super) unseen: Option<String>,
+    /// What became of the last such command (for the one who asked for it, a `/rename`).
+    pub(in crate::view::chat) result: Option<CommandResult>,
 }
 
 impl Chat {
@@ -155,6 +202,12 @@ impl Chat {
             self.staging.sent.clear();
             self.staging.stopped = false;
         }
+    }
+
+    /// A slash command's keys are on their way or followed: waiting for its prompt, its echo, or
+    /// (one Chat typed on its own) for Claude Code to take it.
+    pub(in crate::view::chat) fn command_in_flight(&self) -> bool {
+        self.staging.command.is_some() || self.staging.echo.is_some() || self.staging.owned.is_some()
     }
 
     pub(in crate::view::chat) fn enter_only(&self) -> bool {
@@ -186,12 +239,22 @@ pub(super) fn recovery_ready(tab: &Tab, now: Instant, recovery: Recovery) -> boo
 }
 
 pub(super) fn can_confirm(tab: &Tab, now: Instant, stamp: Stamp, into_turn: bool) -> bool {
+    confirms(tab, now, stamp, into_turn, false)
+}
+
+/// As [`can_confirm`], for a Ctrl+U that takes a command Chat typed on its own off the input: the
+/// command's own tracking (`Reason::Slash`, set once its Enter went) does not stop it.
+pub(super) fn can_withdraw(tab: &Tab, now: Instant, stamp: Stamp) -> bool {
+    confirms(tab, now, stamp, false, true)
+}
+
+fn confirms(tab: &Tab, now: Instant, stamp: Stamp, into_turn: bool, slash: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
     let modes = tab.term.screen.modes();
     let (gate, reason) = pane.chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
     stamp.matches(tab)
         && pane.model.error.is_none()
-        && reason.is_none()
+        && (reason.is_none() || slash && reason == Some(super::Reason::Slash))
         && gate != super::Gate::Ended
         && !modes.alt_screen
         && (pane.chat.demo || modes.bracketed_paste)

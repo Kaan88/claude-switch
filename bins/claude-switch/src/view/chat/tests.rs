@@ -190,17 +190,23 @@ fn mode_shortcut_is_scoped_to_the_palette_and_f6_still_has_terminal_bytes() {
 #[test]
 fn drawer_only_closes_automatically_if_it_opened_automatically() {
     let mut chat = Chat::default();
-    assert!(chat.react(Some(Reason::Tool)));
-    assert_eq!(chat.drawer, Drawer::Auto(Reason::Tool));
+    assert!(chat.react(Some(Reason::Permission)));
+    assert_eq!(chat.drawer, Drawer::Auto(Reason::Permission));
     assert!(chat.react(None));
     assert_eq!(chat.drawer, Drawer::Closed);
+    // Claude Code may be waiting, or the bell rang: the screen shows as a card instead.
+    for reason in [Reason::Tool, Reason::Bell] {
+        assert!(chat.react(Some(reason)));
+        assert_eq!(chat.drawer, Drawer::Closed);
+        chat.react(None);
+    }
     chat.open_drawer();
     chat.react(Some(Reason::Bell));
     chat.react(None);
     assert_eq!(chat.drawer, Drawer::Manual);
-    chat.react(Some(Reason::Tool));
+    chat.react(Some(Reason::Permission));
     chat.toggle_drawer();
-    chat.react(Some(Reason::Tool));
+    chat.react(Some(Reason::Permission));
     assert_eq!(chat.drawer, Drawer::Closed);
     chat.react(Some(Reason::Ended));
     assert_eq!(chat.drawer, Drawer::Auto(Reason::Ended));
@@ -565,7 +571,54 @@ fn compact_and_clear_only_write_after_confirmation() {
     }
 }
 
+mod redesign;
 mod review;
+
+/// Settings › Chat: the Compact chip runs Switch's handover by default, through the same command
+/// as "Compact and open…" (the handover dialog for the shown tab); with "Claude Code /compact" it
+/// is the CLI's `/compact` with its confirmation, as before.
+#[test]
+fn the_compact_chip_runs_the_handover_or_claude_codes_compact() {
+    use crate::dialogs::{Dialog, Pending};
+    use crate::state::AppState;
+    use crate::view::chat::composer::chips_of;
+    use crate::view::chat::input::chip_slash;
+    let mut app = demo();
+    assert!(app.config.chat.compact_handover);
+    let chips = chips_of(&app.config.chat);
+    assert!(chips.contains(&Control::Handover) && !chips.contains(&Control::Compact), "{chips:?}");
+    assert_eq!(chip_slash(Control::Handover), None, "the handover chip types nothing into the CLI");
+    // The handover's own checks: a session the list has not indexed gets no dialog.
+    app.handover_chip(Instant::now());
+    assert_eq!(app.compact_source(), None);
+    app.dialog = None;
+    app.apply_scan(crate::demo::scan(&app.config));
+    let session = app.sessions[0].id.clone();
+    let tab = app.tabs.shown_mut().unwrap();
+    (tab.session, tab.resume_id) = (Some(session.clone()), Some(session.clone()));
+    let id = tab.id;
+    app.handover_chip(Instant::now());
+    assert_eq!(app.compact_source(), Some((session.as_str(), Some(id))), "the handover dialog for this tab");
+    assert!(app.tabs.shown().unwrap().pane.as_ref().unwrap().chat.writes.is_empty());
+    app.dialog = None;
+
+    app.config.chat.compact_handover = false;
+    let chips = chips_of(&app.config.chat);
+    assert!(chips.contains(&Control::Compact) && !chips.contains(&Control::Handover), "{chips:?}");
+    let line = chip_slash(Control::Compact).unwrap();
+    assert_eq!(line, "/compact");
+    app.dialog = AppState::prepare_slash(app.tabs.shown_mut().unwrap(), Instant::now(), line, false);
+    assert!(
+        matches!(&app.dialog, Some(Dialog::Confirm { then: Pending::ChatSlash { line, .. }, .. }) if line == "/compact")
+    );
+    // A hidden Compact chip stays hidden whichever it runs.
+    app.config.chat.set_slot(4, None);
+    for handover in [false, true] {
+        app.config.chat.compact_handover = handover;
+        let chips = chips_of(&app.config.chat);
+        assert!(!chips.iter().any(|c| matches!(c, Control::Compact | Control::Handover)), "{chips:?}");
+    }
+}
 
 #[test]
 fn cut_removes_the_selection_once_the_clipboard_took_it() {
@@ -865,11 +918,9 @@ fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answ
     let typed = |ago: u64| Some(now - Duration::from_millis(ago));
     for (reason, typed_at, focus) in [
         (Reason::Permission, None, true),
-        (Reason::Tool, None, true),
-        (Reason::Tool, typed(3000), true),
+        (Reason::Permission, typed(3000), true),
         // Someone typing in the box keeps it: the next key would land on Claude Code's prompt.
         (Reason::Permission, typed(300), false),
-        (Reason::Bell, None, false),
         (Reason::Identity, None, false),
     ] {
         let mut chat = Chat { typed_at, ..Chat::default() };
@@ -879,6 +930,13 @@ fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answ
         // Gone again, the drawer closes and the box has the keyboard.
         chat.react_at(None, now);
         assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus);
+    }
+    // Claude Code may be waiting, or the bell rang: the terminal stays closed and the keyboard
+    // here; its card in the conversation opens it, with the keyboard, on a click.
+    for reason in [Reason::Tool, Reason::Bell] {
+        let mut chat = Chat::default();
+        chat.react_at(Some(reason), now);
+        assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus, "{reason:?}");
     }
     // Nor while the keyboard is in use here: text in the box, an attachment, text in a card's
     // field, or a selection in the conversation (Ctrl+C is meant for it, never for the CLI).
@@ -970,4 +1028,50 @@ fn a_branch_is_cut_only_where_a_turn_ended_and_never_in_a_subagents_transcript()
     let tab = app.tabs.shown().unwrap().id;
     app.branch_at(Instant::now(), tab, at(10));
     assert!(app.info.is_some(), "refused, with the reason");
+}
+
+/// A Claude tab split with a shell pane beside its own.
+fn split_claude_tab() -> (crate::state::AppState, u64) {
+    use crate::tabs::NewTab;
+    let mut app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
+    app.apply_scan(crate::demo::scan(&app.config));
+    app.window_focused = true;
+    let session = app.sessions.iter().find(|s| s.desktop_id.is_none()).unwrap().clone();
+    let tab = app.tabs.open(
+        NewTab { label: "tab".into(), color: [0; 3], session: Some(session.id.clone()), account: None },
+        crate::term::Term::empty((40, 8)),
+    );
+    let pane = app.new_session_pane(model::Source::Demo(session.file.clone()), session.cwd.clone());
+    app.tabs.get_mut(tab).unwrap().pane = Some(pane);
+    let window = Rect::new(0.0, 0.0, 800.0, 300.0);
+    app.layout_terminals(window, window, 1.0);
+    app.split_pane(std::time::Instant::now(), tab, crate::panes::Axis::Right);
+    (app, tab)
+}
+
+#[test]
+fn keys_for_a_shell_pane_are_not_input_to_claudes_terminal() {
+    let (mut app, tab) = split_claude_tab();
+    assert_eq!(app.tabs.get(tab).unwrap().focused_pane(), 1);
+    let chat = |app: &crate::state::AppState| app.tabs.get(tab).unwrap().pane.as_ref().unwrap().chat.last_input;
+    let before = chat(&app);
+    app.note_chat_terminal_input();
+    app.term_text("ls");
+    assert_eq!(chat(&app), before, "typed into the shell pane");
+    app.focus_pane(crate::panes::MAIN);
+    app.note_chat_terminal_input();
+    assert_ne!(chat(&app), before, "typed into Claude's own pane");
+}
+
+#[test]
+fn the_chat_layout_takes_the_keyboard_to_claudes_pane_and_back() {
+    let (mut app, tab) = split_claude_tab();
+    app.tabs.get_mut(tab).unwrap().panes.get_mut(1).unwrap().selecting = true;
+    assert!(app.set_shown_tab_chat(true));
+    let t = app.tabs.get(tab).unwrap();
+    assert_eq!(t.focused_pane(), crate::panes::MAIN);
+    assert!(!t.panes.get(1).unwrap().selecting, "the shell pane's drag ended");
+    assert!(!app.set_shown_tab_chat(true), "no change");
+    assert!(app.set_shown_tab_chat(false));
+    assert_eq!(app.tabs.get(tab).unwrap().focused_pane(), 1, "the shell pane has it again");
 }

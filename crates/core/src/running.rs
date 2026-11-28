@@ -91,7 +91,25 @@ pub fn scan(roots: &Roots, config: &Config) -> Vec<Running> {
 }
 
 pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
-    let mut out: Vec<Running> = Vec::new();
+    let (found, complete) = scan_folders(roots, config);
+    (found.into_iter().map(|(running, _)| running).collect(), complete)
+}
+
+/// The `sessions` folders (canonical paths) that hold the record of a live process, whatever
+/// account the session is shown under: a desktop app's session of a further account runs in the
+/// first account's CLI folder and holds that folder's files. False with them when some folder or
+/// record could not be read, or a live process's record names no session yet: the list may then
+/// miss one.
+pub fn live_folders(roots: &Roots, config: &Config) -> (Vec<PathBuf>, bool) {
+    let (found, complete) = scan_folders(roots, config);
+    let mut folders: Vec<PathBuf> = found.into_iter().map(|(_, folder)| folder).collect();
+    folders.sort();
+    folders.dedup();
+    (folders, complete)
+}
+
+fn scan_folders(roots: &Roots, config: &Config) -> (Vec<(Running, PathBuf)>, bool) {
+    let mut out: Vec<(Running, PathBuf)> = Vec::new();
     let mut complete = true;
     let mut seen = HashSet::new();
     for (cli_dir, slug) in cli_dirs(roots, config, &mut complete) {
@@ -105,7 +123,7 @@ pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
                 continue;
             }
         };
-        if !seen.insert(canonical) {
+        if !seen.insert(canonical.clone()) {
             continue;
         }
         let entries = match std::fs::read_dir(&dir) {
@@ -140,7 +158,7 @@ pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
                 }
             }
             let Some(session_id) = str_field(&v, "sessionId") else { continue };
-            if out.iter().any(|r| r.pid == pid && r.session_id == session_id) {
+            if out.iter().any(|(r, _)| r.pid == pid && r.session_id == session_id) {
                 continue;
             }
             let app = if str_field(&v, "entrypoint") == Some("claude-desktop") { App::Desktop } else { App::Cli };
@@ -148,16 +166,17 @@ pub fn scan_checked(roots: &Roots, config: &Config) -> (Vec<Running>, bool) {
                 (App::Desktop, Some(host)) => desktop_owner(&config.accounts, host),
                 _ => None,
             };
-            out.push(Running {
+            let running = Running {
                 session_id: session_id.to_string(),
                 pid,
                 app,
                 account: owner.map_or_else(|| slug.clone(), |a| a.slug.clone()),
                 cwd: str_field(&v, "cwd").map(PathBuf::from).unwrap_or_default(),
-            });
+            };
+            out.push((running, canonical.clone()));
         }
     }
-    out.sort_by(|a, b| a.account.cmp(&b.account).then(a.pid.cmp(&b.pid)));
+    out.sort_by(|(a, _), (b, _)| a.account.cmp(&b.account).then(a.pid.cmp(&b.pid)));
     (out, complete)
 }
 

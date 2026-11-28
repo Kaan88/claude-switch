@@ -52,6 +52,34 @@ impl Transcript {
         Ok(demo)
     }
 
+    /// The showcase with another turn that asks: its prompt, the start of the answer, and an
+    /// `AskUserQuestion` call with `input` that waits for its answer.
+    #[cfg(test)]
+    pub fn new_asking(prompt: &str, answer: &str, input: Value) -> io::Result<Self> {
+        let demo = Self::new_showcase(Some((prompt, answer, "")))?;
+        let mut file = fs::OpenOptions::new().append(true).open(&demo.path)?;
+        record(&mut file, 12, "assistant", json!([tool("ask", "AskUserQuestion", input)]))?;
+        Ok(demo)
+    }
+
+    /// A conversation that ran commands: `/context`, which printed `stdout` (colour codes and
+    /// all), and a shell-mode `git status` with coloured output.
+    #[cfg(test)]
+    pub fn new_command(stdout: &str) -> io::Result<Self> {
+        let cwd = Self::folder()?;
+        let path = cwd.join("command-output.jsonl");
+        let demo = Self { cwd, path, stop: None, writer: None };
+        let mut file = File::create(&demo.path)?;
+        let command = "<command-name>/context</command-name>\n<command-message>context</command-message>\n<command-args></command-args>";
+        record(&mut file, 1, "user", json!(command))?;
+        record(&mut file, 2, "user", json!(format!("<local-command-stdout>{stdout}</local-command-stdout>")))?;
+        record(&mut file, 3, "user", json!("<bash-input>git status --short</bash-input>"))?;
+        let status =
+            " \u{1b}[31mM\u{1b}[m docs/notes.md\n\u{1b}[32mA\u{1b}[m  src/tiles.rs\n\u{1b}[31m??\u{1b}[m sketch.txt";
+        record(&mut file, 4, "user", json!(format!("<bash-stdout>{status}</bash-stdout><bash-stderr></bash-stderr>")))?;
+        Ok(demo)
+    }
+
     /// A new session: its transcript holds nothing yet.
     #[cfg(test)]
     pub fn new_empty() -> io::Result<Self> {
@@ -448,10 +476,12 @@ fn seed(demo: &Transcript, file: &mut File) -> io::Result<()> {
         tool("notes", "Read", json!({"file_path":"field-notes.md"})),
         tool("proof", "Read", json!({"file_path":"ridge-proof.png"})),
     ];
-    for (id, desc, finished, note) in [
-        ("colour", "Compare the sky colours", Some(true), "Copper and slate keep their contrast at pocket size."),
-        ("contour", "Trace the ridge contour", Some(false), "Checking where the two ridges cross."),
-        ("caption", "Review the plate caption", None, "The caption should tell the reader which way to face."),
+    // Claude Code marks only an end beside an agent's transcript (`finished`, `stoppedByUser`):
+    // one finished, one stopped, and one whose end nothing records.
+    for (id, desc, end, note) in [
+        ("colour", "Compare the sky colours", "finished", "Copper and slate keep their contrast at pocket size."),
+        ("contour", "Trace the ridge contour", "stoppedByUser", "Checking where the two ridges cross."),
+        ("caption", "Review the plate caption", "", "The caption should tell the reader which way to face."),
     ] {
         let spawn = format!("spawn-{id}");
         calls.push(tool(&spawn, "Agent", json!({"description":desc})));
@@ -461,8 +491,11 @@ fn seed(demo: &Transcript, file: &mut File) -> io::Result<()> {
         record(&mut child, 4, "assistant", json!([tool("read", "Read", json!({"file_path":"field-notes.md"}))]))?;
         record(&mut child, 5, "user", json!([result("read", json!("Look west at dusk."))]))?;
         record(&mut child, 6, "assistant", json!(note))?;
-        let meta = json!({"agentType":"reviewer", "description":desc, "model":"demo",
-            "finished":finished, "toolUseId":spawn, "spawnDepth":1});
+        let mut meta = json!({"agentType":"reviewer", "description":desc, "model":"demo",
+            "toolUseId":spawn, "spawnDepth":1});
+        if !end.is_empty() {
+            meta[end] = json!(true);
+        }
         fs::write(side.with_extension("meta.json"), meta.to_string())?;
     }
     record(file, 2, "assistant", json!(calls))?;
@@ -600,7 +633,7 @@ fn image(bytes: &[u8]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use claude_switch_core::transcript::{ItemKind, Reader, TaskStatus};
+    use claude_switch_core::transcript::{AgentEnd, ItemKind, Reader, TaskStatus};
 
     #[test]
     fn demo_uses_real_reader_shapes_and_streams_more_records() {
@@ -619,8 +652,8 @@ mod tests {
         for picture in pictures {
             assert!(reader.load_picture(&picture).unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
         }
-        let states: Vec<_> = reader.subagents().map(|agent| agent.finished).collect();
-        assert_eq!(states, [None, Some(true), Some(false)]);
+        let states: Vec<_> = reader.subagents().map(|agent| agent.end.map(|(end, _)| end)).collect();
+        assert_eq!(states, [None, Some(AgentEnd::Finished), Some(AgentEnd::Stopped)]);
         assert_eq!(
             reader.tasks().iter().map(|task| task.status).collect::<Vec<_>>(),
             [TaskStatus::Completed, TaskStatus::InProgress, TaskStatus::Pending]

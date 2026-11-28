@@ -1,0 +1,12 @@
+# What Chat reads from scripts/shell-paste.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+# The pasted `!command` puts the input in shell mode: the cursor's row reads `! echo shellcheck`
+# (Chat's `!` toggle presses Enter only then).
+[typed]
+shell = echo shellcheck
+
+# The command ran in Claude Code's shell; its output shows, and the input is at rest again.
+[after]
+kind = idle
+send = yes
+shows = shellcheck

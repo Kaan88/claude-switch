@@ -49,6 +49,6 @@ fn supplied_transcript_loads_picture_payloads_with_matching_png_or_jpeg_signatur
         start.elapsed(),
         pictures.len(),
         reader.tasks().len(),
-        reader.subagents().len()
+        reader.subagents().count()
     );
 }

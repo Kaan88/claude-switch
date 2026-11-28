@@ -58,6 +58,15 @@ impl Live {
         self.chat().output(now, true, false);
     }
 
+    /// The CLI drew this screen now, read as the window reads output: only a change down to the
+    /// input box is activity.
+    pub(in crate::view::chat) fn draw(&mut self, fixture: &str) {
+        let now = self.now;
+        let screen = recorded(fixture);
+        self.tab().term.screen = screen.clone();
+        self.chat().output_on(now, true, false, &screen);
+    }
+
     /// Time passes and the window's tick runs.
     pub(in crate::view::chat) fn pass(&mut self, time: Duration) -> (Gate, Option<Reason>) {
         self.now += time;
@@ -245,7 +254,7 @@ fn text_on_the_cli_input_is_never_an_idle_prompt_and_a_draft_waits_until_it_is_g
 }
 
 /// What `PLAIN_WORKING_TYPED` shows on the input while a turn runs.
-const TYPED_WHILE_BUSY: &str = "hello while busy";
+pub(in crate::view::chat) const TYPED_WHILE_BUSY: &str = "hello while busy";
 
 fn paste(text: &str) -> Vec<Vec<u8>> {
     vec![format!("\x1b[200~{text}\x1b[201~").into_bytes()]
@@ -397,7 +406,10 @@ fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
     let now = f.now;
     AppState::chat_send(f.tab(), now, true);
     assert!(f.chat().error.is_none() && f.chat().queue.as_ref().is_some_and(Queue::sends_now));
-    assert_eq!(f.chat().notice(&Default::default()), Some("Sends as soon as Claude Code's input reads empty."));
+    assert_eq!(
+        f.chat().notice(&Default::default()),
+        Some("Goes into the turn as soon as Claude Code's input takes it.")
+    );
     assert!(f.writes().is_empty());
     // The input reads empty again while the turn still runs: the draft goes into it, and Enter
     // once the input shows it.
@@ -445,7 +457,11 @@ fn a_silent_turn_with_nothing_chat_can_read_opens_the_terminal() {
     // A short silence is only a slow turn.
     assert_eq!(f.pass(SECOND), (Gate::Running, None));
     assert_eq!(f.pass(SECOND * 4), (Gate::Check, Some(Reason::Tool)));
-    assert_eq!(f.chat().drawer, Drawer::Auto(Reason::Tool));
+    // The terminal shows as a card in the conversation (`terminal_card`); the drawer opens on its click.
+    assert_eq!(
+        super::super::terminal_card::cause(f.chat()),
+        Some(super::super::terminal_card::Cause::Reason(Reason::Tool))
+    );
     // Under the working line the same silence is a slow tool.
     f.show(WORKING_TOOL);
     assert_eq!(f.pass(SECOND * 6), (Gate::Running, None));
@@ -848,4 +864,481 @@ fn a_forms_typed_answer_ticks_its_box_and_is_left_for_next_or_submit() {
     let now = f.now;
     assert!(question::press(f.tab(), now, Hit::Option(4)));
     assert_eq!(f.writes(), [downs(1)]);
+}
+
+/// The CLI's input at rest holding `text` (or nothing), as the screen shows it.
+fn input_holds(f: &mut Live, text: &str) {
+    let now = f.now;
+    let tab = f.tab();
+    tab.term = Term::empty((100, 40));
+    tab.term.feed(format!("\x1b[?2004h\u{276f} {text}").as_bytes());
+    f.chat().output(now, true, false);
+}
+
+#[test]
+fn a_command_typed_just_before_a_permission_prompt_is_answered_around_and_then_taken_off() {
+    use crate::view::chat::question::screens::recorded::PERM_READ_OUTSIDE;
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    // Chat types a command of its own (a handover's /rename): its keys go, its echo is awaited.
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    assert_eq!(f.writes(), [b"/rename Notes".to_vec()]);
+    // Claude Code draws a permission prompt over the input before the echo is read.
+    f.show(PERM_READ_OUTSIDE);
+    f.pass(SECOND);
+    assert!(f.writes().is_empty(), "no Enter into the prompt");
+    let chat = f.chat();
+    assert!(chat.staging.owned.is_some(), "followed until the input can be read again");
+    assert!(chat.waiting().is_none(), "no keys of Chat's in flight: the prompt's card may answer it");
+    assert!(chat.question.prompt_answers(), "the card shows the prompt whole, with its choices");
+    // Answered; the turn goes on and ends with the command still typed on the input.
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [b"\x15".to_vec()], "exactly Chat's line comes off, one Ctrl+U");
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    let chat = f.chat();
+    assert_eq!(chat.staging.result, Some(CommandResult::Withdrawn));
+    assert_eq!(chat.error, Some(COMMAND_WITHDRAWN), "the box says what happened");
+    assert!(chat.staging.owned.is_none() && !chat.slash, "nothing holds the next message");
+    f.chat().error = None;
+    f.send("next");
+    assert_eq!(f.writes(), message("next"));
+}
+
+#[test]
+fn an_enter_the_cli_did_not_take_is_found_and_the_line_taken_off() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    f.writes();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "entered once the input shows it");
+    // Nothing changes: Claude Code did not take the Enter. Sends wait meanwhile, with a word.
+    f.pass(SECOND);
+    let now = f.now;
+    assert!(blocked(f.tab(), now, Intent::Draft).is_some());
+    f.pass(SECOND * 3);
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [b"\x15".to_vec()]);
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    assert_eq!(f.chat().staging.result, Some(CommandResult::Withdrawn));
+}
+
+#[test]
+fn a_command_taken_by_the_cli_lets_the_next_message_go() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    f.writes();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    input_holds(&mut f, "");
+    f.pass(SECOND / 10);
+    let chat = f.chat();
+    assert_eq!(chat.staging.result, Some(CommandResult::Taken));
+    assert!(chat.staging.owned.is_none() && chat.error.is_none());
+}
+
+#[test]
+fn text_of_anyone_elses_is_never_taken_off() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/rename Notes", false);
+    f.writes();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND / 10);
+    f.writes();
+    f.pass(SECOND * 4);
+    // Before the Ctrl+U the input shows something else (typed in the terminal meanwhile).
+    input_holds(&mut f, "/rename Notes and more of mine");
+    f.pass(SECOND);
+    assert!(f.writes().is_empty(), "nothing is cleared");
+    let chat = f.chat();
+    assert_eq!(chat.staging.result, Some(CommandResult::Left));
+    assert_eq!(chat.error, Some(COMMAND_LEFT));
+    assert!(chat.staging.owned.is_none() && !chat.slash);
+}
+
+#[test]
+fn a_command_from_the_box_is_never_taken_off() {
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    // The user's own command from the box: its text stays where the user can see it.
+    AppState::submit_slash(f.tab(), now, "/rename Notes", true);
+    f.writes();
+    f.pass(SECOND * 6);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().staging.owned.is_none() && f.chat().staging.recovery.is_some());
+}
+
+/// Chat typed `line` on its own and entered it once the input showed it.
+fn entered(f: &mut Live, line: &str) {
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, line, false);
+    assert_eq!(f.writes(), [line.as_bytes().to_vec()]);
+    input_holds(f, line);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+}
+
+#[test]
+fn a_command_that_opens_a_panel_ends_without_a_word_when_its_line_is_never_read_again() {
+    use crate::view::chat::question::screens::recorded::MENU_CONFIG;
+    let mut f = Live::new();
+    entered(&mut f, "/config");
+    // The panel hides the input until the limit: the command ran.
+    f.show(MENU_CONFIG);
+    f.pass(SECOND * 61);
+    let chat = f.chat();
+    assert!(chat.staging.owned.is_none());
+    assert_eq!(chat.staging.result, Some(CommandResult::Taken));
+    assert!(chat.error.is_none(), "no word about a line left on the input");
+    assert!(chat.slash, "the command's tracking goes on");
+    assert!(f.writes().is_empty());
+}
+
+#[test]
+fn a_line_read_at_rest_after_following_ended_unseen_is_said() {
+    use crate::view::chat::question::screens::recorded::MENU_CONFIG;
+    let mut f = Live::new();
+    entered(&mut f, "/config");
+    f.show(MENU_CONFIG);
+    f.pass(SECOND * 61);
+    assert_eq!(f.chat().staging.result, Some(CommandResult::Taken));
+    // The panel closes and the input still holds the line: the command never ran.
+    input_holds(&mut f, "/config");
+    f.pass(SECOND);
+    let chat = f.chat();
+    assert_eq!(chat.error, Some(COMMAND_LEFT));
+    assert_eq!(chat.staging.result, Some(CommandResult::Left));
+    assert!(!chat.slash && chat.staging.unseen.is_none());
+    assert!(f.writes().is_empty(), "never cleared: it is said");
+}
+
+#[test]
+fn an_empty_input_after_following_ended_unseen_says_nothing() {
+    use crate::view::chat::question::screens::recorded::MENU_CONFIG;
+    let mut f = Live::new();
+    entered(&mut f, "/config");
+    f.show(MENU_CONFIG);
+    f.pass(SECOND * 61);
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    let chat = f.chat();
+    assert!(chat.error.is_none() && chat.staging.unseen.is_none());
+    assert_eq!(chat.staging.result, Some(CommandResult::Taken));
+}
+
+#[test]
+fn a_running_turn_does_not_use_up_the_time_to_take_a_line_off() {
+    let mut f = Live::new();
+    entered(&mut f, "/rename Notes");
+    // Enter did not take: the line is to come off.
+    f.pass(SECOND * 4);
+    assert!(matches!(f.chat().staging.owned.as_ref().unwrap().step, OwnedStep::Withdraw { .. }));
+    // A turn runs for longer than the limit with the line on the input: no Ctrl+U meanwhile.
+    f.tab().program_title = "Claude Code — Working".into();
+    for _ in 0..80 {
+        input_holds(&mut f, "/rename Notes");
+        f.pass(SECOND);
+    }
+    assert!(f.writes().is_empty(), "no Ctrl+U into a running turn");
+    assert!(f.chat().staging.owned.is_some(), "still followed");
+    assert_ne!(f.chat().error, Some(COMMAND_LEFT));
+    // The turn ends: the line comes off.
+    f.tab().program_title = String::new();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [CLEAR_LINE.to_vec()]);
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    assert_eq!(f.chat().staging.result, Some(CommandResult::Withdrawn));
+}
+
+#[test]
+fn a_command_still_read_on_the_input_at_the_limit_is_said_to_be_left() {
+    let mut f = Live::new();
+    entered(&mut f, "/rename Notes");
+    // The line stays, but never at rest long enough for a Ctrl+U (output keeps coming).
+    for _ in 0..130 {
+        input_holds(&mut f, "/rename Notes");
+        f.pass(SECOND / 2);
+    }
+    let chat = f.chat();
+    assert_eq!(chat.staging.result, Some(CommandResult::Left));
+    assert_eq!(chat.error, Some(COMMAND_LEFT));
+    assert!(f.writes().is_empty());
+}
+
+#[test]
+fn terminal_input_ends_the_following_of_a_command_without_a_key() {
+    let mut f = Live::new();
+    entered(&mut f, "/rename Notes");
+    assert!(f.chat().staging.owned.is_some());
+    f.chat().interrupt_staging();
+    let chat = f.chat();
+    assert!(chat.staging.owned.is_none(), "the input may hold the user's own text now");
+    assert_eq!(chat.staging.result, Some(CommandResult::Unknown), "after its Enter: most likely taken");
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND * 5);
+    assert!(f.writes().is_empty(), "no Ctrl+U after terminal input");
+    let now = f.now;
+    assert_ne!(blocked(f.tab(), now, Intent::Draft), Some(OWNED_PENDING));
+}
+
+#[test]
+fn no_ctrl_u_goes_while_the_gate_would_refuse_a_key() {
+    let mut f = Live::new();
+    entered(&mut f, "/rename Notes");
+    // Exactly the line, at rest, but the title says a turn runs.
+    f.tab().program_title = "Claude Code — Working".into();
+    f.pass(SECOND * 4);
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    f.pass(SECOND);
+    assert!(f.writes().is_empty(), "no Ctrl+U into a running turn");
+    f.tab().program_title = String::new();
+    input_holds(&mut f, "/rename Notes");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [CLEAR_LINE.to_vec()]);
+}
+
+#[test]
+fn one_reading_of_other_text_while_output_still_comes_is_not_taken() {
+    let mut f = Live::new();
+    entered(&mut f, "/rename Notes");
+    // A redraw caught half way: newer output, not at rest, not empty.
+    input_holds(&mut f, "/rename No");
+    f.pass(Duration::from_millis(10));
+    assert!(f.chat().staging.owned.is_some(), "not taken on that reading");
+    assert_eq!(f.chat().staging.result, None);
+    // At rest, the input reads empty: taken.
+    input_holds(&mut f, "");
+    f.pass(SECOND);
+    assert_eq!(f.chat().staging.result, Some(CommandResult::Taken));
+}
+
+const RULE: &str = "────────────────────";
+const NAMED: &str = "──────────────────── Test session ─";
+
+/// Background agents listed under the input, their row redrawn with `timer`; `above` over the
+/// input's rule.
+fn agents_below(above: &str, timer: &str) -> String {
+    format!(
+        "cursor 2 2\n{above}\n{NAMED}\n❯ \x1b[2msuggested text\x1b[0m\n{RULE}\n  ⏵⏵ auto mode on · 2 background tasks · ↓ to manage\n  ● main\n  ◯ general-purpose  Reading a.rs   {timer} · ↓ 1.0k tokens\n  ↓ 1 more"
+    )
+}
+
+#[test]
+fn background_agents_redrawn_under_the_input_do_not_keep_a_command_from_going() {
+    // Their timers redraw every second while the CLI is at rest: counted as activity, the screen
+    // was never quiet and every command was refused (owner, 2026-11-28).
+    let waiting = "✻ Waiting for 2 background agents to finish";
+    let mut f = Live::new();
+    f.draw(&agents_below(waiting, "1m 02s"));
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert!(f.chat().error.is_none() && f.writes().is_empty());
+    for second in 3..7 {
+        f.pass(QUIET * 2 / 3);
+        f.draw(&agents_below(waiting, &format!("1m 0{second}s")));
+    }
+    assert_eq!(f.writes(), [b"/context".to_vec()]);
+    assert!(f.chat().staging.command.is_none() && f.chat().error.is_none());
+
+    // A row above the input that keeps changing is still activity: never quiet, refused.
+    let mut f = Live::new();
+    f.draw(&agents_below("✻ Thinking (1s)", "1m 02s"));
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    for second in 2..10 {
+        f.pass(QUIET * 2 / 3);
+        f.draw(&agents_below(&format!("✻ Thinking ({second}s)"), "1m 02s"));
+    }
+    assert_eq!(f.chat().error, Some(NO_QUIET_PROMPT));
+    assert!(f.chat().staging.command.is_none() && f.writes().is_empty());
+}
+
+#[test]
+fn only_the_rows_down_to_the_input_box_count_as_activity() {
+    let digest = |fixture: &str| screen::activity_digest(&recorded(fixture));
+    let base = digest(&agents_below("Done.", "1m 02s"));
+    assert_eq!(base, digest(&agents_below("Done.", "1m 03s")), "under the box");
+    assert_ne!(base, digest(&agents_below("Done!", "1m 02s")), "over it");
+    // A menu has no input box: an earlier prompt's mark in the history does not cut it short.
+    let menu = |highlight: usize| {
+        let row = |n: usize, text: &str| format!("{} {n}. {text}", if n == highlight { "❯" } else { " " });
+        format!("cursor 0 0\n❯ hello\n\n{RULE}\n Do you want to proceed?\n{}\n{}", row(1, "Yes"), row(2, "No"))
+    };
+    assert_ne!(digest(&menu(1)), digest(&menu(2)));
+}
+
+#[test]
+fn a_menus_highlighted_choice_is_no_input_mark() {
+    let screen = recorded(&format!("cursor 0 0\n❯ 1. Yes\n  2. No\n❯ 12. Twelve\n❯ hello\n❯ 1.5 is a number\n{RULE}"));
+    assert!(!screen::marks_input(&screen, 0) && !screen::marks_input(&screen, 2));
+    assert!(screen::marks_input(&screen, 3) && screen::marks_input(&screen, 4));
+    // Right under the input box's rule, plain or named, `❯ 1. …` is a message on the input.
+    let typed = recorded(&format!("cursor 1 10\n{RULE}\n❯ 1. fix a\n{RULE}"));
+    assert!(screen::marks_input(&typed, 1));
+    let named = recorded(&format!("cursor 1 10\n{NAMED}\n❯ 1. fix a\n{RULE}"));
+    assert!(screen::marks_input(&named, 1));
+}
+
+#[test]
+fn a_message_starting_with_a_number_reads_as_the_input() {
+    // Several lines, sent as typed: the echo check and the take-back read them.
+    let lines = recorded(&format!("cursor 2 10\n{RULE}\n❯ 1. fix a\n  2. fix b\n{RULE}\n  ⏵⏵ auto mode on"));
+    assert!(screen::shows_lines(&lines, "1. fix a\n2. fix b"));
+    assert!(screen::shows_some_input(&lines));
+    // One line.
+    let single = recorded(&format!("cursor 1 8\n{NAMED}\n❯ 1. x\n{RULE}\n  ⏵⏵ auto mode on"));
+    assert!(screen::shows_some_input(&single));
+    assert_eq!(screen::prompt(&single).as_deref(), Some("1. x"));
+    // The activity digest ends at the input box's bottom rule, as for any input.
+    let below =
+        |hint: &str| screen::activity_digest(&recorded(&format!("cursor 1 8\n{RULE}\n❯ 1. x\n{RULE}\n  {hint}")));
+    assert_eq!(below("1m 02s"), below("1m 03s"));
+    // The menu the exclusion is for: its highlighted choice is under its question, no input.
+    let first = format!(
+        "cursor 4 0\n❯ hello\n\n{RULE}\n Do you want to proceed?\n❯ 1. Yes\n  2. No\n\n Esc to cancel · Tab to amend"
+    );
+    let menu = recorded(&first);
+    assert!(!screen::marks_input(&menu, 4));
+    assert!(!screen::shows_some_input(&menu));
+    // A move of the highlight is activity: the menu counts whole.
+    let second = recorded(&first.replace("❯ 1. Yes\n  2.", "  1. Yes\n❯ 2."));
+    assert_ne!(screen::activity_digest(&menu), screen::activity_digest(&second));
+}
+
+#[test]
+fn a_command_after_slash_model_goes_once_the_idle_screen_is_quiet() {
+    // The turn before `/model` had no `end_turn` record, so the command's own record stays the
+    // newest and Active: the idle screen is what tells it is over.
+    let idle = format!(
+        "cursor 3 2\n❯ /model opus\n  ⎿  Set model to Opus and saved as your default\n{NAMED}\n❯ \n{RULE}\n  ⏵⏵ auto mode on (shift+tab to cycle)"
+    );
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&idle);
+    let now = f.now;
+    assert_eq!(blocked(f.tab(), now, Intent::Slash), Some(NO_QUIET_PROMPT), "not quiet yet: waited for");
+    f.pass(SECOND);
+    let now = f.now;
+    assert_eq!(blocked(f.tab(), now, Intent::Slash), None);
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert_eq!(f.writes(), [b"/context".to_vec()]);
+    // A chip command right after `/model`, within the quiet time: held, then run by itself.
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&idle);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert!(f.chat().error.is_none() && f.writes().is_empty());
+    assert!(f.chat().staging.command.is_some(), "held by the command's wait");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), [b"/context".to_vec()]);
+    assert!(f.chat().staging.command.is_none() && f.chat().error.is_none());
+    // Held the same way, but a turn shows meanwhile: refused as running, nothing written.
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&idle);
+    let now = f.now;
+    AppState::submit_slash(f.tab(), now, "/context", false);
+    assert!(f.chat().staging.command.is_some());
+    f.draw(&idle.replace("  ⎿  Set model", "✻ Working… (1s)\n  ⎿  Set model").replacen("cursor 3 2", "cursor 4 2", 1));
+    f.pass(QUIET / 3);
+    assert!(f.writes().is_empty() && f.chat().staging.command.is_none());
+    assert_eq!(f.chat().error, Some(BUSY_CMD));
+    // The same transcript with a working line: the turn runs.
+    let mut working = idle.replace("  ⎿  Set model", "✻ Working… (3s)\n  ⎿  Set model");
+    working = working.replacen("cursor 3 2", "cursor 4 2", 1);
+    let mut f = Live::new();
+    {
+        let pane = f.tab().pane.as_mut().unwrap();
+        pane.model.chat.prompt = Some(500);
+        pane.model.chat.latest = Some((500, ChatPhase::Active));
+        pane.chat.fresh = true;
+    }
+    f.draw(&working);
+    f.pass(SECOND);
+    let now = f.now;
+    assert_eq!(blocked(f.tab(), now, Intent::Slash), Some(BUSY_CMD));
+}
+
+#[test]
+fn a_review_step_over_blank_rows_and_a_named_rule_shows_as_a_card() {
+    // Claude Code left five blank rows and the input's named rule under "2. Cancel": the last
+    // row was taken for the review's last entry, and Chat sent the user to the terminal.
+    let review = format!(
+        "cursor 9 2\n{RULE}\n←  ☒ Size  ✔ Submit  →\n\nReview your answers\n\n │ ● Which size should the test use? A long question\n │   that wraps onto a second row.\n   → Small\n\n❯ 1. Submit answers\n  2. Cancel\n\n\n\n\n\n{NAMED}"
+    );
+    let mut f = Live::new();
+    f.turn();
+    f.draw(&review);
+    // The transcript holds no call while the question waits: a card for the screen's menu.
+    assert_eq!(f.pass(QUIET), (Gate::Check, Some(Reason::Menu)));
+    let shown = f.chat().question.menu.clone().expect("a card");
+    assert!(format!("{shown:?}").contains(r#"["Submit answers", "Cancel"]"#), "{shown:?}");
+    assert_eq!(f.chat().drawer, Drawer::Closed, "no terminal needed");
+    f.send("later");
+    assert!(f.writes().is_empty() && f.chat().queue.is_none());
+}
+
+#[test]
+fn a_numbered_message_makes_no_card_in_the_input_or_once_sent() {
+    // The owner's message, a numbered list of three lines: Chat read a menu from its own lines,
+    // showed a card for it and refused every send.
+    let footer_like = "  Enter to select · ↑/↓ to navigate · Esc to cancel";
+    let draft =
+        format!("cursor 3 12\n❯ earlier\n{RULE}\n❯ 1. say pong\n  2. nothing else\n  3. done\n{RULE}\n{footer_like}");
+    let mut f = Live::new();
+    f.draw(&draft);
+    let (_, reason) = f.pass(QUIET);
+    assert_ne!(reason, Some(Reason::Menu));
+    assert!(f.chat().question.menu.is_none(), "no card");
+    let now = f.now;
+    assert_ne!(blocked(f.tab(), now, Intent::Slash), Some(MENU_OPEN));
+    // Sent: the message in the conversation, the turn running, the empty input.
+    let sent = format!(
+        "cursor 6 2\n❯ 1. say pong\n  2. nothing else\n  3. done\n\n✻ Working… (1s)\n{RULE}\n❯ \n{RULE}\n{footer_like}"
+    );
+    let mut f = Live::new();
+    f.turn();
+    f.draw(&sent);
+    let (_, reason) = f.pass(QUIET);
+    assert_ne!(reason, Some(Reason::Menu));
+    assert!(f.chat().question.menu.is_none(), "no card");
 }

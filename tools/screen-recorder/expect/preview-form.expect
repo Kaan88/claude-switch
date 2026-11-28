@@ -1,0 +1,61 @@
+# Recorded from Claude Code 2.1.332 (Haiku) on 2026-11-28. `side` says whether the preview box
+# was found beside the choices; every other screen key is read without it, as Chat reads the
+# question. A page with previews has no "Type something" row, and its "Chat about this" no
+# number; the other pages are drawn as in `form`.
+
+[page1]
+kind = question
+title = Which layout do you prefer?
+choices = Boxed | Tree | Chat about this
+highlight = Boxed
+side = yes
+send = no
+
+[waiting_transcript]
+# Whether the transcript holds the call while the form waits differs from run to run (see
+# `preview.expect`): Chat uses the call's card whenever it is there, the screen's otherwise.
+asked = - || Layout · Extras · Name (2 previews, 1 multi-select, running)
+
+[page1_tree]
+kind = question
+highlight = Tree
+side = yes
+
+[page2]
+kind = question
+title = Which extras should it keep?
+choices = [ ] Logs | [ ] Metrics | [ ] Traces | [ ] Type something | Next | Chat about this
+highlight = [ ] Logs
+
+[page2_logs]
+kind = question
+choices = [✔] Logs | [ ] Metrics | [ ] Traces | [ ] Type something | Next | Chat about this
+
+[page2_typed]
+kind = question
+answer = alerts
+
+[page2_next]
+kind = question
+highlight = Next
+
+[page3]
+kind = question
+title = How long a name?
+choices = Short | Long | Type something. | Chat about this
+highlight = Short
+
+[review]
+kind = review
+answers = Which layout do you prefer? = Tree | Which extras should it keep? = Logs, alerts | How long a name? = Short
+choices = Submit answers | Cancel
+highlight = Submit answers
+send = no
+
+[submitted]
+kind = idle
+send = yes
+working = no
+
+[submitted_transcript]
+asked = Layout · Extras · Name (2 previews, 1 multi-select, ok)

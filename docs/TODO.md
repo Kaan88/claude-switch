@@ -34,23 +34,37 @@ Written 2026-11-26, when work was stopped for the night. Read `DESIGN.md` first.
 
 The ten changes of the redesign study (branch `design/chat-redesign`, `docs/chat-redesign.md`) were
 built by one agent (merge `d2deea0`) and released at the owner's word before a review (owner,
-2026-11-28). Still to do:
+2026-11-28). A read-only review found twelve issues; all were fixed on `feature/redesign-fixes`
+(cards that fit or scroll, a card on a new session, the task progress below 900 px, Stop's own
+slot and turn check, "Run in background" without its line, the question's measure and mark, the
+code header's patch, Esc under a card, the older cards' layout, per-frame work, copied spacers),
+with queued messages and Send now (Claude Code's Ctrl+X Ctrl+S). Still to do:
 
-- A correctness review of the branch (`main` b71f1a4 to `ee3500a`) for behaviour that changed beyond
-  the look: sending, queueing, Send now, card answering, Stop, undo, prompt recall.
 - Never tried in the running app or in a real session: the banner read on the empty state, the
-  patch on real edits (diff line numbers), "Run in background" on the working line.
-- Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind and
-  blocked-calls cards, a card in a very short window; scales other than 100 % and 150 %; the new
-  cards and panel in custom themes.
-- Decided by the builder, to confirm: typing while a card is docked goes nowhere until the card's
-  field is clicked; with a draft, Stop is an icon-only square beside Send; Chat's side padding grew
-  12 to 28 px; code blocks sit about 40 px lower (header drawn in a spacer, the renderer is an
-  external crate); the Session view keeps its strip and its tabs.
-- Not updated: the README's screenshots, `docs/DESIGN.md`, this file's Chat items.
+  patch on real edits (diff line numbers), "Run in background" on the working line, queued
+  messages and their Send now (recorded only through `recorder compat`), a card scrolled under
+  its pinned foot.
+- Drawn 2026-11-28 (`chat_shots`): a form built from the transcript's pending call (`form-tabs`,
+  `form-submit`) and the rewind card's choices (`rewind-choices`, the recorded choices screen
+  read by Chat's own rewind step; looking at it found the list flush against the rows above it,
+  now apart). Neither tried in the running app.
+- Decided, to confirm by the owner: typing while a card is docked still goes nowhere (the card
+  says so once); Stop is a small square in its own slot beside Send whenever a turn runs; Chat's
+  side padding is 28 px, 12 px under a 560 px column; code blocks sit about 40 px lower (header
+  drawn in a spacer, the renderer is an external crate); the Session view keeps its strip and its
+  tabs; a cut command well says how many lines are only in the terminal.
+- Not done: the cards' parts are built each frame (the question's measure, the costly part, is
+  cached); the code header still hides the renderer's own language label with a patch (in the
+  box's colour, only in the band the renderer keeps free of code, never over a selection) as the
+  renderer has no setting to leave it out.
+- Not updated: the README's screenshots, this file's Chat items.
 
 ## Completed follow-ups
 
+- The Sessions details show the conversation with the shared view, read-only, in a region that
+  scrolls on its own (2026-11-28, branch `feature/workers-tab`; DESIGN.md, "Session organization").
+  Seen in the picture test `sessions_details_shots` in both themes; not tried in the running app
+  with a real, long transcript.
 - Open a copy is in the palette and under "Open elsewhere"; the Desktop and cold-cache warnings
   share one confirmation. Both are documented in `DESIGN.md`.
 - Shell and Desktop launches strip the CLI config, login and session variables. Confirm dialogs use
@@ -82,8 +96,27 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Defects noticed
 
+- Try Resume in the desktop app as a further account (fixed 2026-11-28, review finding 5: it was real,
+  `claude --desktop --resume` opens a `claude:` link that Windows hands to the first account's
+  desktop app; a further account now starts its own desktop app with `--user-data-dir` and the link,
+  DESIGN.md "Facts"). Read from the desktop app's files, not run: check that the session opens in the
+  further account's window, both when that window is closed and when it is open.
 - Try Branch from the running app (2026-11-28: `recorder compat` resumes the app's cut copies in
   print mode and in the terminal, but the app's own button, tab and mark were not used for real).
+- Try subagent states with real sessions (2026-11-28; the shapes are from Claude Code 2.1.332's
+  bundle and the recorded agent list, not from a recorded transcript): a background agent running,
+  finished and stopped from the list, a foreground agent finished and interrupted with Esc, and a
+  closed session reopened. Check that Running shows only while the list shows it, and whether an
+  agent stopped from the list gets `stoppedByUser` or no mark (Claude Code's own note says a stop
+  "via the UI leaves no transcript marker"; that one then reads Unknown once the list drops it).
+- Record `agent-message` again (`pwsh tools\cli-compat.ps1 -Only agent-message`). Run
+  20261128-122040 recorded the walk up to Back (the `agent_message_*` fixtures); not yet
+  recorded: the Esc that gives the input its keys back after Back (`back_closed`, Chat's walk
+  sends it), the message typed as a bracketed paste while the list has the keys (the first run
+  typed it as plain keys), and the agent's end with the message in its own transcript
+  (`ended_transcript`; the first run's `wait completed` never matched 2.1.332's "Agent "Count
+  slowly" finished · 1m 3s"). Still open: whether a named agent's placeholder gives its name
+  rather than its type (Chat then holds the message, as the name does not match).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.
@@ -94,42 +127,15 @@ as the second account, Windows Terminal, the desktop hand-over.
 - Insert and Shift+Insert cannot be typed (`keys::key_name` has no Insert); input-method composition
   does not work (the toolkit's host turns it off on Windows); F13 and above; Ctrl+Alt+letter on
   AltGr layouts.
-- `claude --desktop --resume` as a further account probably opens the first account's copy of the
-  desktop app (review finding 5, not verified).
 
 ## Later (the owner's list)
 
-- **What Chat cannot read, shown in Chat** (owner, 2026-11-28; next after the command-output
-  renderer, which it reuses). When Chat says Claude Code may be waiting in the terminal, it shows the
-  relevant part of the terminal screen (the rows around the prompt) as a card in the conversation,
-  drawn with the terminal's font and colours, with **Answer in terminal** (opens the drawer with the
-  keyboard, as 0.1.6 does for questions). Chat still never types into a screen it cannot read. Not on
-  Tab: Tab completes in the message box. The screen reports (`%APPDATA%\claude-switch\screen-reports`)
-  show which prompts come up; frequent ones can become real cards, as the trust question did.
 - **Wrap long lines in Chat's edit diffs** (owner, 2026-11-28, screenshot of a Markdown table row cut
   at the right edge). The patch view of an edit (line numbers, +/- and the changed text) cuts lines
   that are wider than the column. Wrap them instead: continuation rows keep the +/- background, are
   indented under the text (not under the number), and carry no line number; a long word or URL breaks
   anywhere. Selecting and Copy still give the original lines. Optionally a toggle to scroll sideways
   instead, for code where wrapping hurts.
-- **Running and finished subagents are not told apart** (owner, 2026-11-28, screenshot: Details ›
-  Background lists agents with `?`, among them one that has finished). `?` is drawn when
-  `agent.finished` is `None` (`view/chat/side/paint.rs`, Side::Agents): Chat found the agent's call but
-  no result. Find which shapes leave it unknown (the result outside the loaded slice, a background
-  agent that reports through a `<task-notification>` instead of a tool result, an interrupted or
-  stopped agent, the agent's own transcript ended) and settle each from what is there: the
-  notification, the agent's transcript end, the agent list under Claude Code's input (running or
-  stopped). Show three plain states (running, finished, stopped or interrupted) with a word, not only a
-  mark, and keep `?` only when nothing can tell, with a tooltip saying why.
-- **The message box talks to the subagent Chat shows** (owner, 2026-11-28). With a subagent's
-  conversation open in Chat ("‹ Back · <agent's task>"), the box still sends to the main session.
-  It should send to that agent, the way Claude Code does when an agent is picked in the list under its
-  input (`↓ to manage`, then the agent: typed text goes to it). Chat picks the agent through that list
-  and sends only once the screen shows that agent selected; otherwise it holds the message and says
-  why. Make the target plain: the box's edge and placeholder take the agent's colour and name
-  ("Message general-purpose…"), and Back returns the box to the main session. An agent that has
-  ended or is not in the list can't be messaged: the box says so instead of sending to main. Record
-  the agent list's selection and a message to an agent with a compat script first.
 - **Question previews and tabbed forms in Chat's card** (owner, 2026-11-28; after the queue job and the
   command-output renderer). Claude Code's question tool can give each option a `preview` (monospace
   text: mock-ups, code, layouts); the terminal shows the options on the left and the highlighted
@@ -141,25 +147,53 @@ as the second account, Windows Terminal, the desktop hand-over.
   currently falls back to "Choose in Claude Code's menu above"; show its tabs in the card so it can
   be answered in Chat, with the Submit step. Check with a compat script that asks a question with
   previews and one with several questions.
-- **Command output in Chat drawn like the terminal** (owner, 2026-11-28; doable). Output of commands such
-  as `/context`, `/mcp` or `/cost` shows in Chat as plain grey text: no colours, and the cell glyphs
-  (⛁ ⛀ ⛶) come from a fallback font with other widths, so the grid and the columns beside it go out of
-  line. The terminal drawer shows the same output correctly. The transcript keeps the colour codes
-  (the `<local-command-stdout>` record of `/context` has its SGR sequences), so Chat can draw it: feed
-  the text into an off-screen terminal of the block's width (the app's own emulator, `mdshared_term`)
-  and paint its cells with the terminal's font, cell grid and the theme's ANSI colours, as the drawer
-  does; keep selection and Copy working as plain text. Check wide lines (wrap or scroll sideways) and
-  output recorded with no colour codes.
-- **Workers tab**, after a usable first version: the bridge's jobs live (worker, model, folder, running
-  time, last tool) from `%TEMP%\opencode-agent\job_*.json`, the output streaming from `job_*.jsonl`, and
-  Cancel. Read-only on the bridge's files.
+  - Previews built 2026-11-28 on `feature/question-previews` (DESIGN.md, "Previews"). Seen only in
+    the picture test (`chat_shots` states `preview`, `preview-hover`, `preview-screen`: wide and
+    narrow, 100 % and 150 %, both themes) and unit tests over screens recorded from 2.1.332 on
+    2026-11-28 (`fixtures/preview_*`; the first recording found the reader did not see such a
+    question at all, fixed the same day, 18 of 18 states read as expected offline). Whether the
+    transcript holds the call while the question waits is racy (once yes, once no): to record
+    again with `preview` and `preview-form`, several times, and to try in the running app both
+    ways (the card with its previews, and the screen's card). Not built: notes (`n`).
+  - Form tabs and the Submit step built 2026-11-28 on the same branch (DESIGN.md, "Forms"), for
+    the card built from the transcript's call. Seen in `chat_shots` states `form-tabs` and
+    `form-submit` (same sizes and themes) and unit tests; the keys to Claude Code's form are the
+    ones already tested over recorded screens. Not done: tabs on the menu card read from the
+    screen, which is what shows while Claude Code (as 2.1.332 did) keeps the call out of the
+    transcript until it is answered: that card still answers one page at a time.
+- **Workers tab**: built 2026-11-28 on branch `feature/workers-tab` (DESIGN.md, "The Workers tab").
+  Seen only in the picture test `workers_tab_shots` (made-up jobs, both themes, wide and 760×480)
+  and unit tests; never in the running app against the real folder. To try: the first scan of a
+  folder with many job files (it parses each state file once), a job's output while it runs, and
+  Cancel on a real running job (the unit test ends a process tree it started itself). Not built: a
+  way to cancel a queued job (only the bridge can), copying the output, the job's reply.
 - A real hand-over out of Desktop (make it let go of a session). No supported way is known.
 - The account selector's drop-down shows each account's colour dot before its name, as the selector
   itself does (owner, 2026-11-28). Blocked on the toolkit: drop-down items cannot carry a colour
   swatch ("For the toolkit", item 1).
-- Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
-- Reuse Conversation in Sessions details later. That view is currently a short read-only preview
-  and has no independently scrollable transcript region.
+- Font-family settings, tab reordering, restoring tabs. Done 2026-11-28, not yet tried in the
+  running app (only tests and pictures): search in the scrollback (DESIGN.md, "Find in a terminal";
+  with mouse selection and the menu in its box, whole words and regular expressions) and splits
+  (DESIGN.md, "Panes"; not there yet: splits shown in Chat's layout, below). Panes come back with
+  reopened tabs; a drag selects within its own pane; closing the tab's own pane under others asks
+  to close the tab (2026-11-28). No keys to split or move between panes: the owner wants no new
+  shortcuts (2026-11-28); the tab's menu and the palette (Split right/down, Close pane, Next pane)
+  stay the way.
+- **Split panes in Chat's layout** (designed 2026-11-28, not built). Today Chat's drawer shows only
+  the Claude pane and the shells wait, unchanged, for the terminal layout. Design: a small switcher in
+  the drawer's header, "Claude · Shell 1 · Shell 2" (shell labels from their folder), shown only
+  when the tab is split; the drawer shows one pane at a time, `Chat::drawer_pane` (default pane 0).
+  Keys in the drawer, paste, the mouse and find go to the pane it shows (`Tab::focused_pane` returns
+  it in Chat instead of always 0); only pane 0's input counts for Chat (already so). Any reason
+  that opens the drawer for Claude (a question, a permission, the shell manager, Press Enter, Stop)
+  switches it back to pane 0 first, and Chat's screen readers keep reading `Tab::term` whatever the
+  drawer shows. The shown shell takes the drawer's size only while shown. Not built because
+  (1) `Screen::resize` cuts lines and never brings them back ("For the toolkit", item 23), so
+  moving a shell between its pane size and the drawer's would lose its output each switch; it
+  needs reflow, or a drawer-sized view that scrolls sideways instead of resizing the shell;
+  (2) the drawer's focus (`drawer_focus`) and auto-open reasons assume the drawer is Claude's, and
+  changing that touches the send gate's safety logic, which wants tests against recorded screens
+  first.
 - Verify actual Claude Code image attachment via Alt+V and pasted paths in a real CLI session.
 
 ## For the toolkit (what the app's authors had to work around)
@@ -197,6 +231,13 @@ as the second account, Windows Terminal, the desktop hand-over.
 21. `host::Event` has no file-drop event with positions or file batches. The raw winit hook supplies
     file paths to the active terminal tab, with a short coalescing delay for multiple files.
 
+22. No list widget with virtual rows, hover and selection for app data: the Workers tab draws its
+    own rows, as the Sessions list does.
+23. `mdshared_term::Screen::resize` does not reflow: a line longer than the new width is cut, and
+    the cells stay gone when the screen widens again. A new split pane therefore starts near the
+    size it will get, and showing split shells in Chat's drawer waits for reflow (Next, "Split
+    panes in Chat's layout").
+
 ### Done in the toolkit
 
 - 15: `termview::BackgroundOpacity` composites the default terminal background and padding
@@ -206,9 +247,9 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## The bridge (`claude-flash-bridge`)
 
-The worker-account setting (`claudeAccounts`, `claudeWorkersUse` in `workers.json`) is written, tested
-and in the README, not committed, and not copied to the installed clone
-(`~/.claude/mcp-servers/opencode-agent`). The app's Settings dialog writes the two keys.
+The worker-account setting (`claudeAccounts`, `claudeWorkersUse` in `workers.json`) is committed
+(3.2.0, `5cc9ca9`) and installed (the installed clone runs 3.6.0). The app's Settings dialog writes
+the two keys.
 
 ## Recent sessions
 
@@ -222,7 +263,7 @@ and in the README, not committed, and not copied to the installed clone
 
 Status of items 23 to 60 (2026-11-27, merged into `main` after two reviews by Claude Fable and the fixes
 of both): built and passing format, lint and the test suite: 23 to 31, 34 to 48, 50 to 55, 57, 58 and 60.
-Partly: 47 (no `!` toggle in the composer). 22, 53 (with Stop agent), 49 (rewind), 56 and 59 were built on
+47's `!` toggle followed on 2026-11-28 (`feature/redesign-fixes`). 22, 53 (with Stop agent), 49 (rewind), 56 and 59 were built on
 2026-11-27, 49 and 53 against recorded screens and 49 before a live check of 42 and 48 (see the items). Not built:
 32 (later; fonts need toolkit work). Item 14 for Settings text rows waits for the toolkit pin move
 (toolkit 7da7b22). Nothing was tried against a live Claude Code: the screen shapes the cards read (the
@@ -655,7 +696,9 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
 47. **Command results and shell mode in the conversation**: `<local-command-stdout>` and `<bash-input>`/`<bash-stdout>`
     records as mono cards under their command (filtered out today, `prompt_clean.rs`); interactive panels get a
     card; a `!` toggle in the composer once shell mode by paste is verified.
-    **Done except the `!` toggle** (2026-11-27, branch `fix/items-47-tools`). The records were already read into
+    **Done.** The `!` toggle (2026-11-28, `feature/redesign-fixes`): `!` in the empty box, Enter only once
+    the input shows `! command`; to record with `recorder compat` script `shell-paste` before it is trusted.
+    Before that (2026-11-27, branch `fix/items-47-tools`). The records were already read into
     finished rows (`transcript/local.rs`); this pass gave them item 71's quiet look. One-line replies (at most 140
     characters, which covers the shapes found read-only in this machine's transcripts: "Set model to …", "Goal
     set: …", "Settings dialog dismissed", "Reconnected to …") sit on their command's row. Longer output
@@ -666,7 +709,7 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     one record with two text blocks (`<bash-input>` then `<bash-stdout>`). The reader stopped at the first
     block and lost the output; it now reads every block. Checked: parser, reader and row unit tests (the
     shapes copied from real records), plus a bitmap test with `/model`, `/context` and two shell commands
-    (one failing) in light and dark, whose pictures were looked at. Not built: the `!` toggle. Shell mode
+    (one failing) in light and dark, whose pictures were looked at. The `!` toggle was not built then. Shell mode
     by paste was not checked against a real Claude Code: that needs an interactive CLI session driven
     through a terminal, which this pass did not start. Nothing was seen in the running app.
 48. **CLI menus and dialogs as cards**: any menu, picker or startup dialog the CLI shows (the native /model and
@@ -687,8 +730,24 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     nothing (recorded). Not checked: the menu item and the card have not been seen or clicked in the running app; a
     list long enough to scroll (the one-row scroll rule is untested); what "Summarize from here", "Summarize up to
     here" and "Never mind" lead to (each is done once the rewind screens are gone); prompts with pictures or pasted
-    text markers in the list. Left: the Chat view keeps showing the rewound turns, since the CLI appends nothing on
-    a rewind and the reader does not follow `parentUuid` branches.
+    text markers in the list. Done (2026-11-28): the reader shows the active branch only, the chain from
+    the newest record back through `parentUuid` (DESIGN.md, "Rewind"), so the rewound turns go once the next
+    prompt is written (the CLI appends nothing on the rewind itself, so they show until then). Checked by unit
+    tests over made-up transcripts: a rewind, a rewind to the first prompt, a fork's copy, tool results recorded
+    against their own call, progress and hook records off the chain, sidechains and a subagent's transcript, a
+    compaction boundary, the bounded slice and history paged in, records without links. Not checked: against a
+    live rewind in the app.
+    Done (2026-11-28): the Tasks, Agents, Shells and Files pages follow the active branch too (DESIGN.md,
+    "Rewind"); an agent, shell or MCP task from a replaced turn stays while it is known to run. Checked by
+    unit tests: a rewind (plan, ended and running shells, finished and running agents, a new plan after
+    it), a fork's copy, a compaction (and a rewind after it), the bounded slice with history paged in, and
+    the panel's sections through the worker (the written file, the plan and the ended shell go).
+    Review fixes (2026-11-28): a prompt counts as replaced only when the chain's own next record at
+    its parent is a typed prompt too, so a recap or notice written after a new prompt but linked to
+    the previous turn no longer hides that prompt with its turn; the branch change rebuilds the shown
+    items without a new reader generation (history pages, pictures and prompt recall go on); each
+    line is parsed once. `recorder compat` script `rewind-send` (not run yet) rewinds to the second
+    of two prompts, sends a third and checks that the reader shows the first and third only.
     Review fixes (2026-11-27): every key on the choices needs them to quote the chosen prompt (the CLI could have
     been moved to another prompt whose choices read the same), and Enter on the list needs the rows under the chosen
     prompt to be the later prompts one for one (slash commands, which the list does not show, left out), so a list
@@ -1094,8 +1153,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     footer's words are shown as they are); `ruleSource` values other than `flagSettings` (the names
     of the other settings files are Claude Code's documented ones); a No given with text; a denial
     inside a subagent (not counted: it is in the subagent's transcript, and only the CLI's passing
-    notice under the input says so). Open: the count is hidden while another card has the card's
-    place; a rule can only be changed in the terminal.
+    notice under the input says so). The count stays on a line over another card that has the card's
+    place (2026-11-28, `feature/redesign-fixes`). Open: a rule can only be changed in the terminal.
 
 80. **Later: `/fork` breaks Chat's continuation** (owner, 2026-11-27: "fork broke chat continuation, I
     think. not a big deal right now. note it."; screenshot). After `/fork` typed in a Claude tab,
@@ -1103,4 +1162,70 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     prompt · <title> · continued · <id>"), while Chat keeps showing the old conversation and does not
     pick up the new turns the terminal shows. Chat follows a tab to a new session after `/clear`,
     compaction and `/resume`; `/fork` probably needs the same (find the forked session's transcript
-    and switch the tab to it, as for `/resume`). Not looked into yet.
+    and switch the tab to it, as for `/resume`).
+    Looked into (2026-11-28). Recorded with `recorder compat`'s `fork` script (2.1.332, Haiku): the
+    live record keeps the tab's session id before and after `/fork` and after the next turn; the
+    tab's transcript gets the command's records, Claude Code's note about the fork (`isMeta`) and
+    then the next turn; the fork is a background session (own process, `kind: bg`) whose copy names
+    the tab's session in `derived-from`. Over those files (trimmed into
+    `crates/core/src/transcript/fixtures/fork-2.1.332`) the reader shows the `/fork` row and the
+    next turn, read in one go or as the file grew, takes the note for no prompt and no turn, shows
+    the copy's task notification as no prompt, and the tab keeps its session with the copy newer
+    beside it; the screen after `/fork` reads as an idle input with Send offered. So this shape
+    breaks nothing in Chat. The owner's report (2026-11-27) matches another shape found in a
+    transcript of that day, also 2.1.332, the same "<title> · continued · <id>" line: about 14 s
+    after `/fork` (Claude Code's first request after it) the session moved to a new id, the old
+    transcript ending with a `continued-in` record naming it, and the new transcript was written
+    only with the next message, 13 minutes later. Chat showing the `/fork` row means it stayed on
+    the old transcript, so the live record most likely did not move then; what makes Claude Code
+    move (and whether its record moves) is not known. Chat now follows `continued-in` (DESIGN.md,
+    "Tab identity and interaction checks"); for the recorded shape it is never written, so it
+    changes nothing there. Not checked: the moving shape live, and in the app.
+    `recorder compat` `fork` checks: the record stays (`session = same`), no `continued-in`, one
+    background fork with the first prompt only, the next turn in the tab's transcript, an idle
+    input after `/fork`. It starts a background session that has to be ended by hand
+    (`claude agents`).
+    Review fix (2026-11-28): once the live record names anything but the session a `continued-in`
+    left (the new one, as the record catches up, or a third), the record naming the old session is
+    no longer taken for the new one, so a later `/resume` of it is followed and the running-session
+    guard sees it. While the record has never moved, such a return cannot be told apart.
+
+81. **Claude Code's /config in Settings** (owner, 2026-11-28: "expose Claude Code's advanced
+    configuration like /config, in a separate page, and maybe Status, Usage, Stats"). Done on
+    `feature/cc-advanced`: the entries, keys and defaults of 2.1.332 (DESIGN.md, "Claude Code's
+    /config"), Settings › Claude Code › Advanced. Tested: core writes against temporary folders
+    (master and sharing, nested keys and their neighbours, reset, a value changed meanwhile, a
+    running Claude Code of the account, Claude Code's lock folder, a broken file), the page in the
+    demo (search, change, Reset) and on a temporary folder (refused when changed meanwhile, then
+    saved; read-only while the test's own process poses as a running session), and every label and
+    help line fitting at 760 px, with values set and read-only, in both themes; the pictures were
+    looked at. Not tried: the running app against a real account, and the recording of `/config`
+    (`tools/screen-recorder/scripts/config-list.txt`, to be run by the owner with a scratch,
+    signed-in config folder). Open: read-only rows are a single selected segment (the toolkit has
+    no read-only or label/value row, "For the toolkit", item 4); entries Claude Code hides behind
+    flags are offered all the same (the files cannot tell which flags an account has); the newer
+    user-settings storage behind `storageV5` is not covered.
+    Settings › Claude Code › Status is done too (DESIGN.md, the same section): tested in core on
+    temporary folders (sign-in, MCP servers, memory, version folders, history counts, local days,
+    models from bounded transcript tails) and in the demo (rows, the link to Usage), pictures looked
+    at. Left out, as only a running Claude Code knows them (`/status` and `/stats` in a session):
+    the session's model and permission mode, MCP connection status, cost and context use, and
+    token totals per day or model (whole transcripts would have to be read; the design allows only
+    bounded slices). Usage was not repeated: the page links to Settings › Usage.
+    `tools/cli-compat.ps1` checks every key and label of the table in the installed `claude.exe`
+    (`-KeysOnly`, also a warning step in the daily GitHub Actions run); tried here on 2.1.332 (all
+    88 found) and on a copy of the table with a renamed key and label (both reported, exit 1).
+    The owner's `config-list` recording (2026-11-28, an ordinary terminal) found 34 of 43 labels.
+    The nine missing were all hidden by their show condition, none renamed: eight stay on the
+    page with a help line saying when they apply (`cc_config::WHEN`), and their expectation now
+    accepts "No settings match"; Auto-install IDE extension (only inside an IDE's own terminal) was
+    dropped. Re-checked on that recording without recording again: 43 of 43 as expected.
+    Review fixes (2026-11-28): the running check by the folder a record is in (a desktop session
+    of another account), an incomplete scan and the window's own tabs refuse, a missing
+    `.claude.json` is never made, a backup and a byte compare right before the rename, a lock left
+    behind is taken over after a minute, a sync failure is told apart from a failed save, saves
+    and reads in the background, key order kept (`preserve_order`; the usage shape probe sorts its
+    members itself so its output is as before), and the `config-list` script needs the empty search
+    box before each search (`need`, which ends the script in any run). Tested in core on temporary
+    folders; the tab check is not (a test cannot start a tab's program) and the background save
+    is tested through the page with a wait. Not re-recorded.

@@ -17,6 +17,31 @@ use super::links;
 /// A paragraph that holds only this is the room kept above a code block for its header.
 pub const SPACER: &str = "\u{200b}";
 
+/// `text` as it is copied: without the spacers kept for code headers, nor the blank line each
+/// left between the paragraphs around it.
+pub fn copyable(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(SPACER) {
+        return text.into();
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim_end_matches('\r');
+        if line.contains(SPACER) && line.trim_matches('\u{200b}').is_empty() {
+            let blank = |l: &&str| l.trim().is_empty();
+            if out.last().is_some_and(blank) && lines.get(i + 1).is_some_and(blank) {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        out.push(lines[i]);
+        i += 1;
+    }
+    out.join("\n").into()
+}
+
 /// A top-level code block of a rendered answer, in logical px from the text's top.
 pub struct CodeBlock<'a> {
     pub top: f32,
@@ -165,6 +190,12 @@ pub fn markdown_names(raw: &str) -> Vec<String> {
     names
 }
 
+/// The colour of the renderer's code box: the conversation draws a code block's header joined to
+/// it, in the same colour.
+pub fn code_ground(pal: &Palette) -> mdshared_ui::gfx::Rgb {
+    pal.field
+}
+
 fn theme(pal: &Palette, size: f32) -> Theme {
     Theme {
         bg: pal.page,
@@ -173,7 +204,7 @@ fn theme(pal: &Palette, size: f32) -> Theme {
         muted: pal.muted,
         accent: pal.accent,
         border: pal.line,
-        code_bg: pal.field,
+        code_bg: code_ground(pal),
         head_bg: pal.bar,
         tint: pal.on,
         kw: pal.accent,
@@ -457,6 +488,21 @@ mod tests {
         assert!(doc.images.iter().all(|i| i.src.len == 0 && i.dark_src.len == 0 && i.light_src.len == 0));
         assert!(!doc.blocks.iter().any(|b| matches!(b.kind, BlockKind::Diagram { .. } | BlockKind::Math { .. })));
         assert!(!doc.spans.iter().any(|s| matches!(s.kind, SpanKind::Math { .. })));
+    }
+
+    #[test]
+    fn a_code_header_is_joined_to_the_box_in_the_boxs_own_colour() {
+        for pal in [mdshared_ui::theme::DARK, mdshared_ui::theme::LIGHT] {
+            assert_eq!(theme(&pal, 14.0).code_bg, code_ground(&pal));
+        }
+    }
+
+    #[test]
+    fn the_room_kept_for_code_headers_is_never_copied() {
+        let shown = format!("Run this:\n\n{SPACER}\n\ncargo test\n\nThen this:\n{SPACER}\ncargo fmt");
+        assert_eq!(copyable(&shown), "Run this:\n\ncargo test\n\nThen this:\ncargo fmt");
+        assert!(!copyable(&format!("{SPACER}\n\nx")).contains(SPACER));
+        assert_eq!(copyable("no spacer\n\nhere"), "no spacer\n\nhere");
     }
 
     #[test]

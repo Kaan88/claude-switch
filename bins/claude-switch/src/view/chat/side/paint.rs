@@ -417,7 +417,7 @@ impl Details {
                 self.side_lines(&mut out, p, f, width, Side::Tasks);
             }
         }
-        let running = m.agents.iter().filter(|a| a.finished == Some(false)).count()
+        let running = m.agents.iter().filter(|a| m.agent_status(a).running()).count()
             + m.running_shells()
             + m.mcp_tasks.iter().filter(|t| t.status == claude_switch_core::transcript::McpStatus::Running).count();
         let background = m.agents.len() + m.shells.len() + m.mcp_tasks.len();
@@ -489,30 +489,21 @@ impl Details {
                 // In Chat's Background section the running agents come first.
                 let mut order: Vec<usize> = (0..f.model.agents.len()).collect();
                 if f.sections {
-                    order.sort_by_key(|&i| f.model.agents[i].finished != Some(false));
+                    order.sort_by_key(|&i| !f.model.agent_status(&f.model.agents[i]).running());
                 }
                 for index in order {
                     let agent = &f.model.agents[index];
                     let key = Key::Agent(agent.id.clone());
                     let expanded = self.expanded.contains(&key);
-                    let (mark, status) = match agent.finished {
-                        Some(true) => ("✓", "Finished"),
-                        Some(false) => ("◉", "Running"),
-                        None => ("?", "Unknown"),
-                    };
+                    let shown = f.model.agent_status(agent);
+                    let status = shown.word;
                     let desc = agent.description.as_deref().unwrap_or(&agent.id);
-                    let label = format!("{mark}  {}", first_line(desc));
+                    // The state's word with its mark: a mark alone does not say which it is.
+                    let label = format!("{}  {} · {}", shown.mark(), status, first_line(desc));
                     let opens = f.model.agent.as_deref() != Some(agent.id.as_str());
                     out.push(
                         ROW,
-                        Line::Header {
-                            label,
-                            index,
-                            expanded,
-                            active: agent.finished == Some(false),
-                            split: opens,
-                            opens,
-                        },
+                        Line::Header { label, index, expanded, active: shown.running(), split: opens, opens },
                     );
                     if expanded {
                         let top = out.height;
@@ -522,9 +513,10 @@ impl Details {
                             .collect::<Vec<_>>()
                             .join(" · ");
                         let mut text = format!(
-                            "{desc}\n{status} · {} tool {}",
+                            "{desc}\n{status} · {} tool {}\n{}",
                             agent.tool_calls,
-                            if agent.tool_calls == 1 { "call" } else { "calls" }
+                            if agent.tool_calls == 1 { "call" } else { "calls" },
+                            shown.why
                         );
                         if !kind.is_empty() {
                             text.push_str(&format!("\n{kind}"));

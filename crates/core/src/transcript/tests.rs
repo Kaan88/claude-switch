@@ -224,7 +224,7 @@ fn bounded_tail_and_history_keep_ids_and_apply_results_that_were_read_first() {
     fs::write(&path, first.clone() + &call + &result + &last).unwrap();
     let mut reader = Reader::open(&path, result.len() + last.len() + 5).unwrap();
     assert!(reader.has_earlier());
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
     let recent = reader.items().next().unwrap().0;
     let change = reader.earlier().unwrap();
     assert_eq!(change.added, BTreeSet::from([ItemId { offset: first.len() as u64, block: 0 }]));
@@ -246,7 +246,7 @@ fn clipped_partial_line_survives_poll_or_interleaved_history_load() {
         let line = prompt(&text);
         fs::write(&path, prompt("previous") + &line[..line.len() - 4]).unwrap();
         let mut reader = Reader::open(&path, 64).unwrap();
-        assert_eq!(reader.items().len(), 0);
+        assert_eq!(reader.items().count(), 0);
         assert!(reader.has_earlier());
         if load_history_first {
             assert_eq!(reader.earlier().unwrap().added.len(), 1);
@@ -271,7 +271,7 @@ fn initial_partial_first_line_is_kept_until_its_newline() {
     let line = prompt("a  b");
     fs::write(&path, &line[..line.len() - 1]).unwrap();
     let mut reader = Reader::open(&path, 4096).unwrap();
-    assert_eq!(reader.items().len(), 0);
+    assert_eq!(reader.items().count(), 0);
     assert!(!reader.has_earlier());
     assert_eq!(reader.poll().unwrap(), Changes::default());
     let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
@@ -356,11 +356,11 @@ fn subagent_without_meta_follows_activity_and_links_when_meta_appears() {
     );
     let info = reader.subagents().next().unwrap();
     assert_eq!(info.id, "abc");
-    assert_eq!(info.finished, None);
+    assert_eq!(info.end, None);
     assert_eq!(info.started_at.as_deref(), Some("2026-11-26T01:00:00Z"));
     assert_eq!(info.tool_calls, 0);
     let mut child = reader.open_subagent("abc", 4096).unwrap();
-    assert_eq!(child.items().len(), 1);
+    assert_eq!(child.items().count(), 1);
     append(
         &agent_path,
         record(json!({"type":"assistant","isSidechain":true,"timestamp":"2026-11-26T01:02:00Z",
@@ -378,7 +378,7 @@ fn subagent_without_meta_follows_activity_and_links_when_meta_appears() {
     assert_eq!(change.updated, BTreeSet::from([spawn]));
     assert!(matches!(&reader.item(spawn).unwrap().kind, ItemKind::Tool { subagent: Some(id), .. } if id == "abc"));
     let info = reader.subagents().next().unwrap();
-    assert_eq!(info.finished, Some(true));
+    assert_eq!(info.end, Some((AgentEnd::Finished, EndSource::Sidecar)));
     assert_eq!(info.spawn_depth, Some(1));
     assert_eq!(info.model.as_deref(), Some("model-x"));
     assert_eq!(info.agent_type.as_deref(), Some("explore"));
@@ -393,7 +393,125 @@ fn subagent_without_meta_follows_activity_and_links_when_meta_appears() {
     let change = reader.poll().unwrap();
     assert!(change.subagents_changed);
     assert_eq!(change.updated, BTreeSet::from([spawn]));
-    assert_eq!(reader.subagents().len(), 0);
+    assert_eq!(reader.subagents().count(), 0);
+}
+
+/// Each shape an agent's end comes in (Claude Code 2.1.332): the sidecar's marks (only ever
+/// `true`), a background agent's `<task-notification>` (a user record, or a `queued_command`
+/// attachment while a turn ran), a foreground call's result, and the agent's own transcript.
+#[test]
+fn agent_ends_are_read_from_each_record_that_tells() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let dir = path.with_extension("").join("subagents");
+    fs::create_dir_all(&dir).unwrap();
+    let agent = |id: &str, meta: Value, last: Value| {
+        let mut lines = record(json!({"type":"user","isSidechain":true,"message":{"content":"task"}}));
+        lines.push_str(&record(last));
+        fs::write(dir.join(format!("agent-{id}.jsonl")), lines).unwrap();
+        fs::write(dir.join(format!("agent-{id}.meta.json")), meta.to_string()).unwrap();
+    };
+    let call =
+        json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Read","input":{}}]}});
+    let answer = |stop: Value| json!({"type":"assistant","message":{"content":[{"type":"text","text":"done"}],"stop_reason":stop}});
+    let esc = json!({"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}});
+    agent("running", json!({"agentType":"general-purpose","toolUseId":"bg1"}), call.clone());
+    agent("notified", json!({"toolUseId":"bg2"}), call.clone());
+    agent("queued", json!({"toolUseId":"bg3"}), call.clone());
+    agent("foreground", json!({"toolUseId":"fg1"}), call.clone());
+    agent("escaped", json!({"toolUseId":"fg2"}), call.clone());
+    agent("stopped", json!({"finished":true,"stoppedByUser":true}), call.clone());
+    agent("sidecar", json!({"finished":true}), call.clone());
+    agent("answered", json!({}), answer(json!("end_turn")));
+    agent("streaming", json!({}), answer(Value::Null));
+    agent("interrupted", json!({}), esc);
+    let background = |id| tool(id, "Agent", json!({"description":"d","prompt":"p","run_in_background":true}));
+    let launched = |id: &str, agent: &str| {
+        record(json!({"type":"user","toolUseResult":{"status":"async_launched","agentId":agent},
+            "message":{"content":[{"type":"tool_result","tool_use_id":id,"content":"Async agent launched"}]}}))
+    };
+    let mut session =
+        [background("bg1"), launched("bg1", "running"), background("bg2"), launched("bg2", "notified")].concat();
+    session.push_str(&tool("fg1", "Agent", json!({"description":"d","prompt":"p"})));
+    session.push_str(&record(json!({"type":"user","toolUseResult":{"status":"completed"},
+        "message":{"content":[{"type":"tool_result","tool_use_id":"fg1","content":"report"}]}})));
+    session.push_str(&tool("fg2", "Agent", json!({"description":"d","prompt":"p"})));
+    session.push_str(&record(json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"fg2",
+        "is_error":true,"content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}]}})));
+    session.push_str(&record(json!({"type":"user","message":{"content":
+        "<task-notification>\n<task-id>notified</task-id>\n<tool-use-id>bg2</tool-use-id>\n<status>killed</status>\n<summary>Agent \"d\" was stopped</summary>\n</task-notification>"}})));
+    session.push_str(&record(json!({"type":"attachment","attachment":{"type":"queued_command","commandMode":"task-notification",
+        "prompt":"<task-notification>\n<task-id>queued</task-id>\n<status>completed</status>\n<summary>Agent \"d\" completed</summary>\n</task-notification>"}})));
+    fs::write(&path, session).unwrap();
+    let reader = Reader::open(&path, 1024 * 1024).unwrap();
+    let end = |id: &str| reader.subagents().find(|a| a.id == id).unwrap().end;
+    assert_eq!(end("running"), None, "launched in the background, nothing ended it");
+    assert_eq!(end("notified"), Some((AgentEnd::Stopped, EndSource::Notification)));
+    assert_eq!(end("queued"), Some((AgentEnd::Finished, EndSource::Notification)));
+    assert_eq!(end("foreground"), Some((AgentEnd::Finished, EndSource::Result)));
+    assert_eq!(end("escaped"), Some((AgentEnd::Interrupted, EndSource::Result)));
+    assert_eq!(end("stopped"), Some((AgentEnd::Stopped, EndSource::Sidecar)));
+    assert_eq!(end("sidecar"), Some((AgentEnd::Finished, EndSource::Sidecar)));
+    assert_eq!(end("answered"), Some((AgentEnd::Finished, EndSource::Transcript)));
+    assert_eq!(end("streaming"), None, "an answer without its stop reason may be followed by a call");
+    assert_eq!(end("interrupted"), Some((AgentEnd::Interrupted, EndSource::Transcript)));
+}
+
+/// A message the user sent to a running agent is written into the agent's own transcript when it
+/// is handed in, as a `queued_command` without `commandMode` (Claude Code 2.1.332's bundle; the
+/// `agent-message` compat run showed it held in memory until then). In the agent's transcript that
+/// is a prompt; in the session's, the same record is not.
+#[test]
+fn a_message_handed_to_an_agent_is_a_prompt_of_its_own_transcript() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let dir = path.with_extension("").join("subagents");
+    fs::create_dir_all(&dir).unwrap();
+    let handed = json!({"type":"attachment","isSidechain":true,"attachment":{"type":"queued_command",
+        "prompt":"Reply with kilo","origin":{"kind":"human"}}});
+    let notice = json!({"type":"attachment","isSidechain":true,"attachment":{"type":"queued_command",
+        "commandMode":"task-notification","prompt":"<task-notification>x</task-notification>"}});
+    let task = record(json!({"type":"user","isSidechain":true,"message":{"content":"Count slowly"}}));
+    fs::write(dir.join("agent-a1.jsonl"), [task, record(handed.clone()), record(notice)].concat()).unwrap();
+    fs::write(&path, [prompt("start one"), record(handed)].concat()).unwrap();
+    let reader = Reader::open(&path, 1024 * 1024).unwrap();
+    let prompts = |reader: &Reader| -> Vec<(String, bool)> {
+        reader
+            .items()
+            .filter_map(|(_, item)| match &item.kind {
+                ItemKind::Prompt { text, queued, .. } => Some((text.clone(), *queued)),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(prompts(&reader), [("start one".to_owned(), false)], "not the session's prompt");
+    let agent = reader.open_subagent("a1", 1024 * 1024).unwrap();
+    assert_eq!(prompts(&agent), [("Count slowly".to_owned(), false), ("Reply with kilo".to_owned(), true)]);
+}
+
+/// A notification paged in with earlier history settles an agent the newest slice left unknown.
+#[test]
+fn an_agent_end_in_earlier_history_is_found_when_it_loads() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let dir = path.with_extension("").join("subagents");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("agent-old.jsonl"), record(json!({"type":"user","message":{"content":"task"}}))).unwrap();
+    let mut session = record(json!({"type":"user","message":{"content":
+        "<task-notification><task-id>old</task-id><status>completed</status></task-notification>"}}));
+    for i in 0..40 {
+        session.push_str(&prompt(&format!("later prompt {i} with some words to fill the slice")));
+    }
+    fs::write(&path, session).unwrap();
+    let mut reader = Reader::open(&path, 512).unwrap();
+    assert!(reader.has_earlier());
+    assert_eq!(reader.subagents().next().unwrap().end, None);
+    let mut changed = false;
+    while reader.has_earlier() {
+        changed |= reader.earlier().unwrap().subagents_changed;
+    }
+    assert!(changed);
+    assert_eq!(reader.subagents().next().unwrap().end, Some((AgentEnd::Finished, EndSource::Notification)));
 }
 
 #[test]
@@ -409,7 +527,7 @@ fn shrink_and_larger_replacement_reset_history() {
     let change = reader.poll().unwrap();
     assert!(change.reset);
     assert_eq!(change.added.len(), 1);
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
     assert!(reader.load_picture(&stale_picture).is_err());
     fs::rename(&path, folder.0.join("old.jsonl")).unwrap();
     assert_eq!(reader.poll().unwrap(), Changes::default());
@@ -417,7 +535,7 @@ fn shrink_and_larger_replacement_reset_history() {
     let change = reader.poll().unwrap();
     assert!(change.reset);
     assert_eq!(change.added.len(), 1);
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
     assert!(
         matches!(&reader.items().next().unwrap().1.kind, ItemKind::Prompt { text, .. } if text == "a larger replacement")
     );
@@ -434,7 +552,7 @@ fn ignores_large_blobs_with_type_before_or_after_the_payload() {
     let path = folder.session();
     fs::write(&path, first + "\n" + &last + "\n" + &prompt("visible")).unwrap();
     let reader = Reader::open(&path, 8 * 1024 * 1024).unwrap();
-    assert_eq!(reader.items().len(), 1);
+    assert_eq!(reader.items().count(), 1);
 }
 
 #[test]
@@ -465,7 +583,7 @@ fn timing_generated_20_mb() {
     let mut reader = Reader::open(&path, 2 * 1024 * 1024).unwrap();
     let open = start.elapsed();
     assert!(reader.has_earlier());
-    let items = reader.items().len();
+    let items = reader.items().count();
     assert!(items > 0);
     let start = Instant::now();
     let added = reader.earlier().unwrap().added.len();
@@ -688,4 +806,85 @@ fn a_long_paste_is_shown_as_its_text_without_claude_codes_tags() {
     );
     // A tag without its end stays as it is.
     assert_eq!(super::unwrap_pastes("a <pasted_content id=\"1\">b"), "a <pasted_content id=\"1\">b");
+}
+
+#[test]
+fn the_session_a_fork_goes_on_in_is_read_from_the_record_it_writes_last() {
+    // Claude Code 2.1.332's `/fork` ends the transcript it leaves with this record.
+    const NEXT: &str = "7e6b2a9e-5649-42e7-8db5-01617d00d7cd";
+    let folder = Folder::new();
+    let path = folder.session();
+    let message = |uuid: &str| record(json!({"type":"user","uuid":uuid,"message":{"content":"hi"}}));
+    let continued = |id: &str| record(json!({"type":"continued-in","sessionId":"x","continuedInSessionId":id}));
+    fs::write(&path, message("u1") + &record(json!({"type":"cost-state"}))).unwrap();
+    let mut reader = Reader::open(&path, 4096).unwrap();
+    assert_eq!(reader.chat().continued_in, None);
+    append(&path, continued("not an id"));
+    reader.poll().unwrap();
+    assert_eq!(reader.chat().continued_in, None, "an invalid id is ignored");
+    append(&path, continued(NEXT));
+    reader.poll().unwrap();
+    assert_eq!(reader.chat().continued_in.as_deref(), Some(NEXT));
+    assert_eq!(reader.items().count(), 1, "the record is no item");
+    // The session resumed here later: the conversation goes on in this transcript again.
+    append(&path, message("u2"));
+    reader.poll().unwrap();
+    assert_eq!(reader.chat().continued_in, None);
+    // A subagent's transcript names no continuation.
+    let agents = folder.0.join("session").join("subagents");
+    fs::create_dir_all(&agents).unwrap();
+    fs::write(agents.join("agent-a.jsonl"), continued(NEXT)).unwrap();
+    assert_eq!(Reader::open(agents.join("agent-a.jsonl"), 4096).unwrap().chat().continued_in, None);
+}
+
+/// Claude Code 2.1.332's `/fork`, recorded by `recorder compat` (script `fork`, trimmed: context
+/// attachments are stubs that keep their links, account fields are left out): the terminal's own
+/// transcript, and the background session the fork made from it.
+const FORK_TAB: &str = include_str!("fixtures/fork-2.1.332/b251c8e6-184e-48ea-a1db-c43a9618612d.jsonl");
+const FORK_COPY: &str = include_str!("fixtures/fork-2.1.332/d356e845-f0ad-412a-a14a-bd7e652ebc66.jsonl");
+
+fn shown(reader: &Reader) -> Vec<String> {
+    reader
+        .items()
+        .map(|(_, item)| match &item.kind {
+            ItemKind::Prompt { text, .. } => format!("> {text}"),
+            ItemKind::Assistant { markdown } => markdown.clone(),
+            ItemKind::Tool { name, .. } => name.clone(),
+            ItemKind::Notice { text, .. } => format!("! {text}"),
+        })
+        .collect()
+}
+
+#[test]
+fn after_fork_the_tabs_transcript_goes_on_and_the_copy_shows_only_the_copied_turn() {
+    let folder = Folder::new();
+    let path = folder.session();
+    // As the file grew: up to `/fork`, then its records, then the next turn.
+    let fork = FORK_TAB.find("<command-name>/fork").unwrap();
+    let fork = FORK_TAB[..fork].rfind('\n').unwrap() + 1;
+    let bravo = FORK_TAB.find("Reply with just the word: bravo").unwrap();
+    let bravo = FORK_TAB[..bravo].rfind('\n').unwrap() + 1;
+    fs::write(&path, &FORK_TAB[..fork]).unwrap();
+    let mut reader = Reader::open(&path, 256 * 1024).unwrap();
+    assert_eq!(shown(&reader), ["> Reply with just the word: alpha", "alpha"]);
+    append(&path, &FORK_TAB[fork..bravo]);
+    let changes = reader.poll().unwrap();
+    assert!(!changes.reset && !changes.branch_changed);
+    // The command's row; Claude Code's note to the model about the fork is no prompt and no turn.
+    assert_eq!(shown(&reader), ["> Reply with just the word: alpha", "alpha", "/fork"]);
+    let chat = reader.chat();
+    assert!(matches!(chat.latest, Some((_, ChatPhase::EndTurn))), "{chat:?}");
+    assert_eq!(chat.continued_in, None, "2.1.332 leaves the terminal in its session");
+    append(&path, &FORK_TAB[bravo..]);
+    reader.poll().unwrap();
+    let after = ["> Reply with just the word: alpha", "alpha", "/fork", "> Reply with just the word: bravo", "bravo"];
+    assert_eq!(shown(&reader), after);
+    assert!(matches!(reader.chat().latest, Some((_, ChatPhase::EndTurn))));
+
+    // The background copy: its task notification about the fork is not a prompt of the user's.
+    let copy = folder.0.join("copy.jsonl");
+    fs::write(&copy, FORK_COPY).unwrap();
+    let reader = Reader::open(&copy, 256 * 1024).unwrap();
+    assert_eq!(shown(&reader), ["> Reply with just the word: alpha", "alpha"]);
+    assert_eq!(reader.chat().continued_in, None);
 }

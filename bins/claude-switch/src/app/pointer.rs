@@ -121,7 +121,13 @@ impl AppState {
         if self.tabs.drag.is_some() {
             return self.move_tab_drag(x, y);
         }
-        let terminal_drag = self.tabs.shown().is_some_and(|tab| tab.term.selecting || tab.term.reported.is_some());
+        if self.divider_dragging() {
+            return self.drag_divider(x, y);
+        }
+        let terminal_drag = self.tabs.shown().is_some_and(|tab| {
+            let t = tab.focused_term();
+            t.selecting || t.reported.is_some()
+        });
         if !terminal_drag
             && y >= TITLE_H
             && let Some(changed) = self.session_move(x, y)
@@ -141,7 +147,7 @@ impl AppState {
         let over = hover
             .and_then(|key| {
                 let text = match layer {
-                    Layer::Base => topbar::tip_of(key)?.into(),
+                    Layer::Base => topbar::tip_of(key).map(Into::into).or_else(|| self.session_tip(key))?,
                     Layer::Dialog => self.dialog_tip(key)?,
                     _ => return None,
                 };
@@ -175,6 +181,10 @@ impl AppState {
         }
         match hover {
             Some(Target::Splitter) => Cursor::ResizeEw,
+            Some(Target::PaneDivider(i)) => match self.pane_divider_axis(i) {
+                Some(crate::panes::Axis::Down) => Cursor::ResizeNs,
+                _ => Cursor::ResizeEw,
+            },
             Some(Target::Chat(crate::view::chat::Control::Editor)) => Cursor::Text,
             Some(Target::Chat(crate::view::chat::Control::Grip)) => Cursor::ResizeNs,
             Some(Target::Chat(crate::view::chat::Control::Detail(_) | crate::view::chat::Control::Shells)) => {

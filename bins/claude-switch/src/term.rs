@@ -113,6 +113,10 @@ pub struct Term {
     /// How the program ended, once it has and its last output is on the screen.
     pub ended: Option<Exit>,
     pub ended_lines: Range<u64>,
+    /// The find bar, while it is open (`termfind`).
+    pub find: Option<crate::termfind::Find>,
+    /// Counts output and resizes, so that a search knows when to look again.
+    pub changes: u64,
 }
 
 impl Term {
@@ -148,6 +152,8 @@ impl Term {
             wheel_rest: 0.0,
             ended: None,
             ended_lines: 0..0,
+            find: None,
+            changes: 0,
         }
     }
 
@@ -214,6 +220,7 @@ impl Term {
     pub fn feed(&mut self, bytes: &[u8]) {
         let before = self.screen.screen_start();
         self.screen.feed(bytes);
+        self.changes += 1;
         if self.scroll > 0 {
             let moved = self.screen.screen_start().saturating_sub(before) as usize;
             self.scroll = (self.scroll + moved).min(self.screen.scrollback_len());
@@ -235,6 +242,7 @@ impl Term {
         }
         let cursor_line = self.screen.screen_start() + self.screen.cursor().row as u64;
         self.screen.resize(cols, rows);
+        self.changes += 1;
         if !self.ended_lines.is_empty() {
             // The alternate screen can discard top rows rather than preserving their absolute IDs.
             let delta = cursor_line.saturating_sub(self.screen.screen_start() + self.screen.cursor().row as u64);

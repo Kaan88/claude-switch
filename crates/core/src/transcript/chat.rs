@@ -26,6 +26,9 @@ pub struct ChatInfo {
     pub effort_report: Option<(u64, String)>,
     /// The newest "Set model to …" a local command printed, with its offset.
     pub model_report: Option<(u64, String)>,
+    /// The session Claude Code says this conversation goes on in (a `continued-in` record after the
+    /// newest message: `/fork` moves the terminal to a new session that way).
+    pub continued_in: Option<String>,
     usage_at: Option<u64>,
     compacted_at: Option<u64>,
     /// A slash command typed while the CLI was at rest: its record's offset, until its output.
@@ -45,7 +48,10 @@ impl ChatInfo {
 
     /// A slash command's record (`<command-name>`), seen before it counts as a prompt. Typed at
     /// rest, it may run in the CLI alone and only print (`/model`, `/effort`): its output ends it
-    /// ([`command_done`](Self::command_done)). Typed during a turn it changes nothing.
+    /// ([`command_done`](Self::command_done)). Typed during a turn it changes nothing. At rest is
+    /// only after a turn that plainly ended (`end_turn`): an answer block with no stop reason
+    /// (Unknown) may be followed by a tool call in the same turn. A turn that ended with no
+    /// `end_turn` record leaves the command Active here; the app tells it by the idle screen.
     pub(super) fn command_started(&mut self, at: u64) {
         let at_rest = self.latest.is_none_or(|(_, phase)| phase == Phase::EndTurn);
         self.command_at = at_rest.then_some(at);
@@ -186,8 +192,12 @@ pub enum ToolCard {
     Questions(Vec<Question>),
     /// The Markdown plan of an `ExitPlanMode` call.
     Plan(String),
-    /// What a slash command or a shell-mode command printed, as mono text.
-    Output(String),
+    /// What a slash command or a shell-mode command printed: the plain text, and the same with
+    /// the escape sequences the CLI recorded (its colours) when there were any, bounded alike.
+    Output {
+        text: String,
+        ansi: Option<String>,
+    },
 }
 
 /// An edit's recorded patch (`toolUseResult.structuredPatch`), bounded.
@@ -267,10 +277,51 @@ pub struct Question {
     pub multi_select: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QuestionOption {
     pub label: String,
     pub description: String,
+    /// Monospace text Claude gave the option to look at (a mock-up, code, a layout), which the
+    /// terminal shows in a box beside the choices: plain text, bounded (see [`preview`]); empty
+    /// without one. Never matched against the screen, so a long one may be cut.
+    pub preview: String,
+}
+
+/// The most of a preview kept: characters and lines.
+const MAX_PREVIEW: usize = 8000;
+const MAX_PREVIEW_LINES: usize = 200;
+
+/// An option's `preview`, as plain text: tabs and line breaks kept, every other control character
+/// (escape sequences included) dropped, cut at [`MAX_PREVIEW`] characters or
+/// [`MAX_PREVIEW_LINES`] lines with a last line saying so. `None` when it is not text.
+fn preview(value: Option<&Value>) -> Option<String> {
+    let Some(value) = value else { return Some(String::new()) };
+    let mut rest = value.as_str()?;
+    let mut plain = String::with_capacity(rest.len().min(4 * MAX_PREVIEW));
+    while let Some(c) = rest.chars().next() {
+        let len = if c == '\u{1b}' { super::local::escape_len(rest).max(1) } else { c.len_utf8() };
+        if !c.is_control() || matches!(c, '\n' | '\t') {
+            plain.push(c);
+        }
+        rest = &rest[len..];
+    }
+    let plain = plain.trim_end().trim_start_matches('\n');
+    let mut out = String::new();
+    let mut cut = false;
+    for (i, line) in plain.lines().enumerate() {
+        if i == MAX_PREVIEW_LINES || out.chars().count() + line.chars().count() > MAX_PREVIEW {
+            cut = true;
+            break;
+        }
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end());
+    }
+    if cut {
+        out.push_str("\n… (the rest is in the terminal)");
+    }
+    Some(out)
 }
 
 const MAX_QUESTIONS: usize = 4;
@@ -294,7 +345,8 @@ impl Question {
             .map(|option| {
                 let label = whole(&option["label"], 200).filter(|label| !label.is_empty() && !label.contains('\n'))?;
                 let description = option.get("description").map_or(Some(String::new()), |d| whole(d, 1000))?;
-                Some(QuestionOption { label, description })
+                let preview = preview(option.get("preview"))?;
+                Some(QuestionOption { label, description, preview })
             })
             .collect::<Option<Vec<_>>>()?;
         Some(Self {
@@ -533,7 +585,7 @@ mod tests {
             json!({"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"cargo test"}}]}}),
         ]);
         write(&command);
-        write(&[output]);
+        write(std::slice::from_ref(&output));
         reader.poll().unwrap();
         assert_eq!(phase(&reader), Some(Phase::Active), "the turn goes on");
 
@@ -547,6 +599,23 @@ mod tests {
         reader.poll().unwrap();
         assert_eq!(phase(&reader), Some(Phase::Active));
         assert_eq!(reader.chat().pending, None);
+
+        // An answer block with no stop reason may be the middle of a turn (a streamed text
+        // before a tool call): a command typed after it ends nothing, and the turn goes on. (A
+        // turn that did end that way is told by the idle screen, in the app.)
+        write(&[
+            json!({"type":"user","message":{"content":"Hello again"}}),
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"Let me look."}],"stop_reason":null}}),
+        ]);
+        write(&command);
+        write(&[output]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active), "the turn goes on");
+        write(&[
+            json!({"type":"assistant","message":{"stop_reason":"tool_use","content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ls"}}]}}),
+        ]);
+        reader.poll().unwrap();
+        assert_eq!(phase(&reader), Some(Phase::Active));
     }
 
     #[test]
@@ -621,7 +690,10 @@ mod tests {
             (q.header.as_str(), q.question.as_str(), q.multi_select),
             ("Who builds", "Who builds the parser?", false)
         );
-        assert_eq!(q.options[0], QuestionOption { label: "Me".into(), description: "I write it".into() });
+        assert_eq!(
+            q.options[0],
+            QuestionOption { label: "Me".into(), description: "I write it".into(), preview: String::new() }
+        );
         assert_eq!(q.options[1].description, "");
         for bad in [
             json!({"questions":[]}),
@@ -633,6 +705,26 @@ mod tests {
         ] {
             assert_eq!(ToolCard::from_input("AskUserQuestion", &bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn an_option_keeps_its_preview_as_plain_text_and_a_long_one_is_cut() {
+        let mock = "┌──────┐\n│ Map  │\t\u{1b}[31mred\u{1b}[0m\r\n└──────┘   ";
+        let input = json!({"questions":[{"question":"Which layout?","options":[
+            {"label":"Boxed","preview":mock},{"label":"Plain"},{"label":"Long","preview":"line\n".repeat(300)}
+        ]}]});
+        let Some(ToolCard::Questions(questions)) = ToolCard::from_input("AskUserQuestion", &input) else {
+            panic!("no card");
+        };
+        let options = &questions[0].options;
+        // Escape sequences and carriage returns go; tabs and line breaks stay.
+        assert_eq!(options[0].preview, "┌──────┐\n│ Map  │\tred\n└──────┘");
+        assert_eq!(options[1].preview, "");
+        let long: Vec<&str> = options[2].preview.lines().collect();
+        assert_eq!(long.len(), MAX_PREVIEW_LINES + 1);
+        assert_eq!(long.last(), Some(&"… (the rest is in the terminal)"));
+        let bad = json!({"questions":[{"question":"Q","options":[{"label":"A","preview":7}]}]});
+        assert_eq!(ToolCard::from_input("AskUserQuestion", &bad), None);
     }
 
     #[test]
@@ -710,7 +802,7 @@ mod tests {
             .items()
             .map(|(_, item)| match &item.kind {
                 ItemKind::Prompt { text, .. } => format!("prompt {text}"),
-                ItemKind::Tool { name, summary, state, card: Some(ToolCard::Output(text)), .. } => {
+                ItemKind::Tool { name, summary, state, card: Some(ToolCard::Output { text, .. }), .. } => {
                     format!("{name}|{summary}|{state:?}|{text}")
                 }
                 other => format!("{other:?}"),

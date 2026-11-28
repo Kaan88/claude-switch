@@ -17,11 +17,14 @@ pub(super) struct Draw<'a> {
     pub chips: &'a [Control],
     /// Own command lines by slot; an empty one has no chip.
     pub own: &'a [String],
-    /// A turn is running, and whether Stop's checks pass now: Stop is on the Send button (or
-    /// beside it, when there is a draft to send).
+    /// A turn is running, and whether Stop's checks pass now: Stop stands in its own slot beside
+    /// the Send button.
     pub stop: Option<bool>,
     /// A new session before its first message: the box says what can be typed.
     pub welcome: bool,
+    /// The box sends to this subagent (its conversation is shown): its name and colour, which the
+    /// box's edge and placeholder take.
+    pub agent: Option<(String, mdshared_ui::gfx::Rgb)>,
 }
 
 /// The chips in their default order.
@@ -41,10 +44,19 @@ pub(crate) fn chip_control(key: &str) -> Option<Control> {
     DEFAULT_CHIPS.get(at).copied()
 }
 
-/// The quick-command chips Settings shows, in order.
+/// The quick-command chips Settings shows, in order. The Compact chip is Switch's handover unless
+/// Settings › Chat says Claude Code's `/compact`.
 pub(crate) fn chips_of(prefs: &claude_switch_core::config::ChatPrefs) -> Vec<Control> {
-    prefs.shown().filter_map(chip_control).collect()
+    prefs
+        .shown()
+        .filter_map(chip_control)
+        .map(|c| if c == Control::Compact && prefs.compact_handover { Control::Handover } else { c })
+        .collect()
 }
+
+/// The Compact chip's label: what it runs.
+pub(super) const HANDOVER_LABEL: &str = "Handover";
+pub(super) const COMPACT_LABEL: &str = "/compact";
 
 const MODE_W: f32 = 125.0;
 /// An own command's widest chip.
@@ -56,7 +68,7 @@ fn chip_width(control: Control) -> f32 {
         Control::Effort => EFFORT_CHIP_MAX,
         Control::Context => CONTEXT_CHIP_MAX,
         Control::Mode => MODE_W,
-        Control::Compact => 62.0,
+        Control::Compact | Control::Handover => 62.0,
         Control::Clear => 44.0,
         _ => 32.0,
     }
@@ -148,7 +160,7 @@ impl Chat {
             .or_else(|| {
                 self.queue.as_ref().map(|queue| {
                     if queue.sends_now() {
-                        "Sends as soon as Claude Code's input reads empty."
+                        "Goes into the turn as soon as Claude Code's input takes it."
                     } else if self.last_gate == Some(Gate::Running) {
                         "A turn is running. This will be sent when it ends."
                     } else if self.drawer_focus {
@@ -188,6 +200,10 @@ impl Draw<'_> {
         let clip = p.clip(l.composer);
         // A raised box: with the keyboard its border is a little stronger, not the accent.
         look::raised_box(p, self.pal, l.box_frame, self.focused);
+        // Over a subagent's conversation the box is the agent's: its edge in the agent's colour.
+        if let Some((_, colour)) = &self.agent {
+            look::edged_box(p, self.pal, l.box_frame, *colour);
+        }
         self.attachments(p, chat);
         self.editor(p, chat);
         self.shell_chip(p, l.shell_chip, chat.shell_count);
@@ -338,11 +354,23 @@ impl Draw<'_> {
         let e = chat.layout.editor;
         self.hits.push((e, Target::Chat(Control::Editor)));
         let c = p.clip(e);
-        let x = e.x + 8.0;
-        let width = editor_text_width(e);
+        let x = e.x + editor_left(chat.shell_mode);
+        let width = editor_text_width(e, chat.shell_mode);
+        if chat.shell_mode {
+            // Claude Code's own mark for its shell mode; a click leaves it.
+            let mark = Rect::new(e.x + 8.0, e.y + FIRST_ROW - SHELL_MARK / 2.0, SHELL_MARK, SHELL_MARK);
+            let target = Target::Chat(Control::ShellMode);
+            let fill = if self.hover == Some(target) { self.pal.hover } else { self.pal.on };
+            p.rbox(mark, 6.0, fill);
+            p.text_center(Face::Semibold, 13.0, mark, "!", self.pal.accent);
+            self.hits.push((mark, target));
+        }
         let next_chip = chat.popups.next_prompt.clone().filter(|_| !chat.locked());
         // While a turn runs a message goes into it (or waits for it), and the box says so.
+        let to_agent = self.agent.as_ref().map(|(name, _)| format!("Message {name}…"));
         let hint = match () {
+            _ if chat.shell_mode => super::shell::HINT,
+            _ if to_agent.is_some() => to_agent.as_deref().unwrap_or_default(),
             _ if self.stop.is_some() && !chat.locked() => QUEUE_HINT,
             _ if self.welcome => super::welcome::HINT,
             _ => "Message Claude Code…",
@@ -352,7 +380,11 @@ impl Draw<'_> {
         let selection = ed.selection();
         let caret_row = ed.caret_row();
         if ed.text.is_empty() {
-            p.text(editor::FACE, editor::TEXT_SIZE, x, e.y + FIRST_ROW, hint, self.pal.muted, width);
+            let ink = match &self.agent {
+                Some((_, colour)) if !chat.shell_mode => *colour,
+                _ => self.pal.muted,
+            };
+            p.text(editor::FACE, editor::TEXT_SIZE, x, e.y + FIRST_ROW, hint, ink, width);
             if let Some(next) = next_chip.as_deref() {
                 let label = format!("↳ {}  ·  Tab", short(next, 80));
                 let w = (p.measure(Face::Ui, PILL_FONT, &label) + 18.0).min(width);
@@ -456,7 +488,8 @@ impl Draw<'_> {
                 Control::Context => context.as_str(),
                 Control::Mode if mode_shown => mode.as_str(),
                 Control::Mode => continue,
-                Control::Compact => "Compact",
+                Control::Compact => COMPACT_LABEL,
+                Control::Handover => HANDOVER_LABEL,
                 Control::Clear => "Clear",
                 _ => "/ …",
             };
@@ -493,16 +526,12 @@ impl Draw<'_> {
         let y = row + (SEND - 24.0) / 2.0;
         // The slot left of Send is kept for the small Stop, so nothing moves when it shows.
         let mut x = rsend.x - STOP_SLOT - 4.0;
-        let something = !chat.editor.text.trim().is_empty() || !chat.chips.is_empty();
-        match self.stop {
-            // A turn runs and there is nothing to send: the round button is Stop.
-            Some(ready) if !something && !chat.locked() => self.stop_button(p, rsend, ready, true),
-            // With a draft the round button sends (the draft is queued); Stop stands beside it.
-            Some(ready) => {
-                self.send(p, chat, rsend);
-                self.stop_button(p, Rect::new(x + 1.0, y, 24.0, 24.0), ready, false);
-            }
-            None => self.send(p, chat, rsend),
+        // The round button is always Send. While a turn runs Stop stands in its own slot beside
+        // it, draft or not: a send into the running turn never turns the button under the
+        // pointer into Stop.
+        self.send(p, chat, rsend);
+        if let Some(ready) = self.stop {
+            self.stop_button(p, Rect::new(x + 1.0, y, 24.0, 24.0), ready);
         }
         if self.wide {
             x -= 58.0;
@@ -523,29 +552,18 @@ impl Draw<'_> {
         self.toolbar_pill(p, attach, "Attach…", Control::Attach, false, !chat.locked());
     }
 
-    /// Stop: a square, on the round button or as a small plain button beside Send. It is dimmed
-    /// and takes no click while its checks fail; a click goes the way every Stop does.
-    fn stop_button(&mut self, p: &mut Painter, r: Rect, ready: bool, round: bool) {
+    /// Stop: a small plain button with a square, beside Send. It is dimmed and takes no click
+    /// while its checks fail; a click goes the way every Stop does.
+    fn stop_button(&mut self, p: &mut Painter, r: Rect, ready: bool) {
         let pal = self.pal;
         let target = Target::Chat(Control::Stop);
         let hot = ready && self.hover == Some(target);
-        let ground = look::raised(pal);
-        let side = if round { 10.0 } else { 9.0 };
+        let side = 9.0;
         let square = Rect::new(r.cx() - side / 2.0, r.cy() - side / 2.0, side, side);
-        if round {
-            let fill = match (ready, hot) {
-                (true, true) => mdshared_ui::gfx::mix(pal.text, ground, 0.18),
-                (true, false) => pal.text,
-                _ => look::quiet_fill(pal, ground),
-            };
-            p.rbox(r, r.h / 2.0, fill);
-            p.rbox(square, 2.0, if ready { ground } else { pal.faint });
-        } else {
-            if hot {
-                p.rbox(r, 6.0, pal.hover);
-            }
-            p.rbox(square, 2.0, if ready { pal.text } else { pal.faint });
+        if hot {
+            p.rbox(r, 6.0, pal.hover);
         }
+        p.rbox(square, 2.0, if ready { pal.text } else { pal.faint });
         if ready {
             self.hits.push((r, target));
         }
@@ -673,10 +691,19 @@ impl Draw<'_> {
     }
 }
 
-/// The editor's wrapping width inside its rectangle (8 px of padding on each side).
-pub(super) fn editor_text_width(e: Rect) -> f32 {
-    (e.w - 16.0).max(0.0)
+/// The editor's wrapping width inside its rectangle (8 px of padding on each side, and the `!`
+/// mark's room in shell mode).
+pub(super) fn editor_text_width(e: Rect, shell: bool) -> f32 {
+    (e.w - 8.0 - editor_left(shell)).max(0.0)
 }
+
+/// Where the draft's text starts in the editor: after the `!` mark in shell mode.
+pub(super) fn editor_left(shell: bool) -> f32 {
+    if shell { 8.0 + SHELL_MARK + 6.0 } else { 8.0 }
+}
+
+/// The `!` mark of shell mode, at the start of the first row.
+const SHELL_MARK: f32 = 20.0;
 
 fn short(s: &str, max: usize) -> String {
     if s.chars().count() <= max { s.into() } else { s.chars().take(max - 1).chain(['…']).collect() }
@@ -809,6 +836,19 @@ mod tests {
                 assert!(w <= CONTEXT_CHIP_MAX, "Context {n}: {w}");
             }
         }
+        // The Compact chip says what it runs, in its one width, at every scale.
+        for scale in [1.0, 1.25, 1.5, 2.0] {
+            let mut bitmap = Bitmap::new(8, 8);
+            let mut p = Painter::new(&mut bitmap, &mut gfx, scale);
+            for (control, label) in [(Control::Handover, HANDOVER_LABEL), (Control::Compact, COMPACT_LABEL)] {
+                let w = p.measure(Face::Semibold, PILL_FONT, label) + 8.0;
+                assert!(w <= chip_width(control), "{label} at {scale}x: {w}");
+            }
+        }
+        assert_eq!(chip_width(Control::Handover), chip_width(Control::Compact), "either choice lays out the same");
+        // The chips as Settings gives them by default: the Compact chip is the handover.
+        let chips = chips_of(&claude_switch_core::config::ChatPrefs::default());
+        assert!(chips.contains(&Control::Handover));
         // Every 20 px, and around where the Details panel appears and the measure reaches its cap.
         let widths = (760..=1600).step_by(20).chain([899, 900, 901, 1010, 1019, 1020, 1021, 1047, 1048, 1049]);
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -837,10 +877,11 @@ mod tests {
                                 hover: None,
                                 hits: &mut hits,
                                 pins: &[],
-                                chips: &DEFAULT_CHIPS,
+                                chips: &chips,
                                 own: &[],
                                 stop: None,
                                 welcome: false,
+                                agent: None,
                             }
                             .toolbar(&mut p, &chat, &info);
                             let what = format!("{width} px at {scale}x, panel {panel}, {start:?} {model} {mode:?}");
@@ -887,6 +928,7 @@ mod tests {
             own: &own,
             stop: None,
             welcome: false,
+            agent: None,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         let order: Vec<_> = hits.iter().map(|(_, t)| *t).collect();
@@ -928,6 +970,7 @@ mod tests {
             own: &own,
             stop: None,
             welcome: false,
+            agent: None,
         }
         .toolbar(&mut p, &chat, &ChatInfo::default());
         for (r, t) in &hits {
@@ -940,11 +983,11 @@ mod tests {
         assert_eq!(chips_of(&settings), chips);
     }
 
-    /// While a turn runs, Stop is the round button when there is nothing to send, and a small
-    /// button beside Send when there is a draft; dimmed, it takes no click. Either way the click
-    /// is `Control::Stop`, as the old strip's and the notice bar's Stop were.
+    /// While a turn runs, Stop is a small button in its own slot beside Send, with a draft or
+    /// without: the round button stays Send, so a click on it after a send into the running turn
+    /// never meets Stop. Dimmed, Stop takes no click. Either way the click is `Control::Stop`.
     #[test]
-    fn stop_is_on_the_send_button_while_a_turn_runs_and_beside_it_with_a_draft() {
+    fn stop_stays_in_its_own_slot_while_a_turn_runs_and_the_round_button_stays_send() {
         let mut gfx = Gfx::new();
         let app = crate::state::AppState::new(crate::source::Source::Demo, Some(true), Default::default());
         let mut bitmap = Bitmap::new(1100, 480);
@@ -966,6 +1009,7 @@ mod tests {
                 own: &[],
                 stop: turn,
                 welcome: false,
+                agent: None,
             }
             .composer(&mut p, &mut chat, &ChatInfo::default(), None, None);
             let find = |t: Target| hits.iter().find_map(|(r, hit)| (*hit == t).then_some(*r));
@@ -974,17 +1018,17 @@ mod tests {
         let (idle_send, none) = hits_for("", None);
         let idle_send = idle_send.expect("Send when no turn runs");
         assert_eq!(none, None);
-        // Nothing to send: the round button is Stop, where Send was.
-        assert_eq!(hits_for("", Some(true)), (None, Some(idle_send)));
-        // Its checks fail: dimmed, and no click.
-        assert_eq!(hits_for("", Some(false)), (None, None));
-        // A draft: the round button sends (it is queued), Stop is the small button left of it.
-        let (queue, small) = hits_for("next", Some(true));
+        // Nothing to send: the round button is still Send; Stop is the small one beside it.
+        let (round, small) = hits_for("", Some(true));
+        assert_eq!(round, Some(idle_send));
         let small = small.expect("Stop beside Send");
-        assert_eq!(queue, Some(idle_send));
         assert!(
             small.right() <= idle_send.x && small.w < idle_send.w && layout.toolbar.contains(small.cx(), small.cy())
         );
+        // A draft: the same places.
+        assert_eq!(hits_for("next", Some(true)), (Some(idle_send), Some(small)));
+        // Its checks fail: dimmed, and no click.
+        assert_eq!(hits_for("", Some(false)), (Some(idle_send), None));
         assert_eq!(hits_for("next", Some(false)), (Some(idle_send), None));
     }
 
@@ -1015,6 +1059,7 @@ mod tests {
                     own: &[],
                     stop: None,
                     welcome: false,
+                    agent: None,
                 }
                 .toolbar(&mut p, &chat, &info);
                 positions.push(hits);
@@ -1067,6 +1112,7 @@ mod tests {
                 own: &[],
                 stop: None,
                 welcome: false,
+                agent: None,
             }
             .composer(&mut p, &mut chat, &info, suggestions, None);
             let tool = hits.iter().filter(|(r, _)| layout.toolbar.contains(r.cx(), r.cy())).collect::<Vec<_>>();

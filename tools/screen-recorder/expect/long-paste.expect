@@ -1,0 +1,14 @@
+# What Chat reads from scripts/long-paste.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+# The long paste shows on the input as Claude Code's paste marker, which Chat's echo check takes
+# (within the 5 seconds it waits: the script's `wait` fails the run otherwise).
+[pasted]
+kind = input
+lines = Reply with just the word: lima. Every line after this one is filler; ignore it.
+send = no
+
+# Entered, the message is taken and answered; the input is idle again.
+[answered]
+kind = idle
+send = yes
+shows = lima

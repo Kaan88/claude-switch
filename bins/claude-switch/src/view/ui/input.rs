@@ -338,10 +338,7 @@ impl Ui {
                 let page = self.agent_origin.take().unwrap_or(Page::Agents);
                 self.show(page);
             }
-            Action::Picture(id, index) => {
-                let image = m.picture(id, index, true).or_else(|| m.picture(id, index, false));
-                self.overlay = Some(Overlay { id, index, image, bounds: Rect::default() });
-            }
+            Action::Picture(id, index) => self.overlay = Some(Overlay::open(m, id, index)),
             Action::File(file) => self.open_markdown(file, m),
             Action::Editor => {
                 if let Some(pane) = &mut self.markdown {
@@ -356,6 +353,11 @@ impl Ui {
                 }
             }
             Action::Close => self.overlay = None,
+            Action::Previous | Action::Next => {
+                if let Some(o) = &mut self.overlay {
+                    o.step(action == Action::Next);
+                }
+            }
             Action::CopyCode(code) => {
                 if platform::set_clipboard_text(&code) {
                     self.copied = Some(code);
@@ -364,7 +366,7 @@ impl Ui {
             Action::CopyMessage(id) => {
                 // As the right-click menu's Copy message: the text as shown.
                 let text = self.rows.iter().find(|r| r.id == Id::Message(id)).and_then(|r| r.body.as_ref());
-                if let Some(text) = text.map(|b| b.text().to_owned())
+                if let Some(text) = text.map(|b| crate::view::preview::copyable(b.text()).into_owned())
                     && platform::set_clipboard_text(&text)
                 {
                     self.copied = Some(text);
@@ -405,10 +407,7 @@ impl Ui {
                 platform::open_url(&url);
             }
             Destination::File(file) => self.open_markdown(file, m),
-            Destination::Picture(id, index) => {
-                let image = m.picture(id, index, true).or_else(|| m.picture(id, index, false));
-                self.overlay = Some(Overlay { id, index, image, bounds: Rect::default() });
-            }
+            Destination::Picture(id, index) => self.overlay = Some(Overlay::open(m, id, index)),
             _ => {}
         }
     }
@@ -429,6 +428,12 @@ impl Ui {
         self.follow.latest();
     }
 
+    /// The Agents page, for its pictures.
+    #[cfg(test)]
+    pub(in crate::view) fn show_agents(&mut self) {
+        self.show(Page::Agents);
+    }
+
     pub(in crate::view) fn open_agent(&mut self, id: &str, model: &Model) {
         if model.agent.as_deref() != Some(id) {
             self.agent_origin = Some(self.page);
@@ -437,26 +442,31 @@ impl Ui {
         }
     }
 
-    pub fn wheel(&mut self, x: f32, y: f32, dy: f32) {
+    /// Scrolls what is under the pointer: true when it moved.
+    pub fn wheel(&mut self, x: f32, y: f32, dy: f32) -> bool {
         if self.overlay_open() {
-            return;
+            return false;
         }
         if let Some(pane) = &self.markdown {
             if pane.bounds.contains(x, y) {
-                self.scroll_to(Surface::Markdown, pane.offset() - dy);
-                return;
+                return self.scroll_to(Surface::Markdown, pane.offset() - dy);
             }
             if self.body.w == 0.0 {
-                return;
+                return false;
             }
         }
-        self.scroll_to(Surface::Conversation, self.offset - dy);
+        self.scroll_to(Surface::Conversation, self.offset - dy)
     }
 
     pub fn key(&mut self, name: &KeyName, mods: Mods) -> bool {
-        if self.overlay_open() {
-            if *name == KeyName::Escape {
-                self.overlay = None;
+        if let Some(overlay) = &mut self.overlay {
+            // Every key stays with the viewer while it is open; none reaches the terminal.
+            match name {
+                KeyName::Escape => self.overlay = None,
+                KeyName::Left | KeyName::Right if mods.none() => {
+                    overlay.step(*name == KeyName::Right);
+                }
+                _ => {}
             }
             return true;
         }
@@ -582,7 +592,7 @@ mod tests {
                     false,
                 );
                 // Chat keeps room beside the column for the composer's box, which is wider.
-                let available = width - 2.0 * CHAT_PAD - GUTTER;
+                let available = width - 2.0 * super::chat_pad(width) - GUTTER;
                 let expected = match reading {
                     Reading::Narrow => available.min(560.0),
                     Reading::Medium => available.min(720.0),

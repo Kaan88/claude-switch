@@ -1,5 +1,6 @@
 //! Session view integration with the window, terminal and splitter.
 
+pub(crate) mod agent_status;
 pub mod attach;
 pub mod chat;
 mod discovery;
@@ -10,6 +11,7 @@ pub(crate) mod model;
 mod outputs;
 mod pictures;
 mod preview;
+pub mod reader;
 mod shells;
 mod text;
 mod ui;
@@ -86,6 +88,9 @@ pub struct Pane {
     wake: Wake,
     /// A new session this pane followed and the one it continues, for the Threads link.
     pub(crate) continued: Option<(String, String)>,
+    /// A session this pane left for the one its transcript said the conversation goes on in
+    /// (`continued-in`, as `/fork` writes), and that one: the live record may go on naming the first.
+    left: Option<(String, String)>,
     pub chat: chat::Chat,
     pub(crate) transcript_source: model::Source,
     verified_path: Option<PathBuf>,
@@ -178,6 +183,8 @@ impl Pane {
         if self.chat.awaiting_transcript && self.chat.first_sent {
             return false;
         }
+        // Following any session ends a mapping from a `continued-in` (set again by that follow).
+        self.left = None;
         let Some(source) = self.transcript_source.follow(&self.cwd, id) else { return false };
         // Only a session this tab had attached and verified is a parent: not one it was refused
         // for, nor a new chat whose transcript was never written.
@@ -199,6 +206,41 @@ impl Pane {
         self.verified_path = None;
         self.chat.followed(&self.model.chat, end);
         true
+    }
+
+    /// The session the live record's `found` stands for: the one this pane went on in when the
+    /// record still names the session the transcript left (`continued-in`).
+    /// The live record named `found`: once it names anything but the session left (the one gone on
+    /// in, as the record catches up, or a third), the mapping is done with, so a later return to
+    /// the old session (`/resume`) is followed as any other.
+    pub(crate) fn note_live_record(&mut self, found: Option<&str>) {
+        if let (Some((old, _)), Some(id)) = (&self.left, found)
+            && !id.eq_ignore_ascii_case(old)
+        {
+            self.left = None;
+        }
+    }
+
+    pub(crate) fn live_session(&self, found: Option<&str>) -> Option<String> {
+        let left = self.left.as_ref().filter(|(old, _)| found.is_some_and(|id| id.eq_ignore_ascii_case(old)));
+        left.map(|(_, new)| new.clone())
+    }
+
+    /// Follows the session this pane's own, verified transcript says the conversation goes on in
+    /// (Claude Code's `continued-in` record, written last by `/fork`), as it follows the live
+    /// record. Its id, when followed.
+    pub(crate) fn follow_continuation(&mut self) -> Option<String> {
+        let next = self.model.chat.continued_in.clone()?;
+        let old = self.pinned_id()?.to_owned();
+        let own = self.model.session_id().is_some_and(|id| id.eq_ignore_ascii_case(&old));
+        if !own || next.eq_ignore_ascii_case(&old) || self.verified_path.is_none() || self.chat.identity_unverified {
+            return None;
+        }
+        if !self.follow(&next) {
+            return None;
+        }
+        self.left = Some((old, next.clone()));
+        Some(next)
     }
 
     pub(crate) fn update_identity(&mut self, found: Option<&str>) -> bool {
@@ -386,6 +428,7 @@ impl AppState {
             model,
             wake,
             continued: None,
+            left: None,
             transcript_source: source,
             verified_path: None,
             ui,
@@ -469,6 +512,11 @@ impl AppState {
             } else {
                 cx.request_redraw(area);
             }
+            if tab.follow_continuation() {
+                self.see_shown();
+                self.rebuild_view();
+                cx.request_redraw_all();
+            }
         }
         self.chat_input_tick(cx);
         self.update_working(cx);
@@ -484,8 +532,10 @@ impl AppState {
         let details_active = self.nothing_over() && !self.picture_overlay() && !self.usage.popup.open;
         let mut hits = Vec::new();
         let diff = look::Diff::from_ansi(&self.term_colours.0.ansi);
+        let scheme = self.term_colours.0;
         if let Some(pane) = self.shown_pane(area.w) {
             pane.ui.set_diff_colours(diff);
+            pane.ui.set_terminal_colours(scheme);
             pane.ui.draw(p, pal, rects.2, &mut pane.model, mouse, cx.now(), motion);
             if let Some(deadline) = pane.ui.scroll_deadline() {
                 cx.wake_at(deadline);
@@ -524,22 +574,42 @@ impl AppState {
     pub fn draw_session_overlay(&mut self, p: &mut Painter, pal: &Palette, window: Rect) {
         let mouse = self.picture_pointer();
         let radius = crate::windowlook::Cards::for_frame(self, p).decoration(10.0);
+        if let Some(reader) = self.shown_reader() {
+            reader.draw_overlay(p, pal, window, mouse, radius);
+        }
         if let Some(pane) = self.shown_pane(window.w) {
             pane.ui.draw_overlay(p, pal, window, &pane.model, mouse, radius);
         }
     }
 
     pub fn picture_overlay(&self) -> bool {
-        self.session_visible(self.session_view.area.w)
-            && self.tabs.shown().and_then(|tab| tab.pane.as_ref()).is_some_and(|pane| pane.ui.overlay_open())
+        let details = !self.terminal_shown()
+            && !self.tabs.workers_shown()
+            && self.details_reader.as_ref().is_some_and(|r| r.overlay_open() && self.selected.as_ref() == Some(&r.id));
+        details
+            || self.session_visible(self.session_view.area.w)
+                && self.tabs.shown().and_then(|tab| tab.pane.as_ref()).is_some_and(|pane| pane.ui.overlay_open())
     }
 
     pub fn session_key(&mut self, width: f32, name: &KeyName, mods: Mods) -> bool {
+        // The details conversation has the keys it was clicked for only while the Sessions page
+        // keeps the keyboard there: once Tab, Ctrl+F or typing moved it, the reader lets go.
+        let list = self.focus == crate::state::Focus::List;
+        if let Some(reader) = self.shown_reader() {
+            if !list && !reader.overlay_open() {
+                reader.blur();
+                return false;
+            }
+            return reader.key(name, mods);
+        }
         (self.session_view.text_focus || self.picture_overlay())
             && self.shown_pane(width).is_some_and(|pane| pane.ui.key(name, mods))
     }
 
     pub fn clear_session_text_focus(&mut self) {
+        if let Some(reader) = &mut self.details_reader {
+            reader.blur();
+        }
         self.session_view.text_focus = false;
         if let Some(pane) = self.tabs.shown_mut().and_then(|tab| tab.pane.as_mut()) {
             pane.ui.blur();
@@ -547,6 +617,15 @@ impl AppState {
     }
 
     pub fn session_press(&mut self, cx: &mut Cx<'_, Msg>, x: f32, y: f32, clicks: u32) -> bool {
+        let mods = cx.mods();
+        if let Some(reader) = self.shown_reader() {
+            if reader.press(x, y, clicks, mods) {
+                self.pressed = None;
+                self.focus = crate::state::Focus::List;
+                return true;
+            }
+            return false;
+        }
         let width = cx.size().0;
         let overlay = self.picture_overlay();
         if !overlay
@@ -598,6 +677,10 @@ impl AppState {
         }
         if !self.nothing_over() {
             return false;
+        }
+        let mods = cx.mods();
+        if let Some(reader) = self.shown_reader() {
+            return reader.release(x, y, mods);
         }
         let Some(pane) = self.shown_pane(cx.size().0) else { return false };
         let previous = pane.ui.detail_side();
@@ -656,6 +739,12 @@ impl AppState {
         if !self.picture_overlay() && self.session_view.splitter.dragging() {
             return Some(self.session_view.splitter.drag(area, AXIS, x, y));
         }
+        if !self.splitter.dragging()
+            && let Some(reader) = self.shown_reader()
+        {
+            let changed = reader.moved(x, y);
+            return (changed || reader.owns_pointer(x, y)).then_some(changed);
+        }
         if let Some(pane) = self.shown_pane(area.w) {
             let changed = pane.ui.moved(x, y);
             return (changed || pane.ui.owns_pointer(x, y)).then_some(changed);
@@ -664,6 +753,13 @@ impl AppState {
     }
 
     pub fn session_pointer_cursor(&self, x: f32, y: f32) -> Option<Cursor> {
+        if self.tabs.workers_shown() {
+            return None;
+        }
+        if !self.terminal_shown() {
+            let reader = self.details_reader.as_ref().filter(|r| self.selected.as_ref() == Some(&r.id))?;
+            return reader.pointer_cursor(x, y);
+        }
         let area = self.session_view.area;
         if !self.session_visible(area.w) {
             return None;
@@ -676,6 +772,9 @@ impl AppState {
 
     pub fn session_pointer_left(&mut self) {
         self.mouse = (-1.0, -1.0);
+        if let Some(reader) = self.shown_reader() {
+            reader.pointer_left();
+        }
         let width = self.session_view.area.w;
         if let Some(pane) = self.shown_pane(width) {
             // Re-evaluate hover on re-entry rather than leaving a hot button behind.

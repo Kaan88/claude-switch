@@ -51,6 +51,7 @@ impl AppState {
     fn timers(&self, cx: &mut Cx<'_, Msg>) {
         for at in [
             self.next_poll,
+            self.feed_poll,
             self.conversation_search.due.filter(|_| self.scanned),
             self.tip.deadline(),
             self.toasts.deadline(),
@@ -91,6 +92,7 @@ impl AppState {
                 self.request_window_close(cx);
             }
             Target::TabClose(id) => self.ask_close_tab(id),
+            Target::Worker(_) | Target::WorkerCancel => self.workers_activate(t),
             Target::RestoreTabs => self.begin_tab_restore(now),
             Target::DismissTabs => self.dismiss_tab_restore(),
             Target::SessionToggle => self.toggle_session_view(),
@@ -310,6 +312,9 @@ impl AppState {
             }
             return;
         }
+        if self.find_focused() && self.find_key(&name, mods, text) {
+            return;
+        }
         if self.session_key(cx.size().0, &name, mods) {
             return;
         }
@@ -335,6 +340,14 @@ impl AppState {
                 self.term_key(now, &k);
             }
             Self::cursor_moved(cx);
+            return;
+        }
+        if self.tabs.workers_shown() {
+            if !self.workers_key(&name)
+                && let Some(id) = self.keymap.lookup(&name, mods)
+            {
+                self.command(now, id, None);
+            }
             return;
         }
         if matches!(name, KeyName::Char('f' | 'F')) && mods.ctrl && mods.shift && !mods.alt {
@@ -449,6 +462,16 @@ impl AppState {
             return;
         }
         self.usage.popup = Default::default();
+        if let Some(Target::Find(control)) = hover {
+            // In the box the toolkit places the caret, selects and drags, as in other fields.
+            if !(control == crate::termfind::FindControl::Text && self.field_press(x, y, cx.mods(), cx.now())) {
+                self.find_press(control);
+            }
+            return;
+        }
+        if matches!(hover, Some(Target::PaneDivider(_))) && self.press_divider(x, y) {
+            return;
+        }
         if self.chat_press(cx, hover, x, y, clicks) {
             self.clear_session_text_focus();
             return;
@@ -466,7 +489,9 @@ impl AppState {
                 self.term_press(x, y, Button::Left, clicks, cx.mods());
                 return;
             }
-            Some(Target::Search | Target::Entry(_)) if self.terminal_shown() => self.show_sessions(),
+            Some(Target::Search | Target::Entry(_)) if self.terminal_shown() || self.tabs.workers_shown() => {
+                self.show_sessions()
+            }
             _ => {}
         }
         let area = self.main_area(cx);
@@ -535,6 +560,10 @@ impl AppState {
             return;
         }
         if self.session_release(cx, x, y) {
+            return;
+        }
+        if self.release_divider() {
+            cx.request_redraw_all();
             return;
         }
         if self.splitter.release() {

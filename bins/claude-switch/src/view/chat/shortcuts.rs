@@ -143,6 +143,7 @@ impl AppState {
     pub(super) fn chat_editor_changed(&mut self) {
         let Some(chat) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()).map(|p| &mut p.chat) else { return };
         chat.recall.cancel_load();
+        chat.shell_from_text();
         if chat.error == Some(super::submission::BAD_TEXT)
             && !chat.editor.text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
         {

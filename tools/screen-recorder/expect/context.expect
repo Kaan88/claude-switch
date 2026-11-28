@@ -1,0 +1,18 @@
+# What Chat reads from each snapshot of scripts/context.txt. The keys are explained in the README
+# and in bins/claude-switch/src/view/chat/question/screens/compat.rs.
+
+# The card's rows start at the answer's bullet (`●`, or `⏺`), at column 0.
+[answered]
+kind = idle
+send = yes
+card = bullet: *ong*
+
+[context_closed]
+kind = idle
+input =
+send = yes
+
+# /context's output is recorded with its colour codes (SGR) inside <local-command-stdout>; the
+# name is the command as typed.
+[transcript]
+outputs = */context: colours*

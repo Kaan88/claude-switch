@@ -43,6 +43,10 @@ impl Hit {
     pub(in crate::view::chat) fn side(&self) -> Side {
         self.side
     }
+
+    pub(in crate::view::chat) fn tab(&self) -> u64 {
+        self.tab
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -134,8 +138,29 @@ impl Details {
         self.refresh(model, cwd, Side::Files);
     }
 
+    /// Whether the panel, which the user neither opened nor closed, opens: it has a section to
+    /// show. The lists the model keeps answer at once; the transcript is scanned for changed files
+    /// only while nothing else would open it and none was found yet (a file once changed stays
+    /// changed for the session).
+    pub(in crate::view) fn wants_panel(&mut self, model: &Model, cwd: &Path) -> bool {
+        if self.generation != Some(model.generation) {
+            *self = Self { generation: Some(model.generation), ..Self::default() };
+        }
+        let listed = !model.tasks.is_empty()
+            || !model.agents.is_empty()
+            || !model.shells.is_empty()
+            || !model.mcp_tasks.is_empty()
+            || !model.output_list.is_empty();
+        if listed || !self.files.is_empty() {
+            return true;
+        }
+        self.refresh_all(model, cwd);
+        !self.files.is_empty()
+    }
+
     /// Chat's panel has a section to show: tasks, something in the background, a changed file
     /// or an output. Call after [`Details::refresh_all`].
+    #[cfg(test)]
     pub(in crate::view) fn has_sections(&self, model: &Model) -> bool {
         !model.tasks.is_empty()
             || !model.agents.is_empty()
@@ -143,6 +168,16 @@ impl Details {
             || !model.mcp_tasks.is_empty()
             || !self.files.is_empty()
             || !model.output_list.is_empty()
+    }
+
+    /// The tooltip of an agent's row: its state and where that was read, or why nothing tells.
+    pub(in crate::view) fn tip(model: &Model, hit: Hit) -> Option<String> {
+        if hit.side != Side::Agents || hit.revision != model.revision || !matches!(hit.part, Part::Expand | Part::Open)
+        {
+            return None;
+        }
+        let status = model.agent_status(model.agents.get(hit.index)?);
+        Some(format!("{}. {}", status.word, status.why))
     }
 
     fn action(&self, model: &Model, tab: u64, side: Side, hit: Hit) -> Option<Action> {

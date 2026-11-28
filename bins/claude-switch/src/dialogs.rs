@@ -27,7 +27,9 @@ mod settings;
 mod terminal_appearance;
 pub(crate) use opencode_rows::update_opencode_rows;
 pub(crate) use settings::peek::{PEEK_TIP, PeekInput};
-pub(crate) use settings::{OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event};
+pub(crate) use settings::{
+    CcPage, CcRead, OPENCODE, TERMINAL, refresh_sessions_page, settings, settings_event, take_claude_code_jobs,
+};
 
 pub const OK: u32 = 1;
 pub const CANCEL: u32 = 2;
@@ -68,6 +70,10 @@ pub enum Pending {
     },
     /// Close a terminal tab whose program runs.
     CloseTab(u64),
+    /// A pane of a tab: (tab, pane).
+    ClosePane(u64, crate::panes::PaneId),
+    /// End a bridge job's worker process tree (the Workers tab).
+    CancelWorker(String),
     CloseOtherTabs(u64),
     RestoreTab,
     ChatSlash {
@@ -601,6 +607,8 @@ pub fn click(st: &mut AppState, now: Instant, id: u32, x: f32) {
             (OK, Pending::Copy { id, account, delete }) => st.copy_now_then(now, &id, &account, delete),
             (OK, Pending::Delete { id }) => st.delete_confirmed(now, &id),
             (OK, Pending::CloseTab(tab)) => st.close_tab_now(tab),
+            (OK, Pending::ClosePane(tab, pane)) => st.close_pane_now(tab, pane),
+            (OK, Pending::CancelWorker(id)) => st.cancel_worker(&id),
             (OK, Pending::CloseOtherTabs(tab)) => st.close_other_tabs(tab),
             (OK | CANCEL, Pending::RestoreTab) => st.confirm_restore_tab(now, id == OK),
             (OK, Pending::ChatSlash { tab, session, line, from_editor }) => {

@@ -4,17 +4,18 @@ use crate::state::AppState;
 use crate::tabs::NewTab;
 use crate::term::Term;
 use crate::view::chat::{Gate, QUIET, Reason};
-use claude_switch_core::transcript::{Item, QuestionOption};
+use claude_switch_core::transcript::{AgentEnd, EndSource, Item, QuestionOption};
 
 const AT: u64 = 100;
+const FINISHED: (AgentEnd, EndSource) = (AgentEnd::Finished, EndSource::Sidecar);
 
 fn question(multi_select: bool) -> Question {
     Question {
         header: "Who builds".into(),
         question: "Who builds the parser?".into(),
         options: vec![
-            QuestionOption { label: "Me".into(), description: "I write it".into() },
-            QuestionOption { label: "You".into(), description: "Claude writes it".into() },
+            QuestionOption { label: "Me".into(), description: "I write it".into(), preview: String::new() },
+            QuestionOption { label: "You".into(), description: "Claude writes it".into(), preview: String::new() },
         ],
         multi_select,
     }
@@ -117,7 +118,14 @@ fn the_screen_must_show_the_same_question_and_every_option_in_order() {
     assert!(other(&|q| q.question = "Who tests the parser?".into()).is_none());
     assert!(other(&|q| q.options[1].label = "Them".into()).is_none());
     assert!(other(&|q| q.options.swap(0, 1)).is_none());
-    assert!(other(&|q| q.options.push(QuestionOption { label: "Both".into(), description: String::new() })).is_none());
+    assert!(
+        other(&|q| q.options.push(QuestionOption {
+            label: "Both".into(),
+            description: String::new(),
+            preview: String::new()
+        }))
+        .is_none()
+    );
     assert!(other(&|q| q.options.truncate(1)).is_none(), "an unknown extra entry is not accepted");
 
     let mut no_footer = Screen::new(70, 24, 0);
@@ -131,8 +139,8 @@ fn a_screen_that_looks_like_a_permission_question_is_never_answered() {
         header: String::new(),
         question: "Do you want to proceed?".into(),
         options: vec![
-            QuestionOption { label: "Yes".into(), description: String::new() },
-            QuestionOption { label: "No".into(), description: String::new() },
+            QuestionOption { label: "Yes".into(), description: String::new(), preview: String::new() },
+            QuestionOption { label: "No".into(), description: String::new(), preview: String::new() },
         ],
         multi_select: false,
     };
@@ -301,7 +309,8 @@ fn an_answerable_question_blocks_sending_without_opening_the_drawer() {
         let reason = if answerable { Reason::Question } else { Reason::Tool };
         assert_eq!(decision, (Gate::Check, Some(reason)));
         pane.chat.react(decision.1);
-        assert_eq!(pane.chat.drawer == Drawer::Closed, answerable);
+        // Neither opens the drawer: the card answers it, or `terminal_card` shows the screen.
+        assert_eq!(pane.chat.drawer, Drawer::Closed);
     }
 }
 
@@ -553,15 +562,13 @@ fn a_prompt_must_show_the_whole_command_or_full_path_and_no_subagent_may_be_aski
 
     // A subagent that is running (or that this turn started, end unknown) may be the one asking.
     let pane = f.tab().pane.as_mut().unwrap();
-    pane.model.agents.push(claude_switch_core::transcript::Subagent {
-        id: "a1".into(),
-        finished: Some(false),
-        ..Default::default()
-    });
+    pane.model.agents.push(claude_switch_core::transcript::Subagent { id: "a1".into(), ..Default::default() });
+    pane.model.listed.insert("a1".into(), crate::view::agent_status::Listed::Running);
     f.sync();
     assert_eq!(f.chat().question.answerable, None);
     let pane = f.tab().pane.as_mut().unwrap();
-    pane.model.agents[0].finished = Some(true);
+    pane.model.agents[0].end = Some(FINISHED);
+    pane.model.listed.clear();
     let mut agent = shell("toolu_a", "");
     if let ItemKind::Tool { name, state, card, .. } = &mut agent {
         *name = "Agent".into();
@@ -1006,6 +1013,40 @@ fn recorded_agent_lists_read_with_their_keys_and_states() {
     assert!(list(BG_HINT).is_none() && list(REWIND_IDLE).is_none());
 }
 
+/// The terminal's agent list says which agents run and which were stopped; the input with no list
+/// under it says none is listed, and a screen that covers the input says nothing.
+#[test]
+fn the_agent_list_tells_running_and_stopped_agents_by_their_transcript_ids() {
+    use crate::view::agent_status::{Listed, State};
+    use screens::recorded::*;
+    let mut f = Fixture::idle();
+    f.agent("First pinger");
+    f.agent("Second pinger");
+    let listed = |f: &mut Fixture, fixture: &str| {
+        let pane = f.tab().pane.as_ref().unwrap();
+        super::listed_agents(&pane.model, &recorded(fixture))
+    };
+    let running = std::collections::BTreeMap::from([
+        ("a-First pinger".into(), Listed::Running),
+        ("a-Second pinger".into(), Listed::Running),
+    ]);
+    assert_eq!(listed(&mut f, AGENTS_IDLE), Some(running.clone()));
+    assert_eq!(listed(&mut f, AGENTS_SECOND), Some(running.clone()), "highlighted, still running");
+    let stopped = listed(&mut f, AGENTS_STOPPED).unwrap();
+    assert_eq!(stopped.get("a-Second pinger"), Some(&Listed::Stopped));
+    assert_eq!(listed(&mut f, PROMPT_IDLE), Some(Default::default()), "no list under the input");
+    assert_eq!(listed(&mut f, ASK_SINGLE), None, "a question covers the input");
+    // Read while syncing, for every place agents show; a covered screen keeps the last reading.
+    let now = Instant::now();
+    f.show(AGENTS_IDLE, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    let pane = f.tab().pane.as_ref().unwrap();
+    assert!(pane.model.agents.iter().all(|a| pane.model.agent_status(a).state == State::Running));
+    // Twice in the transcript: no row can say which one it is.
+    f.agent("First pinger");
+    assert!(!listed(&mut f, AGENTS_IDLE).unwrap().contains_key("a-First pinger"));
+}
+
 #[test]
 fn stop_agent_walks_the_list_one_checked_key_at_a_time() {
     use screens::recorded::*;
@@ -1106,7 +1147,7 @@ fn stop_agent_stops_when_the_screen_shows_anything_else() {
     // An agent known to have finished, or one the transcript holds twice, is not offered.
     let mut f = Fixture::idle();
     start(&mut f);
-    f.tab().pane.as_mut().unwrap().model.agents[0].finished = Some(true);
+    f.tab().pane.as_mut().unwrap().model.agents[0].end = Some(FINISHED);
     f.agent("Second pinger");
     f.sync();
     assert!(f.chat().question.agents.is_empty());
@@ -1255,7 +1296,8 @@ fn a_question_worded_like_a_permission_prompt_never_opens_the_drawer_for_a_tick(
 }
 
 fn fruits() -> Question {
-    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let option =
+        |label: &str| QuestionOption { label: label.into(), description: String::new(), preview: String::new() };
     Question {
         header: "Fruits".into(),
         question: "Which fruits do you like?".into(),
@@ -1265,7 +1307,8 @@ fn fruits() -> Question {
 }
 
 fn size() -> Question {
-    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let option =
+        |label: &str| QuestionOption { label: label.into(), description: String::new(), preview: String::new() };
     Question {
         header: "Size".into(),
         question: "Which size?".into(),
@@ -1275,7 +1318,8 @@ fn size() -> Question {
 }
 
 fn speed() -> Question {
-    let option = |label: &str| QuestionOption { label: label.into(), description: String::new() };
+    let option =
+        |label: &str| QuestionOption { label: label.into(), description: String::new(), preview: String::new() };
     let options = vec![option("Slow"), option("Fast")];
     Question { header: "Speed".into(), question: "Which speed?".into(), options, multi_select: false }
 }
@@ -1555,7 +1599,7 @@ fn recorded_form_screens_lead_to_the_expected_keys() {
     };
 
     let shown = form_question(&screen(FORM_MULTI), &qs, 0).expect("the first question");
-    assert_eq!((shown.other, shown.submit, shown.chat, shown.marks.as_slice()), (3, Some(4), 5, &[false; 3][..]));
+    assert_eq!((shown.other, shown.submit, shown.chat, shown.marks.as_slice()), (Some(3), Some(4), 5, &[false; 3][..]));
     assert!(form_question(&screen(FORM_MULTI), &qs, 1).is_none());
     assert!(form_question(&screen(FORM_SECOND), &qs, 0).is_none(), "the second question shows");
     assert!(form_question(&screen(FORM_SECOND), &qs, 1).is_some());
@@ -1614,15 +1658,71 @@ fn enter_in_a_forms_field_turns_the_page_and_submits_on_the_last_question() {
     assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
     assert_eq!(f.chat().question.form.page, 1, "Enter turns to the next question");
     assert!(f.writes().is_empty());
-    // On the last question Enter is Submit, with the same checks.
+    // After the last question Enter turns to the Submit step, which has no field.
     assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert_eq!(f.chat().question.form.page, 2);
+    assert!(!f.chat().question.focus && f.writes().is_empty());
+    // Submit there checks first: the second question has no answer, and is shown.
+    assert!(press(f.tab(), now, Hit::Submit));
     assert_eq!(f.chat().question.error, Some(UNANSWERED));
+    assert_eq!(f.chat().question.form.page, 1);
     assert!(f.writes().is_empty());
     press(f.tab(), now, Hit::Option(0));
-    assert!(press(f.tab(), now, Hit::Field));
-    assert!(key(f.tab(), now, &KeyName::Enter, Mods::default(), None));
+    assert!(press(f.tab(), now, Hit::Page(2)));
+    assert_eq!(f.chat().question.form.page, 2);
+    assert!(press(f.tab(), now, Hit::Submit));
     assert_eq!(f.writes(), [b"\r".to_vec()], "Large is highlighted: chosen");
     assert!(f.chat().question.step.is_some());
+}
+
+#[test]
+fn a_forms_tabs_name_its_questions_and_submit_and_mark_what_the_terminal_shows() {
+    let qs = [size(), speed()];
+    let mut f = Fixture::new(qs.to_vec());
+    let now = Instant::now();
+    f.screen(&form_screen(&qs, 0, 0, &[], None), now);
+    let tab = f.tab();
+    let pane = tab.pane.as_mut().unwrap();
+    pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
+    assert_eq!(f.chat().question.form_shown, Some(0), "the terminal shows the first question");
+    press(f.tab(), now, Hit::Option(1));
+    let tabs = |f: &mut Fixture| {
+        let pane = f.tab().pane.as_mut().unwrap();
+        let parts = cards::parts(&pane.chat, &pane.model, 600.0).expect("the form's card");
+        parts
+            .into_iter()
+            .find_map(|p| match p {
+                cards::Part::Tabs(tabs) => Some(tabs),
+                _ => None,
+            })
+            .expect("its tabs")
+    };
+    let row = tabs(&mut f);
+    let names: Vec<(&str, bool, bool, bool)> =
+        row.iter().map(|t| (t.label.as_str(), t.answered, t.current, t.terminal)).collect();
+    assert_eq!(
+        names,
+        [
+            (qs[0].header.as_str(), true, true, true),
+            (qs[1].header.as_str(), false, false, false),
+            ("Submit", false, false, false)
+        ]
+    );
+    // A tab turns the card's page, and nothing is written.
+    assert!(press(f.tab(), now, Hit::Page(2)));
+    assert!(f.writes().is_empty());
+    let pane = f.tab().pane.as_mut().unwrap();
+    let parts = cards::parts(&pane.chat, &pane.model, 600.0).unwrap();
+    let answers = parts.iter().find_map(|p| match p {
+        cards::Part::Answers(rows) => Some(rows.clone()),
+        _ => None,
+    });
+    let answers = answers.expect("the Submit step lists the answers");
+    assert_eq!(answers[0], (collapse(&qs[0].question), collapse(&qs[0].options[1].label), true));
+    assert!(!answers[1].2, "the second has none yet");
+    assert!(parts.iter().any(
+        |p| matches!(p, cards::Part::Buttons(b) if b.iter().any(|(_, h, primary)| *h == Hit::Submit && *primary))
+    ));
 }
 
 #[test]
@@ -2212,7 +2312,7 @@ fn an_interrupted_side_step_leaves_a_notice_not_a_stuck_card() {
     assert_eq!(f.chat().question.error, Some(INTERRUPTED));
     assert!(!f.chat().question.failed, "only a notice");
     // The agents end; the pending call then asks.
-    f.tab().pane.as_mut().unwrap().model.agents.iter_mut().for_each(|a| a.finished = Some(true));
+    f.tab().pane.as_mut().unwrap().model.agents.iter_mut().for_each(|a| a.end = Some(FINISHED));
     f.screen(&prompt("cargo test --workspace", 0, None), now);
     f.sync();
     assert_eq!(f.chat().question.answerable, Some(AT), "the prompt is answered from the card");
@@ -2365,4 +2465,421 @@ fn rewind_is_refused_in_a_subagents_transcript() {
     assert!(f.writes().is_empty(), "nothing is written");
     assert_eq!(f.chat().error, Some(rewind::IN_AGENT));
     assert!(f.rewind().is_none());
+}
+
+#[test]
+fn a_read_outside_the_project_is_a_card_with_or_without_its_call_in_the_transcript() {
+    use screens::recorded::PERM_READ_OUTSIDE;
+    for known in [true, false] {
+        let mut f = Fixture::idle();
+        let now = Instant::now();
+        if known {
+            // The transcript holds the pending Read call (a handover tab that read it already).
+            let path = r"C:\Users\user1\AppData\Local\Temp\cs-hand\data\handover\one\h.md";
+            let kind = ItemKind::Tool {
+                id: "toolu_read".into(),
+                name: "Read".into(),
+                summary: path.into(),
+                file_path: Some(path.into()),
+                state: ToolState::Running,
+                duration_ms: None,
+                pictures: vec![],
+                subagent: None,
+                denial: None,
+                card: None,
+            };
+            let pane = f.tab().pane.as_mut().unwrap();
+            pane.model.items.insert(ItemId { offset: 900, block: 0 }, Item { kind, timestamp: None });
+            pane.model.chat.pending = Some(900);
+            pane.model.chat.latest = Some((900, claude_switch_core::transcript::ChatPhase::Active));
+        }
+        f.tab().term.screen = screens::recorded::recorded(PERM_READ_OUTSIDE);
+        f.chat().output(now, true, false);
+        f.sync();
+        let card = &f.chat().question;
+        // With its call: the call's card; without (a new session whose transcript Chat has not read
+        // yet): the prompt read whole from the screen. Either answers it here.
+        assert!(if known { card.approval && card.answerable == Some(900) } else { card.prompt_answers() }, "{known}");
+        assert_eq!(f.decide(now + QUIET), Some(Reason::Approval), "{known}");
+    }
+}
+
+/// The message box over a subagent's conversation, on the screens Claude Code 2.1.332 drew
+/// (`agent-message`): ↓, ↓ to the agent, Enter to show it, the message, Enter; each key only once
+/// the screen shows what the one before led to. Back then returns Claude Code to the main session
+/// through the same list, and one Esc there gives the input its keys again.
+#[test]
+fn a_message_to_the_shown_agent_goes_through_the_agent_list() {
+    use screens::recorded::*;
+    const KILO: &str = "Reply with the word kilo when you are done.";
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("Count slowly");
+    f.tab().pane.as_mut().unwrap().model.agent = Some("a-Count slowly".into());
+    f.show(AGENT_MESSAGE_IDLE, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    f.writes();
+    f.chat().editor.set(KILO.into());
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [down(1)], "↓ gives the list the keys");
+    assert!(f.chat().waiting().is_some(), "the box waits meanwhile");
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "the same screen proves nothing");
+    f.show(AGENT_MESSAGE_LIST, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(AGENT_MESSAGE_HIGHLIGHTED, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Enter on the agent's row, never x");
+    // The agent shows; its list keeps the keys on it, and its input reads empty (dim placeholder).
+    f.show(AGENT_MESSAGE_VIEWING, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [format!("\x1b[200~{KILO}\x1b[201~").into_bytes()]);
+    assert_eq!(f.chat().question.cli_agent.as_deref(), Some("a-Count slowly"));
+    f.show(AGENT_MESSAGE_TYPED, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.show(AGENT_MESSAGE_SENT, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert!(f.chat().editor.text.is_empty() && f.chat().error.is_none(), "sent");
+    assert!(f.chat().waiting().is_none());
+
+    // The next message goes straight in: Claude Code shows that agent already.
+    f.chat().editor.set(KILO.into());
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [format!("\x1b[200~{KILO}\x1b[201~").into_bytes()]);
+    f.show(AGENT_MESSAGE_TYPED, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    f.show(AGENT_MESSAGE_SENT, now);
+    advance(f.tab(), now, true);
+    assert!(f.chat().editor.text.is_empty());
+
+    // A message for the main session waits while Claude Code shows the agent.
+    f.tab().pane.as_mut().unwrap().model.agent = None;
+    assert_eq!(
+        crate::view::chat::submission::blocked(f.tab(), now, crate::view::chat::Intent::Draft),
+        Some(agent_send::SHOWS_AGENT),
+        "it would go to the agent"
+    );
+    // Back: ↓ (the highlight on main), Enter, then Esc once main shows with the list on main.
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(AGENT_MESSAGE_BACK_LIST, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "Enter on main");
+    f.show(AGENT_MESSAGE_BACK, now);
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\x1b".to_vec()], "Esc only with main shown and highlighted");
+    f.show(AGENT_MESSAGE_IDLE, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().question.cli_agent, None);
+    advance(f.tab(), now, true);
+    assert!(f.writes().is_empty(), "nothing more to do");
+}
+
+/// No Esc while an agent shows, whatever else the screen says.
+#[test]
+fn back_sends_no_esc_while_claude_code_shows_the_agent() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    f.agent("Count slowly");
+    f.show(AGENT_MESSAGE_SENT, now);
+    f.app.progress_chat_tabs(now + STEP, true);
+    f.chat().question.cli_agent = Some("a-Count slowly".into());
+    f.writes();
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [down(1)]);
+    // The list as it is right after Enter on the agent: the agent shows, its row highlighted.
+    f.show(AGENT_MESSAGE_VIEWING, now);
+    advance(f.tab(), now, true);
+    assert!(f.writes().iter().all(|w| w != b"\x1b"), "never Esc while the agent shows");
+    advance(f.tab(), now + Duration::from_secs(3), true);
+    assert_eq!(f.chat().error, Some(agent_send::STILL_AGENT));
+}
+
+/// An agent that ended, or that the list does not show running, gets no message; neither does
+/// one while a turn's screen holds the keys. The box says why and keeps the text.
+#[test]
+fn a_message_to_an_agent_that_cannot_take_it_stays_in_the_box() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let setup = |listed: bool| {
+        let mut f = Fixture::idle();
+        f.agent("First pinger");
+        f.agent("Second pinger");
+        f.tab().pane.as_mut().unwrap().model.agent = Some("a-First pinger".into());
+        f.show(if listed { AGENTS_IDLE } else { PROMPT_IDLE }, now);
+        f.app.progress_chat_tabs(now + STEP, true);
+        f.writes();
+        f.chat().editor.set("Reply with kilo".into());
+        f
+    };
+    let mut f = setup(false);
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::UNLISTED), "not sent to main either");
+    assert_eq!(f.chat().editor.text, "Reply with kilo");
+
+    let mut f = setup(true);
+    f.tab().pane.as_mut().unwrap().model.agents[0].end = Some(FINISHED);
+    f.tab().pane.as_mut().unwrap().model.listed.clear();
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::ENDED));
+
+    // The list with the keys elsewhere (a Stop agent's screen): held, nothing written.
+    let mut f = setup(true);
+    f.show(AGENTS_OPEN, now);
+    AppState::chat_send(f.tab(), now, false);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::NOT_READY));
+
+    // The screen does not show the agent selected in time: the message is held.
+    let mut f = setup(true);
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [down(1)]);
+    f.show(PROMPT_IDLE, now);
+    advance(f.tab(), now + Duration::from_secs(3), true);
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(agent_send::NOT_SELECTED));
+    assert_eq!(f.chat().editor.text, "Reply with kilo");
+
+    // A shell command or an attachment goes to the main session only.
+    let mut f = setup(true);
+    f.chat().shell_mode = true;
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.chat().error, Some(agent_send::SHELL));
+    assert!(f.writes().is_empty());
+}
+
+#[test]
+fn the_placeholder_names_the_agent_claude_code_shows() {
+    use screens::recorded::*;
+    for fixture in [AGENT_MESSAGE_VIEWING, AGENT_MESSAGE_SENT] {
+        assert_eq!(screens::viewing_agent(&recorded(fixture)).as_deref(), Some("general-purpose"));
+    }
+    // Drawn dim, the placeholder reads as an empty input once the cursor is back on it; right
+    // after Enter the cursor is parked in the list, which still has the keys.
+    assert!(crate::view::chat::submission::screen::clean_prompt(&recorded(AGENT_MESSAGE_SENT)));
+    assert!(!crate::view::chat::submission::screen::clean_prompt(&recorded(AGENT_MESSAGE_VIEWING)));
+    // Back on main the dim text is Claude Code's suggestion, no agent.
+    for fixture in [AGENT_MESSAGE_IDLE, AGENT_MESSAGE_BACK, AGENT_MESSAGE_TYPED, AGENTS_IDLE] {
+        assert_eq!(screens::viewing_agent(&recorded(fixture)), None);
+    }
+    assert!(screens::names_agent("general-purpose", "general-purpose"));
+    assert!(screens::names_agent("a-very-long-agent-n", "a-very-long-agent-name"), "cut to 20 columns");
+    assert!(!screens::names_agent("Explore", "general-purpose"));
+    assert!(!screens::names_agent("gen", "general-purpose"), "too short to tell");
+}
+
+/// The list as 2.1.332 draws it with the effort at the end of the hint row, and while it shows an
+/// agent.
+#[test]
+fn recorded_agent_message_lists_read_with_their_keys() {
+    use screens::ListKeys;
+    use screens::recorded::*;
+    let read = |fixture: &str| {
+        let list = screens::agent_list(&recorded(fixture))?;
+        let h = list.highlight;
+        Some((list.keys, h, h.map(|h| list.rows[h].shown)))
+    };
+    assert_eq!(read(AGENT_MESSAGE_IDLE), Some((ListKeys::Input, None, None)));
+    assert_eq!(read(AGENT_MESSAGE_LIST), Some((ListKeys::Select, Some(0), Some(true))));
+    assert_eq!(read(AGENT_MESSAGE_HIGHLIGHTED), Some((ListKeys::Stop, Some(1), Some(false))));
+    assert_eq!(read(AGENT_MESSAGE_VIEWING), Some((ListKeys::Select, Some(1), Some(true))), "the shown agent");
+    assert_eq!(read(AGENT_MESSAGE_SENT), Some((ListKeys::Input, None, None)));
+    assert_eq!(read(AGENT_MESSAGE_BACK_LIST), Some((ListKeys::Select, Some(0), Some(false))), "main, an agent shown");
+    assert_eq!(read(AGENT_MESSAGE_BACK), Some((ListKeys::Select, Some(0), Some(true))));
+    // The queued message on the row keeps it running.
+    let sent = screens::agent_list(&recorded(AGENT_MESSAGE_SENT)).unwrap();
+    assert_eq!(sent.rows[1].state, screens::AgentState::Running);
+}
+
+/// The question of the recorded `preview_*` screens (Claude Code 2.1.332, `recorder compat`
+/// script `preview`), as the transcript holds it.
+fn layout_question() -> Question {
+    let option = |label: &str, preview: &str| QuestionOption {
+        label: label.into(),
+        description: String::new(),
+        preview: preview.into(),
+    };
+    Question {
+        header: "Layout".into(),
+        question: "Which layout do you prefer?".into(),
+        options: vec![
+            option("Boxed", "+-----+\n| Map |\n+-----+"),
+            option("Tree", "cache/\n  12/\n  13/"),
+            option("Plain", ""),
+        ],
+        multi_select: false,
+    }
+}
+
+/// The form of the recorded `preview_form*` screens (script `preview-form`).
+fn preview_form() -> Vec<Question> {
+    let option = |label: &str| QuestionOption { label: label.into(), ..Default::default() };
+    let mut layout = layout_question();
+    layout.options.truncate(2);
+    vec![
+        layout,
+        Question {
+            header: "Extras".into(),
+            question: "Which extras should it keep?".into(),
+            options: vec![option("Logs"), option("Metrics"), option("Traces")],
+            multi_select: true,
+        },
+        Question {
+            header: "Name".into(),
+            question: "How long a name?".into(),
+            options: vec![option("Short"), option("Long")],
+            multi_select: false,
+        },
+    ]
+}
+
+#[test]
+fn a_question_with_previews_reads_from_the_recorded_screen_without_its_box() {
+    use screens::recorded::{PREVIEW_ASKED, PREVIEW_NONE, recorded};
+    let screen = recorded(PREVIEW_ASKED);
+    let (col, rows) = screens::side_box(&screen).expect("the box beside the choices");
+    assert_eq!(col, 34);
+    let view = screens::question_view(&screen);
+    let notes = (0..view.rows()).any(|r| view.row_text(r).contains("Notes:"));
+    assert!(!notes && rows.len() >= 5, "the notes row goes with the box");
+    // The cut keeps the modes the arrow keys are written for and the cursor.
+    assert_eq!(view.modes(), screen.modes());
+    assert_eq!((view.cursor().row, view.cursor().col), (screen.cursor().row, screen.cursor().col));
+    // No "Type something" with previews; "Chat about this" carries no number but is walked to.
+    let (menu, other, chat) = question_menu(&screen, &layout_question(), false).expect("the question");
+    assert_eq!(menu.texts(), ["Boxed", "Tree", "Plain", "Chat about this"]);
+    assert_eq!((menu.highlight(), other, chat), (Some(0), None, Some(3)));
+    // The menu card read from the screen alone: the question, its choices, no field.
+    let shown = menu_shown(&screen).expect("the menu card");
+    assert!(shown.question && shown.other.is_none());
+    assert_eq!((shown.title.as_str(), shown.header.as_str()), ("Which layout do you prefer?", "Layout"));
+    assert_eq!(shown.choices, ["Boxed", "Tree", "Plain", "Chat about this"]);
+    assert!(shown.notes.iter().all(String::is_empty), "{:?}", shown.notes);
+    // The option without a preview: "No preview available" in a shorter box.
+    let none = recorded(PREVIEW_NONE);
+    let (menu, ..) = question_menu(&none, &layout_question(), false).expect("the question");
+    assert_eq!(menu.highlight(), Some(2));
+    // A label that differs fails closed.
+    let mut other = layout_question();
+    other.options[1].label = "Trees".into();
+    assert!(question_menu(&screen, &other, false).is_none());
+}
+
+#[test]
+fn a_box_near_the_left_edge_or_without_a_menu_footer_is_no_preview_box() {
+    let footer = "Enter to select · ↑/↓ to navigate · Esc to cancel";
+    let draw = |indent: &str, footer: &str| {
+        let mut screen = Screen::new(80, 12, 0);
+        let rows = [
+            format!("  1. A     {indent}┌──────────┐"),
+            format!("  2. B     {indent}│ text     │"),
+            format!("           {indent}└──────────┘"),
+            String::new(),
+            footer.to_owned(),
+        ];
+        screen.feed(rows.join("\r\n").as_bytes());
+        screen
+    };
+    assert!(screens::side_box(&draw("    ", footer)).is_some());
+    let mut near = Screen::new(80, 12, 0);
+    near.feed(format!("┌──────────┐\r\n│ text     │\r\n└──────────┘\r\n{footer}").as_bytes());
+    assert!(screens::side_box(&near).is_none());
+    assert!(screens::side_box(&draw("    ", "")).is_none());
+}
+
+#[test]
+fn a_form_with_previews_is_driven_over_the_recorded_pages_and_review() {
+    use screens::recorded::{PREVIEW_FORM, PREVIEW_FORM_EXTRAS, PREVIEW_FORM_REVIEW, PREVIEW_FORM_TREE, recorded};
+    let qs = preview_form();
+    let first = recorded(PREVIEW_FORM);
+    let shown = form_question(&first, &qs, 0).expect("the first page, without its box");
+    assert_eq!((shown.other, shown.chat, shown.menu.highlight()), (None, 2, Some(0)));
+    assert!(form_question(&first, &qs, 1).is_none());
+    let tree = recorded(PREVIEW_FORM_TREE);
+    assert_eq!(form_question(&tree, &qs, 0).and_then(|s| s.menu.highlight()), Some(1));
+    let extras = recorded(PREVIEW_FORM_EXTRAS);
+    let shown = form_question(&extras, &qs, 1).expect("the multi-select page");
+    assert_eq!((shown.other, shown.submit, shown.marks.as_slice()), (Some(3), Some(4), &[false, false, false][..]));
+    // Tree, then Logs with "alerts", then Short: the first key moves to Tree, then Enter.
+    let answers = vec![
+        Answer { picks: vec![1], text: None },
+        Answer { picks: vec![0], text: Some("alerts".into()) },
+        Answer { picks: vec![0], text: None },
+    ];
+    let mut run = FormRun { questions: qs.clone(), answers, expect: Expect::Opened(0), why: NOT_SHOWN };
+    let (key, expect, _) = form_next(&run, &first).expect("a key");
+    assert_eq!(key, down(1));
+    run.expect = expect;
+    let (key, expect, _) = form_next(&run, &tree).expect("Enter on Tree");
+    assert_eq!((key, expect), (b"\r".to_vec(), Expect::Opened(1)));
+    // A typed answer on a page without "Type something" stops before any key.
+    let mut typed = run.clone();
+    typed.answers[0] = Answer { picks: vec![], text: Some("mine".into()) };
+    typed.expect = Expect::Opened(0);
+    assert_eq!(form_next(&typed, &first).err(), Some(NO_FIELD));
+    // The review shows every answer as the card holds them: Enter on "Submit answers".
+    run.expect = Expect::Review(None);
+    let (key, expect, _) = form_next(&run, &recorded(PREVIEW_FORM_REVIEW)).expect("Submit answers");
+    assert_eq!((key, expect), (b"\r".to_vec(), Expect::Submitted));
+}
+
+#[test]
+fn a_question_with_previews_shows_the_one_under_the_pointer_or_the_keys_and_copies_plain_text() {
+    let mut f = Fixture::new(vec![layout_question()]);
+    let now = Instant::now();
+    f.screen("\x1b[2J", now);
+    let tab = f.tab();
+    let pane = tab.pane.as_mut().unwrap();
+    pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen);
+    let lay = |f: &mut Fixture, width: f32| {
+        let pane = f.tab().pane.as_mut().unwrap();
+        let mut parts = cards::parts(&pane.chat, &pane.model, width).expect("the question's card");
+        let options = layout_question().options;
+        preview::lay(&mut pane.chat.question, &mut parts, width, 1.0, &options);
+        parts
+    };
+    // Wide: beside the choices, as tall as the tallest preview.
+    let parts = lay(&mut f, 900.0);
+    let side = parts.iter().find_map(|p| match p {
+        cards::Part::Choices { side, .. } => Some(*side),
+        _ => None,
+    });
+    let size = side.flatten().expect("the preview beside the list");
+    assert_eq!(size.rows, 3);
+    assert!(!parts.iter().any(|p| matches!(p, cards::Part::Preview(_))));
+    // Narrow: under them.
+    let parts = lay(&mut f, 420.0);
+    assert!(parts.iter().any(|p| matches!(p, cards::Part::Preview(s) if s.w == 420.0 && s.rows == 3)));
+    let previews = &mut f.chat().question.previews;
+    assert_eq!(previews.copy_text(false).as_deref(), Some(layout_question().options[0].preview.as_str()));
+    // ↓ shows the next option's (while the card is in view); the pointer over the third shows
+    // it has none.
+    f.chat().question.rect = Rect::new(0.0, 0.0, 420.0, 400.0);
+    assert!(key(f.tab(), now, &KeyName::Down, Mods::default(), None));
+    assert_eq!(
+        f.chat().question.previews.copy_text(false).as_deref(),
+        Some(layout_question().options[1].preview.as_str())
+    );
+    assert!(f.writes().is_empty(), "the keys only move the preview");
+    f.chat().question.previews.hover(2);
+    assert_eq!(f.chat().question.previews.copy_text(false), None);
+    // Nothing to copy without a selection; the press goes nowhere near the terminal.
+    f.chat().question.previews.hover(0);
+    assert_eq!(f.chat().question.previews.copy_text(true), None);
+    assert!(!press(f.tab(), now, Hit::Preview) && !press(f.tab(), now, Hit::CopyPreview));
+    assert!(f.writes().is_empty());
+    // A question without previews has no preview part.
+    let mut plain = Fixture::new(vec![question(false)]);
+    let pane = plain.tab().pane.as_mut().unwrap();
+    let mut parts = cards::parts(&pane.chat, &pane.model, 700.0).unwrap();
+    preview::lay(&mut pane.chat.question, &mut parts, 700.0, 1.0, &question(false).options);
+    assert!(parts.iter().all(|p| !matches!(p, cards::Part::Preview(_) | cards::Part::Choices { side: Some(_), .. })));
 }

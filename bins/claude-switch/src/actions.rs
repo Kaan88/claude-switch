@@ -36,8 +36,8 @@ pub const OPEN_COPY: u32 = 17;
 pub const SESSION_VIEW: u32 = 18;
 pub const PASTE: u32 = 19;
 pub const SWITCHER: u32 = 20;
-const RENAME: u32 = 21;
-const PIN: u32 = 22;
+pub(crate) const RENAME: u32 = 21;
+pub(crate) const PIN: u32 = 22;
 const SUGGEST: u32 = 23;
 const SUGGEST_BATCH: u32 = 24;
 pub const HIDE: u32 = 25;
@@ -52,6 +52,11 @@ const SET_TOPIC: u32 = 31;
 const MEANING_INDEX: u32 = 240;
 const MEANING_ASK: u32 = 241;
 pub const NEW_OPENCODE: u32 = 242;
+pub const FIND_TERMINAL: u32 = 243;
+pub const SPLIT_RIGHT: u32 = 244;
+pub const SPLIT_DOWN: u32 = 245;
+pub const CLOSE_PANE: u32 = 246;
+pub const NEXT_PANE: u32 = 247;
 
 /// The confirmation before a session the desktop app still lists is opened in the CLI.
 pub const DESKTOP_WARNING: &str =
@@ -62,6 +67,37 @@ const ACCOUNT_BASE: u32 = 50_000;
 const SESSION_BASE: u32 = 100_000;
 /// Menu ids of "Open as…": `OPEN_AS_BASE + account index * 2 + (0 CLI, 1 Desktop)`.
 const OPEN_AS_BASE: u32 = 1_000;
+
+/// The commands that act on the selected session (or its row or folder) of the Sessions list.
+pub fn on_selected_session(id: u32) -> bool {
+    use crate::delete::{COPY_DELETE, DELETE_ROW};
+    [
+        OPEN_CLI,
+        OPEN_DESKTOP,
+        OPEN_AS,
+        OPEN_COPY,
+        OPEN_LAST,
+        MOVE_FOLDER,
+        RENAME,
+        SET_TOPIC,
+        PIN,
+        SUGGEST,
+        HIDE,
+        HIDE_FOLDER,
+        COPY_ID,
+        COPY_PATH,
+        REVEAL,
+        OPEN_FOLDER,
+        DELETE_ROW,
+        COPY_DELETE,
+        ARCHIVE_ROW,
+        ARCHIVE_FOLDER,
+        UNARCHIVE_ROW,
+        UNARCHIVE_SELECTED,
+    ]
+    .contains(&id)
+        || (OPEN_AS_BASE..OPEN_AS_BASE + 200).contains(&id)
+}
 
 pub const COMMANDS: &[Command] = &[
     Command::new(NEW_SESSION, "session.new", "New session…").keys("Ctrl+N"),
@@ -127,6 +163,11 @@ impl BranchJob {
 impl AppState {
     /// Runs a command of the table (or a palette entry's id).
     pub fn command(&mut self, now: Instant, id: u32, anchor: Option<Rect>) {
+        // On the Workers tab the selected session is hidden: its commands (F2, Ctrl+D, the
+        // palette's) do not act on it unseen.
+        if self.tabs.workers_shown() && on_selected_session(id) {
+            return;
+        }
         match id {
             NEW_SESSION => self.ask_new_session(),
             crate::compact_dialog::COMMAND => {
@@ -171,6 +212,19 @@ impl AppState {
             PASTE => self.paste(),
             NEW_SHELL => self.new_shell(now),
             NEW_OPENCODE => self.ask_new_opencode_tab(),
+            FIND_TERMINAL => self.open_find(),
+            SPLIT_RIGHT | SPLIT_DOWN => {
+                if let Some(t) = self.tabs.active {
+                    let axis = if id == SPLIT_RIGHT { crate::panes::Axis::Right } else { crate::panes::Axis::Down };
+                    self.split_pane(now, t, axis);
+                }
+            }
+            CLOSE_PANE => {
+                if let Some(t) = self.tabs.active {
+                    self.ask_close_pane(t);
+                }
+            }
+            NEXT_PANE => self.focus_next_pane(),
             NEXT_TAB | PREV_TAB => self.step_tab(id == NEXT_TAB),
             CLOSE_TAB => {
                 if let Some(t) = self.tabs.active {
@@ -614,6 +668,15 @@ impl AppState {
         }
         if self.terminal_shown() {
             entries.push(Entry::new(PASTE, "Paste").group(0));
+            entries.push(Entry::new(FIND_TERMINAL, "Find in terminal").hint("Ctrl+Shift+F").group(0));
+            if self.tabs.active.is_some_and(|t| self.can_split(t)) {
+                entries.push(Entry::new(SPLIT_RIGHT, "Split right").group(0));
+                entries.push(Entry::new(SPLIT_DOWN, "Split down").group(0));
+            }
+            if self.tabs.shown().is_some_and(|t| t.shows_panes()) {
+                entries.push(Entry::new(CLOSE_PANE, "Close pane").group(0));
+                entries.push(Entry::new(NEXT_PANE, "Next pane").group(0));
+            }
         }
         if self.tabs.shown().is_some_and(|tab| tab.pane.is_some()) {
             entries.push(Entry::new(CHAT_LAYOUT, "Switch Chat / Terminal · F6 in palette").group(0));

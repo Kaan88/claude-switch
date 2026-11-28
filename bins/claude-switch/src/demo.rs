@@ -10,7 +10,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use claude_switch_core::sessions::PreviewLine;
 use claude_switch_core::share::{LinkState, SHARED, ShareState};
 use claude_switch_core::{
     Account, AccountStatus, App, Config, Launch, Place, Refusal, Running, Session, WorkersUse, running,
@@ -301,19 +300,6 @@ pub fn seed_marks(marks: &mut claude_switch_core::marks::Marks, sessions: &[Sess
             marks.see(&s.id, &s.file, s.transcript_ms);
         }
     }
-}
-
-pub fn preview(s: &Session, max: usize) -> Vec<PreviewLine> {
-    let lines = [
-        (true, format!("{}. Start with the part that fails.", s.title)),
-        (false, "I read the module and the failing test. The state is reset before the scan ends, so the second call sees an empty list. I moved the reset after the scan and the test passes.".to_string()),
-        (true, "Good. Does anything else call it that way?".to_string()),
-        (false, "Two other places do. Both read the list after the scan has finished, so they are not affected. I left them as they are.".to_string()),
-        (true, "Run the whole suite once more, then stop.".to_string()),
-        (false, "All tests pass. Nothing is committed.".to_string()),
-    ];
-    let skip = lines.len().saturating_sub(max);
-    lines.into_iter().skip(skip).map(|(from_user, text)| PreviewLine { from_user, text }).collect()
 }
 
 pub fn last_account(s: &Session) -> String {

@@ -194,7 +194,7 @@ pub fn draw_below_title_with(
     let mut moving = None;
     let terminal = st.terminal_shown().then(|| st.terminal_scheme());
     let mut top = TITLE_H;
-    if !st.tabs.is_empty() {
+    if st.tabs.strip_shown() {
         let look = tabs::Look {
             hover: st.hover,
             pressed: st.pressed,
@@ -265,6 +265,7 @@ pub fn tip_of(t: Target) -> Option<&'static str> {
         Target::SearchConversation => "In conversations (Ctrl+Shift+F) — toggle full-text search",
         Target::Account => "The account sessions are opened as",
         Target::SessionToggle => "Toggle session view (Ctrl+Shift+E)",
+        Target::Find(control) => return crate::termfind::tip_of(control),
         _ => return None,
     })
 }

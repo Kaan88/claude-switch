@@ -44,6 +44,8 @@ pub struct Layout {
     /// starts. Both empty otherwise.
     pub greeting: Rect,
     pub starts: Rect,
+    /// The window has room for the Details panel: a click that opens it can show it.
+    pub panel_room: bool,
 }
 
 impl Layout {
@@ -55,7 +57,12 @@ impl Layout {
 
     /// The Details panel's width in `area`: nothing when it is hidden or the window too narrow.
     pub fn panel_width(area: Rect, panel: bool, reveal: bool) -> f32 {
-        if panel && (area.w >= 900.0 || reveal) { (area.w * 0.24).clamp(252.0, 300.0) } else { 0.0 }
+        if panel && Self::panel_room(area, reveal) { (area.w * 0.24).clamp(252.0, 300.0) } else { 0.0 }
+    }
+
+    /// Whether the Details panel can show in `area`: a wide window, or a section that reveals it.
+    pub fn panel_room(area: Rect, reveal: bool) -> bool {
+        area.w >= 900.0 || reveal
     }
 
     /// The reading column of a conversation `main_w` wide when the conversation pane has not
@@ -160,6 +167,7 @@ impl Layout {
             shell_chip,
             greeting,
             starts,
+            panel_room: Self::panel_room(area, reveal),
         }
     }
 }

@@ -5,7 +5,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use claude_switch_core::sessions::PreviewLine;
 use claude_switch_core::{AccountStatus, Config, Running, Session};
 use mdshared_app::job::Job;
 use mdshared_ui::anim::Stack;
@@ -64,8 +63,6 @@ pub const HEAD_H: f32 = 30.0;
 pub const ROW_H: f32 = 62.0;
 /// How often the running sessions are read while the window is shown.
 pub const POLL: Duration = Duration::from_secs(5);
-/// How many messages the preview shows.
-pub const PREVIEW_LINES: usize = 6;
 
 /// Which part has the keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,9 +114,16 @@ pub enum Target {
     Dialog(u32),
     /// A tab of the strip, by its id ([`crate::tabs::SESSIONS`] for the list), and its close button.
     Tab(u64),
+    /// A job in the Workers tab's list, by its place, and the selected job's Cancel.
+    Worker(usize),
+    WorkerCancel,
     TabClose(u64),
     /// The terminal of the tab shown.
     Terminal,
+    /// A control of the find bar over the terminal shown.
+    Find(crate::termfind::FindControl),
+    /// A divider between panes of the tab shown, by its number.
+    PaneDivider(usize),
     SessionToggle,
     ChatMode(bool),
     Chat(crate::view::chat::Control),
@@ -212,8 +216,12 @@ pub struct AppState {
     pub key_used: bool,
     pub accounts_dd: Dropdown<String>,
     pub splitter: Splitter,
-    pub preview: Option<(String, Vec<PreviewLine>)>,
-    pub preview_job: Option<(String, Job<Vec<PreviewLine>>)>,
+    /// The selected session's conversation in the details, read-only.
+    pub details_reader: Option<crate::view::reader::Reader>,
+    /// When the shown details conversation and the Workers tab are read again.
+    pub feed_poll: Option<Instant>,
+    /// The OpenCode bridge's jobs (the Workers tab).
+    pub workers: crate::workers_tab::WorkersTab,
     pub last_account: Option<(String, String)>,
     pub scan_job: Option<Job<Scan>>,
     pub running_job: Option<Job<crate::source::ActivityScan>>,
@@ -225,6 +233,10 @@ pub struct AppState {
     pub info: Option<InfoBar>,
     pub dialog: Option<Dialog>,
     pub settings_category: Option<&'static str>,
+    /// What Settings › Claude Code › Advanced read, and its search and account.
+    pub cc_page: crate::dialogs::CcPage,
+    /// What Settings › Claude Code › Status read.
+    pub cc_status: crate::dialogs::CcRead,
     pub confirm_scroll: f32,
     pub compact: crate::compact_dialog::Cache,
     pub opencode: crate::opencode_workers::Workers,
@@ -251,6 +263,8 @@ pub struct AppState {
     pub cell_font: CellFont,
     pub metrics: Option<Metrics>,
     pub term_area: Rect,
+    /// The whole terminal of the tab shown, all its panes and their padding.
+    pub term_region: Rect,
     /// The grid that fits the terminal area, for a tab opened next.
     pub grid: (u16, u16),
     pub window_focused: bool,
@@ -331,8 +345,9 @@ impl AppState {
             key_used: false,
             accounts_dd: Dropdown::new(Vec::<(String, String)>::new(), 0),
             splitter,
-            preview: None,
-            preview_job: None,
+            details_reader: None,
+            feed_poll: None,
+            workers: Default::default(),
             last_account: None,
             scan_job: None,
             running_job: None,
@@ -344,6 +359,8 @@ impl AppState {
             info: None,
             dialog: None,
             settings_category: None,
+            cc_page: Default::default(),
+            cc_status: Default::default(),
             confirm_scroll: 0.0,
             compact: Default::default(),
             opencode: Default::default(),
@@ -369,6 +386,7 @@ impl AppState {
             cell_font: CellFont::new(),
             metrics: None,
             term_area: Rect::default(),
+            term_region: Rect::default(),
             grid: crate::term::FIRST_SIZE,
             window_focused: true,
             quit: false,
@@ -486,15 +504,8 @@ impl AppState {
                 changed |= self.apply_activity(r);
             }
         }
-        if let Some((id, job)) = &self.preview_job
-            && !job.running()
-        {
-            let lines = job.take().unwrap_or_default();
-            if self.selected.as_ref() == Some(id) {
-                self.preview = Some((id.clone(), lines));
-            }
-            self.preview_job = None;
-            changed = true;
+        if let Some(reader) = &mut self.details_reader {
+            changed |= reader.collect();
         }
         changed |= self.take_conversation_search();
         changed |= self.take_related();
@@ -590,7 +601,7 @@ impl AppState {
             }
             None => {
                 self.selected = None;
-                self.preview = None;
+                self.details_reader = None;
                 self.session_size.cancel();
                 self.cancel_related();
             }
@@ -616,18 +627,19 @@ impl AppState {
         let wake = self.wake_fn();
         self.session_size.start(&session, self.source.is_demo(), wake);
         self.last_account = self.source.last_account(&self.config, &session).map(|account| (id.to_string(), account));
-        if !again && self.preview.as_ref().is_some_and(|(p, _)| p == id) {
+        if let Some(reader) = self.details_reader.as_ref().filter(|r| r.id == id && r.file == session.file) {
+            // The same session again (a rescan): the reader goes on from where it read.
+            if again {
+                reader.poll();
+            }
             return;
         }
-        if !again {
-            self.preview = None;
-        }
-        if let Some((_, job)) = &self.preview_job {
-            job.cancel();
-        }
-        let source = self.source.clone();
-        let job = Job::start(self.wake_fn(), move |_, _| source.preview(&session, PREVIEW_LINES)).ok();
-        self.preview_job = job.map(|j| (id.to_string(), j));
+        let wake = self.wake_fn();
+        self.details_reader = if self.source.is_demo() {
+            crate::view::reader::Reader::demo(id, &session.file, &session.title, wake).ok()
+        } else {
+            Some(crate::view::reader::Reader::new(id, session.file.clone(), session.cwd.clone(), wake))
+        };
     }
 
     pub fn running_of(&self, id: &str) -> Option<&Running> {

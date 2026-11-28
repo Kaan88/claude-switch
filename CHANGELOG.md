@@ -2,9 +2,192 @@
 
 ## Unreleased
 
+- Chat: with a subagent's conversation open, the message box talks to that agent: its edge and
+  placeholder take the agent's colour and name ("Message general-purpose…"), and Send picks the
+  agent in the list under Claude Code's input and types the message there, each key only once the
+  screen shows the one before worked. ‹ Back returns the box, and Claude Code, to the main session.
+  An agent that ended or is not listed running gets no message: the box says so instead of
+  sending to the main session.
+
+- Chat and the Session view: subagents are told apart in plain words wherever they show (Details ›
+  Background, a subagent's conversation header, the Agents page): Running, Finished, or Stopped
+  (Interrupted, Failed). Before, an agent Claude Code had not marked showed `?` even when it was
+  done, and a running one never showed as running. The end is read from the agent's
+  notification, its call's result, the mark beside its transcript or its transcript's last
+  record; running and stopped from the terminal's agent list. `?` is left only when nothing tells,
+  and its tooltip says why.
+
+- Chat: a question whose options have previews (mock-ups, code) shows the preview of the option
+  under the pointer, or the one ↑ and ↓ move to, in the terminal's font, cell grid and colours:
+  beside the choices in a wide card, under them in a narrow one, as tall as the tallest preview up
+  to 16 rows, scrolling with the wheel when longer. A drag selects in it; Ctrl+C or Copy copies
+  plain text. The previews come from the question's call in the transcript when Claude Code has
+  written it there (it does not always while the question waits); otherwise the card is read from
+  the screen, now including a question with previews (the box beside the choices is left out), and
+  shows its choices without previews. Such a question offers no typed answer in Claude Code, so
+  its card has no text field.
+- Chat: a form of several questions (or a multi-select one) built from the question's call shows
+  its tabs, as the terminal does ("Layout · Extras · Names · Submit"): a tick on each answered
+  question, a dot on the one the terminal shows, and a click turns the page. After the last
+  question comes the Submit step in the card, with every answer and **Submit answers**; Chat then
+  drives Claude Code's form as before, one checked key at a time.
+- Chat: the rewind card's choices no longer touch the lines above them that say what they do.
+- Chat: the message box is quieter, as in the desktop app: no shadow in a dark theme (a faint one in a
+  light theme), an edge only just lighter than the box, and focus firms it only a little.
+- Chat: the Compact chip runs Switch's handover by default (labelled "Handover"; the same dialog
+  as "Compact and open…", continuing in place where it can). Settings › Chat › "Compact chip runs"
+  switches it back to Claude Code's `/compact` (labelled "/compact").
+- Chat and the Session view: the picture viewer goes to the conversation's previous and next
+  picture with buttons on its sides (shown where there is one, quiet until pointed at) or the Left
+  and Right arrow keys, and says where you are ("2 of 5"; left out in a window too narrow for it
+  beside the buttons). Each picture still loads only when shown, and one that cannot be shown
+  says why while the arrows go on.
+- Chat: when Claude Code may be waiting in the terminal, the bell rang, a permission prompt Chat
+  cannot read whole is left with its drawer closed, or a send is refused because Chat cannot read
+  the screen, the part of the terminal screen that matters shows as a card above the message box:
+  from the call that waits down to the input, in the terminal's font and colours, following the
+  screen while it stays. **Answer in terminal** opens the drawer with the keyboard, and the
+  drawer closes again by itself once the wait is over, unless you resized it or typed in Chat
+  meanwhile; **Dismiss** hides it until the next time. It goes once Chat can read the screen again. Chat still types
+  nothing into such a screen, and the drawer no longer opens by itself for these waits.
+- Chat and the Session view: what a command printed (`/context`, `/mcp`, `/cost`, shell mode) is
+  drawn as the terminal draws it, from the colour codes Claude Code recorded: the terminal's font,
+  cell grid and theme colours, so `/context`'s grid and the columns beside it line up and keep
+  their colours. Lines wider than the box wrap; selection and Copy give plain text. Other escape
+  sequences in the output are dropped, so it cannot move or clear what is shown.
+- Chat and the Session view: after a rewind, the turns it replaced are no longer shown once the
+  next message is written; the conversation follows the active branch of the transcript.
+- Chat and the Session view: after a rewind, the Tasks, Agents, Shells and Files pages leave out
+  what the replaced turns did once the next message is written, as the conversation does; an agent
+  or background shell started there that is still running stays listed.
+- Chat: after a handover, `/rename` could stay typed on Claude Code's input without Enter (typed
+  just before a permission prompt took the screen) and every later message waited behind it
+  without a word. The rename now goes only once Chat has read the new session's first prompt, and
+  every command Chat types on its own (a rename, a handover's `/clear`, the Compact, Clear and
+  model buttons) is followed until Claude Code took it: one that was not entered is taken off the
+  input again (only when the input shows exactly that line, never your own text), a rename is
+  typed again up to three times, and the box says what happened.
+- Chat: a slash command after `/model` is no longer refused with "A turn is running (the screen
+  reads idle)" when the turn before it ended without an `end_turn` record.
+- Chat: background agents listed under the input (their timers redraw every second) no longer
+  keep the screen from reading quiet, so commands and messages go instead of being refused.
+- Chat: the "Review your answers" step of a question shows as a card when blank rows and the
+  input's rule are drawn under it, instead of sending you to the terminal. A menu's highlighted
+  choice (`❯ 1. Yes`) is no longer taken for the input's mark.
+- Chat: a message that is a numbered list ("1. …", "2. …") no longer shows as a question card
+  that blocks sending. What is in Claude Code's input box, under it or in the conversation above
+  it is never read as a menu, question or dialog.
+- Chat: when Claude Code moves a tab's conversation to a new session after `/fork` and says so in
+  the transcript it leaves, Chat follows it instead of staying on the old conversation; the
+  conversation shows there once its transcript is written with the next message.
+- Chat: shell mode turned on with no command yet counts as a draft, so a handover continued in
+  place waits for it instead of being sent as a shell command after `/clear`; a draft that starts
+  with `!` shows as shell mode before it goes; a long shell command that wraps is entered.
+- Chat: a one-character message (or a short number) sent while a call is pending waits for the
+  call, as a prompt drawn the same instant could take it as its answer; a message held in the
+  first moment of a call joins Claude Code's queue once the call runs; queued bubbles go when the
+  program ends, and only a prompt with the same text takes one off.
+
+- Chat: a multi-select question read from the screen shows Claude Code's ticked boxes as the
+  card's own ticks instead of "[√]" in the label, and no longer repeats each label under it; the
+  list of blocked calls marks the call its buttons act on with a bar, not a tick; a rewind on its
+  way says "Rewinding in Claude Code…"; a card too tall for a short window says "Scroll for the
+  choices" while they are below.
+- Chat: the count of permissions denied in the current turn stays in view, on a line over another
+  card that holds the card's place (a question or a permission prompt), instead of disappearing
+  until that card is gone.
+- Chat: `!` typed into the empty message box turns it to Claude Code's shell mode, as in the
+  terminal: the command goes as `!command` and runs in Claude Code's shell (Backspace in the empty
+  box leaves the mode). Enter goes only once Claude Code's input shows the command in shell mode,
+  which is not recorded from a real session yet.
+- Chat: while a command runs, a slash command or "Send anyway" is refused with "a turn is
+  running" instead of "Claude Code may be waiting for your answer in the terminal", which it was
+  not: the screen shows the turn working over an empty input.
+- Chat: messages sent while Claude works wait in Claude Code's queue, and Chat now shows each as a
+  quiet bubble at the end of the conversation ("Queued — waiting for its turn"), in the order sent,
+  until Claude Code hands it in. **Send now** under them uses Claude Code's own key for its queue
+  (Ctrl+X Ctrl+S): every queued message goes to the running turn at once, without stopping it. A
+  message sent while a command runs now goes into that queue too, instead of waiting in the box
+  for the turn to end.
+- Chat: a card taller than its room (a long command in a short window, or with the terminal
+  drawer open) no longer cuts off its choices and foot: it lowers its choices, shortens the
+  command (saying how many lines are left out) and the question, and scrolls what still does not
+  fit, with Open terminal and Esc kept in view. Nothing outside a card takes a click meant for
+  it.
+- Chat: a question on a new session shows at the foot of the window, not in the greeting's place.
+- Chat: a question longer than the card shows says so ("The rest of the question is in the
+  terminal") instead of being cut silently.
+- Chat: "Run in background" shows on the card when the command's own line is scrolled out of view.
+- Chat: Stop keeps its own place beside Send while Claude works, so a click on Send never lands
+  on Stop; Stop only stops the turn it was drawn for.
+- Chat: Escape under a card does what its "Esc to …" button says; a key typed while a card waits
+  says where typing goes.
+- Chat: the task progress on the working line ("2 of 3") is not shown where the window is too
+  narrow for the panel it opens.
+- Chat: copied text no longer carries the invisible character kept above code blocks for their
+  header, and the header no longer covers a selection at the code's top.
+- Chat: the rewind, blocked-calls, background and denied-permissions cards are laid out like the
+  other cards; Chat's side margin narrows to 12 px in a narrow window.
+
+- Handover: Claude Code no longer asks in the terminal whether it may read the handover file. A
+  new handover tab may read exactly that one file. A handover that continues in the same tab is
+  pasted whole up to 15,000 characters, as before; a longer one is still read from its file, and
+  Claude Code's question about it shows in Chat as a card with its choices, which answers it.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.
+- Terminal tabs: split a tab into up to four panes, side by side or stacked, with "Split right",
+  "Split down", "Close pane" and "Next pane" in the tab's menu and the palette. A new pane starts a
+  shell in the tab's folder; a click gives a pane the keyboard (it has a thin edge), the divider
+  between two panes can be dragged, and each pane has its own size. Chat and the session view stay
+  with the tab's own Claude pane, which closes last; closing the last pane closes the tab.
+- Terminal tabs: find in the screen and the scrollback. Ctrl+Shift+F (while the terminal has the
+  keyboard, as in Windows Terminal), "Find in terminal" in the palette or "Find…" in the tab's menu
+  opens a bar at the top right of the terminal, also over Chat's terminal drawer. Matches are marked
+  as you type, the current one in its own colour, with a count ("3 of 12"); Enter or ↑ goes to the
+  match above, Shift+Enter or ↓ to the one below, Aa (Alt+C) matches case (off by default), Escape
+  closes it. A match across a wrapped line is found.
+- Terminal panes: "Close pane" on the tab's own (Claude) pane while other panes are open asks
+  "Close the whole tab?" and closes the tab, instead of refusing; Chat never loses its terminal.
+- Terminal panes: a selection belongs to the pane it was started in; dragging over another pane
+  selects to the edge of its own, and moving to another pane clears it, so a tab shows one.
+- Terminal find: whole word (Alt+W) and regular expression (Alt+R) toggles beside "Aa"; a pattern
+  that does not compile says "Invalid pattern". The box takes mouse selection (drag, double and
+  triple click) and its right-click menu (Cut, Copy, Paste, Select all) like the app's other fields.
+- Terminal tabs: a split tab reopened with the saved tabs gets its panes back, in the same layout
+  and sizes, each shell started again in the folder it was started in.
+- Sessions: the details show the selected session's conversation as Chat draws it (answers in
+  Markdown, code blocks, tool rows that open), read-only, in a region that scrolls on its own and
+  follows new messages; it replaces the short "Last messages" list. Earlier history loads on
+  request.
+- Workers tab: beside Sessions while the OpenCode bridge's job folder (`%TEMP%\opencode-agent`)
+  exists, the bridge's jobs live: worker, model, folder, state, running time and last tool, with
+  jobs whose server has exited shown as "Owner gone". The selected job's output streams from its
+  event log. **Cancel job…** ends the job's worker and the processes it started, after a confirm,
+  and only while that process is still the job's; otherwise it says why it did not.
+- Settings › Claude Code › Advanced: the rest of Claude Code's `/config` (taken from 2.1.332), with a
+  search box, a short line on what each does, a "default" mark and Reset to Claude Code's default.
+  `settings.json` entries are saved in the master account and shared; `.claude.json` entries belong
+  to the chosen account and are read-only while it runs Claude Code. A value changed elsewhere since
+  the page read it is never overwritten. Entries Claude Code lists only in some contexts
+  (fullscreen mode, an IDE connected, agent teams, a feature flag) say so on their row.
+  `.claude.json` is changed only when no Claude Code can hold it (a desktop session of another
+  account in the same folder, a session still starting, a program in one of the window's tabs,
+  or a scan that could not read everything all count), never created, backed up first, and
+  replaced only if its bytes are still those read; a lock Claude Code left behind is taken over.
+  Saves and reads run in the background, and files keep the order of their keys.
+- Settings › Claude Code › Status: for a chosen account, the installed Claude Code version, the
+  sign-in method and account, the settings files in effect, user MCP servers and memory file, and
+  stats from its prompt history (prompts, sessions, days active, folders) and the models of its
+  newest sessions. Read from files only; plan usage links to the Usage page.
+- Resume in the desktop app as a further account opens that account's desktop app (its own data
+  folder) with the session; it used to go through Claude Code's `--desktop`, whose link Windows
+  hands to the first account's desktop app.
+- Tools: `recorder compat` has a `fork` script that checks what `/fork` does to the live session
+  record and the transcripts (a `live` op records both), and whether Chat reads the screen after
+  it as an idle input.
+- Tools: `recorder compat` has a `rewind-send` script: a rewind, then a prompt, checked against
+  what Chat shows of the transcript.
 
 ## 0.1.6 (2026-11-28)
 

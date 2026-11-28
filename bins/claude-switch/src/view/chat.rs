@@ -10,16 +10,19 @@ mod layout;
 mod paint;
 mod popups;
 pub(super) mod question;
+mod queued;
 #[cfg(test)]
-mod readme_shots;
+pub(crate) mod readme_shots;
 mod recall;
 mod rename;
 mod screen_report;
+mod shell;
 mod shortcuts;
 #[cfg(test)]
 mod shots;
 pub(super) mod side;
 pub(super) mod submission;
+mod terminal_card;
 mod undo;
 mod welcome;
 
@@ -29,6 +32,8 @@ pub use input::layout_shortcut;
 pub use layout::Layout;
 pub use paint::STRIP_RESERVE;
 pub use paint::strip_button;
+pub(in crate::view) use queued::Shown as QueuedShown;
+pub(crate) use rename::PROMPT_WAIT as RENAME_PROMPT_WAIT;
 pub use shortcuts::MenuMode;
 
 use std::path::PathBuf;
@@ -107,6 +112,11 @@ struct Signals<'a> {
     typed: bool,
     /// The screen shows the CLI's input at rest (empty or not): quiet, with no working line.
     resting: bool,
+}
+
+/// The CLI's live input box is on the screen: no prompt or menu has its place.
+pub(crate) fn input_box_shown(screen: &mdshared_term::Screen) -> bool {
+    question::screens::input_box(screen).is_some()
 }
 
 fn assess(s: Signals<'_>) -> (Gate, Option<Reason>) {
@@ -189,6 +199,8 @@ pub struct Chat {
     /// pickers or permission prompts; they stay in the terminal.
     pub(crate) menus_off: bool,
     question: question::Card,
+    /// The part of the terminal screen Chat cannot read, shown in the conversation.
+    terminal_card: terminal_card::Card,
     mode_step: Option<submission::mode::ModeStep>,
     /// The permission mode as the screen last showed it.
     mode_shown: Option<&'static str>,
@@ -217,10 +229,18 @@ pub struct Chat {
     editor_words: Option<std::ops::Range<usize>>,
     chips: Vec<Chip>,
     chip_page: usize,
+    /// The draft is a command for Claude Code's shell mode (`!`, `shell.rs`).
+    shell_mode: bool,
     recall: recall::Recall,
     error: Option<&'static str>,
     retry: Option<Intent>,
     queue: Option<Queue>,
+    /// Messages sent into a running turn that Claude Code keeps in its queue, until the
+    /// transcript shows them handed in (`queued.rs`), and when Send now's keys went.
+    queued: Vec<queued::Queued>,
+    send_now: Option<Instant>,
+    /// What the last refused Send now said, which its next success takes back.
+    send_now_refused: Option<&'static str>,
     image_wait: Option<ImageWait>,
     staging: submission::Staging,
     commands: commands::Picker,
@@ -238,6 +258,8 @@ pub struct Chat {
     bell: bool,
     slash: bool,
     last_output: Option<Instant>,
+    /// A digest of the rows down to the input box at the last output (`output_on`).
+    drawn: Option<u64>,
     /// When the terminal last got input from the user or from Chat.
     last_input: Option<Instant>,
     /// When this tab last saved a screen report (`screen_report`).
@@ -245,6 +267,8 @@ pub struct Chat {
     /// A message or command Chat submitted: the output it was written after, and when.
     sent: Option<(u64, Instant)>,
     last_gate: Option<Gate>,
+    /// The turn the composer's Stop was last drawn for: its click stops that turn only.
+    stop_turn: Option<crate::view::working::Turn>,
     demo: bool,
     demo_progress: bool,
     #[cfg(test)]
@@ -267,10 +291,30 @@ impl Chat {
         self.react(Some(Reason::Permission));
     }
 
+    /// Tests: the CLI drew something new, whatever the screen holds.
+    #[cfg(test)]
     pub fn output(&mut self, now: Instant, output: bool, bell: bool) {
         if output {
             self.last_output = Some(now);
             self.output_epoch = self.output_epoch.wrapping_add(1);
+        }
+        if bell {
+            self.bell = true;
+            self.suppressed = None;
+        }
+    }
+
+    /// Output from the terminal, as it changed `screen`: every output is newer output (the epoch),
+    /// but only a change of what is drawn down to the input box is activity (`last_output`, which
+    /// `quiet` waits on). The rows under it redraw by themselves while the CLI is at rest.
+    pub fn output_on(&mut self, now: Instant, output: bool, bell: bool, screen: &mdshared_term::Screen) {
+        if output {
+            self.output_epoch = self.output_epoch.wrapping_add(1);
+            let digest = submission::screen::activity_digest(screen);
+            if self.drawn != Some(digest) {
+                self.drawn = Some(digest);
+                self.last_output = Some(now);
+            }
         }
         if bell {
             self.bell = true;
@@ -496,6 +540,7 @@ impl Chat {
     /// `end` is the followed transcript's length then: only records after it count as new.
     pub(super) fn followed(&mut self, info: &ChatInfo, end: u64) {
         self.interrupt_submission();
+        self.forget_queued();
         self.first_sent = false;
         self.stopped = None;
         self.pending = None;
@@ -538,9 +583,14 @@ impl Chat {
         self.reason = reason;
         // A question or request the card can answer does not open the drawer, and closes one it opened.
         // A command's results and menus now show in the conversation: a slash command alone does
-        // not open it either.
-        let reason =
-            reason.filter(|r| !matches!(r, Reason::Question | Reason::Approval | Reason::Menu | Reason::Slash));
+        // not open it either. Nor does a screen Chat cannot read (Claude Code may be waiting, the
+        // bell): `terminal_card` shows it in the conversation and opens the drawer on a click.
+        let reason = reason.filter(|r| {
+            !matches!(
+                r,
+                Reason::Question | Reason::Approval | Reason::Menu | Reason::Slash | Reason::Tool | Reason::Bell
+            )
+        });
         match (self.drawer, reason) {
             (Drawer::Closed, Some(reason)) if Some(reason) != self.suppressed => self.drawer = Drawer::Auto(reason),
             (Drawer::Auto(_), Some(reason)) => self.drawer = Drawer::Auto(reason),
@@ -555,6 +605,14 @@ impl Chat {
             _ => {}
         }
         before != (self.drawer, self.reason)
+    }
+
+    /// The transcript's pending call runs: the screen shows the CLI's working line, and the call
+    /// has been pending for a moment (a permission prompt is drawn as soon as it is written).
+    pub(super) fn call_running(&self, term: &crate::term::Term, now: Instant) -> bool {
+        !self.demo
+            && submission::screen::working(&term.screen)
+            && self.pending.is_some_and(|(_, at)| now.saturating_duration_since(at) >= QUIET)
     }
 
     fn can_stop(&self, info: &ChatInfo) -> bool {
@@ -581,6 +639,7 @@ impl Chat {
             && !self.first_sent
             && self.queue.is_none()
             && self.waiting().is_none()
+            && !self.question.asks(model)
     }
 
     pub(super) fn is_demo(&self) -> bool {
@@ -594,6 +653,7 @@ impl Chat {
     }
 
     fn toggle_drawer(&mut self) {
+        terminal_card::keep(self);
         if self.drawer == Drawer::Closed {
             self.open_drawer();
         } else {
@@ -604,7 +664,17 @@ impl Chat {
         }
     }
 
+    /// Opens the terminal drawer, if it is closed, and gives it the keyboard.
+    pub(crate) fn show_terminal(&mut self) {
+        if self.drawer == Drawer::Closed {
+            self.open_drawer();
+        } else {
+            self.drawer_focus = true;
+        }
+    }
+
     pub(super) fn open_drawer(&mut self) {
+        terminal_card::keep(self);
         self.drawer = Drawer::Manual;
         self.drawer_focus = true;
     }

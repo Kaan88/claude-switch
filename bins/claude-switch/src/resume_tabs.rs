@@ -34,6 +34,8 @@ struct Entry {
     chat: Option<bool>,
     /// An OpenCode tab in `cwd` (`id` and `account` are empty).
     opencode: bool,
+    /// The tab's panes when it was split (`panes::saved`).
+    panes: Option<Value>,
 }
 
 #[derive(Default)]
@@ -63,8 +65,13 @@ fn valid_id(id: &str) -> bool {
 
 impl Entry {
     fn opencode(cwd: PathBuf, active: bool) -> Self {
-        Self { id: String::new(), account: String::new(), cwd, active, chat: None, opencode: true }
+        Self { id: String::new(), account: String::new(), cwd, active, chat: None, opencode: true, panes: None }
     }
+}
+
+/// A row's panes: only an object (older builds write none; anything else is dropped).
+fn panes_of(row: &Value) -> Option<Value> {
+    row.get("panes").filter(|v| v.is_object()).cloned()
 }
 
 fn decode(text: &str) -> VecDeque<Entry> {
@@ -75,7 +82,7 @@ fn decode(text: &str) -> VecDeque<Entry> {
             if row["kind"] == "opencode" {
                 let cwd = PathBuf::from(row["folder"].as_str()?);
                 let active = row["active"].as_bool()?;
-                return cwd.is_absolute().then(|| Entry::opencode(cwd, active));
+                return cwd.is_absolute().then(|| Entry { panes: panes_of(&row), ..Entry::opencode(cwd, active) });
             }
             let id = row["id"].as_str()?;
             let account = row["account"].as_str()?;
@@ -89,6 +96,7 @@ fn decode(text: &str) -> VecDeque<Entry> {
                     active,
                     chat: row["chat"].as_bool(),
                     opencode: false,
+                    panes: panes_of(&row),
                 },
             )
         })
@@ -99,11 +107,16 @@ fn encode(rows: impl IntoIterator<Item = Entry>) -> String {
     Value::Array(
         rows.into_iter()
             .filter_map(|row| {
-                if row.opencode {
-                    return Some(json!({"kind": "opencode", "folder": row.cwd.to_str()?, "active": row.active}));
+                let mut v = if row.opencode {
+                    json!({"kind": "opencode", "folder": row.cwd.to_str()?, "active": row.active})
+                } else {
+                    json!({"id": row.id, "account": row.account, "folder": row.cwd.to_str()?, "active": row.active,
+                    "chat":row.chat})
+                };
+                if let Some(panes) = row.panes {
+                    v["panes"] = panes;
                 }
-                Some(json!({"id": row.id, "account": row.account, "folder": row.cwd.to_str()?, "active": row.active,
-                    "chat":row.chat}))
+                Some(v)
             })
             .collect(),
     )
@@ -126,6 +139,7 @@ fn snapshot(tabs: &Tabs) -> Vec<Entry> {
             active: tabs.active == Some(t.id),
             chat: t.pane.as_ref().map(|p| p.chat.enabled),
             opencode: false,
+            panes: crate::panes::saved::save(&t.panes),
         })
     };
     let active = tabs.shown().and_then(entry).map(|t| t.id.to_ascii_lowercase());
@@ -133,7 +147,10 @@ fn snapshot(tabs: &Tabs) -> Vec<Entry> {
     tabs.list
         .iter()
         .filter_map(|t| match &t.opencode {
-            Some(folder) if t.term.ended.is_none() => Some(Entry::opencode(folder.clone(), tabs.active == Some(t.id))),
+            Some(folder) if t.term.ended.is_none() => Some(Entry {
+                panes: crate::panes::saved::save(&t.panes),
+                ..Entry::opencode(folder.clone(), tabs.active == Some(t.id))
+            }),
             Some(_) => None,
             None => entry(t),
         })
@@ -270,6 +287,7 @@ impl AppState {
                     active: i == 1,
                     chat: None,
                     opencode: false,
+                    panes: None,
                 })
                 .collect();
         } else if let Some(text) = &self.restore.baseline {
@@ -472,6 +490,9 @@ impl AppState {
         {
             pane.restore_chat_layout(chat);
         }
+        if let (Some(id), Some(panes)) = (id, &item.panes) {
+            self.restore_panes(id, panes);
+        }
         if item.active && id.is_some() {
             self.restore.active = id;
         }
@@ -504,8 +525,14 @@ impl AppState {
             crate::opencode_tab::Start::Fresh
         };
         match self.open_opencode_tab(&item.cwd, start) {
-            Ok(id) if item.active => self.restore.active = Some(id),
-            Ok(_) => {}
+            Ok(id) => {
+                if let Some(panes) = &item.panes {
+                    self.restore_panes(id, panes);
+                }
+                if item.active {
+                    self.restore.active = Some(id);
+                }
+            }
             Err(e) => {
                 let label = crate::opencode_tab::label(&item.cwd);
                 self.restore.failures.push(format!("{label} ({e})"));
@@ -575,6 +602,74 @@ mod tests {
     }
 
     #[test]
+    fn a_split_tab_is_saved_with_its_panes_and_reopens_with_them() {
+        use crate::panes::saved;
+        let mut app = AppState::new(Source::Demo, None, Default::default());
+        app.apply_scan(crate::demo::scan(&app.config));
+        let tmp = std::env::temp_dir();
+        let (left, right) = (tmp.join("pane-a"), tmp.join("pane-b"));
+        let layout = json!({
+            "tree": {"axis": "right", "ratio": 0.3, "a": 0, "b": {"axis": "down", "ratio": 0.6, "a": 1, "b": 2}},
+            "folders": [left.to_str().unwrap(), right.to_str().unwrap()],
+            "focus": 2,
+        });
+        let entry = Entry {
+            id: app.sessions[2].id.clone(),
+            account: "main".into(),
+            cwd: app.sessions[2].cwd.clone(),
+            active: true,
+            chat: None,
+            opencode: false,
+            panes: Some(layout.clone()),
+        };
+        // Through the file and back, as an older build's row without panes too.
+        let text = encode([entry.clone()]);
+        assert_eq!(decode(&text)[0], entry);
+        let mut old = entry.clone();
+        old.panes = None;
+        assert!(!encode([old.clone()]).contains("panes"));
+        app.restore.pending = decode(&text);
+        app.begin_tab_restore(Instant::now());
+        let tab = app.tabs.list.iter().find(|t| t.resume_id.as_deref() == Some(&entry.id)).unwrap();
+        assert_eq!(tab.panes.count(), 3);
+        assert_eq!(tab.panes.focus, 2);
+        let want = saved::load(&layout).unwrap();
+        let rows = snapshot(&app.tabs);
+        let again = saved::load(rows[0].panes.as_ref().unwrap()).unwrap();
+        assert_eq!(again, want, "saved again as it was read");
+        assert_eq!(tab.panes.folders, [(1, left), (2, right)]);
+        let text = |t: &crate::term::Term| t.screen.row_text(0);
+        assert!(
+            text(tab.panes.get(2).unwrap()).contains("pane-b")
+                || tab.panes.get(2).unwrap().screen.row_text(1).contains("pane-b")
+        );
+    }
+
+    #[test]
+    fn saved_panes_that_are_not_a_layout_leave_the_tab_unsplit() {
+        use crate::panes::saved::load;
+        let abs = std::env::temp_dir().join("x");
+        let f = abs.to_str().unwrap();
+        for bad in [
+            json!({"tree": 0, "folders": [], "focus": 0}),
+            json!({"tree": {"axis": "right", "ratio": 0.5, "a": 0, "b": 0}, "folders": [f], "focus": 0}),
+            json!({"tree": {"axis": "right", "ratio": 0.5, "a": 0, "b": 2}, "folders": [f], "focus": 0}),
+            json!({"tree": {"axis": "up", "ratio": 0.5, "a": 0, "b": 1}, "folders": [f], "focus": 0}),
+            json!({"tree": {"axis": "right", "ratio": 1.5, "a": 0, "b": 1}, "folders": [f], "focus": 0}),
+            json!({"tree": {"axis": "right", "ratio": 0.5, "a": 0, "b": 1}, "folders": ["relative"], "focus": 0}),
+            json!({"tree": {"axis": "right", "ratio": 0.5, "a": 0, "b": 1}, "folders": [f], "focus": 7}),
+            json!({"tree": {"axis": "right", "ratio": 0.5, "a": 0, "b": 1}, "folders": [f, f, f, f], "focus": 0}),
+        ] {
+            assert_eq!(load(&bad), None, "{bad}");
+        }
+        assert!(
+            load(&json!({"tree": {"axis": "down", "ratio": 0.5, "a": 1, "b": 0}, "folders": [f], "focus": 1}))
+                .is_some()
+        );
+        assert_eq!(panes_of(&json!({"panes": "x"})), None);
+    }
+
+    #[test]
     fn finish_restore_then_save_changed_tabs_keeps_the_loaded_revision() {
         let scratch = crate::testing::Scratch::new("cs-restore-exit");
         let root = scratch.to_path_buf();
@@ -590,6 +685,7 @@ mod tests {
             active: true,
             chat: None,
             opencode: false,
+            panes: None,
         };
         std::fs::write(&file, encode([original.clone()])).unwrap();
         app.restore.load_snapshot(&file).unwrap();
@@ -614,6 +710,7 @@ mod tests {
             active: true,
             chat: Some(true),
             opencode: false,
+            panes: None,
         };
         let invalid = Entry { id: "--bogus".into(), ..entry.clone() };
         let text = encode([entry.clone(), invalid, entry.clone()]);
@@ -640,6 +737,7 @@ mod tests {
             active: false,
             chat: None,
             opencode: false,
+            panes: None,
         };
         let text = encode(rows.iter().cloned().chain([claude.clone()]));
         assert!(!text.contains("--prompt") && !text.contains("Goal"), "the prompt is not saved: {text}");
@@ -769,6 +867,7 @@ mod tests {
             active: true,
             chat: None,
             opencode: false,
+            panes: None,
         };
         std::fs::write(&file, encode([saved.clone()])).unwrap();
         let open = |second: bool| {
@@ -815,6 +914,7 @@ mod tests {
             active: true,
             chat: None,
             opencode: false,
+            panes: None,
         };
         std::fs::write(&file, encode([first.clone()])).unwrap();
         let open = |tab: bool| {
@@ -895,5 +995,21 @@ mod tests {
         assert_eq!(live_id(&records, "elsewhere", &cwd, |_| true), None);
         assert_eq!(live_id(&records, "main", Path::new(r"C:\other"), |_| true), None);
         assert_eq!(live_id(&records, "main", &cwd, |_| true), None);
+    }
+
+    #[test]
+    fn a_background_fork_of_the_tabs_session_is_not_taken_for_the_tab() {
+        // `/fork` (Claude Code 2.1.332) starts a background session in the same folder and account,
+        // with its own process and live record (`kind: bg`).
+        let cwd = PathBuf::from(r"C:\test");
+        let record = |id: &str, pid| Running {
+            session_id: id.into(),
+            pid,
+            app: App::Cli,
+            account: "main".into(),
+            cwd: cwd.clone(),
+        };
+        let records = [record(A, 10), record(B, 11)];
+        assert_eq!(live_id(&records, "main", &cwd, |pid| pid == 10), Some(A));
     }
 }

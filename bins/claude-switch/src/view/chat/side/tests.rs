@@ -2,7 +2,7 @@ use super::*;
 use crate::state::{AppState, Target};
 use crate::view::chat::Control;
 use crate::view::model::Source;
-use claude_switch_core::transcript::{Item, McpStatus, McpTask, Subagent, Task};
+use claude_switch_core::transcript::{AgentEnd, EndSource, Item, McpStatus, McpTask, Subagent, Task};
 use mdshared_text::bitmap::Bitmap;
 use mdshared_ui::gfx::{Gfx, Painter, Rect};
 use mdshared_ui::theme::DARK;
@@ -281,6 +281,25 @@ fn a_task_opens_the_newest_plan_update_and_only_when_there_is_one() {
     assert_eq!(open(&model), Some(Action::Jump(newest)));
 }
 
+/// Whether the panel opens by itself is answered from the lists the model keeps; the transcript is
+/// scanned for changed files only while nothing else would open it.
+#[test]
+fn the_panel_scans_for_changed_files_only_while_nothing_else_opens_it() {
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let cwd = demo.cwd();
+    let mut model = Model::new(Source::File(demo.path().into()), cwd.into(), || {});
+    let mut details = Details::default();
+    assert!(!details.wants_panel(&model, cwd), "an empty session has nothing to show");
+    assert_eq!(details.files_revision, Some(model.revision), "scanned, with nothing else to show");
+    model.revision += 1;
+    model.tasks.push(claude_switch_core::transcript::Task {
+        content: "Fix the order".into(),
+        status: claude_switch_core::transcript::TaskStatus::InProgress,
+    });
+    assert!(details.wants_panel(&model, cwd));
+    assert_eq!(details.files_revision, Some(model.revision - 1), "not scanned again for this revision");
+}
+
 /// Chat's panel: one list of sections in place of the tabs. A section shows only when it has
 /// something, its head folds it, and every target says which page it belongs to, so what a tab's
 /// row did is still reachable.
@@ -314,9 +333,11 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
         Task { content: "Doing".into(), status: TaskStatus::InProgress },
     ];
     model.agents = vec![
-        Subagent { id: "done".into(), finished: Some(true), ..Default::default() },
-        Subagent { id: "busy".into(), finished: Some(false), ..Default::default() },
+        Subagent { id: "done".into(), end: Some((AgentEnd::Finished, EndSource::Sidecar)), ..Default::default() },
+        Subagent { id: "busy".into(), ..Default::default() },
     ];
+    // Running: the terminal's agent list shows it so.
+    model.listed.insert("busy".into(), crate::view::agent_status::Listed::Running);
     put_tool(&mut model, cwd, 2, "Edit", "notes.md", ToolState::Ok);
     model.revision += 1;
     details.refresh_all(&model, cwd);
@@ -348,4 +369,124 @@ fn chats_panel_lists_the_sections_that_have_something_and_each_folds() {
     assert!(hits.contains(&(Side::Tasks, 0, Part::Fold)));
     assert!(!hits.iter().any(|h| h.0 == Side::Tasks && h.2 == Part::Expand));
     assert!(hits.iter().any(|h| h.0 == Side::Agents));
+}
+
+/// Item 49: after a rewind's next prompt, the panel's sections drop what the replaced turn did
+/// (its written file, its plan, an ended shell), through the worker as Chat reads it.
+#[test]
+fn the_panel_drops_what_a_rewound_turn_did_once_the_next_prompt_is_written() {
+    use serde_json::json;
+    let dir = crate::testing::unique("cs-side-rewind");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("s.jsonl");
+    let rec = |mut v: serde_json::Value, uuid: &str, parent: Option<&str>| {
+        v["uuid"] = json!(uuid);
+        v["parentUuid"] = json!(parent);
+        format!("{v}\n")
+    };
+    let call = |uuid: &str, parent: &str, id: &str, name: &str, input: serde_json::Value| {
+        rec(
+            json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":id,"name":name,"input":input}]}}),
+            uuid,
+            Some(parent),
+        )
+    };
+    let result = |uuid: &str, parent: &str, id: &str, text: &str| {
+        rec(
+            json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":id,"content":text}]}}),
+            uuid,
+            Some(parent),
+        )
+    };
+    let prompt = |uuid: &str, parent: Option<&str>, text: &str| {
+        rec(json!({"type":"user","message":{"content":text}}), uuid, parent)
+    };
+    let answer = |uuid: &str, parent: &str| {
+        rec(
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}),
+            uuid,
+            Some(parent),
+        )
+    };
+    let todos = |content: &str| json!({"todos":[{"content":content,"status":"pending","activeForm":content}]});
+    let text = prompt("u1", None, "one")
+        + &call("t1", "u1", "todo1", "TodoWrite", todos("first plan"))
+        + &result("t1r", "t1", "todo1", "ok")
+        + &call("w1", "t1r", "write1", "Write", json!({"file_path":"kept.md","content":"x"}))
+        + &result("w1r", "w1", "write1", "ok")
+        + &answer("a1", "w1r")
+        + &prompt("u2", Some("a1"), "two")
+        + &call("t2", "u2", "todo2", "TodoWrite", todos("replaced plan"))
+        + &result("t2r", "t2", "todo2", "ok")
+        + &call("w2", "t2r", "write2", "Write", json!({"file_path":"replaced.md","content":"x"}))
+        + &result("w2r", "w2", "write2", "ok")
+        + &call("b2", "w2r", "bash2", "Bash", json!({"command":"watch","run_in_background":true}))
+        + &result(
+            "b2r",
+            "b2",
+            "bash2",
+            "Command running in background with ID: done2. Output is being written to: /tmp/done2.output",
+        )
+        + &rec(
+            json!({"type":"user","isMeta":true,"message":{"content":
+            "<task-notification><task-id>done2</task-id><status>completed</status><summary>Command ended (exit code 0)</summary></task-notification>"}}),
+            "n2",
+            Some("b2r"),
+        )
+        + &answer("a2", "n2");
+    std::fs::write(&path, text).unwrap();
+    let mut model = Model::new(Source::File(path.clone()), dir.clone(), || {});
+    let settle = |model: &mut Model, done: &dyn Fn(&Model) -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(model) && std::time::Instant::now() < deadline {
+            model.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            model.collect();
+        }
+    };
+    let names = |model: &Model| -> Vec<String> { changed_files(model, &dir).into_iter().map(|f| f.path).collect() };
+    settle(&mut model, &|m| m.tasks.iter().any(|t| t.content == "replaced plan") && !m.shells.is_empty());
+    assert_eq!(names(&model), ["replaced.md", "kept.md"]);
+    assert_eq!(model.shells.len(), 1);
+
+    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    std::io::Write::write_all(&mut file, prompt("u3", Some("a1"), "two again").as_bytes()).unwrap();
+    settle(&mut model, &|m| m.tasks.iter().any(|t| t.content == "first plan"));
+    assert_eq!(model.tasks.iter().map(|t| t.content.as_str()).collect::<Vec<_>>(), ["first plan"]);
+    assert_eq!(names(&model), ["kept.md"], "the replaced turn's file is not a changed file");
+    assert!(model.shells.is_empty(), "its ended shell is gone");
+    drop(model);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An agent's row says its state in a word, and its tooltip where that was read or why nothing
+/// tells.
+#[test]
+fn an_agent_row_names_its_state_and_its_tooltip_says_why() {
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let mut model = Model::new(Source::File(demo.path().into()), demo.cwd().into(), || {});
+    model.agents = vec![
+        Subagent { id: "gone".into(), description: Some("Trace".into()), ..Default::default() },
+        Subagent {
+            id: "done".into(),
+            description: Some("Compare".into()),
+            end: Some((AgentEnd::Interrupted, EndSource::Transcript)),
+            ..Default::default()
+        },
+    ];
+    model.revision += 1;
+    let tip = |model: &Model, index| Details::tip(model, hit(model, Side::Agents, index, Part::Open));
+    assert_eq!(
+        tip(&model, 0).as_deref(),
+        Some(format!("Unknown. {}", crate::view::agent_status::UNKNOWN_WHY).as_str())
+    );
+    assert_eq!(tip(&model, 1).as_deref(), Some("Interrupted. From the end of its own transcript."));
+    assert!(model.set_listed([("gone".into(), crate::view::agent_status::Listed::Running)].into()));
+    assert_eq!(tip(&model, 0).as_deref(), Some("Running. The terminal's agent list shows it running."));
+    assert!(!model.set_listed([("gone".into(), crate::view::agent_status::Listed::Running)].into()), "the same");
+    // Another section's target has no tooltip; a stale one neither.
+    assert_eq!(Details::tip(&model, hit(&model, Side::Tasks, 0, Part::Open)), None);
+    let stale = hit(&model, Side::Agents, 0, Part::Open);
+    model.revision += 1;
+    assert_eq!(Details::tip(&model, stale), None);
 }

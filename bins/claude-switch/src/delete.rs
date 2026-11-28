@@ -250,7 +250,7 @@ impl AppState {
         self.archive_picks.remove(id);
         if self.selected.as_deref() == Some(id) {
             self.selected = None;
-            self.preview = None;
+            self.details_reader = None;
         }
         self.rebuild_threads();
         self.rebuild_view();

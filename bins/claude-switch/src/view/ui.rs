@@ -1,10 +1,12 @@
 //! The read-only session pane. Worker updates change its content; they never give it keyboard focus.
+pub(in crate::view) mod grid;
 mod input;
 mod markdown;
 mod paint;
 mod rows;
 mod scroll;
 mod select;
+mod viewer;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -22,6 +24,7 @@ use super::working::{Footer, Turn};
 pub use markdown::{Panel, Reading};
 use rows::{HEAD, Id, Row, Rows, Style, Tone};
 use scroll::{Drag, GUTTER, Scrollbar, Surface, Visibility};
+use viewer::Overlay;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Page {
@@ -53,19 +56,15 @@ enum Action {
     CloseMarkdown,
     Open,
     Close,
+    /// The picture viewer's side buttons: the conversation's picture before or after this one.
+    Previous,
+    Next,
     /// A code block's Copy button, with the code.
     CopyCode(String),
     /// Under a message: Copy (its text as shown), Rewind to here, Branch.
     CopyMessage(ItemId),
     Rewind(ItemId),
     Branch(ItemId),
-}
-
-struct Overlay {
-    id: ItemId,
-    index: usize,
-    image: Option<Arc<Image>>,
-    bounds: Rect,
 }
 
 #[derive(Default)]
@@ -137,6 +136,8 @@ pub struct Ui {
     awaiting: Option<ItemId>,
     /// The colours of added and removed lines, from the terminal's theme.
     diff: Option<super::look::Diff>,
+    /// The terminal.s font and colours, which command output is drawn in.
+    grid: grid::Look,
     /// Chat's Details panel is closed: the working line shows the task list's progress, and a
     /// click on it opens the panel.
     progress: bool,
@@ -145,6 +146,12 @@ pub struct Ui {
     /// What Chat says in place of an empty conversation: a quiet line, or nothing (a new
     /// session's greeting is the host's).
     empty_line: Option<&'static str>,
+    /// The Sessions details' read-only conversation: no heading, no page tabs, no shell button.
+    embedded: bool,
+    /// Chat's messages waiting in Claude Code's queue, drawn after the last message.
+    queued: super::chat::QueuedShown,
+    /// Where the last frame drew their Send now.
+    queued_rect: Option<Rect>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -164,19 +171,32 @@ const PAD: f32 = 12.0;
 /// Chat's side padding: the composer's box and the cards reach `look::INSET` past the reading
 /// column on each side and still keep the window's margin.
 const CHAT_PAD: f32 = PAD + super::look::INSET;
+/// Under this conversation column Chat keeps only the window's own margin at its sides, as the
+/// Session view does: the column keeps the room.
+const CHAT_PAD_NARROW: f32 = 560.0;
+
+/// Chat's side padding in a conversation area `width` wide.
+pub(super) fn chat_pad(width: f32) -> f32 {
+    if width - 2.0 * CHAT_PAD < CHAT_PAD_NARROW { PAD } else { CHAT_PAD }
+}
 /// The round "jump to latest" button.
 const JUMP: f32 = 34.0;
+/// A queued message: its bubble, the word under it and the gap after; then the row of Send now.
+const QUEUED_BUBBLE: f32 = 34.0;
+const QUEUED_ROW: f32 = QUEUED_BUBBLE + 26.0;
+const QUEUED_FOOT: f32 = 34.0;
 
 impl Ui {
     fn pad(&self) -> f32 {
-        if self.chat { CHAT_PAD } else { PAD }
+        if self.chat { chat_pad(self.area.w) } else { PAD }
     }
 
     /// Where the conversation's text goes in a Chat conversation area at `x`, `width` wide:
     /// `(left, width)`. The composer and the cards are laid out on it before the frame is drawn.
     pub(super) fn column_for(&self, x: f32, width: f32) -> (f32, f32) {
         // Chat's column whatever this pane last drew as: the layout is Chat's.
-        self.reading_column(x + CHAT_PAD, (width - 2.0 * CHAT_PAD).max(1.0))
+        let pad = chat_pad(width);
+        self.reading_column(x + pad, (width - 2.0 * pad).max(1.0))
     }
 
     pub(super) fn detail_side(&self) -> Option<super::chat::Side> {
@@ -192,6 +212,17 @@ impl Ui {
             self.cache = None;
             self.scroll_drag = None;
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn offset(&self) -> f32 {
+        self.offset
+    }
+
+    /// Draws the conversation alone, for the Sessions details: no heading, no Attach, no pages.
+    pub fn set_embedded(&mut self) {
+        self.embedded = true;
+        self.cache = None;
     }
 
     pub fn set_chat_reading(&mut self, reading: Reading) {
@@ -239,6 +270,11 @@ impl Ui {
         self.diff = Some(diff);
     }
 
+    /// The terminal theme.s colours, which command output is drawn in.
+    pub fn set_terminal_colours(&mut self, scheme: mdshared_ui::termview::Scheme) {
+        self.grid.scheme = Some(scheme);
+    }
+
     /// What Chat shows for a conversation with nothing in it: one quiet line (a transcript still
     /// being read), or nothing at all. The Session view keeps its card.
     pub(super) fn set_empty_line(&mut self, line: Option<&'static str>) {
@@ -259,6 +295,31 @@ impl Ui {
     /// Where the last frame drew "Run in background", for the host to take its click.
     pub(super) fn offer_rect(&self) -> Option<Rect> {
         self.offer_rect.filter(|_| self.offer.is_some_and(|(_, busy)| !busy))
+    }
+
+    /// Chat's messages waiting in Claude Code's queue: each a quiet bubble after the last
+    /// message, with Send now under them.
+    pub(super) fn set_queued(&mut self, queued: super::chat::QueuedShown) {
+        self.queued = queued;
+    }
+
+    /// Where the last frame drew Send now under the queued messages, for the host to take its
+    /// click (none while its keys are on their way).
+    pub(super) fn queued_rect(&self) -> Option<Rect> {
+        self.queued_rect.filter(|_| !self.queued.sending)
+    }
+
+    /// The room the queued messages take after the last message.
+    fn queued_room(&self, m: &Model) -> f32 {
+        let shown = self.chat && self.page == Page::Conversation && m.agent.is_none();
+        let n = self.queued.messages.len();
+        if shown && n > 0 { n as f32 * QUEUED_ROW + QUEUED_FOOT } else { 0.0 }
+    }
+
+    /// The last frame drew "Run in background" on the command's line (dimmed or not): it is in
+    /// view, so no card has to offer it.
+    pub(super) fn offer_drawn(&self) -> bool {
+        self.offer_rect.is_some()
     }
 
     /// The room Chat's working line takes after the last message.
@@ -345,7 +406,7 @@ impl Ui {
         let pad = self.pad();
         let x = area.x + pad;
         let width = (area.w - 2.0 * pad).max(1.0);
-        if !self.chat {
+        if !self.chat && !self.embedded {
             p.text(Face::Semibold, 17.0, x, area.y + 22.0, "Session view", pal.text, (width - 116.0).max(1.0));
             self.button(
                 p,
@@ -357,7 +418,7 @@ impl Ui {
             );
         }
         let tabs_y = area.y + 44.0;
-        if !self.chat {
+        if !self.chat && !self.embedded {
             let mut bx = x;
             use super::chat::Side;
             let tabs = [
@@ -385,7 +446,13 @@ impl Ui {
             p.restore(clip);
             return;
         }
-        let mut top = if self.chat { area.y + 7.0 } else { tabs_y + 38.0 };
+        let mut top = if self.chat {
+            area.y + 7.0
+        } else if self.embedded {
+            area.y + 4.0
+        } else {
+            tabs_y + 38.0
+        };
         // Lines above and below the conversation start where its text does.
         self.column = self.text_column(x, width);
         let (cx, cw) = self.column;
@@ -393,9 +460,19 @@ impl Ui {
             && let Some(agent) = &m.agent
         {
             self.button(p, pal, Rect::new(x, top, 64.0, 26.0), "‹  Back", Action::Back, false);
-            let title =
-                m.agents.iter().find(|a| a.id == *agent).and_then(|a| a.description.as_deref()).unwrap_or(agent);
-            p.text(Face::Semibold, 13.0, x + 72.0, top + 13.0, title, pal.text, (width - 72.0).max(1.0));
+            let shown = m.agents.iter().find(|a| a.id == *agent);
+            let title = shown.and_then(|a| a.description.as_deref()).unwrap_or(agent);
+            // The agent's state after its task, in the same words as Details and the Agents page.
+            let state = shown.map(|a| m.agent_status(a));
+            let room = (width - 72.0).max(1.0);
+            let word = state.map_or(0.0, |s| p.measure(Face::Ui, 12.0, &format!("{}  {}", s.mark(), s.word)) + 14.0);
+            let used = p.measure(Face::Semibold, 13.0, title).min((room - word).max(room * 0.5));
+            p.text(Face::Semibold, 13.0, x + 72.0, top + 13.0, title, pal.text, used);
+            if let Some(s) = state.filter(|_| word < room) {
+                let ink = if s.running() { pal.accent } else { pal.muted };
+                let label = format!("{}  {}", s.mark(), s.word);
+                p.text(Face::Ui, 12.0, x + 72.0 + used + 14.0, top + 13.0, &label, ink, room - used - 14.0);
+            }
             top += 34.0;
         }
         if let Some(error) = &m.error {
@@ -403,8 +480,11 @@ impl Ui {
             top += 24.0;
         }
         // The track must retain its length when paging or dragging toggles follow.
-        let shell_count =
-            if self.page == Page::Conversation && !self.chat && m.agent.is_none() { m.running_shells() } else { 0 };
+        let shell_count = if self.page == Page::Conversation && !self.chat && !self.embedded && m.agent.is_none() {
+            m.running_shells()
+        } else {
+            0
+        };
         let shell_h = if shell_count > 0 { 26.0 } else { 0.0 };
         let footer = area.bottom() - self.footer_height(area.w, m.agent.is_none()) - shell_h;
         if self.page == Page::Conversation && m.has_earlier && !(self.markdown.is_some() && width < 640.0) {
@@ -434,13 +514,19 @@ impl Ui {
             self.covered = if self.jump_shown() { JUMP + 20.0 } else { 0.0 };
             self.offer_rect = None;
             self.progress_rect = None;
+            self.queued_rect = None;
             if self.chat
                 && self.rows.is_empty()
                 && let Some(line) = self.empty_line
             {
                 p.text(Face::Ui, 13.0, self.body.x, self.body.y + 14.0, line, pal.muted, self.body.w);
             }
+            if self.embedded && self.rows.is_empty() {
+                let line = if m.loaded { "No messages to show." } else { "Reading the conversation\u{2026}" };
+                p.text(Face::Ui, 13.0, self.body.x, self.body.y + 14.0, line, pal.muted, self.body.w);
+            }
             self.paint_rows(p, pal, m);
+            self.paint_queued(p, pal, m);
             self.paint_working(p, pal, m);
             self.scrollbar =
                 Scrollbar::new(Rect::new(self.body.right() + 1.0, top, GUTTER - 1.0, self.body.h), self.max);
@@ -506,10 +592,8 @@ impl Ui {
                 width,
             );
         }
-        if let Some(overlay) = &mut self.overlay
-            && let Some(image) = m.picture(overlay.id, overlay.index, true)
-        {
-            overlay.image = Some(image);
+        if let Some(overlay) = &mut self.overlay {
+            overlay.refresh(m);
         }
         p.restore(clip);
     }
@@ -525,6 +609,7 @@ impl Ui {
                 } else {
                     Default::default()
                 };
+            let cells = self.grid.font.metrics(grid::FONT_SIZE, scale);
             let mut r = Rows {
                 previous,
                 list: Vec::new(),
@@ -536,18 +621,19 @@ impl Ui {
                 offer: self.offer.map(|(id, _)| id),
                 awaiting: self.awaiting,
                 actions: rows::MessageActions::of(m, self.chat),
+                cells,
             };
             match self.page {
                 Page::Conversation => {
                     r.conversation(m, &self.expanded, &self.tool_expanded);
-                    if r.list.is_empty() && !self.chat {
+                    if r.list.is_empty() && !self.chat && !self.embedded {
                         r.empty(
                             "Waiting for messages",
                             "The conversation appears here when its transcript is available.",
                         );
                     }
                 }
-                Page::Agents => r.agents(&m.agents),
+                Page::Agents => r.agents(&m.agents, |a| m.agent_status(a)),
                 Page::Tasks => r.tasks(&m.tasks),
                 Page::Details(_) => unreachable!("shared Details draws outside transcript rows"),
             }
@@ -559,7 +645,7 @@ impl Ui {
                 self.offset = row.top + delta;
             }
         }
-        self.max = (self.rows_end() + self.working_room(m) - self.body.h).max(0.0);
+        self.max = (self.rows_end() + self.queued_room(m) + self.working_room(m) - self.body.h).max(0.0);
         if let Some((id, pending)) = &mut self.tool_jump
             && *pending
             && self.body.h > 0.0
@@ -587,7 +673,7 @@ impl Ui {
         }
         let Some(work) = &self.working else { return };
         let body = self.shown_body();
-        let y = body.y + self.rows_end() - self.offset;
+        let y = body.y + self.rows_end() + self.queued_room(m) - self.offset;
         let clip = p.clip(body);
         let cy = y + super::working::CHAT_LINE / 2.0 + 2.0;
         let mut room = body.w;
@@ -605,6 +691,51 @@ impl Ui {
             room -= w + 12.0;
         }
         super::working::draw_chat_line(p, pal, body.x, cy, &work.label, room);
+        p.restore(clip);
+    }
+
+    /// Chat's messages waiting in Claude Code's queue, after the last message and before the
+    /// working line: each a quiet bubble at the right, as your messages stand, with "Queued —
+    /// waiting for its turn" under it, then Send now (Claude Code's own key for its queue).
+    fn paint_queued(&mut self, p: &mut Painter, pal: &Palette, m: &Model) {
+        if self.queued_room(m) == 0.0 {
+            return;
+        }
+        let body = self.shown_body();
+        let clip = p.clip(body);
+        let edge = super::look::edge(pal);
+        let mut y = body.y + self.rows_end() - self.offset + 4.0;
+        let max_w = (body.w * 0.78).floor();
+        for (text, picture) in &self.queued.messages {
+            let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let line = match (*picture, line.is_empty()) {
+                (true, true) => "[Picture]".to_owned(),
+                (true, false) => format!("[Picture] {line}"),
+                _ => line,
+            };
+            let w = (p.measure(Face::Ui, 13.5, &line) + 32.0).clamp(80.0, max_w);
+            let r = Rect::new(body.right() - w, y, w, QUEUED_BUBBLE);
+            p.frame(r, (QUEUED_BUBBLE / 2.0).min(16.0), pal.page, edge);
+            p.text(Face::Ui, 13.5, r.x + 16.0, r.cy(), &line, pal.muted, (r.w - 32.0).max(0.0));
+            let note = "Queued — waiting for its turn";
+            let nw = p.measure(Face::Ui, 11.5, note);
+            p.icon(mdshared_ui::glyph::RECENT, 11.0, body.right() - nw - 14.0, r.bottom() + 11.0, pal.faint);
+            p.text(Face::Ui, 11.5, body.right() - nw - 4.0, r.bottom() + 11.0, note, pal.faint, nw + 2.0);
+            y += QUEUED_ROW;
+        }
+        // Claude Code hands every queued message in at once: one Send now for them all.
+        let label = match (self.queued.sending, self.queued.messages.len()) {
+            (true, _) => "Sending now…",
+            (false, 1) => "Send now",
+            _ => "Send all now",
+        };
+        let w = p.measure(Face::Semibold, 12.0, label) + 24.0;
+        let r = Rect::new(body.right() - w, y - 4.0, w, 26.0);
+        let hot = !self.queued.sending && r.contains(self.mouse.0, self.mouse.1);
+        p.frame(r, 13.0, if hot { pal.hover } else { pal.page }, edge);
+        let ink = if self.queued.sending { pal.muted } else { pal.text };
+        p.text_center(Face::Semibold, 12.0, r, label, ink);
+        self.queued_rect = intersection(r, body);
         p.restore(clip);
     }
 
@@ -758,6 +889,7 @@ impl Ui {
         self.hits.push((frame, Action::Close));
         self.button(p, pal, open, "Open in system viewer", Action::Open, false);
         self.button(p, pal, close, "Close", Action::Close, false);
+        self.draw_steps(p, pal, frame, open, close);
     }
 
     pub fn overlay_open(&self) -> bool {

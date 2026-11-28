@@ -34,6 +34,18 @@ const SWITCH: std::time::Duration = std::time::Duration::from_millis(140);
 /// Room round the page for its card's soft shadow, which the switch blends too.
 const SHADOW_ROOM: f32 = 16.0;
 
+/// How far a sub-page's name is indented in the rail.
+const SUB_INDENT: f32 = 12.0;
+
+/// A page's name in the rail: a sub-page ("Claude Code › Advanced") shows its own part,
+/// indented under its parent, which comes just before it.
+fn rail_label(name: &str) -> (&str, f32) {
+    match name.split_once(" › ") {
+        Some((_, sub)) => (sub, SUB_INDENT),
+        None => (name, 0.0),
+    }
+}
+
 #[derive(Default)]
 struct Layout {
     rail: Rect,
@@ -212,14 +224,15 @@ impl Settings {
             } else if self.hover == Some(i) {
                 p.rbox(rect, 6.0, pal.hover);
             }
+            let (label, indent) = rail_label(label);
             p.text(
                 Face::Ui,
                 13.0,
-                rect.x + 14.0,
+                rect.x + 14.0 + indent,
                 rect.cy(),
                 label,
                 if selected { pal.text } else { pal.muted },
-                rect.w - 24.0,
+                rect.w - 24.0 - indent,
             );
         }
         let mut style = Style::CLASSIC;
@@ -591,7 +604,8 @@ mod tests {
                 assert!(card.bottom() < MIN_WINDOW.bottom() && rail.bottom() < MIN_WINDOW.bottom());
                 let nav = settings.layout.category(index).inset(1.0);
                 assert!(nav.bottom() < rail.bottom());
-                assert!(p.measure(Face::Ui, 13.0, label) <= nav.w - 24.0, "{label}");
+                let (shown, indent) = rail_label(label);
+                assert!(p.measure(Face::Ui, 13.0, shown) <= nav.w - 24.0 - indent, "{label}");
                 let body = settings.form.body_rect();
                 let controls: Vec<_> =
                     settings.form.rows().iter().enumerate().filter_map(|(i, row)| row.id().map(|id| (i, id))).collect();
@@ -1134,6 +1148,68 @@ mod tests {
             assert!(s.peeking(), "{name}");
             s.release(b.cx(), b.cy());
             assert!(!s.peeking() && s.index == index, "{name}");
+        }
+    }
+
+    /// The Claude Code sub-pages at the narrowest and a wide window, dark and light: every
+    /// label and help line fits beside its control, with values set (Reset rows) and with the
+    /// per-account rows read-only. With `CS_SETTINGS_SHOTS` set, frames are saved there (the top
+    /// of the page and further down).
+    #[test]
+    fn claude_code_sub_pages_fit_at_every_width_in_both_themes() {
+        let shots = std::env::var_os("CS_SETTINGS_SHOTS").map(std::path::PathBuf::from);
+        let mut gfx = Gfx::new();
+        let pages: Vec<usize> =
+            PAGES.iter().enumerate().filter(|(_, (n, _))| n.contains(" › ")).map(|(i, _)| i).collect();
+        assert!(!pages.is_empty());
+        for dark in [true, false] {
+            for (state, busy) in [("default", None), ("set", Some(false)), ("busy", Some(true))] {
+                let mut st = AppState::new(Source::Demo, Some(dark), Default::default());
+                for &index in &pages {
+                    super::super::prepare_page(&mut st, index);
+                }
+                if let Some(busy) = busy {
+                    super::super::cc_advanced::fill_for_pictures(&mut st, busy);
+                }
+                for &index in &pages {
+                    for (w, h) in [(760.0, 480.0), (1280.0, 800.0)] {
+                        let win = Rect::new(0.0, 0.0, w, h);
+                        let mut bmp = Bitmap::new(w as u32, h as u32);
+                        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+                        let mut page = Settings::new(&st, index);
+                        let mut anim = Animator::new();
+                        anim.begin_frame(Instant::now());
+                        page.draw(&mut p, &st, win, 1.0, &mut anim);
+                        let name = rail_label(PAGES[index].0).0.to_lowercase();
+                        for (row, item) in page.form.rows().iter().enumerate() {
+                            let (label, help) = match item {
+                                Row::Toggle { label, help, .. }
+                                | Row::Choice { label, help, .. }
+                                | Row::Text { label, help, .. } => (label.as_str(), help.as_str()),
+                                Row::Action { label, .. } => (label.as_str(), ""),
+                                _ => continue,
+                            };
+                            let control = page.form.control_rect(row);
+                            let room = (control.x - page.form.rect_of_row(row).x - 28.0).max(40.0);
+                            let at = format!("{name} {state} {w}: {label}");
+                            assert!(p.measure(Face::Ui, 13.5, label) <= room, "{at}");
+                            assert!(p.measure(Face::Ui, 11.5, help) <= room, "{at}: {help} (room {room})");
+                        }
+                        let theme = if dark { "dark" } else { "light" };
+                        for step in 0..7 {
+                            if let Some(dir) = &shots
+                                && (state != "default" || step == 0)
+                            {
+                                page.draw(&mut p, &st, win, 1.0, &mut anim);
+                                let file = format!("cc-{name}-{state}-{theme}-{w}-{step}.png");
+                                p.bmp.write_png(&dir.join(file)).unwrap();
+                            }
+                            let card = page.form.rect();
+                            page.form.wheel(card.cx(), card.cy(), 400.0);
+                        }
+                    }
+                }
+            }
         }
     }
 }

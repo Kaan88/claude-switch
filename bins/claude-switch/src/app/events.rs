@@ -1,6 +1,6 @@
 use super::*;
 use crate::dialogs::PeekInput;
-use crate::tabs::SESSIONS;
+use crate::tabs::fixed;
 use crate::windowlook;
 use mdshared_ui::gfx::Painter;
 use mdshared_ui::host::{App, Event};
@@ -22,6 +22,7 @@ impl App for AppState {
         self.resume_polling(now);
         self.start_debug(cx);
         self.start_demo_session();
+        self.start_workers();
         self.start_usage_hover_demo(now);
         self.start_compact();
         self.serve_handovers();
@@ -67,10 +68,10 @@ impl App for AppState {
                 }
                 match self.hit(x, y) {
                     _ if button == Button::Right && self.conversation_menu(x, y) => {}
-                    Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Middle && id != SESSIONS => {
+                    Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Middle && !fixed(id) => {
                         self.ask_close_tab(id)
                     }
-                    Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Right && id != SESSIONS => {
+                    Some(Target::Tab(id) | Target::TabClose(id)) if button == Button::Right && !fixed(id) => {
                         self.tab_menu(id, Rect::new(x, y, 0.0, 0.0));
                     }
                     Some(Target::Terminal) => self.term_press(x, y, button, clicks, cx.mods()),
@@ -94,6 +95,7 @@ impl App for AppState {
                 let (x, y) = self.mouse;
                 if !(!self.picture_overlay() && self.chat_wheel(x, y, dy))
                     && !self.session_wheel(cx.size().0, x, y, dy)
+                    && !self.wheel_other_pane(x, y, dy)
                     && self.term_area.contains(x, y)
                 {
                     self.term_wheel(dy, cx.mods());
@@ -111,11 +113,18 @@ impl App for AppState {
                     dialogs::wheel(self, x, y, dy);
                 } else if self.usage.popup.open {
                     self.usage.popup.scroll = (self.usage.popup.scroll - dy).max(0.0);
+                } else if self.tabs.workers_shown() {
+                    if self.workers.wheel(x, y, dy) {
+                        self.moved(cx, x, y);
+                    }
                 } else if self.list_area.contains(x, y) {
                     self.sections.scroll = self.sections.clamp_scroll(self.sections.scroll - f64::from(dy));
                     self.moved(cx, x, y);
                 } else if self.details_scroll.area.contains(x, y) {
-                    self.details_scroll.wheel(dy);
+                    // The conversation scrolls first; at its end the details around it do.
+                    if !self.details_wheel(x, y, dy) {
+                        self.details_scroll.wheel(dy);
+                    }
                     self.moved(cx, x, y);
                 }
             }
@@ -123,11 +132,17 @@ impl App for AppState {
             Event::Text(t) => {
                 if self.dialog.is_some() {
                     dialogs::text_input(self, &t);
+                } else if self.find_focused() {
+                    self.find_text(&t);
                 } else if self.terminal_shown() && self.nothing_over() && !self.picture_overlay() {
                     if !self.chat_text(cx, &t) {
                         self.term_text(&t);
                     }
-                } else if self.focus == Focus::Search && self.palette.is_none() && self.search.insert(&t) {
+                } else if self.focus == Focus::Search
+                    && self.palette.is_none()
+                    && !self.tabs.workers_shown()
+                    && self.search.insert(&t)
+                {
                     self.after_search();
                 }
             }
@@ -203,6 +218,13 @@ impl App for AppState {
                         cx.request_redraw_all();
                     }
                 }
+                if self.feed_poll.is_some_and(|t| t <= now) {
+                    self.feed_poll = None;
+                    self.take_workers();
+                    if cx.window().is_minimized() != Some(true) && (self.poll_details() | self.poll_workers()) {
+                        self.feed_poll = Some(now + crate::view::reader::POLL);
+                    }
+                }
                 if self.next_poll.is_some_and(|t| t <= now) {
                     // A new or forked tab still needs its verified transcript identity while minimized.
                     if cx.window().is_minimized() == Some(true)
@@ -212,6 +234,9 @@ impl App for AppState {
                         self.next_poll = None;
                     } else {
                         self.poll_running();
+                        if self.check_workers_folder() {
+                            cx.request_redraw_all();
+                        }
                         if self.check_copy_deletes(now) {
                             cx.request_redraw_all();
                         }
@@ -260,11 +285,13 @@ impl App for AppState {
         match m {
             Msg::Woke => {
                 let changed = self.take_jobs()
+                    | self.take_workers()
                     | self.take_usage_jobs(cx.now())
                     | self.take_desktop_job(cx.now())
                     | self.take_compact_jobs()
                     | self.take_background_handovers()
-                    | self.take_opencode_job(cx.now());
+                    | self.take_opencode_job(cx.now())
+                    | crate::dialogs::take_claude_code_jobs(self);
                 let changed = changed | self.open_finished_handover(cx.now());
                 self.handover_attention(cx);
                 let changed = changed | self.restore_tabs_if_always(cx.now());

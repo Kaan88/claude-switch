@@ -1,0 +1,26 @@
+# What Claude Switch relies on after `/fork` (scripts/fork.txt). The keys are explained in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs ("A live record").
+
+[idle]
+kind = idle
+send = yes
+
+# Claude Code 2.1.332 (recorded 2026-11-28): the terminal stays in its session, the fork is a
+# background session derived from it with a copy of the conversation, and the input is idle
+# again (Chat's slash command is done; Send is offered).
+[forked]
+kind = idle
+send = yes
+session = same
+continued-in = no
+forks = background
+prompts = Reply with just the word: alpha
+fork-prompts = Reply with just the word: alpha
+
+# The next turn goes on in the same session's transcript, which Chat reads.
+[after]
+kind = idle
+send = yes
+session = same
+continued-in = no
+prompts = Reply with just the word: alpha | Reply with just the word: bravo

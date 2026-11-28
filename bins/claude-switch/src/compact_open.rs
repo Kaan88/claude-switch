@@ -78,8 +78,34 @@ pub fn keep(roots: &Roots, id: &str, text: &str, previous: Option<&Path>) -> Res
     compact::save(roots, id, text).map_err(|e| format!("Could not keep the handover: {e}"))
 }
 
-fn first_args(id: &str, text: &str, saved: &Path) -> Result<Vec<String>, String> {
-    Ok(vec!["--session-id".into(), id.into(), "--".into(), first_prompt(text, saved)?])
+/// A new handover process's own arguments: its session ID and its first message; when that
+/// message asks Claude to read the saved file, permission to read exactly that file, which lies
+/// outside the project folder (Claude Code 2.1.332 asks first otherwise, in manual mode).
+pub(crate) fn first_args(id: &str, text: &str, saved: &Path) -> Result<Vec<String>, String> {
+    let mut args = vec!["--session-id".into(), id.into()];
+    if uses_file(text) {
+        let path = std::path::absolute(saved).map_err(|_| "Could not resolve the absolute handover path.")?;
+        args.extend(read_rule(&path).map(|rule| format!("--allowedTools={rule}")));
+    }
+    args.extend(["--".into(), first_prompt(text, saved)?]);
+    Ok(args)
+}
+
+/// Claude Code's permission rule for reading exactly `path` (`Read(//c/Users/…/file.md)`, the
+/// form it writes such paths in), or `None` for a path the rule could not name exactly: not a
+/// drive path, or with a character a rule gives a meaning (`*`, brackets, quotes). The handover
+/// then waits for the question, which Chat's card answers.
+pub(crate) fn read_rule(path: &Path) -> Option<String> {
+    let path = path.to_str()?;
+    // A verbatim drive path (`\\?\C:\…`) names the same file.
+    let path = path.strip_prefix(r"\\?\").filter(|rest| !rest.starts_with("UNC")).unwrap_or(path);
+    let (drive, rest) = path.split_once(':')?;
+    let drive = drive.chars().next().filter(|c| c.is_ascii_alphabetic() && drive.len() == 1)?;
+    let special = |c: char| "*?[](){}\"'`,".contains(c) || c.is_control();
+    if !rest.starts_with(['\\', '/']) || rest.chars().any(special) {
+        return None;
+    }
+    Some(format!("Read(//{}{})", drive.to_ascii_lowercase(), rest.replace('\\', "/")))
 }
 
 /// The first message: the handover itself, or above the command-line limit a request to read
@@ -292,6 +318,50 @@ mod tests {
     }
 
     #[test]
+    fn a_handover_read_from_its_file_may_read_exactly_that_file() {
+        let saved = Path::new(r"C:\Users\someone\AppData\Roaming\claude-switch\handover\a-1.md");
+        assert_eq!(
+            read_rule(saved).as_deref(),
+            Some("Read(//c/Users/someone/AppData/Roaming/claude-switch/handover/a-1.md)")
+        );
+        // A space stays in the rule: the rule is one native argument (the terminal quotes it as
+        // the C runtime reads it back), and Claude Code keeps spaces inside a rule's parentheses
+        // (`Bash(git log:*)`). The ConPTY test below passes such a path through to a fake Claude.
+        assert_eq!(
+            read_rule(Path::new(r"C:\Users\John Smith\a-1.md")).as_deref(),
+            Some("Read(//c/Users/John Smith/a-1.md)")
+        );
+        let args = first_args("new-id", &"words ".repeat(3000), Path::new(r"C:\Users\John Smith\a-1.md")).unwrap();
+        assert_eq!(args.len(), 5, "{args:?}");
+        assert_eq!(args[2], "--allowedTools=Read(//c/Users/John Smith/a-1.md)");
+        assert_eq!(read_rule(Path::new(r"\\?\C:\x\a.md")).as_deref(), Some("Read(//c/x/a.md)"));
+        for odd in [
+            r"\\?\UNC\server\share\a.md",
+            r"\\server\share\a.md",
+            r"C:\x (copy)\a.md",
+            r"C:\x\a*.md",
+            r"relative\a.md",
+            r"C:\x,y\a.md",
+        ] {
+            assert_eq!(read_rule(Path::new(odd)), None, "{odd}");
+        }
+        let long = "## Long\n\nwords\n".repeat(2000);
+        let args = first_args("new-id", &long, saved).unwrap();
+        assert_eq!(
+            args[..3],
+            [
+                "--session-id",
+                "new-id",
+                "--allowedTools=Read(//c/Users/someone/AppData/Roaming/claude-switch/handover/a-1.md)"
+            ]
+        );
+        assert_eq!(args[3], "--");
+        assert!(args[4].starts_with("Read the handover file at"));
+        // A handover given whole needs no file and no rule.
+        assert_eq!(first_args("new-id", "## Short", saved).unwrap(), ["--session-id", "new-id", "--", "## Short"]);
+    }
+
+    #[test]
     fn agent_is_one_option_before_the_literal_prompt_and_default_adds_nothing() {
         let saved = Path::new("unused.md");
         let first = "Review this text with --agent embedded";
@@ -317,6 +387,7 @@ mod tests {
             ("## Long\n\nlong private marker 😺\n".repeat(1000), true, Some("workshop:nested:reviewer")),
         ] {
             let saved = keep(&roots, "source-id", &text, previous.as_deref()).unwrap();
+            assert!(saved.to_str().unwrap().contains(' '), "a path with spaces: its read rule is one argument");
             assert_ne!(previous.as_ref(), Some(&saved), "edited text needs a new revision");
             assert_eq!(keep(&roots, "source-id", &text, Some(&saved)).unwrap(), saved);
             assert_eq!(std::fs::read_to_string(&saved).unwrap(), text);

@@ -11,10 +11,12 @@
 //! before should have led to (the highlight moved, the box ticked, the text typed, the next
 //! question or the review opened), and "Submit answers" only once the review reads every answer
 //! as picked.
+pub(super) mod agent_send;
 mod background;
 mod blocked;
 mod cards;
 pub(in crate::view) mod denials;
+mod preview;
 mod prompt;
 pub(in crate::view) mod rewind;
 pub(super) mod screens;
@@ -61,6 +63,8 @@ pub(super) const INTERRUPTED: &str =
     "Chat stopped sending keys: the terminal got other input, or Chat was left or cancelled. Check the terminal.";
 pub(super) const WAITING: &str = "Sending your answer to the terminal…";
 const ASKING: &str = "Waiting for your answer";
+/// Said once a key went nowhere while a card stands in the composer's place.
+const TYPED_AWAY: &str = "Typing goes to the card's field once you click it. Your draft waits in the message box.";
 const APPROVING: &str = "Waiting for your approval";
 const ESC: &[u8] = b"\x1b";
 const NO_ESC: &str = "This menu does not offer Esc. Use the terminal.";
@@ -243,11 +247,19 @@ fn has_rows(rows: &[String], text: &str) -> bool {
         })
 }
 
+/// The agents the terminal's list shows: see `background::listed`.
+pub(super) fn listed_agents(
+    model: &Model,
+    screen: &Screen,
+) -> Option<std::collections::BTreeMap<String, crate::view::agent_status::Listed>> {
+    background::listed(model, screen)
+}
+
 /// A subagent may be the one asking: one is running, or the turn started one whose end is unknown.
 fn subagent_may_prompt(model: &Model) -> bool {
-    let finished = |id: &str| model.agents.iter().any(|a| a.id == id && a.finished == Some(true));
+    let finished = |id: &str| model.agents.iter().any(|a| a.id == id && model.agent_status(a).ended());
     let turn = model.chat.prompt.map_or(0, |p| p.saturating_add(1));
-    model.agents.iter().any(|a| a.finished == Some(false))
+    model.agents.iter().any(|a| model.agent_status(a).running())
         || model.items.range(ItemId { offset: turn, block: 0 }..).any(|(_, item)| {
             matches!(&item.kind, ItemKind::Tool { name, subagent, .. }
                 if (name == "Agent" || name == "Task") && !subagent.as_deref().is_some_and(finished))
@@ -275,6 +287,8 @@ pub enum Hit {
     /// A form's previous and next question in the card (nothing is sent).
     Back,
     Next,
+    /// A form's tab: its question, or the Submit step after the last (nothing is sent).
+    Page(usize),
     /// Send the form's answers.
     Submit,
     /// Scroll a long permission prompt on (nothing is sent).
@@ -289,6 +303,10 @@ pub enum Hit {
     AskRetry,
     /// Show or fold the list of denied permissions (nothing is sent).
     Denials(bool),
+    /// The preview of an option: a press starts a selection in it (nothing is sent).
+    Preview,
+    /// Copy the shown preview's text (nothing is sent).
+    CopyPreview,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -393,7 +411,13 @@ impl MenuShown {
 }
 
 fn menu_shown(screen: &Screen) -> Option<MenuShown> {
-    let panel = screens::panel(screen)?;
+    // A question's preview box beside its choices is not part of the menu: read without it.
+    let panel = match screens::question_view(screen) {
+        std::borrow::Cow::Owned(view) => {
+            screens::panel(&view).filter(|p| p.question).or_else(|| screens::panel(screen))
+        }
+        std::borrow::Cow::Borrowed(_) => screens::panel(screen),
+    }?;
     let choices = panel.menu.as_ref().map(screens::Menu::texts).unwrap_or_default();
     let (notes, question) = (panel.notes, panel.question);
     // Only the row as the CLI first draws it: once it holds text it is an answer, not the field.
@@ -441,12 +465,32 @@ pub(super) struct Card {
     pub(super) menu: Option<MenuShown>,
     /// The running shell call the CLI offers to move to the background.
     background: Option<background::Shell>,
+    /// A key went nowhere while the card stood in the composer's place: the card says so once.
+    typed_away: bool,
+    /// The parts of the card as last laid out, which are drawn.
+    laid: Option<Vec<cards::Part>>,
+    /// The card's whole height, before it was fitted to its room, and how far it is scrolled.
+    natural: f32,
+    scroll: f32,
+    /// The scale the card was last painted at (0 before the first paint), and that it changed:
+    /// the question is measured at it.
+    painted_scale: f32,
+    pub(super) relayout: bool,
+    /// The line over another card that keeps the current turn's denials counted (0 without).
+    denied_row: f32,
+    /// The conversation drew "Run in background" on the command's own line in the last frame.
+    pub(super) offer_inline: bool,
     /// A Ctrl+B in flight: for which call, until when, and the output it was written after.
     background_step: Option<(background::Shell, Instant, u64)>,
     /// The background agents the CLI's list shows running, which Chat can stop.
     agents: Vec<background::AgentOffer>,
     /// A Stop agent in flight. It outlives the pending call: the main turn may move on meanwhile.
     agent_step: Option<background::AgentStep>,
+    /// A message to an agent, or Back to the main session, through the agent list in flight.
+    agent_send: Option<agent_send::Step>,
+    /// The agent Chat left Claude Code showing (its input then sends to that agent), until Back
+    /// brings it to the main session again.
+    pub(super) cli_agent: Option<String>,
     /// A rewind from a prompt bubble, from its first Esc until it is done or its card is closed.
     rewind: Option<rewind::Rewind>,
     /// The pending call's offset while Chat may answer it: its drawer stays closed.
@@ -460,6 +504,11 @@ pub(super) struct Card {
     busy: Option<&'static str>,
     /// What the user picked in a form's card.
     form: Picks,
+    /// The form's question the terminal shows (the number of questions for its review), read as
+    /// before every key; `None` when the screen shows none of them.
+    pub(super) form_shown: Option<usize>,
+    /// The previews of the question's options, as the card shows them.
+    pub(in crate::view::chat) previews: preview::State,
     /// The card stands in the composer's place: it waits for an answer, and nothing is sent
     /// past it. (The denied permissions and the background agents sit over the composer.)
     docked: bool,
@@ -538,6 +587,49 @@ impl Card {
         self.docked && self.visible()
     }
 
+    /// The scale the card is measured at: the one it was last painted at.
+    pub(super) fn scale(&self) -> f32 {
+        if self.painted_scale > 0.0 { self.painted_scale } else { 1.0 }
+    }
+
+    /// How far the card is scrolled, kept within `over` (how much taller it is than its room).
+    pub(super) fn scroll_parts(&mut self, over: f32) -> f32 {
+        self.scroll = self.scroll.clamp(0.0, over.max(0.0));
+        self.scroll
+    }
+
+    /// The wheel over a card taller than its room: true when the card took it.
+    pub(in crate::view::chat) fn wheel_card(&mut self, x: f32, y: f32, dy: f32) -> bool {
+        if !self.rect.contains(x, y) || self.prompt.is_some() || self.natural <= self.rect.h {
+            return false;
+        }
+        let over = (self.natural - self.rect.h).max(0.0).floor();
+        let step = if dy < 0.0 { cards::WHEEL_STEP } else { -cards::WHEEL_STEP };
+        self.scroll = (self.scroll + step).clamp(0.0, over);
+        true
+    }
+
+    /// A key was typed while the card stands in the composer's place, where nothing takes it.
+    pub(in crate::view::chat) fn note_typed_away(&mut self) {
+        self.typed_away = true;
+    }
+
+    /// What the card says after a key went nowhere: where typing goes, once.
+    pub(super) fn typed_hint(&self) -> Option<&'static str> {
+        self.typed_away.then_some(TYPED_AWAY)
+    }
+
+    /// Something wants a card in the composer's place: a CLI menu, a permission prompt read from
+    /// the screen or for the pending call, or Claude's pending question. A new session's
+    /// greeting then gives way, so the card is laid out at the window's foot.
+    pub(in crate::view::chat) fn asks(&self, model: &Model) -> bool {
+        self.menu.is_some()
+            || self.prompt.is_some()
+            || self.shown.is_some()
+            || self.blocked.is_some()
+            || matches!(pending(model).map(|p| p.kind), Some(Kind::Question(_)))
+    }
+
     pub(super) fn deadline(&self) -> Option<Instant> {
         let background = self.background_step.as_ref().map(|(_, due, _)| *due);
         let rewind = self.rewind.as_ref().and_then(|r| r.due);
@@ -546,6 +638,7 @@ impl Card {
             .map(|step| step.due)
             .or(background)
             .or(self.agent_step.as_ref().map(|step| step.due))
+            .or(self.agent_send.as_ref().map(agent_send::Step::due))
             .or(rewind)
     }
 }
@@ -560,7 +653,7 @@ fn read(
     match subject {
         Subject::Question(question) => question_menu(screen, question, typing.is_some()),
         Subject::FormQuestion { questions, at } => {
-            form_question(screen, questions, *at).map(|shown| (shown.menu, Some(shown.other), Some(shown.chat)))
+            form_question(screen, questions, *at).map(|shown| (shown.menu, shown.other, Some(shown.chat)))
         }
         Subject::Form(_) => None,
         Subject::Tool { needles, choices } => {
@@ -633,6 +726,9 @@ fn question_menu(
     if crate::attention::screen_permission_prompt(screen) {
         return None;
     }
+    // Without the preview box beside the choices, which is the option's, never the question's.
+    let view = screens::question_view(screen);
+    let screen = &*view;
     let menu = screens::menu(screen)?;
     let options = question.options.len();
     if menu.entries.len() < options
@@ -659,7 +755,9 @@ fn question_menu(
 #[derive(Clone, Debug)]
 struct FormShown {
     menu: screens::Menu,
-    other: usize,
+    /// The "Type something" row; `None` on a page without one (a question whose options have
+    /// previews, Claude Code 2.1.332).
+    other: Option<usize>,
     submit: Option<usize>,
     chat: usize,
     /// The options' boxes (multi-select only), in order.
@@ -677,9 +775,15 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
         return None;
     }
     let question = questions.get(at)?;
+    let view = screens::question_view(screen);
+    let screen = &*view;
     let mut menu = screens::menu(screen)?;
     let n = question.options.len();
-    (menu.entries.len() == n + 2).then_some(())?;
+    let multi = question.multi_select;
+    // A single choice whose options have previews has no "Type something" row: "Chat about this"
+    // follows the options.
+    let bare = !multi && menu.entries.len() == n + 1;
+    (menu.entries.len() == n + 2 || bare).then_some(())?;
     let above = menu.above_box(FORM_ROWS);
     let (tabs, asks) = above.split_first()?;
     (screens::tab_bar(tabs) && squash(&asks.join(" ")) == squash(&question.question)).then_some(())?;
@@ -688,7 +792,6 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
     for header in questions.iter().map(|q| squash(&q.header)).filter(|h| !h.is_empty()) {
         from += tabs.get(from..)?.find(&header)? + header.len();
     }
-    let multi = question.multi_select;
     let mut marks = Vec::new();
     for (entry, option) in menu.entries.iter().zip(&question.options) {
         let label = if multi {
@@ -699,6 +802,10 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
             entry.text.as_str()
         };
         label_matches(label, &collapse(&option.label)).then_some(())?;
+    }
+    if bare {
+        (menu.entries[n].text == screens::CHAT_ABOUT).then_some(())?;
+        return Some(FormShown { menu, other: None, submit: None, chat: n, marks, typed: String::new() });
     }
     menu.entries[n + 1].text.starts_with(screens::CHAT_ABOUT).then_some(())?;
     let submit = if multi { Some(screens::submit_row(screen, &menu, n)?) } else { None };
@@ -711,7 +818,7 @@ fn form_question(screen: &Screen, questions: &[Question], at: usize) -> Option<F
         menu.entries.insert(n + 1, submit);
     }
     let chat = menu.entries.len() - 1;
-    Some(FormShown { menu, other: n, submit: multi.then_some(n + 1), chat, marks, typed })
+    Some(FormShown { menu, other: Some(n), submit: multi.then_some(n + 1), chat, marks, typed })
 }
 
 /// The "Type something" row as it opens, holding no text.
@@ -727,6 +834,23 @@ fn typed_shows(multi: bool, row: &str, text: &str) -> bool {
     } else {
         !pristine(false, row) && squash(row).contains(&squash(text))
     }
+}
+
+/// What the card holds for each question of a form, as the review writes it (the chosen labels
+/// in order, then the text); empty where it holds nothing. Not checked: Submit checks.
+pub(super) fn form_summary(questions: &[Question], picks: &Picks, field: &TextField) -> Vec<String> {
+    questions
+        .iter()
+        .enumerate()
+        .map(|(k, q)| {
+            let raw = if k == picks.page { field.text() } else { picks.texts.get(k).map_or("", String::as_str) };
+            let chosen = picks.chosen.get(k).map_or(&[][..], Vec::as_slice);
+            let mut parts: Vec<String> =
+                q.options.iter().zip(chosen).filter(|(_, on)| **on).map(|(o, _)| collapse(&o.label)).collect();
+            parts.extend(Some(collapse(raw)).filter(|t| !t.is_empty()));
+            parts.join(", ")
+        })
+        .collect()
 }
 
 /// A question's answer as the review writes it: the chosen labels in order, then the text.
@@ -830,22 +954,25 @@ fn question_next(
             }
         }
     }
-    match &answer.text {
-        Some(text) if typed_shows(multi, &shown.typed, text) => {}
-        Some(text) if pristine(multi, &shown.typed) => {
-            if cursor != shown.other {
-                return Ok(to(shown.other));
+    match (&answer.text, shown.other) {
+        // A page without "Type something" takes no typed answer.
+        (Some(_), None) => return Err(NO_FIELD),
+        (None, None) => {}
+        (Some(text), Some(_)) if typed_shows(multi, &shown.typed, text) => {}
+        (Some(text), Some(other)) if pristine(multi, &shown.typed) => {
+            if cursor != other {
+                return Ok(to(other));
             }
             let expect = Expect::Typed { at, cursor, marks: shown.marks.clone(), text: text.clone() };
             return Ok((text.as_bytes().to_vec(), expect, NOT_TYPED));
         }
-        None if pristine(multi, &shown.typed) => {}
+        (None, Some(_)) if pristine(multi, &shown.typed) => {}
         _ => return Err(OTHER_TAKEN),
     }
     let target = match (multi, answer.picks.first()) {
         (true, _) => shown.submit.ok_or(CHANGED)?,
         (false, Some(&i)) => i,
-        (false, None) => shown.other,
+        (false, None) => shown.other.ok_or(NO_FIELD)?,
     };
     if cursor != target {
         return Ok(to(target));
@@ -958,6 +1085,11 @@ impl Chat {
         if side {
             card.error = Some(INTERRUPTED);
         }
+        // A message on its way to an agent stays in the box, which says why it stopped.
+        let to_agent = card.agent_send.take().is_some();
+        if to_agent {
+            self.error = Some(agent_send::INTERRUPTED_SEND);
+        }
         let answer = match self.question.step.take() {
             // Enter already went: the step stays and keeps the card from taking a second click
             // until the prompt closes or its wait runs out, as it does without an interruption.
@@ -972,7 +1104,7 @@ impl Chat {
             }
             None => false,
         };
-        rewind || side || answer
+        rewind || side || to_agent || answer
     }
 
     fn question_failed(&mut self, error: &'static str) {
@@ -1033,7 +1165,7 @@ impl Chat {
 
     /// Puts the held text in the composer once it is empty and nothing is being sent.
     fn land_held(&mut self) -> bool {
-        if self.question.held.is_none() || !self.editor.text.trim().is_empty() || self.locked() {
+        if self.question.held.is_none() || self.has_draft() || self.locked() {
             return false;
         }
         self.editor.set(self.question.held.take().unwrap_or_default());
@@ -1064,6 +1196,8 @@ impl Chat {
             let field = std::mem::take(&mut self.question.field);
             let held = self.question.held.take();
             let agent_step = self.question.agent_step.take();
+            let agent_send = self.question.agent_send.take();
+            let cli_agent = self.question.cli_agent.take();
             let rewind = self.question.rewind.take();
             let error = self.question.error.filter(|_| agent_step.is_some() || step.is_some());
             self.question = Card {
@@ -1071,6 +1205,8 @@ impl Chat {
                 field,
                 held,
                 agent_step,
+                agent_send,
+                cli_agent,
                 rewind,
                 error,
                 step,
@@ -1112,6 +1248,14 @@ impl Chat {
             Kind::Tool(_) => shown.as_ref().is_some_and(|s| s.matched),
         });
         let answerable = answerable.map(|p| p.item.offset);
+        // Which of the form's questions the terminal shows: the card marks its tab.
+        let form_shown = match pending.as_ref().map(|p| p.kind) {
+            Some(Kind::Question(Some(questions))) if form(questions) => (0..questions.len())
+                .find(|&at| form_question(screen, questions, at).is_some())
+                .or_else(|| screens::review(screen).map(|_| questions.len())),
+            _ => None,
+        };
+        changed |= std::mem::replace(&mut self.question.form_shown, form_shown) != form_shown;
         // A rewind that stopped and left its screen open keeps its card (its reason and that the
         // screen is still open) while that screen shows, and goes once it is gone.
         let rewind_screen = screens::rewind_list(screen).is_some() || screens::rewind_actions(screen).is_some();
@@ -1179,7 +1323,11 @@ impl Chat {
     pub(super) fn question_notice(&self) -> Option<&'static str> {
         let card = &self.question;
         let rewind = card.rewind.as_ref().is_some_and(rewind::Rewind::in_flight);
-        (card.step.is_some() || card.background_step.is_some() || card.agent_step.is_some() || rewind)
+        (card.step.is_some()
+            || card.background_step.is_some()
+            || card.agent_step.is_some()
+            || card.agent_send.is_some()
+            || rewind)
             .then_some(WAITING)
     }
 
@@ -1223,6 +1371,8 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
             return true;
         }
         Hit::Denials(_) | Hit::Review | Hit::AskRetry => return denials::press(tab, now, hit),
+        // The preview only looks: a press there selects (see `input.rs`), Copy is the window's.
+        Hit::Preview | Hit::CopyPreview => return false,
         Hit::Option(_) | Hit::Escape | Hit::Close if rewind_shown(&chat.question, &pane.model) => {
             return rewind::press(tab, now, hit);
         }
@@ -1242,13 +1392,14 @@ pub(super) fn press(tab: &mut Tab, now: Instant, hit: Hit) -> bool {
         _ => None,
     });
     if let Some((item, questions)) = form.clone()
-        && matches!(hit, Hit::Option(_) | Hit::Back | Hit::Next | Hit::Answer | Hit::Submit)
+        && matches!(hit, Hit::Option(_) | Hit::Back | Hit::Next | Hit::Answer | Hit::Submit | Hit::Page(_))
     {
         // Enter in the field (`Answer`) turns the page, and on the last question submits.
         let card = &mut pane.chat.question;
         card.form.fit(&questions, &card.field);
-        let last = card.form.page + 1 >= questions.len();
-        if hit != Hit::Submit && !(hit == Hit::Answer && last) {
+        // Enter on the Submit step submits, as its button does; elsewhere it turns the page.
+        let review = card.form.page >= questions.len();
+        if hit != Hit::Submit && !(hit == Hit::Answer && review) {
             return press_form(card, hit, &questions);
         }
         if busy(&mut pane.chat) {
@@ -1388,13 +1539,17 @@ impl Card {
         let text = self.form.texts.get(to).cloned().unwrap_or_default();
         self.field.set_text(&text);
         self.error = None;
+        // The Submit step has no field: the keys go back to the card.
+        if to >= self.form.texts.len() {
+            self.focus = false;
+        }
     }
 }
 
 /// A pick or a page turn in a form's card: nothing goes to the terminal.
 fn press_form(card: &mut Card, hit: Hit, questions: &[Question]) -> bool {
     card.form.fit(questions, &card.field);
-    let page = card.form.page.min(questions.len().saturating_sub(1));
+    let page = card.form.page.min(questions.len());
     match hit {
         Hit::Option(i) => {
             let Some(row) = card.form.chosen.get_mut(page).filter(|row| i < row.len()) else { return false };
@@ -1411,8 +1566,11 @@ fn press_form(card: &mut Card, hit: Hit, questions: &[Question]) -> bool {
             Some(to) => card.turn(to),
             None => return false,
         },
-        // Enter in the field turns the page too (on the last one it submits, see `press`).
-        Hit::Next | Hit::Answer if page + 1 < questions.len() => card.turn(page + 1),
+        // Enter in the field turns the page too; after the last question comes the Submit step
+        // (where Enter submits, see `press`).
+        Hit::Next | Hit::Answer if page < questions.len() => card.turn(page + 1),
+        Hit::Page(to) if to <= questions.len() && to != page => card.turn(to),
+        Hit::Page(_) => {}
         _ => return false,
     }
     true
@@ -1613,6 +1771,7 @@ pub(super) fn advance(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let changed = pane.chat.sync_question(&pane.model, &pane.cwd, &tab.term.screen)
         | background::advance_background(tab, now)
         | background::advance_agent(tab, now, may_write)
+        | agent_send::advance(tab, now, may_write)
         | rewind::advance(tab, now, may_write);
     let pane = tab.pane.as_mut().expect("Chat pane");
     let changed = changed | pane.chat.clear_busy();
@@ -1765,6 +1924,14 @@ pub(super) fn key(tab: &mut Tab, now: Instant, name: &KeyName, mods: Mods, text:
     if !chat.question.visible() {
         chat.question.focus = false;
     }
+    // ↑ and ↓ show the previous or next option's preview, whether or not the field has the keys.
+    if mods.none()
+        && matches!(name, KeyName::Up | KeyName::Down)
+        && chat.question.visible()
+        && chat.question.previews.step(*name == KeyName::Down)
+    {
+        return true;
+    }
     if !chat.question.focus {
         return false;
     }
@@ -1794,8 +1961,6 @@ pub(super) fn text(chat: &mut Chat, text: &str) -> bool {
     true
 }
 
-const PAD: f32 = 12.0;
-const HEADER: f32 = 18.0;
 const CHOICE: f32 = 28.0;
 const LINE: f32 = 16.0;
 const FIELD: f32 = 30.0;
@@ -1816,11 +1981,11 @@ fn copied_row(p: &mut Painter, face: Face, size: f32, x: f32, cy: f32, text: &st
     }
 }
 
-/// The tool call as the transcript has it, a few lines for the card.
-fn detail(kind: &ItemKind) -> Vec<String> {
-    let ItemKind::Tool { summary, file_path, card, .. } = kind else { return Vec::new() };
+/// The tool call as the transcript has it, a few lines for the card, and how many more it has.
+fn detail(kind: &ItemKind) -> (Vec<String>, usize) {
+    let ItemKind::Tool { summary, file_path, card, .. } = kind else { return (Vec::new(), 0) };
     if is_plan(kind) {
-        return vec!["The plan is shown above, in the conversation.".to_owned()];
+        return (vec!["The plan is shown above, in the conversation.".to_owned()], 0);
     }
     let mut lines: Vec<String> = match card {
         Some(ToolCard::Shell { command, .. }) => command.lines().map(str::to_owned).collect(),
@@ -1829,8 +1994,9 @@ fn detail(kind: &ItemKind) -> Vec<String> {
         }
         _ => file_path.iter().cloned().chain(std::iter::once(summary.clone()).filter(|s| !s.is_empty())).collect(),
     };
+    let more = lines.len().saturating_sub(DETAIL_LINES);
     lines.truncate(DETAIL_LINES);
-    lines
+    (lines, more)
 }
 
 fn tool_title(kind: &ItemKind) -> String {
@@ -1865,8 +2031,22 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     // A permission prompt read from the screen is shown whole: it may take more of the window
     // than the other cards, and wraps its rows at the card's width.
     let screen_prompt = chat.question.prompt.is_some() && !rewind;
-    let old = |inside: f32| 2.0 * PAD + inside + FIELD + STATUS;
-    let parts = cards::parts(chat, model, inner_w);
+    // The cards that are not laid out from parts give their height inside the same padding.
+    let old = |inside: f32| 2.0 * cards::INSET + inside - 6.0;
+    let mut parts = cards::parts(chat, model, inner_w);
+    if let Some(parts) = &mut parts {
+        let options = match pending(model).map(|p| p.kind) {
+            Some(Kind::Question(Some(questions))) if !questions.is_empty() => {
+                let page = if form(questions) { chat.question.form.page } else { 0 };
+                questions.get(page).map_or(&[][..], |q| q.options.as_slice())
+            }
+            _ => &[][..],
+        };
+        let scale = chat.question.scale();
+        preview::lay(&mut chat.question, parts, inner_w, scale, options);
+    } else {
+        chat.question.previews.clear();
+    }
     let (wanted, docked) = if rewind {
         (chat.question.rewind.as_ref().map(|r| old(rewind::height(r))), true)
     } else if screen_prompt {
@@ -1883,21 +2063,33 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
     // With no other card, the current turn's denied permissions: a strip with their count, or
     // their list. Its height is its own.
     chat.question.denials_only = wanted.is_none();
+    // Under another card the count stays in view, on a line of that card's own over what it asks.
+    let denied_row = if wanted.is_some() && !chat.question.denials.is_empty() { denials::ROW } else { 0.0 };
+    chat.question.denied_row = denied_row;
+    let wanted = wanted.map(|h| h + denied_row);
     let Some(wanted) = wanted.or_else(|| denials::height(&chat.question)) else {
         chat.question.rect = Rect::default();
         chat.question.docked = false;
+        chat.question.typed_away = false;
+        chat.question.laid = None;
+        chat.question.natural = 0.0;
+        chat.question.scroll = 0.0;
         return;
     };
+    chat.question.natural = wanted;
     chat.question.docked = docked;
+    chat.question.typed_away &= docked;
     let conversation = &mut chat.layout.conversation;
     if docked {
         // From the top of the conversation to the foot of the composer's box.
         let whole = (frame.bottom() - conversation.y).max(0.0);
         let room = ((whole - 40.0) * if screen_prompt { PROMPT_SHARE } else { CARD_SHARE }).floor().max(0.0);
         let mut h = wanted.min(room);
-        if let Some(parts) = &parts {
-            chat.question.density = cards::density_for(parts, room);
-            h = cards::height(parts, chat.question.density).min(room);
+        if let Some(parts) = &mut parts {
+            // Denser, then shorter where it can be read elsewhere; what still does not fit scrolls.
+            chat.question.density = cards::fit(parts, room - denied_row);
+            chat.question.natural = cards::height(parts, chat.question.density) + denied_row;
+            h = chat.question.natural.min(room);
         }
         chat.question.rect = Rect::new(frame.x, frame.bottom() - h, frame.w, h);
         conversation.h = (chat.question.rect.y - 10.0 - conversation.y).max(0.0);
@@ -1909,11 +2101,16 @@ pub(super) fn place(chat: &mut Chat, model: &Model) {
         chat.question.rect = Rect::new(frame.x, conversation.bottom() - h - 8.0, frame.w, h);
         conversation.h = (conversation.h - h - 16.0).max(0.0);
     }
+    // The parts as laid out are the ones drawn: the two cannot disagree, and the question is
+    // measured once a frame.
+    chat.question.laid = parts;
     prompt::fit(&mut chat.question);
 }
 
 pub(super) struct Draw<'a> {
     pub pal: &'a Palette,
+    /// The terminal theme's colours: a preview is drawn in them.
+    pub scheme: mdshared_ui::termview::Scheme,
     pub hover: Option<Target>,
     pub focused: bool,
     /// When this frame is painted: a prompt read from the screen notes when it was first shown.
@@ -1921,13 +2118,6 @@ pub(super) struct Draw<'a> {
 }
 
 impl Draw<'_> {
-    /// A button of the card.
-    fn button(&self, p: &mut Painter, hits: &mut Vec<(Rect, Target)>, r: Rect, label: &str, hit: Hit) {
-        let target = Target::Chat(Control::Question(hit));
-        super::paint::button(p, self.pal, r, label, self.hover == Some(target), false);
-        hits.push((r, target));
-    }
-
     /// The card: in the composer's place while it waits for an answer, else over the composer.
     /// Called by the Chat painter.
     pub(super) fn card(&self, p: &mut Painter, chat: &mut Chat, model: &Model, hits: &mut Vec<(Rect, Target)>) {
@@ -1943,22 +2133,51 @@ impl Draw<'_> {
             p.frame(r, 8.0, pal.popup, pal.popup_line);
         }
         let clip = p.clip(r);
-        let inner = r.inset(PAD);
+        let first = hits.len();
+        let whole = r;
+        let r = if chat.question.denied_row > 0.0 {
+            self.denied_line(p, chat, r);
+            Rect::new(r.x, r.y + chat.question.denied_row, r.w, (r.h - chat.question.denied_row).max(0.0))
+        } else {
+            r
+        };
+        // A question is measured at the window's scale: a new one lays the card out again.
+        if chat.question.painted_scale != p.scale {
+            chat.question.painted_scale = p.scale;
+            chat.question.relayout = true;
+        }
+        // The cards drawn from the top scroll as a whole when taller than their room (the wheel
+        // over them); the parts' card keeps its foot in view (`Draw::parts`), and a prompt read
+        // from the screen scrolls its own rows.
+        let over = (chat.question.natural - whole.h).max(0.0).floor();
+        let lift = if chat.question.laid.is_some() || chat.question.prompt.is_some() {
+            0.0
+        } else {
+            chat.question.scroll_parts(over)
+        };
+        let inner = Rect::new(
+            r.x + cards::INSET,
+            r.y + cards::INSET - lift,
+            r.w - 2.0 * cards::INSET,
+            r.h - 2.0 * cards::INSET,
+        );
         if rewind_shown(&chat.question, model) {
             self.rewind(p, chat, inner, hits);
         } else if chat.question.prompt.is_some() {
             self.prompt(p, chat, r, hits);
         } else if chat.question.blocked.is_some() {
             self.blocked(p, chat, inner, hits);
-        } else if let Some(mut parts) = cards::parts(chat, model, (r.w - 2.0 * cards::INSET).max(1.0)) {
-            cards::fit_panel(&mut parts, r.h, chat.question.density);
+        } else if let Some(parts) = chat.question.laid.take() {
             self.parts(p, chat, r, &parts, hits);
+            chat.question.laid = Some(parts);
         } else if background::height(&chat.question).is_some() {
             self.background(p, chat, inner, hits);
         } else {
-            self.denials(p, chat, r, hits);
+            self.denials(p, chat, Rect::new(r.x, r.y - lift, r.w, r.h.max(chat.question.natural)), hits);
         }
         p.restore(clip);
+        // Nothing outside the card takes a click meant for it.
+        cards::clip_hits(hits, first, whole);
     }
 }
 
@@ -1967,6 +2186,16 @@ mod tests;
 
 #[cfg(test)]
 impl Card {
+    /// For pictures: a rewind from a prompt bubble whose first keys went.
+    pub(in crate::view::chat) fn rewinding(&mut self, prompt: &str) {
+        self.rewind = Some(rewind::Rewind::entering(prompt));
+    }
+
+    /// For pictures: the rewind's choices are on screen and the card offers them.
+    pub(in crate::view::chat) fn rewind_choosing(&self) -> bool {
+        self.rewind.as_ref().is_some_and(|r| r.choosing() && r.actions.is_some())
+    }
+
     /// For tests outside this module: whether a step is in flight, and the card's notice.
     pub(in crate::view::chat) fn probe(&self) -> (bool, Option<&'static str>) {
         (self.step.is_some(), self.error)

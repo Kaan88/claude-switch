@@ -24,7 +24,7 @@ while the CLI keeps running underneath.
 ## Why you'd want it
 
 **🔎 Never lose a session again.** Every CLI and Desktop session on the computer is listed with
-its folder, branch, size and last messages. Search titles, prompts and whole conversations; pin,
+its folder, branch, size and its conversation. Search titles, prompts and whole conversations; pin,
 rename, group by project or thread, hide or archive. With search by meaning on, find a session by
 what it was about ("where we fixed push").
 
@@ -40,7 +40,8 @@ against the terminal screen first, and the CLI keeps running in a drawer underne
 
 **🧳 Hand over instead of compacting.** When a session gets long, a model you choose writes an
 editable handover. It continues in the same tab, in a new one, as another account, or in OpenCode.
-It can also start by itself when the context fills up, or from `/switch-compact` inside Claude Code.
+It can also start by itself when the context fills up, from Chat's Handover chip, or from
+`/switch-compact` inside Claude Code.
 
 **🛡️ Safe by default.** A session already running is never started twice. Deleting moves files to
 the Recycle Bin. Anything that sends your text to a model asks first, and there is no telemetry.
