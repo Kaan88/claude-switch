@@ -80,9 +80,9 @@
   sequences in the output are dropped, so it cannot move or clear what is shown.
 - Chat and the Session view: after a rewind, the turns it replaced are no longer shown once the
   next message is written; the conversation follows the active branch of the transcript.
-- Chat and the Session view: after a rewind, the Tasks, Agents, Shells and Files pages leave out
-  what the replaced turns did once the next message is written, as the conversation does; an agent
-  or background shell started there that is still running stays listed.
+- Chat and the Session view: after a rewind, the Agents and Shells pages leave out what the
+  replaced turns did once the next message is written, as the conversation does; an agent or
+  background shell started there that is still running stays listed.
 - Chat and the Session view: tasks made in a turn a rewind replaced stay on the Tasks page, marked
   "from a rewound turn", as Claude Code keeps them in its own task list.
 - Chat and the Session view: a file changed in a turn a rewind replaced stays in the Files list,
