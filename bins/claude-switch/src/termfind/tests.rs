@@ -373,3 +373,26 @@ fn the_toggles_and_the_invalid_state_are_drawn_in_both_themes() {
         assert_eq!(px(&bad, bar.card.cx(), bar.card.y + 0.2), pal.danger, "the edge says invalid");
     }
 }
+
+#[test]
+fn a_pattern_past_the_size_limits_is_refused_quickly_as_too_large() {
+    let s = screen(20, 3, b"abc\r\n");
+    let mut f = Find::new();
+    f.options.regex = true;
+    // Unicode \w repeated: megabytes of automaton under the crate's defaults.
+    f.field.set_text(r"\w{1000}");
+    let started = std::time::Instant::now();
+    f.update(&s, 1, 3);
+    let took = started.elapsed();
+    assert_eq!(f.count(), "Pattern too large");
+    assert!(f.matches.is_empty());
+    assert!(took < std::time::Duration::from_secs(1), "refused in {took:?}");
+    // Nesting past the limit is refused too, as invalid.
+    f.field.set_text(&format!("{}a{}", "(".repeat(100), ")".repeat(100)));
+    f.update(&s, 1, 3);
+    assert_eq!(f.count(), "Invalid pattern");
+    // An ordinary pattern still works under the limits.
+    f.field.set_text(r"\w+");
+    f.update(&s, 1, 3);
+    assert_eq!(f.count(), "1 of 1");
+}

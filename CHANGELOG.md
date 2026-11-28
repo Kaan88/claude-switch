@@ -158,6 +158,11 @@
   triple click) and its right-click menu (Cut, Copy, Paste, Select all) like the app's other fields.
 - Terminal tabs: a split tab reopened with the saved tabs gets its panes back, in the same layout
   and sizes, each shell started again in the folder it was started in.
+- Terminal find: a regular expression too large to build quickly (such as `\w{1000}`) is refused
+  as "Pattern too large" instead of being built while you type.
+- Terminal panes: reopening a split tab no longer waits on a pane folder on a network share that
+  does not answer (the shell starts in the tab's folder after 300 ms), and a pane that does not come
+  back is named in a notice with the reason; the other panes still come back.
 - Sessions: the details show the selected session's conversation as Chat draws it (answers in
   Markdown, code blocks, tool rows that open), read-only, in a region that scrolls on its own and
   follows new messages; it replaces the short "Last messages" list. Earlier history loads on

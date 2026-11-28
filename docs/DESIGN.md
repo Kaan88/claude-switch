@@ -416,7 +416,10 @@ digit or underscore just before or after it, and regular expression (".*", Alt+R
 case-insensitive unless Aa); with both on the pattern is wrapped in `\b(?:…)\b`. A pattern is
 compiled once per query and options; matches of nothing are skipped. One that does not compile
 finds nothing, says "Invalid pattern" in the danger colour and edges the bar in it, until the text
-or the toggle changes. The Alt keys work only while the box has the keyboard. The box is a text
+or the toggle changes. It is compiled on the window thread, so the builder has explicit limits well
+under the crate's defaults (NFA 1 MiB, one-pass 256 KiB, full DFA 40 KiB and 30 states, lazy DFA
+cache 1 MiB, nesting 64); a pattern past a size limit (such as `\w{1000}`, megabytes of Unicode
+automaton) is refused at once and shows the same state, worded "Pattern too large". The Alt keys work only while the box has the keyboard. The box is a text
 field of `fieldmouse` like the others (`FieldId::TermFind`, its own hit target inside the card):
 press places the caret, drag, double and triple click select, the I-beam shows over it, and a
 right click opens Cut, Copy, Paste, Select all; an edit through that menu finds again.
@@ -457,10 +460,14 @@ terminal layout. A split tab's row in `terminal-tabs.json` (Claude and OpenCode 
 tabs are not saved) carries `panes` (`panes/saved.rs`): the tree with its ratios, numbered leaves
 (0 the tab's own pane, `k` the shell started in `folders[k - 1]`) and the focused leaf; no commands,
 names or screen contents. Reopening the tab puts the layout back and starts each shell again in its
-saved folder, or the tab's own folder when that one is gone. The folder is where the shell was
-started; a later `cd` inside it is not known to the app. A row it cannot read as a layout (shape,
-leaf numbers, ratios outside 0.02–0.98, relative folders) reopens the tab unsplit, as does a shell
-that cannot start; older builds ignore the field.
+saved folder, or the tab's own folder when that one is gone or does not answer within 300 ms
+(asked on a thread of its own, so a network share that hangs cannot hold the window; a new split's
+folder is checked the same way). A shell that cannot start loses only its pane: its leaf is taken
+out of the tree and its sibling takes the space, the keyboard going to the tab's own pane if it was
+that one. Either case is said in one notice per tab, naming the pane's folder and why. The folder
+is where the shell was started; a later `cd` inside it is not known to the app. A row it cannot read
+as a layout (shape, leaf numbers, ratios outside 0.02–0.98, relative folders) reopens the tab
+unsplit; older builds ignore the field.
 
 **Not there:** links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host

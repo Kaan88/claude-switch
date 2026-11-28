@@ -284,3 +284,37 @@ fn a_drag_selection_stays_in_the_pane_it_started_in() {
     assert!(!text.contains("left pane"), "no text of the other pane: {text:?}");
     assert!(st.tabs.get(id).unwrap().term.selection.is_none(), "one selection in the tab, the focused pane's");
 }
+
+#[test]
+fn a_shell_that_did_not_start_loses_only_its_own_pane() {
+    use super::saved::{Saved, load};
+    let tmp = std::env::temp_dir();
+    let layout = serde_json::json!({
+        "tree": {"axis": "right", "ratio": 0.3, "a": 0, "b": {"axis": "down", "ratio": 0.6, "a": 1, "b": 2}},
+        "folders": [tmp.join("a").to_str().unwrap(), tmp.join("b").to_str().unwrap()],
+        "focus": 2,
+    });
+    let saved: Saved = load(&layout).unwrap();
+    let mut p = Panes::default();
+    // Shell 2 (the focused one) did not start.
+    p.restore(saved.clone(), vec![(1, term("a"), tmp.join("a"))]);
+    assert_eq!(p.ids(), [MAIN, 1]);
+    assert_eq!(p.focus, MAIN, "the keyboard goes to the tab's own pane");
+    assert_eq!(p.folders, [(1, tmp.join("a"))]);
+    assert!(matches!(&p.tree, Node::Split { axis: Axis::Right, ratio, .. } if (*ratio - 0.3).abs() < 1e-6));
+    // A new split after it does not reuse a leaf number.
+    assert_eq!(p.split(Axis::Down, term("c")), Some(2));
+    // None started: unsplit.
+    let mut p = Panes::default();
+    p.restore(saved, Vec::new());
+    assert!(!p.is_split());
+    assert_eq!(p.tree, Node::Leaf(MAIN));
+}
+
+#[test]
+fn a_folder_probe_answers_for_folders_there_and_gone() {
+    use super::saved::{FOLDER_PROBE, folder_answers};
+    let wait = FOLDER_PROBE * 10; // Generous here: this machine's disk, not a network share.
+    assert_eq!(folder_answers(&std::env::temp_dir(), wait), Some(true));
+    assert_eq!(folder_answers(&std::env::temp_dir().join("cs-no-such-folder-r4"), wait), Some(false));
+}

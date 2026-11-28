@@ -336,7 +336,8 @@ impl AppState {
         tab.and_then(|t| t.folder.clone())
             .or_else(|| self.tab_folder(id))
             .or_else(|| tab.and_then(|t| t.opencode.clone()))
-            .filter(|c| self.source.is_demo() || c.is_dir())
+            // Bounded: a folder on a share that does not answer must not hold the window.
+            .filter(|c| self.source.is_demo() || saved::folder_answers(c, saved::FOLDER_PROBE) == Some(true))
             .unwrap_or_else(|| self.source.home())
     }
 
