@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Resume in the desktop app as a further account is no longer refused when that account's CLI is
+  not signed in: it opens the account's desktop app, which has its own sign-in.
+
 ## 0.1.7 (2026-11-28)
 
 - Chat: with a subagent's conversation open, the message box talks to that agent: its edge and

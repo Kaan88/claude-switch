@@ -86,6 +86,8 @@ that pid is alive.
   account" (`--user-data-dir=<dir>`) with the link after `--`, which the app opens from its command
   line at start (as it does for its own `ccd` alias) and in that profile's running window
   (`second-instance`). Read from desktop app 7.37095.0 (`app.asar`, `AppxManifest.xml`), not run.
+  That launch does not use the account's CLI, so its CLI sign-in is not required (only the desktop
+  app's own sign-in in that window, which Switch cannot see).
 - The same session open in two places at once loses messages. Never start a session that is running.
 - Resuming under another account works on the same transcript, but the prompt cache belongs to the
   account: the first request re-reads the whole conversation at full price.

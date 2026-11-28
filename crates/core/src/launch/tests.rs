@@ -295,6 +295,22 @@ fn a_gone_folder_resumes_in_the_home_folder_and_a_missing_login_is_refused() {
     assert_eq!(resume(&roots, &config, &s, "new", App::Cli, &[]), Err(Refusal::NotLoggedIn("New".into())));
 }
 
+/// A further account's desktop app does not use its CLI, so the CLI's sign-in is not asked for; the
+/// first account's Desktop resume goes through its CLI and still is.
+#[cfg(windows)]
+#[test]
+fn a_further_accounts_desktop_resume_does_not_need_its_cli_signed_in() {
+    let t = TempDir::new("lau-desk-nologin");
+    let (roots, config) = setup(&t);
+    let s = session(&t.0);
+    std::fs::remove_file(config.accounts[1].cli_dir.join(".credentials.json")).unwrap();
+    assert_eq!(resume(&roots, &config, &s, "work", App::Cli, &[]), Err(Refusal::NotLoggedIn("Work".into())));
+    let desktop = resume(&roots, &config, &s, "work", App::Desktop, &[]).unwrap();
+    assert!(is_desktop_request(&desktop));
+    std::fs::remove_file(config.accounts[0].cli_dir.join(".credentials.json")).unwrap();
+    assert_eq!(resume(&roots, &config, &s, "main", App::Desktop, &[]), Err(Refusal::NotLoggedIn("Main".into())));
+}
+
 #[test]
 fn resuming_as_a_further_account_brings_its_links_and_mcp_up_to_date() {
     let t = TempDir::new("lau-share");
