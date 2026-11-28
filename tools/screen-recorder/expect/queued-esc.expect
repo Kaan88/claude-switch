@@ -15,8 +15,9 @@ input =
 send = yes
 shows = Also reply with the word echo.
 
-# They are recorded as ordinary prompts (not as messages during a turn). Claude Code also records
-# "[Request interrupted by user for tool use]" as a user text after them, which the reader takes
-# for a prompt as well (2.1.332; docs/TODO.md).
+# They are recorded as ordinary prompts (not as messages during a turn), the newest starting the
+# turn that answers them. Claude Code also records "[Request interrupted by user for tool use]" as
+# a user text: no prompt of the user's (an Interrupted notice).
 [transcript]
-prompts = Run exactly this with the Bash tool and nothing else: ping -n 21 127.0.0.1 | Also reply with the word echo. | Then reply with the word foxtrot. On one line. | [Request interrupted by user for tool use]
+prompts = Run exactly this with the Bash tool and nothing else: ping -n 21 127.0.0.1 | Also reply with the word echo. | Then reply with the word foxtrot. On one line.
+turn = Then reply with the word foxtrot.\nOn one line.

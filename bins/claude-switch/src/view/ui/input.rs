@@ -908,6 +908,12 @@ mod tests {
         let last =
             model.items.iter().rev().find(|(_, i)| matches!(i.kind, ItemKind::Assistant { .. })).unwrap().0.offset;
         (model.chat.latest, model.chat.pending) = (Some((last, ChatPhase::EndTurn)), None);
+        // An ended turn's calls have their results.
+        for item in model.items.values_mut() {
+            if let ItemKind::Tool { state, .. } = &mut item.kind {
+                *state = claude_switch_core::transcript::ToolState::Ok;
+            }
+        }
         let mut gfx = Gfx::new();
         let mut bmp = Bitmap::new(800, 2400);
         let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);

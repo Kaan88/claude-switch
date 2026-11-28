@@ -942,6 +942,24 @@ fn a_branch_is_cut_only_where_a_turn_ended_and_never_in_a_subagents_transcript()
     model.chat.pending = Some(64);
     assert_eq!(model.branch_cut(at(65)), None);
     model.chat.pending = None;
+    // A call without its result before the cut: Claude Code could not go on from the copy.
+    let running = ItemKind::Tool {
+        id: "toolu_lost".into(),
+        name: "Bash".into(),
+        summary: "ping".into(),
+        file_path: None,
+        state: claude_switch_core::transcript::ToolState::Running,
+        duration_ms: None,
+        pictures: vec![],
+        subagent: None,
+        denial: None,
+        card: None,
+    };
+    model.items.insert(at(15), Item { timestamp: None, kind: running });
+    for item in [10, 40, 50, 65] {
+        assert_eq!(model.branch_cut(at(item)), None, "{item}");
+    }
+    model.items.remove(&at(15));
     // In a subagent's transcript the items are the agent's: no branch, no buttons, a refusal.
     model.agent = Some("agent-1".into());
     assert_eq!(model.branch_cut(at(10)), None);

@@ -625,3 +625,35 @@ fn thinking_shown_as_updates_is_an_answer_and_other_thinking_stays_a_thought() {
         ]
     );
 }
+
+#[test]
+fn claude_codes_record_of_an_esc_is_a_notice_and_no_prompt_of_the_users() {
+    let folder = Folder::new();
+    let path = folder.session();
+    let user_text =
+        |text: &str| record(json!({"type":"user","message":{"role":"user","content":[{"type":"text","text":text}]}}));
+    let lines = [
+        prompt("run the ping"),
+        tool("toolu_1", "Bash", json!({"command":"ping"})),
+        record(json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1",
+            "content":"The user doesn't want to proceed with this tool use.","is_error":true}]}})),
+        user_text("[Request interrupted by user for tool use]"),
+        user_text("[Request interrupted by user]"),
+    ];
+    fs::write(&path, lines.concat()).unwrap();
+    let reader = Reader::open(&path, 4096).unwrap();
+    let items: Vec<_> = reader.items().map(|(id, item)| (id, item.kind.clone())).collect();
+    let prompts: Vec<_> =
+        items.iter().filter(|(_, k)| matches!(k, ItemKind::Prompt { .. })).map(|(id, _)| id.offset).collect();
+    assert_eq!(prompts, [0], "only the user's own prompt");
+    let notices: Vec<_> = items
+        .iter()
+        .filter_map(|(_, k)| match k {
+            ItemKind::Notice { kind: NoticeKind::Interrupted, text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notices, ["Request interrupted by user for tool use", "Request interrupted by user"]);
+    // No new turn: the newest prompt is still the one typed.
+    assert_eq!(reader.chat().prompt, Some(0));
+}

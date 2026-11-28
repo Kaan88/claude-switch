@@ -84,9 +84,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 - Try Branch from the running app (2026-11-28: `recorder compat` resumes the app's cut copies in
   print mode and in the terminal, but the app's own button, tab and mark were not used for real).
-- The reader takes Claude Code's `[Request interrupted by user for tool use]` user text (written on
-  Esc during a tool call) for a prompt: it shows as your bubble and moves the newest prompt (seen
-  by `recorder compat`, script `queued-esc`, 2.1.332; not from this batch).
 - Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
   script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
   mid-turn, and the message shows where the transcript has it.

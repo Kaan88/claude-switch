@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Chat and the Session view: Claude Code's "[Request interrupted by user]" after an Esc is shown
+  as a quiet "Interrupted" line, no longer as a message of yours; it starts no new turn, so Stop
+  is not offered again for the turn you stopped, and it is not offered for Rewind or prompt recall.
+- Chat: Branch is not offered where the copy would hold a tool call without its result.
 - Chat: a message with a picture that Claude Code put back on its input after an early Stop is
   recognised (and Press Enter's check finds it): Claude Code shows the text right after the
   picture's marker, without the space Chat looked for.

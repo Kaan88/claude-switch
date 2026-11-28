@@ -70,6 +70,8 @@ pub enum NoticeKind {
     Recap,
     /// Another banner Claude Code marked as a warning.
     Info,
+    /// Claude Code's own record of an Esc: "[Request interrupted by user]" (or "… for tool use").
+    Interrupted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -550,6 +552,15 @@ impl View {
                     self.plans_dirty |= known.is_some();
                     self.native_results.insert(outcome.tool.clone(), (id(0), outcome));
                 }
+                // Claude Code's own words for an Esc, written as a user text: not the user's prompt,
+                // and no new turn (Claude Code 2.1.332, `recorder compat`'s `queued-esc`).
+                if let Some(at) = texts.iter().position(|t| interrupted(t)) {
+                    let text = texts.remove(at).trim().trim_matches(['[', ']']).to_owned();
+                    self.add(id(0), timestamp, ItemKind::Notice { kind: NoticeKind::Interrupted, text }, changes);
+                    if texts.is_empty() && pictures.is_empty() {
+                        self.chat.observe(offset, ChatPhase::Active);
+                    }
+                }
                 if !texts.is_empty() || !pictures.is_empty() {
                     let synthetic = flag(&value, "isMeta");
                     if !synthetic {
@@ -893,6 +904,11 @@ fn queued_prompt(attachment: &Value) -> Option<&Value> {
         && attachment["commandMode"] == "prompt"
         && attachment["origin"]["kind"] == "human")
         .then(|| &attachment["prompt"])
+}
+
+/// Claude Code's record of an Esc: `[Request interrupted by user]`, `… for tool use]`.
+fn interrupted(text: &str) -> bool {
+    matches!(text.trim(), "[Request interrupted by user]" | "[Request interrupted by user for tool use]")
 }
 
 pub(crate) fn prompt_text(text: &str) -> Option<&str> {

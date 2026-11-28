@@ -1145,6 +1145,7 @@ fn notice_look(kind: NoticeKind) -> (&'static str, Tone, BodyKind) {
         NoticeKind::Memory => ("Memory", Tone::Muted, BodyKind::Plain),
         NoticeKind::Recap => ("Recap", Tone::Muted, BodyKind::Markdown),
         NoticeKind::Info => ("Notice", Tone::Warning, BodyKind::Plain),
+        NoticeKind::Interrupted => ("Interrupted", Tone::Muted, BodyKind::Plain),
         NoticeKind::Compaction => ("Context compacted", Tone::Muted, BodyKind::Plain),
         NoticeKind::ApiError => ("API error", Tone::Warning, BodyKind::Plain),
     }

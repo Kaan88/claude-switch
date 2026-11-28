@@ -119,9 +119,8 @@ those too:
   goes on, and the transcript records both as messages during the turn, which starts no other.
 - `queued-esc`: two messages waiting in Claude Code's queue, then Esc (Chat's Stop). Claude Code
   does not put them back on its input: it sends them as the next turn (ordinary prompts), and the
-  input reads empty, so Chat's take-back has nothing to do. It also records
-  `[Request interrupted by user for tool use]`, which the reader takes for a prompt (see
-  `docs/TODO.md`).
+  input reads empty, so Chat's take-back has nothing to do. Its
+  `[Request interrupted by user for tool use]` user text is read as a notice, not a prompt.
 - `branch`: two turns, then two branches written by the app's own code: one cut at the end of the
   first turn, one at the end of the newest. Each resumes in print mode under its new id and
   remembers the turns before its cut only; the first is also opened in the terminal (`reopen`),

@@ -429,6 +429,7 @@ hidden rather than shown wrongly:
 | Memory | an `attachment` `nested_memory`: "Loaded" and its `displayPath` |
 | Recap | `system` `away_summary` with `content` |
 | Notice | `system` `informational` at `level: "warning"` (such as the Stop-hook block cap) |
+| Interrupted | Claude Code's own user text for an Esc, `[Request interrupted by user]` or `… for tool use]` (2.1.332): not the user's prompt, so no bubble, no new turn (it does not move the newest prompt), nothing for Rewind, recall or a Branch cut |
 | Prompt blocked by a hook | not seen yet; a text with "Original prompt:", as the docs quote |
 
 Not shown: informational records below warning (usage-limit and goal notices), `turn_duration`,
