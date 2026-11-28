@@ -44,6 +44,8 @@ const TOOL_WAIT: Duration = Duration::from_secs(4);
 /// How long a submitted message may take to show on the screen before the screen as it stands
 /// counts again (the CLI normally redraws within milliseconds).
 const SENT_WAIT: Duration = Duration::from_secs(5);
+/// A key in the message box this recently: the user is typing there.
+const TYPING: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
@@ -194,6 +196,9 @@ pub struct Chat {
     drawer_height: Option<f32>,
     resizing: Option<(f32, f32)>,
     drawer_focus: bool,
+    /// When a key last went to the message box: the terminal does not take the keyboard from
+    /// someone typing there.
+    typed_at: Option<Instant>,
     reason: Option<Reason>,
     suppressed: Option<Reason>,
     /// The Details panel is closed: by the user's own choice, else because it has no section.
@@ -488,6 +493,20 @@ impl Chat {
         self.pending = None;
         self.watermark_input(info, Some(end));
         self.next_floor = Some(end);
+    }
+
+    /// As `react`, and when the terminal opens for a question Chat cannot answer (Claude Code may
+    /// be waiting, a permission prompt Chat cannot read whole), it takes the keyboard so the answer
+    /// can be typed at once; not while someone types in the message box, whose next keys would
+    /// land on that prompt.
+    fn react_at(&mut self, reason: Option<Reason>, now: Instant) -> bool {
+        let closed = self.drawer == Drawer::Closed;
+        let changed = self.react(reason);
+        let typing = self.typed_at.is_some_and(|at| now.saturating_duration_since(at) < TYPING);
+        if closed && matches!(self.drawer, Drawer::Auto(Reason::Tool | Reason::Permission)) && !typing {
+            self.drawer_focus = true;
+        }
+        changed
     }
 
     fn react(&mut self, reason: Option<Reason>) -> bool {

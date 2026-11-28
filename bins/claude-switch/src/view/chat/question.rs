@@ -988,6 +988,8 @@ impl Chat {
         if self.drawer == Drawer::Closed {
             self.drawer = Drawer::Manual;
         }
+        // The question is the terminal's now: the answer is typed there.
+        self.drawer_focus = true;
     }
 
     /// Keeps the text of an answer meant for the composer until it lands there.

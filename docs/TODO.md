@@ -116,9 +116,6 @@ as the second account, Windows Terminal, the desktop hand-over.
   drew the row; how Branch cuts the transcript at a message must be tried against Claude Code first.
 - Find a session by its id: a pasted session id (or a `claude --resume <id>` line, as handovers give
   it) in the Sessions search matches that session, so it can be opened at once (owner, 2026-11-28).
-- When the terminal opens for a question (a card's "Open terminal", or Chat handing a question it
-  cannot answer to the terminal), give the terminal keyboard focus so the answer can be typed at
-  once (owner, 2026-11-28).
 - Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
 - Reuse Conversation in Sessions details later. That view is currently a short read-only preview
   and has no independently scrollable transcript region.

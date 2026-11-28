@@ -233,7 +233,8 @@ impl AppState {
             chat.settle(chat.screen_idle(&tab.term, now));
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
-            let changed = card | chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
+            let changed =
+                card | chat.react_at(decision.1, now) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
@@ -277,6 +278,9 @@ impl AppState {
             return false;
         }
         self.clear_session_text_focus();
+        if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+            pane.chat.typed_at = Some(cx.now());
+        }
         if let Some(name) = k.name.as_ref()
             && let Some(tab) = self.tabs.shown_mut()
             && super::question::key(tab, cx.now(), name, mods, k.text.as_deref())
@@ -323,11 +327,12 @@ impl AppState {
         true
     }
 
-    pub fn chat_text(&mut self, _cx: &mut Cx<'_, Msg>, text: &str) -> bool {
+    pub fn chat_text(&mut self, cx: &mut Cx<'_, Msg>, text: &str) -> bool {
         if !self.chat_takes_input() {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+        chat.typed_at = Some(cx.now());
         if super::question::text(chat, text) || chat.question.docked() || chat.popup_text(text) {
             return true;
         }

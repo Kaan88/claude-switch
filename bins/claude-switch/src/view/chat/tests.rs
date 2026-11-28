@@ -858,3 +858,30 @@ fn demo_app_with_pane(source: model::Source, cwd: std::path::PathBuf) -> crate::
     app.tabs.shown_mut().unwrap().pane = Some(pane);
     app
 }
+
+#[test]
+fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answer() {
+    let now = Instant::now();
+    let typed = |ago: u64| Some(now - Duration::from_millis(ago));
+    for (reason, typed_at, focus) in [
+        (Reason::Permission, None, true),
+        (Reason::Tool, None, true),
+        (Reason::Tool, typed(3000), true),
+        // Someone typing in the box keeps it: the next key would land on Claude Code's prompt.
+        (Reason::Permission, typed(300), false),
+        (Reason::Bell, None, false),
+        (Reason::Identity, None, false),
+    ] {
+        let mut chat = Chat { typed_at, ..Chat::default() };
+        chat.react_at(Some(reason), now);
+        assert_eq!(chat.drawer, Drawer::Auto(reason));
+        assert_eq!(chat.drawer_focus, focus, "{reason:?} {typed_at:?}");
+        // Gone again, the drawer closes and the box has the keyboard.
+        chat.react_at(None, now);
+        assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus);
+    }
+    // A drawer the user opened keeps its focus as it was.
+    let mut chat = Chat { drawer: Drawer::Manual, ..Chat::default() };
+    chat.react_at(Some(Reason::Permission), now);
+    assert!(!chat.drawer_focus);
+}

@@ -2328,3 +2328,18 @@ fn a_cancel_that_stops_sends_no_esc_on_top_of_its_own() {
     let r = f.rewind().unwrap();
     assert_eq!((r.error, r.note), (Some(rewind::NOT_CANCELLED), Some(rewind::LEFT_OPEN)));
 }
+
+#[test]
+fn open_terminal_on_a_card_gives_the_terminal_the_keyboard() {
+    let mut f = Fixture::new(vec![question(false)]);
+    let now = Instant::now();
+    f.sync();
+    assert!(f.app.chat_takes_input());
+    assert!(press(f.tab(), now, Hit::Open));
+    assert!(f.chat().drawer != Drawer::Closed && f.chat().drawer_focus);
+    assert!(!f.app.chat_takes_input(), "keys go to the terminal");
+    // A card's answer that could not go hands the question to the terminal, with the keyboard.
+    let mut chat = Chat::default();
+    chat.question_failed("The question changed.");
+    assert!(chat.drawer == Drawer::Manual && chat.drawer_focus);
+}

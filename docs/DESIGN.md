@@ -1206,7 +1206,10 @@ four seconds, with no working line on the screen, no text on the input and no ca
 the CLI may be waiting for an answer ("Claude Code may be waiting for your answer in the
 terminal."). Under the working line the same silence is a slow tool and opens nothing. A BEL opens
 it only while the screen shows neither the working line nor an idle input (an idle input clears the
-bell), and a process exit does. Only an automatically
+bell), and a process exit does. When it opens for a question Chat cannot answer (that wait, or a
+permission prompt Chat cannot read whole), or a card's answer could not go, or "Open terminal" on a
+card is clicked, the terminal takes the keyboard, so the answer can be typed at once; an automatic
+opening leaves it with the message box while a key went there within the last second. Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. Chat
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
