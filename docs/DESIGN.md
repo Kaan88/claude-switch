@@ -457,10 +457,14 @@ terminal layout. A split tab's row in `terminal-tabs.json` (Claude and OpenCode 
 tabs are not saved) carries `panes` (`panes/saved.rs`): the tree with its ratios, numbered leaves
 (0 the tab's own pane, `k` the shell started in `folders[k - 1]`) and the focused leaf; no commands,
 names or screen contents. Reopening the tab puts the layout back and starts each shell again in its
-saved folder, or the tab's own folder when that one is gone. The folder is where the shell was
-started; a later `cd` inside it is not known to the app. A row it cannot read as a layout (shape,
-leaf numbers, ratios outside 0.02–0.98, relative folders) reopens the tab unsplit, as does a shell
-that cannot start; older builds ignore the field.
+saved folder, or the tab's own folder when that one is gone or does not answer within 300 ms
+(asked on a thread of its own, so a network share that hangs cannot hold the window; a new split's
+folder is checked the same way). A shell that cannot start loses only its pane: its leaf is taken
+out of the tree and its sibling takes the space, the keyboard going to the tab's own pane if it was
+that one. Either case is said in one notice per tab, naming the pane's folder and why. The folder
+is where the shell was started; a later `cd` inside it is not known to the app. A row it cannot read
+as a layout (shape, leaf numbers, ratios outside 0.02–0.98, relative folders) reopens the tab
+unsplit; older builds ignore the field.
 
 **Not there:** links in the terminal,
 font-family settings; Shift+Insert and the Insert key (the window host

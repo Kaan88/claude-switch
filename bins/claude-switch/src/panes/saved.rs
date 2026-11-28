@@ -85,39 +85,86 @@ pub fn load(v: &Value) -> Option<Saved> {
 }
 
 impl Panes {
-    /// Puts back a saved layout with its shells, `terms[k - 1]` for leaf `k` started in `folders[k - 1]`.
-    fn restore(&mut self, saved: Saved, terms: Vec<crate::term::Term>, folders: Vec<PathBuf>) {
-        let n = terms.len() as PaneId;
-        self.tree = saved.tree;
-        self.extra = (1..=n).zip(terms).collect();
-        self.folders = (1..=n).zip(folders).collect();
-        self.focus = saved.focus;
-        self.next = n + 1;
+    /// Puts back a saved layout with the shells that started, each as (its leaf, terminal,
+    /// folder); the leaves of those that did not are taken out, their siblings taking their place.
+    pub(super) fn restore(&mut self, saved: Saved, started: Vec<(PaneId, crate::term::Term, PathBuf)>) {
+        let mut tree = saved.tree;
+        for leaf in 1..=saved.folders.len() as PaneId {
+            if !started.iter().any(|(id, ..)| *id == leaf) {
+                tree.remove(leaf);
+            }
+        }
+        self.focus = if started.iter().any(|(id, ..)| *id == saved.focus) { saved.focus } else { MAIN };
+        self.next = started.iter().map(|(id, ..)| *id).max().unwrap_or(MAIN) + 1;
+        self.tree = tree;
+        self.folders = started.iter().map(|(id, _, folder)| (*id, folder.clone())).collect();
+        self.extra = started.into_iter().map(|(id, term, _)| (id, term)).collect();
         self.drag = None;
     }
 }
 
+/// How long the window waits to learn whether a saved folder is there before using another: a
+/// folder on a network share that does not answer can keep Windows busy for many seconds.
+pub(crate) const FOLDER_PROBE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Whether `folder` is a folder, asked on a thread of its own and waited for at most `wait`.
+/// `None` when it did not answer in time; the thread is left to finish on its own.
+pub(crate) fn folder_answers(folder: &Path, wait: std::time::Duration) -> Option<bool> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let folder = folder.to_path_buf();
+    std::thread::Builder::new()
+        .name("pane-folder-probe".into())
+        .spawn(move || {
+            let _ = tx.send(folder.is_dir());
+        })
+        .ok()?;
+    rx.recv_timeout(wait).ok()
+}
+
 impl AppState {
-    /// Gives a reopened tab the panes it had: each shell starts again in its folder (the tab's
-    /// own when that folder is gone). A layout that cannot be read, or a shell that cannot start,
-    /// leaves the tab unsplit.
+    /// Gives a reopened tab the panes it had: each shell starts again in its folder, or in the
+    /// tab's own when that folder is gone or does not answer within [`FOLDER_PROBE`]. A shell
+    /// that cannot start loses only its pane. Either is said in a notice naming the pane's folder.
+    /// A layout that cannot be read leaves the tab unsplit.
     pub(crate) fn restore_panes(&mut self, id: u64, saved: &Value) {
         let Some(saved) = load(saved) else { return };
         let fallback = self.pane_folder(id);
-        let folders: Vec<PathBuf> = saved
-            .folders
-            .iter()
-            .map(|f| if self.source.is_demo() || Path::new(f).is_dir() { f.clone() } else { fallback.clone() })
-            .collect();
-        let mut terms = Vec::new();
-        for folder in &folders {
-            match self.shell_term(folder, self.grid) {
-                Ok(t) => terms.push(t),
-                Err(_) => return,
+        let mut notes = Vec::new();
+        let mut started = Vec::new();
+        for (leaf, folder) in (1..).zip(&saved.folders) {
+            let answer = if self.source.is_demo() { Some(true) } else { folder_answers(folder, FOLDER_PROBE) };
+            let start_in = match answer {
+                Some(true) => folder.clone(),
+                Some(false) => {
+                    notes.push(format!(
+                        "{} is gone, so that shell started in {}",
+                        folder.display(),
+                        fallback.display()
+                    ));
+                    fallback.clone()
+                }
+                None => {
+                    notes.push(format!(
+                        "{} did not answer, so that shell started in {}",
+                        folder.display(),
+                        fallback.display()
+                    ));
+                    fallback.clone()
+                }
+            };
+            match self.shell_term(&start_in, self.grid) {
+                Ok(term) => started.push((leaf, term, start_in)),
+                Err(e) => {
+                    notes.push(format!("the shell in {} did not start ({e}); its pane is left out", start_in.display()))
+                }
             }
         }
+        let title = self.tabs.get(id).map(|t| t.title().into_owned()).unwrap_or_default();
         if let Some(tab) = self.tabs.get_mut(id) {
-            tab.panes.restore(saved, terms, folders);
+            tab.panes.restore(saved, started);
+        }
+        if !notes.is_empty() {
+            self.toast(format!("Panes of “{title}”: {}", notes.join("; ")), std::time::Instant::now());
         }
     }
 }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Terminal panes: reopening a split tab no longer waits on a pane folder on a network share that
+  does not answer (the shell starts in the tab's folder after 300 ms), and a pane that does not come
+  back is named in a notice with the reason; the other panes still come back.
+
 ## 0.1.7 (2026-11-28)
 
 - Chat: with a subagent's conversation open, the message box talks to that agent: its edge and
