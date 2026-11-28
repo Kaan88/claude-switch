@@ -1,10 +1,9 @@
 # Searches /config for every entry Settings › Claude Code › Advanced writes and snaps each
-# result: a label that no longer shows means a renamed or removed entry, or one this account's
-# flags hide (docs/DESIGN.md, "Claude Code's /config" says which). Generated from
-# crates/core/src/cc_config.rs. The search text is the label in lower case, so the label as
-# written shows only in the list. No model request; nothing is changed.
+# result: a label that no longer shows means a renamed or removed entry. Written by
+# ../config-list.py from crates/core/src/cc_config.rs. The search text is the label in lower
+# case, so the label as written shows only in the list. No model request; nothing is changed.
 #: size 160 50
-#: seconds 96
+#: seconds 94
 start
 send /config
 sleep 800
@@ -194,11 +193,6 @@ send auto-connect\sto\side\s(external\sterminal)
 sleep 900
 snap cfg-autoconnectide
 send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
-sleep 500
-send auto-install\side\sextension
-sleep 900
-snap cfg-autoinstallideextension
-send \x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f
 sleep 500
 send teammate\smode
 sleep 900

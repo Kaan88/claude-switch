@@ -1,4 +1,5 @@
-# The labels scripts/config-list.txt searches /config for (from crates/core/src/cc_config.rs).
+# The labels scripts/config-list.txt searches /config for. Written by ../config-list.py from
+# crates/core/src/cc_config.rs.
 
 [cfg-idlecompaction]
 shows = Idle compaction
@@ -46,7 +47,8 @@ shows = Artifacts
 shows = Terminal progress bar
 
 [cfg-showstatusinterminaltab]
-shows = Show status in terminal tab
+# Listed only in some contexts (If Claude Code enables it): missing is fine.
+shows-any = Show status in terminal tab | No settings match
 
 [cfg-showturnduration]
 shows = Show turn duration
@@ -55,7 +57,8 @@ shows = Show turn duration
 shows = Precompute compaction
 
 [cfg-showmessagetimestamps]
-shows = Show message timestamps
+# Listed only in some contexts (If Claude Code enables it): missing is fine.
+shows-any = Show message timestamps | No settings match
 
 [cfg-timeformat]
 shows = Time format
@@ -73,10 +76,12 @@ shows = Respect .gitignore in file picker
 shows = Skip the /copy picker
 
 [cfg-copyonselect]
-shows = Copy on select
+# Listed only in some contexts (In fullscreen mode): missing is fine.
+shows-any = Copy on select | No settings match
 
 [cfg-autoscrollenabled]
-shows = Auto-scroll
+# Listed only in some contexts (In fullscreen mode): missing is fine.
+shows-any = Auto-scroll | No settings match
 
 [cfg-preferrednotifchannel]
 shows = Local notifications
@@ -97,7 +102,8 @@ shows = Editor mode
 shows = Question auto-continue timeout
 
 [cfg-modelproposedgoals]
-shows = Claude-proposed goals
+# Listed only in some contexts (If enabled): missing is fine.
+shows-any = Claude-proposed goals | No settings match
 
 [cfg-externaleditorcontext]
 shows = Show last response in external editor
@@ -106,16 +112,15 @@ shows = Show last response in external editor
 shows = Show PR status footer
 
 [cfg-difftool]
-shows = Diff tool
+# Listed only in some contexts (With an IDE connected): missing is fine.
+shows-any = Diff tool | No settings match
 
 [cfg-autoconnectide]
 shows = Auto-connect to IDE (external terminal)
 
-[cfg-autoinstallideextension]
-shows = Auto-install IDE extension
-
 [cfg-teammatemode]
-shows = Teammate mode
+# Listed only in some contexts (With agent teams): missing is fine.
+shows-any = Teammate mode | No settings match
 
 [cfg-remotecontrolatstartup]
 shows = Enable Remote Control for all sessions
@@ -127,7 +132,8 @@ shows = Dialog expiry
 shows = Messages from your other sessions
 
 [cfg-remotemessagereceipts]
-shows = Delivery notices to and from cloud and Remote Control sessions
+# Listed only in some contexts (If enabled): missing is fine.
+shows-any = Delivery notices to and from cloud and Remote Control sessions | No settings match
 
 [config-closed]
 kind = idle

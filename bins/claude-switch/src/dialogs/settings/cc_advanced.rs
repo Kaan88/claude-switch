@@ -134,7 +134,9 @@ fn default_label(entry: &Entry) -> Option<String> {
 fn matches(entry: &Entry, search: &str) -> bool {
     let search = search.trim().to_lowercase();
     search.is_empty()
-        || [entry.label, entry.cli_label, entry.key, entry.help].iter().any(|t| t.to_lowercase().contains(&search))
+        || [entry.label, entry.cli_label, entry.key, entry.help, entry.when().unwrap_or_default()]
+            .iter()
+            .any(|t| t.to_lowercase().contains(&search))
 }
 
 fn entry_rows(st: &AppState, i: usize, entry: &Entry, read_only: Option<&str>) -> Vec<Row> {
@@ -143,7 +145,11 @@ fn entry_rows(st: &AppState, i: usize, entry: &Entry, read_only: Option<&str>) -
     if let Some(why) = read_only {
         return vec![Row::choice(id, entry.label, &[shown(entry, saved).as_str()], 0).help(why)];
     }
-    let help = if saved.is_none() { format!("{} · default", entry.help) } else { entry.help.to_owned() };
+    let help = match entry.when() {
+        Some(when) => format!("{} {when}", entry.help),
+        None => entry.help.to_owned(),
+    };
+    let help = if saved.is_none() { format!("{help} · default") } else { help };
     let row = match entry.kind {
         Kind::Switch(default) => Row::toggle(id, entry.label, saved.and_then(Json::as_bool).unwrap_or(default)),
         Kind::Choice { .. } => {

@@ -937,8 +937,8 @@ and the writer its `onChange` calls: the user-settings writer for `settings.json
 global-config writer for `.claude.json`), the global config's defaults (the function that builds
 a fresh `.claude.json`, which also drops keys that equal their default when it saves) and the
 settings schema's descriptions. Many entries only show when a feature flag, the plan or the
-terminal allows; "shown when" says so. `tools/screen-recorder/scripts/config-list.txt` searches
-`/config` for each label Switch writes, so a recording shows which ones an account sees.
+terminal allows; "shown when" says so. `tools/screen-recorder/scripts/config-list.txt` (written by `tools/screen-recorder/config-list.py`)
+searches `/config` for each label Switch writes, so a recording shows which ones an account sees.
 `crates/core/src/cc_config.rs` holds the same table for the page, and `tools/cli-compat.ps1`
 checks that an installed Claude Code still has each of its keys and labels.
 
@@ -971,18 +971,18 @@ is in bold, or named.
 | 21 | Artifacts | `enableArtifact` (also removes `disableArtifact`) | S | **absent** (on once available), true, false | artifacts available | Adv |
 | 22 | Verbose output | `verbose` | G | **false**, true | always | CC |
 | 23 | Terminal progress bar | `terminalProgressBarEnabled` | G | **true**, false | always | Adv |
-| 24 | Show status in terminal tab | `showStatusInTerminalTab` | G | **false**, true | feature flag | Adv |
+| 24 | Show status in terminal tab | `showStatusInTerminalTab` | G | **false**, true | feature flag (`tengu_terminal_sidebar`) | Adv* |
 | 25 | Show turn duration | `showTurnDuration` | G | **true**, false | always | Adv |
 | 26 | Precompute compaction | `precomputeCompactionEnabled` | S | **true**, false | feature flag | Adv |
-| 27 | Show message timestamps | `showMessageTimestamps` | G | **false**, true | feature flag | Adv |
+| 27 | Show message timestamps | `showMessageTimestamps` | G | **false**, true | feature flag (`tengu_silk_hinge`) | Adv* |
 | 28 | Time format | `timeFormat` | S | **auto**, 12-hour, 24-hour, 24-hour-utc | always | Adv |
 | 29 | Default permission mode | `permissions.defaultMode` | S | **absent**, default, plan, acceptEdits, auto, … | always | CC |
 | 30 | Worktree base ref | `worktree.baseRef` | S | **fresh**, head | always | Adv |
 | 31 | Use auto mode during plan | `useAutoModeDuringPlan` | S | **true**, false | always | Adv |
 | 32 | Respect .gitignore in file picker | `respectGitignore` | G | **true**, false | always | Adv |
 | 33 | Skip the /copy picker | `copyFullResponse` | G | **false**, true | always | Adv |
-| 34 | Copy on select | `copyOnSelect` | G | **true**, false | fullscreen renderer | Adv |
-| 35 | Auto-scroll | `autoScrollEnabled` | G | **true**, false | fullscreen renderer | Adv |
+| 34 | Copy on select | `copyOnSelect` | G | **true**, false | fullscreen renderer | Adv* |
+| 35 | Auto-scroll | `autoScrollEnabled` | G | **true**, false | fullscreen renderer | Adv* |
 | 36 | Agents view | `leftArrowOpensAgents`, `defaultToAgentsView` | G | shown, not changed there | agents view available | — |
 | 37 | Auto-update channel | `autoUpdatesChannel` | S | shown, not changed there | always | — |
 | 38 | Theme | `theme` | S | dark, light, … | always | CC |
@@ -994,20 +994,20 @@ is in bold, or named.
 | 44 | Language | `language` | S | **absent** (English), any language name | always | Adv |
 | 45 | Editor mode | `editorMode` | G | **normal**, vim (emacs reads as normal) | always | Adv |
 | 46 | Question auto-continue timeout | `askUserQuestionTimeout` | S | **never**, 60s, 5m, 10m | not set by policy | Adv |
-| 47 | Claude-proposed goals | `modelProposedGoals` | S | **auto**, alwaysAsk, disabled | feature flag | Adv |
+| 47 | Claude-proposed goals | `modelProposedGoals` | S | **auto**, alwaysAsk, disabled | feature flag (`tengu_propose_goal`) | Adv* |
 | 48 | Show last response in external editor | `externalEditorContext` | G | **false**, true | always | Adv |
 | 49 | Show PR status footer | `prStatusFooterEnabled` | G | **true**, false | always | Adv |
 | 50 | Model | `model` | S | **absent** (default), opus, sonnet, … | always | CC |
-| 51 | Diff tool | `diffTool` | G | **auto**, terminal | an IDE is connected | Adv |
+| 51 | Diff tool | `diffTool` | G | **auto**, terminal | an IDE is connected | Adv* |
 | 52 | Auto-connect to IDE (external terminal) | `autoConnectIde` | G | **false**, true | outside an IDE terminal | Adv |
-| 53 | Auto-install IDE extension | `autoInstallIdeExtension` | G | **true**, false | in an IDE terminal | Adv |
+| 53 | Auto-install IDE extension | `autoInstallIdeExtension` | G | **true**, false | inside an IDE's own terminal | — |
 | 54 | Claude in Chrome enabled by default | `claudeInChromeDefaultEnabled` | G | **false**, true | always | CC |
-| 55 | Teammate mode | `teammateMode` | G | auto, tmux, iterm2, **in-process** | agent teams on | Adv |
+| 55 | Teammate mode | `teammateMode` | G | auto, tmux, iterm2, **in-process** | agent teams on (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` or `--agent-teams`, and a flag) | Adv* |
 | 56 | Enable Remote Control for all sessions | `remoteControlAtStartup` | G | **absent** (default), true, false | Remote Control available | Adv |
 | 57 | Dialog expiry | `dialogExpiry` | S | **absent** (default), 60s, 5m, 10m, never | not set by policy | Adv |
 | 58 | Messages from your other sessions | `crossSessionInbound` | S | **absent** (default), accept, hold, refuse | cross-session messages on | Adv |
 | 59 | Always deliver in this session | (this session only) | — | off, mine, anyone | cross-session messages on | — |
-| 60 | Delivery notices to and from cloud and Remote Control sessions | `remoteMessageReceipts` | S | **on**, always, off | cross-session messages on | Adv |
+| 60 | Delivery notices to and from cloud and Remote Control sessions | `remoteMessageReceipts` | S | **on**, always, off | cross-session messages on and a feature flag (`tengu_toasty_phoenix`) | Adv* |
 | 61 | Show external CLAUDE.md includes dialog | (the folder's project entry in `.claude.json`) | G | true, false | a project with external includes | — |
 | 62 | Use custom API key | `customApiKeyResponses` | G | approved or not | `ANTHROPIC_API_KEY` set | — |
 
@@ -1017,6 +1017,16 @@ feedback, Reduce motion, Thinking mode, Fast mode, Prompt suggestions, Session r
 Dynamic workflows, Ultracode keyword trigger, Dynamic workflow size, Artifacts, Verbose output,
 Terminal progress bar, Show turn duration and Precompute compaction: the order above, less the
 entries its flags hide.
+
+**Adv\*** marks an entry `/config` lists only in some contexts. A recording of `/config` on
+2026-11-28 (a signed-in account, an ordinary terminal, the recorder's tab) found 34 of the 43
+labels; the nine missing were exactly the eight Adv\* rows and Auto-install IDE extension, each hidden by its
+condition, none renamed (the keys check finds every label in the bundle). They stay on the page
+because a Switch tab can be in that context (fullscreen mode, an IDE connected through Auto-connect
+to IDE, agent teams on) or Claude Code turns them on per account. Their help line ends with when
+they apply ("In fullscreen mode.", "With an IDE connected.", "With agent teams.", "If Claude
+Code enables it." or "If enabled." for a flag), from `cc_config::WHEN`, and the recording's
+expectation accepts "No settings match" for them.
 
 Left out of Switch, and why:
 
@@ -1030,12 +1040,14 @@ Left out of Switch, and why:
 - Agents view and Auto-update channel: `/config` shows them but does not change them there.
 - Always deliver in this session: that session only. Custom API key: the approval of a key in the
   environment, which Switch removes from what it starts.
+- Auto-install IDE extension: listed only inside an IDE's own terminal (VS Code and the like),
+  which a Switch tab never is.
 - Model, Effort, Permission mode, Theme, Chrome, Auto-compact, Verbose: on the Claude Code page.
 
 Claude Code 2.1.332 also has a newer storage for user settings behind a flag (`storageV5`); the
-page writes `settings.json` as the user-settings writer does without it. Eight of the G keys are
-in `settings_sync::PREFS` (Rewind code, Terminal progress bar, Show turn duration, Local
-notifications, Editor mode, Diff tool and the two IDE switches): they go to the sharing accounts
+page writes `settings.json` as the user-settings writer does without it. Seven of the G keys on
+the page are in `settings_sync::PREFS` (Rewind code, Terminal progress bar, Show turn duration,
+Local notifications, Editor mode, Diff tool and Auto-connect to IDE): they go to the sharing accounts
 at the next sync, as Chrome and Auto-compact do; the other G keys stay with their account.
 
 **Settings › Claude Code › Advanced** shows every **Adv** entry with a switch or a choice (a

@@ -1095,3 +1095,8 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     `tools/cli-compat.ps1` checks every key and label of the table in the installed `claude.exe`
     (`-KeysOnly`, also a warning step in the daily GitHub Actions run); tried here on 2.1.332 (all
     88 found) and on a copy of the table with a renamed key and label (both reported, exit 1).
+    The owner's `config-list` recording (2026-11-28, an ordinary terminal) found 34 of 43 labels.
+    The nine missing were all hidden by their show condition, none renamed: eight stay on the
+    page with a help line saying when they apply (`cc_config::WHEN`), and their expectation now
+    accepts "No settings match"; Auto-install IDE extension (only inside an IDE's own terminal) was
+    dropped. Re-checked on that recording without recording again: 43 of 43 as expected.

@@ -6,7 +6,8 @@
   search box, a short line on what each does, a "default" mark and Reset to Claude Code's default.
   `settings.json` entries are saved in the master account and shared; `.claude.json` entries belong
   to the chosen account and are read-only while it runs Claude Code. A value changed elsewhere since
-  the page read it is never overwritten.
+  the page read it is never overwritten. Entries Claude Code lists only in some contexts
+  (fullscreen mode, an IDE connected, agent teams, a feature flag) say so on their row.
 - Settings › Claude Code › Status: for a chosen account, the installed Claude Code version, the
   sign-in method and account, the settings files in effect, user MCP servers and memory file, and
   stats from its prompt history (prompts, sessions, days active, folders) and the models of its

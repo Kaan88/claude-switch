@@ -308,16 +308,15 @@ pub const ENTRIES: &[Entry] = &[
     entry(
         "diffTool",
         "Diff tool",
-        "Where an IDE shows edits.",
+        "Where edits show.",
         Global,
         Kind::Choice { options: &[("Auto", Str("auto")), ("Terminal", Str("terminal"))], default: Some(0) },
     ),
     switch("autoConnectIde", "Auto-connect to IDE (external terminal)", "Connects to an open IDE.", Global, false),
-    switch("autoInstallIdeExtension", "Auto-install IDE extension", "Installs it in a supported IDE.", Global, true),
     entry(
         "teammateMode",
         "Teammate mode",
-        "Where agent teammates run.",
+        "Where they run.",
         Global,
         Kind::Choice {
             options: &[
@@ -376,6 +375,36 @@ pub const ENTRIES: &[Entry] = &[
         ),
     ),
 ];
+
+/// Entries `/config` lists only in some contexts (shown when, from the bundle's conditions):
+/// the key, and the line the page adds to its help. They are kept because a Switch tab can be
+/// in that context, or Claude Code turns them on per account (a feature flag). The `/config`
+/// recording accepts them missing. Left out for this reason: Auto-install IDE extension, listed
+/// only inside an IDE's own terminal, which a Switch tab never is.
+pub const WHEN: &[(&str, &str)] = &[
+    // tengu_terminal_sidebar
+    ("showStatusInTerminalTab", "If Claude Code enables it."),
+    // tengu_silk_hinge
+    ("showMessageTimestamps", "If Claude Code enables it."),
+    // the fullscreen renderer (`tui`)
+    ("copyOnSelect", "In fullscreen mode."),
+    ("autoScrollEnabled", "In fullscreen mode."),
+    // tengu_propose_goal
+    ("modelProposedGoals", "If enabled."),
+    // an IDE connected (Auto-connect to IDE, or /ide)
+    ("diffTool", "With an IDE connected."),
+    // CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS or --agent-teams, and tengu_amber_flint
+    ("teammateMode", "With agent teams."),
+    // cross-session messages and tengu_toasty_phoenix
+    ("remoteMessageReceipts", "If enabled."),
+];
+
+impl Entry {
+    /// When `/config` lists it, if only in some contexts.
+    pub fn when(&self) -> Option<&'static str> {
+        WHEN.iter().find(|(key, _)| *key == self.key).map(|(_, when)| *when)
+    }
+}
 
 /// The value at `key` (a dotted path) of a JSON object, `null` counting as absent.
 pub fn get<'a>(root: &'a Value, key: &str) -> Option<&'a Value> {
@@ -525,6 +554,13 @@ mod tests {
     use crate::util::testing::{TempDir, config_with, put as put_file};
     use serde_json::json;
 
+    #[test]
+    fn every_context_note_names_an_entry() {
+        for (key, _) in WHEN {
+            assert!(ENTRIES.iter().any(|e| e.key == *key), "{key}");
+        }
+    }
+
     fn by_key(key: &str) -> &'static Entry {
         ENTRIES.iter().find(|e| e.key == key).unwrap()
     }
@@ -540,6 +576,7 @@ mod tests {
                 assert!(default.is_none_or(|d| d < options.len()), "{}", e.key);
                 assert!(options.len() >= 2, "{}", e.key);
             }
+            assert!(e.key != "autoInstallIdeExtension", "only in an IDE's terminal");
             // The Claude Code page has these; the advanced page must not write them twice.
             assert!(
                 !["model", "effortLevel", "theme", "verbose", "autoCompactEnabled", "claudeInChromeDefaultEnabled"]

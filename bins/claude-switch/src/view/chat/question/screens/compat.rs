@@ -183,6 +183,21 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
                 _ => format!("shown: {}", wrong.join(" | ")),
             }
         }
+        // Any one of the parts: an entry `/config` may not list in the recorded context.
+        "shows-any" => {
+            let all: String = (0..s.rows())
+                .map(|r| {
+                    s.row_text(r)
+                        + "
+"
+                })
+                .collect();
+            if want.split(" | ").any(|part| all.contains(part.trim())) {
+                want.to_owned()
+            } else {
+                format!("none shown: {want}")
+            }
+        }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
         "sent" => {
             let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
@@ -548,6 +563,9 @@ fn the_fixtures_read_as_the_states_the_check_names() {
     assert_eq!(fact(&idle, "hides", "no such words here"), "no such words here");
     assert_eq!(fact(&idle, "hides", &some), format!("shown: {some}"));
     assert_eq!(fact(&idle, "shows", "no such words here"), "not shown: no such words here");
+    let either = format!("no such words here | {some}");
+    assert_eq!(fact(&idle, "shows-any", &either), either);
+    assert_eq!(fact(&idle, "shows-any", "no such words | here"), "none shown: no such words | here");
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
 }
