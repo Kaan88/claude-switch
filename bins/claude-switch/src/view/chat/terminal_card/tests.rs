@@ -93,6 +93,20 @@ fn the_rows_come_from_the_live_screen_and_follow_it() {
 }
 
 #[test]
+fn a_running_calls_row_starts_the_card_while_its_bullet_blinks_off() {
+    // The same screen with the call's bullet off: column 0 blank, the call from column 2.
+    let off = WAITING.replace("\u{1b}[32m●\u{1b}[0m \u{1b}[1mBash", "  \u{1b}[1mBash");
+    for (bytes, lit) in [(WAITING, true), (off.as_str(), false)] {
+        let mut chat = chat_for(Reason::Tool);
+        observe(&mut chat, &term(70, 20, bytes).screen);
+        assert_eq!(shown(&chat)[0].trim_start_matches('●').trim(), "Bash(./setup.sh)", "lit: {lit}");
+    }
+    // Under the working line, before any ⎿ row.
+    let t = term(70, 20, "earlier\r\n  Bash(./setup.sh)\r\n\r\n\u{2722} Working\u{2026} (4s)\r\n❯ ");
+    assert_eq!(t.screen.row_text(rows(&t.screen).start), "  Bash(./setup.sh)");
+}
+
+#[test]
 fn at_most_the_bottom_rows_without_a_call_to_start_from() {
     let lines: Vec<String> = (1..=30).map(|n| format!("line {n}")).collect();
     let t = term(40, 40, &lines.join("\r\n"));

@@ -2,8 +2,9 @@
 kind = working
 input =
 send = no
-# The terminal card's rows start at the call's bullet (`●`, or `⏺`), at column 0.
-card = bullet: Bash(ping -n 26 127.0.0.1)*
+# The terminal card's rows start at the call, whether its bullet (`●`, `⏺`) is lit or not:
+# a running call's bullet blinks.
+card = call: Bash(ping -n 26 127.0.0.1)*
 
 # The hint row drops "esc to interrupt" while the input holds text: the working line says it.
 [working_typed]

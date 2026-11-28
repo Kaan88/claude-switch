@@ -1268,7 +1268,9 @@ refusals, while the gate is not Ready), and the drawer is closed and no question
 prompt, a card above the message box shows the part of the live screen that matters, with the
 cause as its title. Its rows: from the last row within the bottom 14 rows with text whose column 0
 is Claude Code's bullet (`●`, or `⏺` on renderers that use it) down to the screen's last row with
-text; without such a row, those 14 rows. They are read from the screen's cells each tick (colours
+text; without such a row, those 14 rows. A running call's bullet blinks, so its row also counts
+while the bullet is off: columns 0 and 1 blank, `Name(` from column 2, and under it the call's
+`⎿` row or the working line (a 2.1.332 recording caught it off). They are read from the screen's cells each tick (colours
 and attributes re-encoded as SGR) and laid out with the same grid renderer as command output,
 in the terminal theme's colours at full strength; one terminal row stays one card row, the text
 shrinking to fit the width down to 9 px, past that cut on the right. The card takes at most 60%

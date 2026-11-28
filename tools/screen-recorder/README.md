@@ -101,8 +101,8 @@ turn and right after a send; a question, a typed answer, a form and its review; 
 prompts (Bash, Write, a subagent's, two calls of one message), a prompt answered No, a call a
 deny rule refuses, a call auto mode blocks and the list of blocked calls with a call marked and
 unmarked; plan approval; the rewind list; the panels of `/model`, `/config` and `/permissions`;
-where the terminal card's rows start (Claude Code's `●`/`⏺` bullet at column 0, on a running call
-in `working` and an answer in `context`).
+where the terminal card's rows start (a running call in `working`, its bullet lit or not, and an
+answer's `●`/`⏺` bullet at column 0 in `context`).
 
 Some of what Chat relies on is in Claude Code's files, not on its screen, and these scripts
 check those too:
@@ -263,7 +263,7 @@ runs of blanks count as one and `\n` is a line break.
 | `answer`, `lines`, `wrapped` | This text reads back exactly on the highlighted row; the input shows this text of several lines; this long line |
 | `sent` | The input shows this message as Chat's echo check before Enter takes it (as typed, wrapped, or as the paste marker) |
 | `shows`, `hides` | Every text of the value (` \| ` between them) is somewhere on the screen, or none is |
-| `card` | The first row the terminal card shows: `bullet: TEXT` when it starts with `●` or `⏺` at column 0, `top: TEXT` when the card falls back to the bottom rows, `-` for none |
+| `card` | The first row the terminal card shows: `call: TEXT` at a tool call (`Bash(…)`), whether its bullet (`●` or `⏺` at column 0, which blinks while the call runs) is lit or not; `bullet: TEXT` at a message's bullet; `top: TEXT` when the card falls back to the bottom rows; `-` for none |
 
 A section can also name a file the script wrote instead of a snapshot (the check looks for
 `<state>.ansi`, then these):

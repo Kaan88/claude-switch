@@ -11,8 +11,10 @@
 //! drawer follows (see [`gone`]), unless the user resized it or typed in Chat since.
 //!
 //! Which rows: the bottom of the screen up to its last row with text, at most [`MAX_ROWS`], from
-//! the last row there that starts one of Claude Code's messages or tool calls (`●`), so the card
-//! opens on what is being asked and the input under it. Each terminal row stays one row: the
+//! the last row there that starts one of Claude Code's messages or tool calls, so the card opens
+//! on what is being asked and the input under it. Such a row starts with `●` at column 0; a
+//! running call's bullet blinks, so a call's row also counts with column 0 blank: `Name(` from
+//! column 2, with the call's `⎿` row right under it or the working line next (see [`starts`]). Each terminal row stays one row: the
 //! text gets smaller to fit the card's width, down to [`MIN_FONT`], and past that the right
 //! side is cut (dialog borders reach the terminal's edge and would only wrap into noise).
 use std::ops::Range;
@@ -202,12 +204,49 @@ pub(super) fn rows(screen: &Screen) -> Range<usize> {
     let blank = |r: usize| screen.line(r).is_none_or(|l| l.cells().iter().all(is_blank));
     let Some(last) = (0..screen.rows()).rev().find(|&r| !blank(r)) else { return 0..0 };
     let top = (last + 1).saturating_sub(MAX_ROWS);
-    let starts = |r: usize| BULLETS.contains(&screen.cell(r, 0).ch);
-    let mut first = (top..=last).rev().find(|&r| starts(r)).unwrap_or(top);
+    let mut first = (top..=last).rev().find(|&r| starts(screen, r)).unwrap_or(top);
     while first < last && blank(first) {
         first += 1;
     }
     first..last + 1
+}
+
+/// Row `r` starts a message or a tool call: Claude Code's bullet at column 0, or a call whose
+/// bullet is off at this instant (it blinks while the call runs): columns 0 and 1 blank, the
+/// call's `Name(` from column 2, and under it the call's first `⎿` row, or the working line
+/// after at most one blank row.
+pub(super) fn starts(screen: &Screen, r: usize) -> bool {
+    let at = |r: usize, c: usize| screen.cell(r, c);
+    if BULLETS.contains(&at(r, 0).ch) {
+        return true;
+    }
+    let indented = |r: usize| is_blank(&at(r, 0)) && is_blank(&at(r, 1));
+    if !indented(r) || !call_shape(&from_column(screen, r, 2)) {
+        return false;
+    }
+    let below = r + 1;
+    if below < screen.rows() && indented(below) && at(below, 2).ch == '⎿' {
+        return true;
+    }
+    (below..(below + 2).min(screen.rows()))
+        .map(|r| screen.row_text(r))
+        .find(|text| !text.trim().is_empty())
+        .is_some_and(|text| crate::view::working::working_row(&text))
+}
+
+/// The row's text from column `col` on.
+fn from_column(screen: &Screen, r: usize, col: usize) -> String {
+    screen.line(r).map_or_else(String::new, |line| {
+        line.cells().iter().skip(col).filter(|c| !c.is_spacer()).map(|c| c.ch).collect()
+    })
+}
+
+/// `text` begins as a tool call does: a name (a letter, then letters, digits, `_`, `-`, `.` or
+/// `:`) and `(`.
+pub(super) fn call_shape(text: &str) -> bool {
+    let Some((name, _)) = text.split_once('(') else { return false };
+    name.starts_with(|c: char| c.is_ascii_alphabetic())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
 }
 
 fn is_blank(c: &Cell) -> bool {

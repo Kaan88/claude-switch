@@ -32,9 +32,10 @@
 //! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
 //!   or none is (a resumed branch shows the turns before its cut and none after).
 //! - `card`: the first row the terminal card would show (`view/chat/terminal_card.rs`):
-//!   `bullet: ` and the row's text after it when that row starts with Claude Code's `●` or `⏺`
-//!   at column 0 (the call that waits), `top: ` and its text when the card falls back to the
-//!   bottom rows, `-` for an empty screen.
+//!   `call: ` and the call's text (`Bash(…)`) when it starts at a tool call, whether its bullet
+//!   (`●` or `⏺` at column 0, which blinks while the call runs) is lit or not; `bullet: ` and
+//!   the text after it for a message's bullet; `top: ` and its text when the card falls back to
+//!   the bottom rows; `-` for an empty screen.
 //!
 //! A state can also be a file the script wrote instead of a snapshot, and its keys are about that:
 //!
@@ -236,9 +237,13 @@ fn card_first(s: &Screen) -> String {
         return NONE.to_owned();
     }
     let text = s.row_text(rows.start);
-    match text.strip_prefix(|c| terminal_card::BULLETS.contains(&c)) {
-        Some(rest) => format!("bullet: {}", rest.trim()),
-        None => format!("top: {}", text.trim()),
+    let rest = text.strip_prefix(|c| terminal_card::BULLETS.contains(&c)).unwrap_or(&text).trim();
+    if !terminal_card::starts(s, rows.start) {
+        format!("top: {}", text.trim())
+    } else if terminal_card::call_shape(rest) {
+        format!("call: {rest}")
+    } else {
+        format!("bullet: {rest}")
     }
 }
 
@@ -593,10 +598,10 @@ fn the_fixtures_read_as_the_states_the_check_names() {
     assert_eq!(fact(&idle, "hides", "no such words here"), "no such words here");
     assert_eq!(fact(&idle, "hides", &some), format!("shown: {some}"));
     assert_eq!(fact(&idle, "shows", "no such words here"), "not shown: no such words here");
-    // The terminal card starts at the call's bullet, at column 0.
+    // The terminal card starts at the call, its bullet lit or not.
     assert_eq!(
         fact(&recorded(WORKING_TOOL), "card", ""),
-        "bullet: Bash(python -c \"import time; time.sleep(25); print('done25')\")"
+        "call: Bash(python -c \"import time; time.sleep(25); print('done25')\")"
     );
     let first = |bytes: &str| {
         let mut t = crate::term::Term::empty((40, 6));
@@ -604,8 +609,13 @@ fn the_fixtures_read_as_the_states_the_check_names() {
         card_first(&t.screen)
     };
     assert_eq!(first("one\r\n  two"), "top: one");
-    assert_eq!(first("one\r\n\u{23fa} call\r\n  two"), "bullet: call");
+    assert_eq!(first("one\r\n\u{23fa} message\r\n  two"), "bullet: message");
     assert_eq!(first("one\r\n x \u{25cf} not at column 0"), "top: one");
+    // The bullet off: the call's shape, with its ⎿ row or the working line under it.
+    assert_eq!(first("one\r\n  Bash(ls)\r\n  \u{23bf}  a.txt"), "call: Bash(ls)");
+    assert_eq!(first("one\r\n  Read(a.rs)\r\n\r\n\u{2722} Working\u{2026} (3s)"), "call: Read(a.rs)");
+    assert_eq!(first("one\r\n  Bash(ls)\r\n  more text"), "top: one", "nothing of a call under it");
+    assert_eq!(first("one\r\n  see f(x)\r\n  \u{23bf}  a"), "top: one", "not a call's name");
     assert_eq!(first(""), NONE);
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
