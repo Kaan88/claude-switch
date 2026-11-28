@@ -160,23 +160,11 @@ impl Source {
         }
     }
 
-    /// A branch of `s` cut at a message: the copy of its transcript is written (except in the
-    /// demo, which has no transcripts to copy) and resumed under `new_id`.
-    pub fn branch(
-        &self,
-        c: &Config,
-        s: &Session,
-        account: &str,
-        new_id: &str,
-        cut: claude_switch_core::branch::Cut,
-    ) -> Result<Launch, Refusal> {
+    /// What resumes a branch of `s` under `new_id` once its transcript copy is written
+    /// (`claude_switch_core::branch`; the demo has no transcripts to copy).
+    pub fn branch(&self, c: &Config, s: &Session, account: &str, new_id: &str) -> Result<Launch, Refusal> {
         match self {
-            Source::Real(roots) => {
-                let launch = launch::branch(roots, c, s, account, new_id)?;
-                claude_switch_core::branch::write(&s.file, &s.id, new_id, cut)
-                    .map_err(|e| Refusal::Invalid(format!("Could not write the branch's transcript: {e}")))?;
-                Ok(launch)
-            }
+            Source::Real(roots) => launch::branch(roots, c, s, account, new_id),
             Source::Demo => Ok(demo::branch(new_id, account)),
         }
     }

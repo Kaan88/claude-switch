@@ -506,11 +506,11 @@ impl Recorder {
         run_for_output(command, Duration::from_secs(120), self.stop.clone())
     }
 
-    /// A branch as the app makes one: the newest transcript copied up to the answer that contains
-    /// `after`, under a new id (the app's own `core::branch`, through its test program), then
-    /// that id resumed in print mode with a question. `NAME.id` holds the id, `NAME.json` the
-    /// answer.
-    fn branch(&mut self, name: &str, after: &str) -> Result<(), Abort> {
+    /// A branch as the app makes one at a message (`at`: `prompt TEXT` or `answer TEXT`): the
+    /// newest transcript copied up to the end of that message's turn under a new id, by the app's
+    /// own code through its test program, then that id resumed in print mode with a question.
+    /// `NAME.id` holds the id, `NAME.json` the answer.
+    fn branch(&mut self, name: &str, at: &str) -> Result<(), Abort> {
         let helper = self.helper.as_ref().ok_or_else(|| Abort::Script("branch needs `recorder compat`".into()))?;
         let source = self.newest_transcript()?.ok_or_else(|| Abort::Io("branch: no transcript".into()))?;
         let id_file = self.out.join(format!("{name}.id"));
@@ -519,7 +519,7 @@ impl Recorder {
             command.env_remove(var);
         }
         command.args(["cli_branch_write", "--ignored", "--nocapture"]).stdin(std::process::Stdio::null());
-        command.env("CS_BRANCH_SOURCE", &source).env("CS_BRANCH_AFTER", after).env("CS_BRANCH_OUT", &id_file);
+        command.env("CS_BRANCH_SOURCE", &source).env("CS_BRANCH_AT", at).env("CS_BRANCH_OUT", &id_file);
         let written = run_for_output(command, Duration::from_secs(60), self.stop.clone())?;
         let id = std::fs::read_to_string(&id_file).unwrap_or_default().trim().to_owned();
         if !written.status.success() || id.len() != 36 {
@@ -617,7 +617,7 @@ impl Recorder {
                 std::fs::write(&to, &output.stdout).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
                 self.note(&format!("help {name}: {} bytes", output.stdout.len()));
             }
-            Step::Branch { name, after } => self.branch(&name, &after)?,
+            Step::Branch { name, at } => self.branch(&name, &at)?,
             Step::Start => self.start()?,
         }
         Ok(())
@@ -665,9 +665,10 @@ enum Step {
     ClipImage(String),
     /// `claude --help` into `NAME.help.txt`.
     Help(String),
+    /// A branch at a message: `prompt TEXT` or `answer TEXT`.
     Branch {
         name: String,
-        after: String,
+        at: String,
     },
     Start,
 }
@@ -803,8 +804,12 @@ impl Step {
             "clipimage" => return Err("clipimage needs FILE".to_owned()),
             "help" => Step::Help(rest.to_owned()),
             "branch" => {
-                let (name, after) = two("NAME TEXT")?;
-                Step::Branch { name: name.to_owned(), after: after.to_owned() }
+                let (name, at) = two("NAME prompt|answer TEXT")?;
+                let (kind, text) = at.split_once(' ').unwrap_or((at, ""));
+                if !matches!(kind, "prompt" | "answer") || text.is_empty() {
+                    return Err(format!("{op} needs NAME prompt|answer TEXT"));
+                }
+                Step::Branch { name: name.to_owned(), at: at.to_owned() }
             }
             "start" => Step::Start,
             _ => return Err(format!("unknown op {op}")),
@@ -880,7 +885,10 @@ mod tests {
         assert_eq!(Step::read("send hi\\r"), Ok(Step::Send(b"hi\r".to_vec())));
         assert_eq!(Step::read("clipimage dot.png"), Ok(Step::ClipImage("dot.png".into())));
         assert_eq!(Step::read("help cli"), Ok(Step::Help("cli".into())));
-        assert_eq!(Step::read("branch cut alpha"), Ok(Step::Branch { name: "cut".into(), after: "alpha".into() }));
+        assert_eq!(
+            Step::read("branch cut answer alpha"),
+            Ok(Step::Branch { name: "cut".into(), at: "answer alpha".into() })
+        );
         for bad in [
             "jump 3",
             "sleep soon",
@@ -893,6 +901,7 @@ mod tests {
             "send \\x4",
             "clipimage",
             "branch cut",
+            "branch cut alpha",
         ] {
             assert!(Step::read(bad).is_err(), "{bad}");
         }

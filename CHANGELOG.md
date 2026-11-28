@@ -14,8 +14,10 @@
 - Chat: buttons under your messages and under Claude's answer to each turn, shown while you point
   at the message and always under the newest answer: Copy (the message as shown), Rewind (the
   same as the right-click "Rewind to here…") under your own messages, and Branch, which starts a
-  new session that continues from a copy of the conversation cut at that message (at your message
-  with Claude's whole answer to it). The original session is not changed.
+  new session that continues from a copy of the conversation up to the end of that message's turn
+  (with Claude's whole answer). Branch is offered once that turn has ended, and not in a
+  subagent's transcript. The original session is not changed; a branch has no file backups, so
+  it cannot rewind code changes made before its cut.
 - Sessions: the search finds a session by its id: the whole id, its first eight characters or
   more, or a pasted line such as `claude --resume <id>` from a hand-over. Other searches are as
   before.

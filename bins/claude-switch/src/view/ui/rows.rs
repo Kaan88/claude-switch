@@ -310,6 +310,40 @@ pub(super) struct Actions {
     pub rewind: bool,
     /// The newest answer: its buttons always show; the others' while the pointer is over them.
     pub newest: bool,
+    /// Branch: the message's turn has ended, so a copy cut there can go on
+    /// (`Model::branch_cut`).
+    pub branch: bool,
+}
+
+/// Which messages carry buttons in Chat, worked out once per layout.
+#[derive(Default)]
+pub(super) struct MessageActions {
+    /// Off in the Session view and in a subagent's transcript (its items are not the session's).
+    pub on: bool,
+    /// The answers with buttons under them (each turn's last), and the newest of them.
+    pub answers: BTreeSet<ItemId>,
+    pub newest: Option<ItemId>,
+    /// The messages a branch can be made at.
+    pub branch: BTreeSet<ItemId>,
+}
+
+impl MessageActions {
+    pub fn of(m: &Model, chat: bool) -> Self {
+        if !chat || m.agent.is_some() {
+            return Self::default();
+        }
+        let (answers, newest) = answer_actions(&m.items);
+        let branch = m
+            .items
+            .iter()
+            .filter(|(_, item)| {
+                matches!(item.kind, ItemKind::Prompt { synthetic: false, .. } | ItemKind::Assistant { .. })
+            })
+            .filter(|(id, _)| m.branch_cut(**id).is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        Self { on: true, answers, newest, branch }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -552,8 +586,8 @@ pub(super) struct Rows<'a> {
     pub offer: Option<ItemId>,
     /// The pending call a card asks about: it has not started, it waits for the answer.
     pub awaiting: Option<ItemId>,
-    /// The answers with buttons under them (each turn's last), and the newest of them.
-    pub answers: (BTreeSet<ItemId>, Option<ItemId>),
+    /// Which messages carry buttons (Chat only).
+    pub actions: MessageActions,
 }
 
 /// The answers that carry the buttons in Chat: the last answer before each prompt and the last of
@@ -853,7 +887,8 @@ impl Rows<'_> {
             ItemKind::Prompt { text, pictures, synthetic, .. } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
                 let rewind = crate::view::chat::question::rewind::listed(text);
-                row.actions = (self.chat && !synthetic).then_some(Actions { rewind, newest: false });
+                let branch = self.actions.branch.contains(&id);
+                row.actions = (self.actions.on && !synthetic).then_some(Actions { rewind, newest: false, branch });
                 row.body = (!text.is_empty()).then(|| self.shape(&row.id, text, row.geo.tw, BodyKind::Prompt, files));
                 let count = pictures.len();
                 row.pictures.extend(thumbs(id, count, move |i| {
@@ -863,8 +898,12 @@ impl Rows<'_> {
             }
             ItemKind::Assistant { markdown } => {
                 let mut row = self.row(Id::Message(id), Style::Answer);
-                let newest = self.answers.1 == Some(id);
-                row.actions = (self.chat && self.answers.0.contains(&id)).then_some(Actions { rewind: false, newest });
+                let (newest, branch) = (self.actions.newest == Some(id), self.actions.branch.contains(&id));
+                row.actions = (self.actions.on && self.actions.answers.contains(&id)).then_some(Actions {
+                    rewind: false,
+                    newest,
+                    branch,
+                });
                 row.body = Some(self.shape(&row.id, markdown, row.geo.tw, BodyKind::Markdown, files));
                 row
             }

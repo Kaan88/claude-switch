@@ -120,7 +120,7 @@ fn both_views_say_runs_in_words_show_edits_as_rows_and_put_only_successful_named
             chat,
             offer: None,
             awaiting: None,
-            answers: Default::default(),
+            actions: Default::default(),
         };
         rows.conversation(
             &model,
@@ -268,7 +268,7 @@ fn a_run_reads_in_words_by_kind_and_a_call_a_card_asks_about_waits() {
             chat: true,
             offer: None,
             awaiting,
-            answers: Default::default(),
+            actions: Default::default(),
         };
         rows.conversation(&model, &BTreeSet::new(), &if open { [id(1)].into() } else { BTreeSet::new() });
         rows.list
@@ -326,7 +326,7 @@ fn notices_are_compact_rows_that_expand_and_thoughts_are_steps_that_do_not_split
             chat: true,
             offer: None,
             awaiting: None,
-            answers: Default::default(),
+            actions: Default::default(),
         };
         rows.conversation(&model, &open, &tools);
         rows.list
@@ -397,7 +397,7 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
             chat: true,
             offer: None,
             awaiting: None,
-            answers: Default::default(),
+            actions: Default::default(),
         };
         rows.conversation(&model, &BTreeSet::new(), &tools);
         rows.list
@@ -463,7 +463,7 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         chat: true,
         offer: None,
         awaiting: None,
-        answers: Default::default(),
+        actions: Default::default(),
     };
     rows.conversation(&model, &[id(1)].into(), &[id(1)].into());
     let row = |i| rows.list.iter().find(|r| r.id == Id::Tool(id(i))).unwrap();
@@ -505,7 +505,8 @@ fn chat_keeps_room_for_buttons_under_each_prompt_and_each_turns_last_answer() {
     .collect();
     model.groups = super::super::super::model::group(&model.items);
     let pal = &mdshared_ui::theme::DARK;
-    for chat in [true, false] {
+    for (chat, agent) in [(true, false), (false, false), (true, true)] {
+        model.agent = agent.then(|| "agent-1".to_owned());
         let mut rows = Rows {
             list: vec![],
             previous: BTreeMap::new(),
@@ -516,25 +517,29 @@ fn chat_keeps_room_for_buttons_under_each_prompt_and_each_turns_last_answer() {
             chat,
             offer: None,
             awaiting: None,
-            answers: if chat { answer_actions(&model.items) } else { Default::default() },
+            actions: MessageActions::of(&model, chat),
         };
         rows.conversation(&model, &BTreeSet::new(), &BTreeSet::new());
         let actions = |i| rows.list.iter().find(|r| r.id == Id::Message(id(i))).unwrap().actions;
-        if !chat {
-            // The Session view is as it was.
+        if !chat || agent {
+            // The Session view is as it was; a subagent's transcript has no buttons (its items are
+            // not the session's).
             assert!(rows.list.iter().all(|r| r.actions.is_none()));
             continue;
         }
         // Rewind only where the CLI's rewind list has the prompt: not a slash command. A message
         // sent while a turn ran is listed there too.
-        assert_eq!(actions(0), Some(Actions { rewind: true, newest: false }));
-        assert_eq!(actions(4), Some(Actions { rewind: true, newest: false }));
-        assert_eq!(actions(6), Some(Actions { rewind: false, newest: false }));
+        assert_eq!(actions(0), Some(Actions { rewind: true, newest: false, branch: true }));
+        assert_eq!(actions(4), Some(Actions { rewind: true, newest: false, branch: true }));
+        assert_eq!(actions(6), Some(Actions { rewind: false, newest: false, branch: false }));
+        // Branch only where a turn ended, before the next prompt typed at an idle input: not under
+        // an answer the turn went on after (3, before a message sent during it), nor in the newest
+        // turn while it has not ended (6, 7).
         // An answer that goes on into tool calls has none; each turn's last has them.
         assert_eq!(actions(1), None);
-        assert_eq!(actions(3), Some(Actions { rewind: false, newest: false }));
-        assert_eq!(actions(5), Some(Actions { rewind: false, newest: false }));
-        assert_eq!(actions(7), Some(Actions { rewind: false, newest: true }));
+        assert_eq!(actions(3), Some(Actions { rewind: false, newest: false, branch: false }));
+        assert_eq!(actions(5), Some(Actions { rewind: false, newest: false, branch: true }));
+        assert_eq!(actions(7), Some(Actions { rewind: false, newest: true, branch: false }));
         // Their room is kept under the message, shown or not.
         let row = |i| rows.list.iter().find(|r| r.id == Id::Message(id(i))).unwrap();
         let next = |i: u64| rows.list.iter().find(|r| r.id == Id::Message(id(i + 1))).unwrap();

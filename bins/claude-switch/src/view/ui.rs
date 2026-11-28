@@ -535,7 +535,7 @@ impl Ui {
                 chat: self.chat,
                 offer: self.offer.map(|(id, _)| id),
                 awaiting: self.awaiting,
-                answers: if self.chat { rows::answer_actions(&m.items) } else { Default::default() },
+                actions: rows::MessageActions::of(m, self.chat),
             };
             match self.page {
                 Page::Conversation => {

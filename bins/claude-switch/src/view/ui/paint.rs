@@ -243,7 +243,9 @@ impl Ui {
                     if actions.rewind {
                         buttons.push((mdshared_ui::glyph::UNDO, "Rewind", Action::Rewind(*id)));
                     }
-                    buttons.push((crate::view::look::BRANCH, "Branch", Action::Branch(*id)));
+                    if actions.branch {
+                        buttons.push((crate::view::look::BRANCH, "Branch", Action::Branch(*id)));
+                    }
                     let widths: Vec<f32> =
                         buttons.iter().map(|(_, word, _)| p.measure(Face::Ui, 11.5, word) + 32.0).collect();
                     let total = widths.iter().sum::<f32>() + 2.0 * (widths.len() as f32 - 1.0);

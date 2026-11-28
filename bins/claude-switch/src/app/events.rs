@@ -325,6 +325,10 @@ impl App for AppState {
                 self.continue_in_folder(cx.now(), &id, &folder);
                 cx.request_redraw_all();
             }
+            Msg::BranchWritten(job, written) => {
+                self.branch_written(cx.now(), *job, written);
+                cx.request_redraw_all();
+            }
             Msg::AttachPictures(id, files, chat) => {
                 if chat {
                     self.chat_attach(id, &files);

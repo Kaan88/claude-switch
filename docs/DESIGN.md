@@ -395,14 +395,23 @@ shown while the pointer is over the message (or the buttons) and always under th
 its room is kept whether it shows or not, so pointing moves nothing. **Copy** copies the message
 as shown (as Copy message does). **Rewind** is "Rewind to here…" of the menu, through the same
 start and checks, under a prompt the CLI's rewind list shows. **Branch** starts a new session,
-as the tab's account, that continues from a copy of the conversation cut at that message: at your
-message the copy keeps its whole turn (up to the next prompt that starts one), at an answer it
-ends with that answer. Claude Code 2.1.332 cannot resume a session up to a message interactively
-(its hidden `--resume-session-at` is for print mode), so `core::branch` writes the copy: the
-transcript's lines up to the cut, as `<new id>.jsonl` beside the original, each record's own
-`sessionId` set to the new id, then `claude --resume <new id>` (`launch::branch`). The original is
-not touched; the branch is marked as a copy of it, as Open a copy's is. Tried in print mode against
-2.1.332: a copy cut after the second of three answers resumed with the first two turns only. The toolkit's
+as the tab's account, that continues from a copy of the conversation cut at the end of that
+message's turn, so that the copy ends where Claude Code can go on (`view::model::branch_cut`): a
+turn ends right before the next prompt typed at an idle input (a message sent while it ran goes
+on in it), the newest one at the record of its end (`end_turn`, no call pending). It is offered
+under your prompts and under a turn's last answer once that turn has ended; never mid-turn, right
+before a message sent during the turn, or in a subagent's transcript (whose items are not the
+session's). Claude Code 2.1.332 cannot resume a session up to a message interactively (its hidden
+`--resume-session-at` is for print mode), so `core::branch` writes the copy, off the window's
+thread: the transcript Chat reads (its own file, which must be the one the Sessions list names
+for the session) up to the cut, under a temporary name and then linked to `<new id>.jsonl` beside
+the original, which never replaces a file; each record's own `sessionId` is set to the new id, in
+place where it has the usual `"sessionId":"<id>"` form, else by reading the record. A cut that is
+not at a line's start is refused. Then `claude --resume <new id>` (`launch::branch`). The original
+is not touched; the branch is marked as a copy of it, as Open a copy's is. File backups
+(`file-history/<id>`) are not copied, so the branch cannot rewind code changes made before its
+cut. Checked by `recorder compat` (script `branch`): cut copies resumed in print mode and in the
+terminal show the turns before the cut only. The toolkit's
 `richtext` manages no selection, so this is the app's (`view/ui/select.rs`) over the renderer's
 selection rectangles and block boxes.
 Notices are rows like a tool row (their kind and the first line) that expand to the whole text,

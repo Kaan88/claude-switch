@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use claude_switch_core::Launch;
-use claude_switch_core::transcript::{ItemId, ItemKind};
+use claude_switch_core::transcript::ItemId;
 use mdshared_ui::cursor::Cursor;
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::host::Cx;
@@ -97,21 +97,23 @@ pub struct Pane {
 }
 
 impl Pane {
-    /// Where a branch at the message `item` cuts the transcript: after a prompt's whole turn (before
-    /// the next prompt that starts one), or right after an answer. `None` for anything else.
-    pub(crate) fn branch_cut(&self, item: ItemId) -> Option<claude_switch_core::branch::Cut> {
-        use claude_switch_core::branch::Cut;
-        let items = &self.model.items;
-        match &items.get(&item)?.kind {
-            ItemKind::Prompt { synthetic: false, .. } => Some(
-                items
-                    .range(ItemId { offset: item.offset + 1, block: 0 }..)
-                    .find(|(_, i)| matches!(i.kind, ItemKind::Prompt { synthetic: false, queued: false, .. }))
-                    .map_or(Cut::Whole, |(next, _)| Cut::Before(next.offset)),
-            ),
-            ItemKind::Assistant { .. } => Some(Cut::After(item.offset)),
-            _ => None,
+    /// What a branch at the message `item` copies: the transcript the reader reads (its file and
+    /// the session id it verified) and where to cut it (`Model::branch_cut`). Why not, otherwise.
+    pub(crate) fn branch_plan(
+        &self,
+        item: ItemId,
+    ) -> Result<(PathBuf, String, claude_switch_core::branch::Cut), &'static str> {
+        if self.model.agent.is_some() {
+            return Err("Branch works in the session's own conversation, not in a subagent's.");
         }
+        let cut = self.model.branch_cut(item).ok_or("Branch works at the end of a turn that has ended.")?;
+        let id = self.model.session_id().ok_or("The session is not verified yet. Try again in a moment.")?;
+        let path = self.verified_path.clone().ok_or("The session's transcript is not read yet.")?;
+        let named = path.file_stem().is_some_and(|stem| stem.to_string_lossy().eq_ignore_ascii_case(id));
+        if !named {
+            return Err("The transcript Chat reads is not this session's.");
+        }
+        Ok((path, id.to_owned(), cut))
     }
 
     fn transcript_end(&self) -> Option<u64> {

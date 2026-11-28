@@ -887,36 +887,57 @@ fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answ
 }
 
 #[test]
-fn a_branch_cuts_after_a_prompts_whole_turn_or_right_after_an_answer() {
+fn a_branch_is_cut_only_where_a_turn_ended_and_never_in_a_subagents_transcript() {
     use claude_switch_core::branch::Cut;
-    use claude_switch_core::transcript::{Item, ItemId, ItemKind};
+    use claude_switch_core::transcript::{ChatPhase, Item, ItemId, ItemKind, NoticeKind};
     let mut app = demo();
     let pane = app.tabs.shown_mut().unwrap().pane.as_mut().unwrap();
     let at = |offset| ItemId { offset, block: 0 };
     let prompt =
         |text: &str, queued| ItemKind::Prompt { text: text.into(), pictures: vec![], synthetic: false, queued };
+    let answer = |text: &str| ItemKind::Assistant { markdown: text.into() };
     pane.model.items = [
         (at(10), prompt("first", false)),
-        (at(20), ItemKind::Assistant { markdown: "working".into() }),
+        (at(20), answer("working on it")),
         (at(30), prompt("also this", true)),
-        (at(40), ItemKind::Assistant { markdown: "done".into() }),
+        (at(40), answer("done")),
         (at(50), prompt("second", false)),
-        (at(60), ItemKind::Assistant { markdown: "the newest".into() }),
-        (at(70), ItemKind::Notice { kind: claude_switch_core::transcript::NoticeKind::Info, text: "x".into() }),
+        (at(60), answer("thinking aloud")),
+        (at(65), answer("the newest")),
+        (at(70), ItemKind::Notice { kind: NoticeKind::Info, text: "x".into() }),
     ]
     .into_iter()
     .map(|(id, kind)| (id, Item { timestamp: None, kind }))
     .collect();
-    // A prompt keeps its turn, also past a message sent while it ran, up to the next prompt.
-    assert_eq!(pane.branch_cut(at(10)), Some(Cut::Before(50)));
-    assert_eq!(pane.branch_cut(at(30)), Some(Cut::Before(50)));
-    assert_eq!(pane.branch_cut(at(50)), Some(Cut::Whole));
-    assert_eq!(pane.branch_cut(at(40)), Some(Cut::After(40)));
-    assert_eq!(pane.branch_cut(at(70)), None);
-    // In the demo the branch opens (with the demo's launch) and writes nothing.
+    let model = &mut pane.model;
+    // The newest turn still runs: nothing in it is a place to branch.
+    model.chat.latest = Some((65, ChatPhase::Active));
+    // A turn that ended before the next prompt typed at an idle input: cut right before that
+    // prompt, from its prompt, from a message sent during it and from its last answer.
+    for item in [10, 30, 40] {
+        assert_eq!(model.branch_cut(at(item)), Some(Cut::Before(50)), "{item}");
+    }
+    // An answer the turn went on after is no end; nor a notice; nor the running turn.
+    for item in [20, 70, 50, 60, 65] {
+        assert_eq!(model.branch_cut(at(item)), None, "{item}");
+    }
+    // Once it has ended: cut after the record of its end, from its prompt and its last answer.
+    model.chat.latest = Some((65, ChatPhase::EndTurn));
+    assert_eq!(model.branch_cut(at(50)), Some(Cut::After(65)));
+    assert_eq!(model.branch_cut(at(65)), Some(Cut::After(65)));
+    assert_eq!(model.branch_cut(at(60)), None, "not mid-turn");
+    // A call still pending is no ended turn.
+    model.chat.pending = Some(64);
+    assert_eq!(model.branch_cut(at(65)), None);
+    model.chat.pending = None;
+    // In a subagent's transcript the items are the agent's: no branch, no buttons, a refusal.
+    model.agent = Some("agent-1".into());
+    assert_eq!(model.branch_cut(at(10)), None);
+    assert_eq!(
+        pane.branch_plan(at(10)).unwrap_err(),
+        "Branch works in the session's own conversation, not in a subagent's."
+    );
     let tab = app.tabs.shown().unwrap().id;
-    app.apply_scan(crate::demo::scan(&crate::demo::config()));
-    app.tabs.get_mut(tab).unwrap().session = Some(app.sessions[0].id.clone());
-    app.branch_at(Instant::now(), tab, at(40));
-    assert!(app.info.is_none(), "no refusal");
+    app.branch_at(Instant::now(), tab, at(10));
+    assert!(app.info.is_some(), "refused, with the reason");
 }

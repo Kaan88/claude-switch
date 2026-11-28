@@ -14,7 +14,7 @@ use crate::archive::{
     ARCHIVE_FOLDER, ARCHIVE_OLD, ARCHIVE_ROW, REPORT, UNARCHIVE_ALL, UNARCHIVE_ROW, UNARCHIVE_SELECTED,
 };
 use crate::dialogs::{self, Dialog, Pending};
-use crate::state::{AppState, Focus, MenuKind};
+use crate::state::{AppState, Focus, MenuKind, Msg};
 
 pub const NEW_SESSION: u32 = 1;
 pub const NEW_DESKTOP: u32 = 2;
@@ -91,6 +91,25 @@ pub const COMMANDS: &[Command] = &[
     Command::new(ABOUT, "app.about", "About"),
     Command::new(ARCHIVE_OLD, "session.archive_old", "Archive older sessions…"),
 ];
+
+/// A branch on its way: what starts it once its transcript copy is written.
+pub struct BranchJob {
+    launch: claude_switch_core::Launch,
+    account: String,
+    session: claude_switch_core::Session,
+    /// The transcript Chat reads, which is copied.
+    source: std::path::PathBuf,
+    new_id: String,
+    cut: claude_switch_core::branch::Cut,
+}
+
+impl BranchJob {
+    fn write(&self) -> Result<(), String> {
+        claude_switch_core::branch::write(&self.source, &self.session.id, &self.new_id, self.cut)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+}
 
 impl AppState {
     /// Runs a command of the table (or a palette entry's id).
@@ -306,39 +325,82 @@ impl AppState {
     }
 
     /// Branch at a message of the conversation in tab `tab`: a new session, as the tab's account,
-    /// that continues from a copy of the transcript cut there (`claude_switch_core::branch`). At
-    /// a prompt the copy keeps that prompt's whole turn; at an answer it ends with the answer.
+    /// that continues from a copy of the transcript Chat reads, cut at the end of that message's
+    /// turn (`view::model::Model::branch_cut`). The copy is written off the window's thread; the
+    /// session starts once it is there ([`Self::branch_written`]).
     pub fn branch_at(&mut self, now: Instant, tab: u64, item: claude_switch_core::transcript::ItemId) {
         let Some(t) = self.tabs.get(tab) else { return };
         let Some(pane) = t.pane.as_ref() else { return };
         let account = t.account.clone().unwrap_or_else(|| self.current().slug.clone());
-        let Some(session) = t.session.as_ref().and_then(|id| self.by_id.get(id)).map(|&i| self.sessions[i].clone())
-        else {
+        let (source, id, cut) = match pane.branch_plan(item) {
+            Ok(plan) => plan,
+            Err(why) => return self.error("Not branched", why.into()),
+        };
+        let Some(session) = self.by_id.get(&id).map(|&i| self.sessions[i].clone()) else {
             return self
                 .error("Not branched", "The session is not in the Sessions list yet. Try again in a moment.".into());
         };
-        let Some(cut) = pane.branch_cut(item) else { return };
+        // The launch checks (the account, its login, its folder) are the list's session's; the copy
+        // is of the file Chat reads. They must be one file.
+        let same = |a: &Path, b: &Path| {
+            let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").to_lowercase();
+            norm(a) == norm(b)
+        };
+        if !self.source.is_demo() && !same(&session.file, &source) {
+            return self.error(
+                "Not branched",
+                "The Sessions list has another transcript file for this session than the one Chat reads.".into(),
+            );
+        }
         let new_id = match crate::compact_open::session_id() {
             Ok(id) => id,
             Err(e) => return self.error("Not branched", e),
         };
-        match self.source.branch(&self.config, &session, &account, &new_id, cut) {
-            Err(r) => self.error("Not branched", r.to_string()),
-            Ok(l) => {
-                if !self.source.is_demo() && !self.record_copy(&new_id, &session.id) {
-                    let _ = std::fs::remove_file(session.file.with_file_name(format!("{new_id}.jsonl")));
-                    return;
-                }
-                let name = self.account_name(&account);
-                let done = format!("Opened a branch of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
-                if self.start_with_result(now, &l, None, Some(&account), done, Some((&session.cwd, App::Cli))) {
-                    self.remember_folder_open(&session.cwd, &account, App::Cli);
-                } else if !self.source.is_demo() {
-                    self.marks.clear_parent(&new_id);
-                    self.save_marks();
-                    let _ = std::fs::remove_file(session.file.with_file_name(format!("{new_id}.jsonl")));
-                }
+        let launch = match self.source.branch(&self.config, &session, &account, &new_id) {
+            Ok(launch) => launch,
+            Err(r) => return self.error("Not branched", r.to_string()),
+        };
+        let job = BranchJob { launch, account, session, source, new_id, cut };
+        if self.source.is_demo() {
+            return self.branch_written(now, job, Ok(()));
+        }
+        match self.proxy.clone() {
+            Some(proxy) => {
+                std::thread::spawn(move || {
+                    let written = job.write();
+                    if let Ok(proxy) = proxy.lock() {
+                        proxy.send(Msg::BranchWritten(Box::new(job), written));
+                    }
+                });
             }
+            None => {
+                let written = job.write();
+                self.branch_written(now, job, written);
+            }
+        }
+    }
+
+    /// The branch's copy is written (or could not be): its session starts, marked as a copy of the
+    /// original, or nothing is left of it.
+    pub fn branch_written(&mut self, now: Instant, job: BranchJob, written: Result<(), String>) {
+        if let Err(why) = written {
+            return self.error("Not branched", format!("Could not write the branch's transcript: {why}"));
+        }
+        let BranchJob { launch, account, session, source, new_id, .. } = job;
+        let remove = || {
+            let _ = std::fs::remove_file(source.with_file_name(format!("{new_id}.jsonl")));
+        };
+        if !self.source.is_demo() && !self.record_copy(&new_id, &session.id) {
+            return remove();
+        }
+        let name = self.account_name(&account);
+        let done = format!("Opened a branch of \u{201c}{}\u{201d} as {name}", self.title_of(&session));
+        if self.start_with_result(now, &launch, None, Some(&account), done, Some((&session.cwd, App::Cli))) {
+            self.remember_folder_open(&session.cwd, &account, App::Cli);
+        } else if !self.source.is_demo() {
+            self.marks.clear_parent(&new_id);
+            self.save_marks();
+            remove();
         }
     }
 

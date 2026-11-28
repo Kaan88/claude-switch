@@ -903,6 +903,11 @@ mod tests {
         model.poll();
         events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
         assert!(model.collect());
+        // The demo's newest turn as one that has ended: Branch is offered at its end.
+        use claude_switch_core::transcript::{ChatPhase, ItemKind};
+        let last =
+            model.items.iter().rev().find(|(_, i)| matches!(i.kind, ItemKind::Assistant { .. })).unwrap().0.offset;
+        (model.chat.latest, model.chat.pending) = (Some((last, ChatPhase::EndTurn)), None);
         let mut gfx = Gfx::new();
         let mut bmp = Bitmap::new(800, 2400);
         let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
@@ -926,7 +931,7 @@ mod tests {
             assert_eq!((rewinds(&ui), branches(&ui)), (1, 2), "the pointed prompt's too");
             let (r, action) = ui.hits.iter().find(|(_, a)| matches!(a, Action::Rewind(_))).cloned().unwrap();
             let Action::Rewind(prompt) = action else { unreachable!() };
-            assert!(matches!(model.items[&prompt].kind, claude_switch_core::transcript::ItemKind::Prompt { .. }));
+            assert!(matches!(model.items[&prompt].kind, ItemKind::Prompt { .. }));
             // Moving onto the button keeps it: it is under the pointed message.
             let (bx, by) = (r.cx(), r.cy());
             assert_eq!(ui.pointed_message(bx, by), Some(prompt));
@@ -938,6 +943,12 @@ mod tests {
             ui.press(r.cx(), r.cy(), 1, Mods::default(), &mut model);
             assert_eq!(ui.release(r.cx(), r.cy(), Mods::default(), &mut model), Release::Branch(prompt));
             assert!(action == Action::Branch(prompt));
+            // While the newest turn runs, its answer has Copy and no Branch.
+            model.chat.latest = Some((last, ChatPhase::Active));
+            model.revision += 1;
+            ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+            let copies = ui.hits.iter().filter(|(_, a)| matches!(a, Action::CopyMessage(_))).count();
+            assert_eq!((copies, branches(&ui)), (1, 0));
         }
     }
 

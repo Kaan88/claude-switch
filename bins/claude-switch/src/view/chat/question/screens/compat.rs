@@ -341,26 +341,34 @@ fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<
 }
 
 /// For `recorder compat`'s `branch`: writes a branch of the transcript `CS_BRANCH_SOURCE` with the
-/// app's own `core::branch`, cut right after the first answer that contains `CS_BRANCH_AFTER` (as
-/// Branch under that answer cuts it), and writes the new id to `CS_BRANCH_OUT`.
+/// app's own code, as Branch under a message does: `CS_BRANCH_AT` is `prompt TEXT` or
+/// `answer TEXT` (the first prompt, or the last answer, whose text contains TEXT), cut where the
+/// app cuts (`view::model::branch_cut`); the new id goes to `CS_BRANCH_OUT`.
 #[test]
 #[ignore = "a tool for recorder compat: writes a transcript copy"]
 fn cli_branch_write() {
-    use claude_switch_core::branch::{Cut, write};
+    use claude_switch_core::branch::write;
     use claude_switch_core::transcript::{ItemKind, Reader};
     let source = std::path::PathBuf::from(std::env::var("CS_BRANCH_SOURCE").expect("CS_BRANCH_SOURCE"));
-    let after = std::env::var("CS_BRANCH_AFTER").expect("CS_BRANCH_AFTER").to_lowercase();
+    let at = std::env::var("CS_BRANCH_AT").expect("CS_BRANCH_AT");
+    let (kind, text) = at.split_once(' ').expect("prompt TEXT or answer TEXT");
+    let text = text.to_lowercase();
     let reader = Reader::open(&source, 64 << 20).expect("the transcript");
-    let at = reader
-        .items()
-        .find_map(|(id, item)| match &item.kind {
-            ItemKind::Assistant { markdown } if markdown.to_lowercase().contains(&after) => Some(id.offset),
-            _ => None,
-        })
-        .expect("an answer with the text");
+    let items: std::collections::BTreeMap<_, _> = reader.items().map(|(id, item)| (id, item.clone())).collect();
+    let found = |(id, item): (&claude_switch_core::transcript::ItemId, &claude_switch_core::transcript::Item)| {
+        let shown = match (&item.kind, kind) {
+            (ItemKind::Prompt { text, .. }, "prompt") => text,
+            (ItemKind::Assistant { markdown }, "answer") => markdown,
+            _ => return None,
+        };
+        shown.to_lowercase().contains(&text).then_some(*id)
+    };
+    let item = if kind == "prompt" { items.iter().find_map(found) } else { items.iter().rev().find_map(found) };
+    let item = item.expect("a message with the text");
+    let cut = crate::view::model::branch_cut(&items, &reader.chat(), item).expect("a place a branch can be made");
     let old = source.file_stem().unwrap().to_string_lossy().into_owned();
     let new = crate::compact_open::session_id().expect("a new id");
-    write(&source, &old, &new, Cut::After(at)).expect("the copy");
+    write(&source, &old, &new, cut).expect("the copy");
     std::fs::write(std::env::var("CS_BRANCH_OUT").expect("CS_BRANCH_OUT"), &new).expect("the id");
 }
 
