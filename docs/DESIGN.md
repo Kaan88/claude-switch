@@ -888,7 +888,7 @@ but a polling tick no longer redraws the window unless visible state changes.
 ## Settings pages
 
 The category list at left selects one page at right: Appearance, Terminal, Sessions, Chat,
-Claude Code (with its sub-page Advanced, indented under it), Usage, Handovers, OpenCode, or
+Claude Code (with its sub-pages Advanced and Status, indented under it), Usage, Handovers, OpenCode, or
 Notification area. A sub-page's name is "Parent › Name" in the code and its title; the rail shows
 "Name", indented. Only the current page scrolls. Up and Down change
 categories when the list has focus, Tab enters the page, and Escape dismisses a popup before
@@ -1066,6 +1066,32 @@ and the file is replaced atomically (a temporary file beside it, then a rename).
 `proper-lockfile` takes when that lock is on); when it exists, the write is refused with "try
 again". A file that is not a JSON object is never replaced. The page reads the files when it
 opens, after every change, and on Check again or another account.
+
+**Settings › Claude Code › Status** shows, for the account chosen on it (the same choice as
+Advanced's), what `/status` and `/stats` show that files hold, so nothing is run
+(`core::cc_status`). Read when the page opens and when another account is chosen; values are
+single-option rows, as the toolkit has no label/value row.
+
+- Claude Code: the installed version, the newest folder of `%USERPROFILE%\.local\share\claude\versions`
+  (the native installer's), with the version the Advanced table was taken from.
+- Account: the sign-in method (a claude.ai login when `.credentials.json` exists, which is never
+  opened, and `.claude.json` has `oauthAccount`; else an `apiKeyHelper` in `settings.json`; else a
+  `primaryApiKey` in `.claude.json`) and `oauthAccount`'s email, organization and plan.
+- Settings in effect: the user `settings.json` (how many keys, or not valid JSON) and a
+  machine-wide `%ProgramFiles%\ClaudeCode\managed-settings.json`; a folder's own settings depend on
+  the folder and are named only.
+- MCP servers in `.claude.json`'s user-scope `mcpServers`, name and transport (eight by name, then
+  a count); user memory, `CLAUDE.md` in the CLI folder, with its lines.
+- Stats from the account's `history.jsonl` (one line per prompt: `timestamp` in ms, `project`,
+  `sessionId`), only its last 8 MiB (the header says so when it is longer): prompts, sessions,
+  local days with a prompt, folders. Models used: the newest 40 of those sessions whose
+  transcript the session index knows, the last 64 KiB of each, the `message.model` of assistant
+  lines (`<synthetic>` skipped), counted once per session.
+- Usage is not repeated: a row opens the Usage page (plan usage shows in the top bar).
+
+Left out because only a running Claude Code knows them: the model and permission mode of a
+session, whether MCP servers connect, a session's cost and context use, and `/stats`' token totals
+(they would need whole transcripts, not the bounded reads above). See TODO.md, item 81.
 
 ## Recent sessions and local marks
 

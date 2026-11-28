@@ -7,6 +7,10 @@
   `settings.json` entries are saved in the master account and shared; `.claude.json` entries belong
   to the chosen account and are read-only while it runs Claude Code. A value changed elsewhere since
   the page read it is never overwritten.
+- Settings › Claude Code › Status: for a chosen account, the installed Claude Code version, the
+  sign-in method and account, the settings files in effect, user MCP servers and memory file, and
+  stats from its prompt history (prompts, sessions, days active, folders) and the models of its
+  newest sessions. Read from files only; plan usage links to the Usage page.
 - Handover: the new session keeps the old one's name instead of adding " · continued" each time
   (which piled up as "… · continued · continued"); such endings from earlier handovers are
   removed. The old session is marked as handed over, so the list still tells the two apart.

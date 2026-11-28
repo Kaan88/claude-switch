@@ -1085,3 +1085,10 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     no read-only or label/value row, "For the toolkit", item 4); entries Claude Code hides behind
     flags are offered all the same (the files cannot tell which flags an account has); the newer
     user-settings storage behind `storageV5` is not covered.
+    Settings › Claude Code › Status is done too (DESIGN.md, the same section): tested in core on
+    temporary folders (sign-in, MCP servers, memory, version folders, history counts, local days,
+    models from bounded transcript tails) and in the demo (rows, the link to Usage), pictures looked
+    at. Left out, as only a running Claude Code knows them (`/status` and `/stats` in a session):
+    the session's model and permission mode, MCP connection status, cost and context use, and
+    token totals per day or model (whole transcripts would have to be read; the design allows only
+    bounded slices). Usage was not repeated: the page links to Settings › Usage.
