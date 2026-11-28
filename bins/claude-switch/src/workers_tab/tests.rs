@@ -124,6 +124,24 @@ fn cancel_asks_first_refuses_a_queued_job_plainly_and_the_demo_ends_nothing() {
     assert_eq!(st.workers.notice.as_ref().unwrap().3, "The demo ends nothing.");
 }
 
+#[test]
+fn commands_for_the_hidden_selected_session_do_nothing_on_the_workers_tab() {
+    let mut st = AppState::new(crate::source::Source::Demo, Some(false), Default::default());
+    st.apply_scan(crate::demo::scan(&st.config));
+    st.select_first();
+    let id = st.selected.clone().unwrap();
+    st.start_demo_workers();
+    let now = Instant::now();
+    st.command(now, crate::actions::RENAME, None);
+    assert!(st.dialog.is_none(), "F2 renames nothing unseen");
+    let pinned = st.marks.pinned(&id);
+    st.command(now, crate::actions::PIN, None);
+    assert_eq!(st.marks.pinned(&id), pinned, "Ctrl+D pins nothing unseen");
+    st.show_tab(SESSIONS);
+    st.command(now, crate::actions::RENAME, None);
+    assert!(st.dialog.is_some(), "on the Sessions tab it acts as before");
+}
+
 /// The Workers tab with the demo's made-up jobs, a running one selected: into `CS_CHAT_SHOTS`.
 #[test]
 #[ignore = "writes pictures of the Workers tab; run by hand"]

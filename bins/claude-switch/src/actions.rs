@@ -36,8 +36,8 @@ pub const OPEN_COPY: u32 = 17;
 pub const SESSION_VIEW: u32 = 18;
 pub const PASTE: u32 = 19;
 pub const SWITCHER: u32 = 20;
-const RENAME: u32 = 21;
-const PIN: u32 = 22;
+pub(crate) const RENAME: u32 = 21;
+pub(crate) const PIN: u32 = 22;
 const SUGGEST: u32 = 23;
 const SUGGEST_BATCH: u32 = 24;
 pub const HIDE: u32 = 25;
@@ -62,6 +62,37 @@ const ACCOUNT_BASE: u32 = 50_000;
 const SESSION_BASE: u32 = 100_000;
 /// Menu ids of "Open as…": `OPEN_AS_BASE + account index * 2 + (0 CLI, 1 Desktop)`.
 const OPEN_AS_BASE: u32 = 1_000;
+
+/// The commands that act on the selected session (or its row or folder) of the Sessions list.
+pub fn on_selected_session(id: u32) -> bool {
+    use crate::delete::{COPY_DELETE, DELETE_ROW};
+    [
+        OPEN_CLI,
+        OPEN_DESKTOP,
+        OPEN_AS,
+        OPEN_COPY,
+        OPEN_LAST,
+        MOVE_FOLDER,
+        RENAME,
+        SET_TOPIC,
+        PIN,
+        SUGGEST,
+        HIDE,
+        HIDE_FOLDER,
+        COPY_ID,
+        COPY_PATH,
+        REVEAL,
+        OPEN_FOLDER,
+        DELETE_ROW,
+        COPY_DELETE,
+        ARCHIVE_ROW,
+        ARCHIVE_FOLDER,
+        UNARCHIVE_ROW,
+        UNARCHIVE_SELECTED,
+    ]
+    .contains(&id)
+        || (OPEN_AS_BASE..OPEN_AS_BASE + 200).contains(&id)
+}
 
 pub const COMMANDS: &[Command] = &[
     Command::new(NEW_SESSION, "session.new", "New session…").keys("Ctrl+N"),
@@ -127,6 +158,11 @@ impl BranchJob {
 impl AppState {
     /// Runs a command of the table (or a palette entry's id).
     pub fn command(&mut self, now: Instant, id: u32, anchor: Option<Rect>) {
+        // On the Workers tab the selected session is hidden: its commands (F2, Ctrl+D, the
+        // palette's) do not act on it unseen.
+        if self.tabs.workers_shown() && on_selected_session(id) {
+            return;
+        }
         match id {
             NEW_SESSION => self.ask_new_session(),
             crate::compact_dialog::COMMAND => {
