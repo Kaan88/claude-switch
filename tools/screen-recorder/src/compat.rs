@@ -83,6 +83,8 @@ pub struct Script {
     pub body: String,
     /// More arguments for `claude`; `{scripts}` is the scripts folder.
     pub args: Vec<String>,
+    /// More variables for `claude` (`#: env NAME=value`, one per line).
+    pub env: Vec<(String, String)>,
     pub cols: u16,
     pub rows: u16,
     /// About how long it takes, for the time left.
@@ -104,6 +106,7 @@ fn scripts(dir: &Path) -> Result<Vec<Script>, String> {
         let mut script = Script {
             name: file.file_stem().unwrap().to_string_lossy().into_owned(),
             args: Vec::new(),
+            env: Vec::new(),
             cols: 100,
             rows: 40,
             seconds: 45,
@@ -115,6 +118,10 @@ fn scripts(dir: &Path) -> Result<Vec<Script>, String> {
             match key {
                 "args" => script.args = value.split_whitespace().map(|a| a.replace("{scripts}", &folder)).collect(),
                 "seconds" => script.seconds = number("#: seconds N")?,
+                "env" => script.env.push(script_variable(value.trim()).ok_or(format!(
+                    "{}: `#: env NAME=value`, NAME in capitals and not CLAUDE_CONFIG_DIR or ANTHROPIC_*",
+                    file.display()
+                ))?),
                 "size" => {
                     let (cols, rows) =
                         value.trim().split_once(' ').ok_or(format!("{}: #: size C R", file.display()))?;
@@ -128,6 +135,14 @@ fn scripts(dir: &Path) -> Result<Vec<Script>, String> {
         out.push(script);
     }
     Ok(out)
+}
+
+/// A script's variable for `claude`: a plain name in capitals, never the account's folder or a key.
+fn script_variable(pair: &str) -> Option<(String, String)> {
+    let (name, value) = pair.split_once('=')?;
+    let plain = !name.is_empty() && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_');
+    let refused = name == "CLAUDE_CONFIG_DIR" || name.starts_with("ANTHROPIC_");
+    (plain && !refused).then(|| (name.to_owned(), value.to_owned()))
 }
 
 #[derive(Clone, PartialEq)]
@@ -591,13 +606,14 @@ fn run_script(setup: &Setup, run: &Run, i: usize) {
     }
     let mut args = vec!["--model".to_owned(), setup.options.model.clone()];
     args.extend(script.args.iter().cloned());
+    let env: Vec<(String, String)> = setup.env.iter().chain(&script.env).cloned().collect();
     let launch = Launch {
         program: "claude",
         cwd: &setup.work,
         cols: script.cols,
         rows: script.rows,
         args: &args,
-        env: &setup.env,
+        env: &env,
         plain: false,
     };
     let mut recorder = match Recorder::spawn(&launch, dir) {
@@ -1080,9 +1096,21 @@ mod tests {
             crate::record::script_reads(&script.body).unwrap_or_else(|why| panic!("{}: {why}", script.name));
             assert!(script.args.iter().all(|a| !a.contains("{scripts}")), "{}", script.name);
         }
+        let task = all.iter().find(|s| s.name == "rewind-task").expect("rewind-task");
+        assert_eq!(task.env, [("CLAUDE_CODE_ENABLE_TODO_TOOLS".to_owned(), "1".to_owned())]);
         let deny = all.iter().find(|s| s.name == "deny").expect("deny");
         let settings = deny.args.last().expect("its settings file");
         assert!(Path::new(settings).is_file(), "{settings}");
+    }
+
+    #[test]
+    fn a_scripts_variable_is_a_plain_name_and_never_the_account_folder_or_a_key() {
+        let pair = |name: &str, value: &str| Some((name.to_owned(), value.to_owned()));
+        assert_eq!(script_variable("CLAUDE_CODE_ENABLE_TODO_TOOLS=1"), pair("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"));
+        assert_eq!(script_variable("EMPTY="), pair("EMPTY", ""));
+        for bad in ["CLAUDE_CONFIG_DIR=x", "ANTHROPIC_API_KEY=x", "lower=x", "=x", "NO_EQUALS", "A B=x"] {
+            assert_eq!(script_variable(bad), None, "{bad}");
+        }
     }
 
     fn api_setup(name: &str) -> Setup {
@@ -1168,6 +1196,7 @@ mod tests {
             name: name.to_owned(),
             body: String::new(),
             args: Vec::new(),
+            env: Vec::new(),
             cols: 100,
             rows: 40,
             seconds: 1,

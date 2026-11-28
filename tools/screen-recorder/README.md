@@ -72,7 +72,9 @@ does not read (an unknown op, a number that is not one) ends the script before a
 
 Lines that start with `#:` are for `recorder compat` (comments to a plain run): `#: args …` (more
 arguments for `claude`; `{scripts}` is this folder's `scripts`), `#: size COLS ROWS` (100 x 40
-without it) and `#: seconds N` (about how long the script takes, for the time left).
+without it), `#: seconds N` (about how long the script takes, for the time left) and `#: env
+NAME=value` (a variable for `claude`, one per line; a name in capitals, never `CLAUDE_CONFIG_DIR` or
+an `ANTHROPIC_*` one).
 
 Type a prompt and its Enter as separate sends with a pause between them (`send …`, `sleep 800`,
 `send \r`); the CLI takes text and Enter in one write for a paste. The model does not always do

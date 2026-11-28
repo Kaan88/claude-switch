@@ -6,6 +6,11 @@
 # rewind says whether Claude Code does too. Three model requests; the model may not call the tool
 # (look at `before-transcript`'s `tasks` first).
 #: args --permission-mode default
+# Claude Code 2.1.332 offers TaskCreate in an interactive session only to some models or with
+# CLAUDE_CODE_ENABLE_TODO_TOOLS set (recorded 2026-11-28 with Haiku: "No such tool available").
+# The second prompt fits on one input row: Ctrl+U clears only the row the cursor is on, so a
+# restored prompt that wraps would be sent with the next one (recorded the same day).
+#: env CLAUDE_CODE_ENABLE_TODO_TOOLS=1
 #: seconds 80
 start
 send Reply with just the word: alpha
@@ -14,7 +19,7 @@ send \r
 sleep 1500
 gone esc to interrupt 60000
 quiet 1500 30000
-send Use the TaskCreate tool once to create a task with the subject rewound-task-bravo, then reply with just the word: bravo
+send Use TaskCreate once, subject rewound-task-bravo. Then reply with just the word: bravo
 sleep 800
 send \r
 sleep 1500
@@ -43,6 +48,7 @@ taskfiles restored-tasks
 send \x15
 sleep 500
 quiet 500 5000
+snap cleared
 send Reply with just the word: charlie
 sleep 800
 send \r

@@ -514,10 +514,15 @@ impl Recorder {
         let id = session.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
         let to = self.out.join(format!("{name}.tasks"));
         std::fs::create_dir_all(&to).map_err(|e| Abort::Io(format!("{}: {e}", to.display())))?;
+        // A task list may be named other than after the session: anything written during this
+        // recording is taken too.
+        let started = std::time::SystemTime::now() - self.start.elapsed();
+        let recent =
+            |entry: &std::fs::DirEntry| entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| t >= started);
         let mut copied = 0;
         for folder in ["tasks", "todos"] {
             for entry in std::fs::read_dir(config.join(folder)).into_iter().flatten().filter_map(Result::ok) {
-                if !entry.file_name().to_string_lossy().to_lowercase().contains(&id) {
+                if !entry.file_name().to_string_lossy().to_lowercase().contains(&id) && !recent(&entry) {
                     continue;
                 }
                 let target = to.join(folder).join(entry.file_name());
@@ -879,7 +884,8 @@ enum Step {
     /// transcript of the work folder into `NAME.transcripts/`, as they are now.
     Live(String),
     /// What Claude Code keeps for the recorded session's tasks: every entry of the account's
-    /// `tasks` and `todos` folders named after the session, copied into `NAME.tasks/`.
+    /// `tasks` and `todos` folders named after the session or written during the recording,
+    /// copied into `NAME.tasks/`.
     TaskFiles(String),
     /// A branch at a message: `prompt TEXT` or `answer TEXT`.
     Branch {

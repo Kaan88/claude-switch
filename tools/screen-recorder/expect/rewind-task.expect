@@ -17,6 +17,11 @@ highlight = *rewound-task-bravo*
 
 [restored]
 kind = input
+input = Use TaskCreate once, subject rewound-task-bravo. Then reply with just the word: bravo
+
+# The restored prompt is cleared before the next one is typed.
+[cleared]
+kind = idle
 
 # Not recorded yet (2026-11-28): what Claude Code does with the replaced turn's task. These say what
 # Chat assumes (it leaves the task out, as the conversation leaves the turn out); a mismatch here is

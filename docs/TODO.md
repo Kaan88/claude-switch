@@ -747,6 +747,13 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     so. `recorder compat` script `rewind-task` (not run yet) creates a task with TaskCreate in the
     turn it then rewinds and copies Claude Code's task files (`taskfiles`) before, right after and
     after the next prompt; its expectations are that assumption.
+    First recording (2026-11-28, 2.1.332, Haiku), 6 of 9: no task was made, as Claude Code offers
+    TaskCreate in an interactive session only to some models or with `CLAUDE_CODE_ENABLE_TODO_TOOLS`
+    (the model searched for it and got "No such tool available"); and the restored prompt wrapped onto
+    two input rows, Ctrl+U cleared only the row under the cursor, and the rest went out with the next
+    prompt. The script now sets that variable (a new `#: env` header of `recorder compat`), uses a
+    prompt that fits on one row, and checks the input read back after the restore and empty before
+    the next prompt. To be recorded again.
     Review (2026-11-28): a file written or edited in a replaced turn now stays in the Files list, marked
     "from a rewound turn" (its edit rows are text, with nothing to go to), since a conversation-only
     rewind leaves the change on disk and the transcript does not say whether the code was restored.
