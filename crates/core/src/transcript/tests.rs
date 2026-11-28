@@ -615,14 +615,20 @@ fn native_tasks_follow_confirmed_creates_and_updates_and_the_latest_list_wins() 
     assert!(!reader.poll().unwrap().tasks_changed, "a call alone is not a task");
     append(&path, result("c1", "Task #1 created successfully: Write the parser", false));
     assert!(reader.poll().unwrap().tasks_changed);
-    assert_eq!(reader.tasks(), [Task { content: "Write the parser".into(), status: TaskStatus::Pending }]);
+    assert_eq!(
+        reader.tasks(),
+        [Task { content: "Write the parser".into(), status: TaskStatus::Pending, rewound: false }]
+    );
 
     append(&path, tool("c2", "TaskCreate", json!({"subject":"Refused"})));
     append(&path, result("c2", "Task #2 created successfully: Refused", true));
     append(&path, tool("u1", "TaskUpdate", json!({"taskId":"1","status":"in_progress","subject":"Write the reader"})));
     append(&path, result("u1", "Updated task #1 status", false));
     reader.poll().unwrap();
-    assert_eq!(reader.tasks(), [Task { content: "Write the reader".into(), status: TaskStatus::InProgress }]);
+    assert_eq!(
+        reader.tasks(),
+        [Task { content: "Write the reader".into(), status: TaskStatus::InProgress, rewound: false }]
+    );
 
     append(&path, tool("t2", "TodoWrite", json!({"todos":[{"content":"new plan","status":"completed"}]})));
     reader.poll().unwrap();
@@ -647,7 +653,7 @@ fn native_tasks_survive_history_paged_in_after_their_results() {
     while reader.has_earlier() {
         reader.earlier().unwrap();
     }
-    assert_eq!(reader.tasks(), [Task { content: "Early task".into(), status: TaskStatus::Pending }]);
+    assert_eq!(reader.tasks(), [Task { content: "Early task".into(), status: TaskStatus::Pending, rewound: false }]);
 }
 
 #[test]

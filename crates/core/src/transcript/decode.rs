@@ -54,7 +54,7 @@ impl Plan {
                         "completed" => TaskStatus::Completed,
                         _ => return None,
                     };
-                    Some(Task { content: item["content"].as_str()?.into(), status })
+                    Some(Task { content: item["content"].as_str()?.into(), status, rewound: false })
                 })
                 .collect();
             return (items.is_empty() || !tasks.is_empty()).then_some(Self::Snapshot(tasks));

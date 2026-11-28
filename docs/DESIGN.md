@@ -2149,10 +2149,14 @@ start): a recap or notice parented to the previous turn and written after a new 
 newest record without hiding that prompt. Records whose parents lead out of the loaded slice stay until history pages in,
 and records without a `uuid`, sidechains, a subagent's transcript, and records hanging off the chain
 that do not start with a prompt (tool results recorded against their call, progress, notices) are
-never left out. The Details pages follow the same branch: the plan is made from the branch's plan
-updates and task calls only (assumed, not yet recorded: that Claude Code's own task list also loses
-a replaced turn's tasks on a rewind; `recorder compat`'s `rewind-task` script checks it against
-the task files Claude Code keeps, and Chat keeps matching the conversation until it is known). The
+never left out. The Details pages follow the same branch, with two exceptions for what a rewind
+does not undo. Tasks: Claude Code keeps the tasks a replaced turn made (recorded with 2.1.332 by
+`recorder compat`'s `rewind-task`: a TaskCreate in the rewound turn is still in Claude Code's own
+task files right after the rewind and after the next prompt), so the Tasks page keeps native tasks
+(TaskCreate, TaskUpdate) from every branch, each marked "from a rewound turn" while its current
+state was set in a replaced turn; a later change on the active branch makes it the branch's again.
+A TodoWrite plan is treated the same way (the plan in force, marked when it came from a replaced
+turn): the recording made no todo list, so whether Claude Code's goes back is not known. The
 changed files are the shown items' writes and edits, and also those of replaced turns, marked "from a
 rewound turn" with no row to go to: "Restore conversation" leaves the code as it is, and neither the
 transcript nor the file history says which choice a rewind took (Claude Code appends nothing to the

@@ -23,18 +23,17 @@ input = Use TaskCreate once, subject rewound-task-bravo. Then reply with just th
 [cleared]
 kind = idle
 
-# Not recorded yet (2026-11-28): what Claude Code does with the replaced turn's task. These say what
-# Chat assumes (it leaves the task out, as the conversation leaves the turn out); a mismatch here is
-# Claude Code keeping it.
+# Recorded 2026-11-28 (2.1.332, Haiku): Claude Code keeps the task the replaced turn made in its own
+# task files, right after the rewind and after the next prompt; Chat's Tasks page keeps it, marked.
 [restored-tasks]
-lacks = rewound-task-bravo
+holds = rewound-task-bravo
 
 [after]
 kind = idle
 
 [after-transcript]
 prompts = Reply with just the word: alpha | Reply with just the word: charlie
-tasks = -
+tasks = rewound-task-bravo (Pending, from a rewound turn)
 
 [after-tasks]
-lacks = rewound-task-bravo
+holds = rewound-task-bravo

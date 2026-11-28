@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Chat and the Session view: tasks made in a turn a rewind replaced stay on the Tasks page, marked
+  "from a rewound turn", as Claude Code keeps them in its own task list.
 - Chat and the Session view: a file changed in a turn a rewind replaced stays in the Files list,
   marked "from a rewound turn": restoring only the conversation leaves the change on disk.
 - Tools: `recorder compat` has a `rewind-task` script (a task made in a turn that is then rewound)

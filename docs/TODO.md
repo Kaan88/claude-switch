@@ -754,6 +754,11 @@ Additions to item 42 from the audit: fail closed for two pending tools at once, 
     prompt. The script now sets that variable (a new `#: env` header of `recorder compat`), uses a
     prompt that fits on one row, and checks the input read back after the restore and empty before
     the next prompt. To be recorded again.
+    Second recording (2026-11-28, 8 of 10): the task was made, and Claude Code keeps it in its own task
+    files right after the rewind and after the next prompt, so Chat's assumption was wrong. The Tasks
+    page now keeps a replaced turn's native tasks, marked "from a rewound turn" while their state comes
+    from there; a TodoWrite plan likewise (that recording made no todo list, so Claude Code's is not
+    known). Expectations updated to the recording; 10 of 10 on it offline.
     Review (2026-11-28): a file written or edited in a replaced turn now stays in the Files list, marked
     "from a rewound turn" (its edit rows are text, with nothing to go to), since a conversation-only
     rewind leaves the change on disk and the transcript does not say whether the code was restored.

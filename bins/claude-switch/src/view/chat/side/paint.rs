@@ -455,11 +455,17 @@ impl Details {
                     let key = task_key(index, &task.content);
                     let expanded = self.expanded.contains(&key);
                     let (mark, status) = task_status(task.status);
+                    // Claude Code keeps a replaced turn's tasks after a rewind: listed, marked.
+                    let title = if task.rewound {
+                        format!("{} · {}", first_line(&task.content), super::REWOUND)
+                    } else {
+                        first_line(&task.content).to_owned()
+                    };
                     if f.sections {
-                        let label = first_line(&task.content).to_owned();
+                        let label = title.clone();
                         out.push(ITEM, Line::Task { label, status: task.status, index, expanded });
                     } else {
-                        let label = format!("{mark}  {}", first_line(&task.content));
+                        let label = format!("{mark}  {title}");
                         out.push(
                             ROW,
                             Line::Header {
@@ -474,7 +480,8 @@ impl Details {
                     }
                     if expanded {
                         let top = out.height;
-                        out.detail(p, width, format!("{status}\n{}", task.content));
+                        let from = if task.rewound { format!(" · {}", super::REWOUND) } else { String::new() };
+                        out.detail(p, width, format!("{status}{from}\n{}", task.content));
                         if opens {
                             out.push(
                                 ROW,

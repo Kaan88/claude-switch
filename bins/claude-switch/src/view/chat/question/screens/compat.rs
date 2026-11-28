@@ -72,7 +72,8 @@
 //!   the copy): `agents` (each agent as `type: description: end`, the end as the reader reads it,
 //!   `Finished from Notification` or `-`) and `agent-prompts` (the prompts of the agents' own
 //!   transcripts, their tasks and the messages sent to them). `tasks`: the task list Chat shows for
-//!   it, each as `content (Status)`, `-` for none.
+//!   it, each as `content (Status)` (`content (Status, from a rewound turn)` for one a rewind
+//!   replaced the turn of), `-` for none.
 //! - What Claude Code keeps for a session's tasks (`taskfiles`, the `<state>.tasks/` folder):
 //!   `holds` (the value when a file there contains it, else `not found`) and `lacks` (the value
 //!   when none does, else `found`).
@@ -409,7 +410,16 @@ fn transcript_fact(path: &Path, key: &str) -> String {
                 .collect(),
         ),
         // The task list Chat shows for the transcript (its Tasks page).
-        "tasks" => joined(reader.tasks().iter().map(|t| format!("{} ({:?})", t.content, t.status)).collect()),
+        "tasks" => joined(
+            reader
+                .tasks()
+                .iter()
+                .map(|t| {
+                    let from = if t.rewound { ", from a rewound turn" } else { "" };
+                    format!("{} ({:?}{from})", t.content, t.status)
+                })
+                .collect(),
+        ),
         // Its agents (`agentcopy` keeps the `subagents` folder beside the copy) and their ends.
         "agents" => joined(
             reader

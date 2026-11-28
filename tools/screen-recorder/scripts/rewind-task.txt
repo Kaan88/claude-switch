@@ -2,9 +2,9 @@
 # TaskCreate, then a rewind to that turn's prompt ("Restore conversation") and a new prompt. The
 # transcript copies show what Chat's Tasks page reads; `taskfiles` copies what Claude Code keeps for
 # the session's tasks (its `tasks` and `todos` entries) before the rewind, right after it and after
-# the next prompt. Chat leaves a replaced turn's tasks out (DESIGN.md, "Rewind"); `lacks` after the
-# rewind says whether Claude Code does too. Three model requests; the model may not call the tool
-# (look at `before-transcript`'s `tasks` first).
+# the next prompt. Recorded 2026-11-28 (2.1.332): Claude Code keeps the task after the rewind, and
+# Chat's Tasks page keeps it too, marked "from a rewound turn" (DESIGN.md, "Rewind"). Three model
+# requests; the model may not call the tool (look at `before-transcript`'s `tasks` first).
 #: args --permission-mode default
 # Claude Code 2.1.332 offers TaskCreate in an interactive session only to some models or with
 # CLAUDE_CODE_ENABLE_TODO_TOOLS set (recorded 2026-11-28 with Haiku: "No such tool available").
