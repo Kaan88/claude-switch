@@ -83,6 +83,16 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Defects noticed
 
+- **Chat: Ctrl+C does not copy selected conversation text** (owner, 2026-11-28; cause read from the
+  code, not tried). `ChatPane::key` (`view/ui/input.rs`) copies the conversation's selection on Ctrl+C,
+  but in a Chat tab every key goes through `chat_key` (`view/chat/input.rs`) to the message box
+  (`editor_key`) and never reaches it. Ctrl+C should copy the conversation's selection when there is
+  one and the box has none; the right-click menu's Copy works meanwhile.
+- **Chat: a double-click selects a word, but dragging on does not extend it** (owner, 2026-11-28; cause
+  read from the code). `press` in `view/ui/input.rs` sets `dragging = clicks == 1`, so a drag after a
+  double- (or triple-) click is ignored. Expected, as in other apps: the drag extends word by word (line
+  by line after a triple-click). The message box has the same gap: `chat_press` sets `editor_drag` only
+  for a single click.
 - **Chat loses messages sent while a turn runs, and their answers** (owner, 2026-11-28, seen in 0.1.4
   and 0.1.5; cause found, not fixed). Three parts:
   1. *The user's message is not shown.* Claude Code (2.1.332) records a message typed while a turn
