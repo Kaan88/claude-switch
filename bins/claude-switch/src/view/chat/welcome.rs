@@ -154,6 +154,7 @@ impl Chat {
                 let Some(command) = self.commands.catalog.get(at) else { return };
                 let line = format!("/{} ", command.name);
                 self.recall.end();
+                self.shell_mode = false;
                 self.editor.set(line);
                 let end = self.editor.text.len();
                 self.editor.move_to(end, false);

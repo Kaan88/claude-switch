@@ -70,7 +70,16 @@ fn same(prompt: &str, pictures: usize, queued: &Queued) -> bool {
     if text.is_empty() {
         return queued.picture && pictures > 0;
     }
-    prompt == text || prompt.ends_with(&format!(" {text}")) || prompt.contains(&text)
+    if prompt == text {
+        return true;
+    }
+    // Attached files go before the text as paths (quoted when they hold spaces), a picture as
+    // its marker: only such a beginning counts.
+    let Some(before) = prompt.strip_suffix(&format!(" {text}")) else { return false };
+    let mut chars = before.chars();
+    let (first, second) = (chars.next(), chars.next());
+    matches!(first, Some('"' | '\'' | '/' | '\\' | '~' | '.' | '@' | '['))
+        || first.is_some_and(|c| c.is_ascii_alphabetic()) && second == Some(':')
 }
 
 impl Chat {
@@ -128,10 +137,13 @@ impl Chat {
         }
     }
 
-    /// The session changed: what was queued in the old one is not this one's.
-    pub(super) fn forget_queued(&mut self) {
+    /// The session changed or its program ended: what was queued is not shown any more. True when
+    /// there was something.
+    pub(super) fn forget_queued(&mut self) -> bool {
+        let had = !self.queued.is_empty() || self.send_now.is_some();
         self.queued.clear();
         self.send_now = None;
+        had
     }
 }
 

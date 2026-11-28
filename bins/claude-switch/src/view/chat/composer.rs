@@ -148,7 +148,7 @@ impl Chat {
             .or_else(|| {
                 self.queue.as_ref().map(|queue| {
                     if queue.sends_now() {
-                        "Sends as soon as Claude Code's input reads empty."
+                        "Goes into the turn as soon as Claude Code's input takes it."
                     } else if self.last_gate == Some(Gate::Running) {
                         "A turn is running. This will be sent when it ends."
                     } else if self.drawer_focus {

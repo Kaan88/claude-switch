@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Chat: shell mode turned on with no command yet counts as a draft, so a handover continued in
+  place waits for it instead of being sent as a shell command after `/clear`; a draft that starts
+  with `!` shows as shell mode before it goes; a long shell command that wraps is entered.
+- Chat: a one-character message (or a short number) sent while a call is pending waits for the
+  call, as a prompt drawn the same instant could take it as its answer; a message held in the
+  first moment of a call joins Claude Code's queue once the call runs; queued bubbles go when the
+  program ends, and only a prompt with the same text takes one off.
+
 - Chat: a multi-select question read from the screen shows Claude Code's ticked boxes as the
   card's own ticks instead of "[√]" in the label, and no longer repeats each label under it; the
   list of blocked calls marks the call its buttons act on with a bar, not a tick; a rewind on its

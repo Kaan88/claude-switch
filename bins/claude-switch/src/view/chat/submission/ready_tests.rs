@@ -397,7 +397,10 @@ fn send_now_into_an_input_that_does_not_read_empty_goes_once_it_does() {
     let now = f.now;
     AppState::chat_send(f.tab(), now, true);
     assert!(f.chat().error.is_none() && f.chat().queue.as_ref().is_some_and(Queue::sends_now));
-    assert_eq!(f.chat().notice(&Default::default()), Some("Sends as soon as Claude Code's input reads empty."));
+    assert_eq!(
+        f.chat().notice(&Default::default()),
+        Some("Goes into the turn as soon as Claude Code's input takes it.")
+    );
     assert!(f.writes().is_empty());
     // The input reads empty again while the turn still runs: the draft goes into it, and Enter
     // once the input shows it.

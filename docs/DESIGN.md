@@ -1214,8 +1214,11 @@ input (no turn, or one that ended while the draft waited) is an ordinary send.
 A call the turn runs does not hold the message back once the screen shows the CLI's working line
 and the call has been pending for 750 ms (a permission prompt is drawn as soon as its call is
 written): Claude Code queues a message typed during a running command as at any other moment of
-the turn (decided 2026-11-28 with queued messages, below). Within that moment the draft is held as
-before. A command or the override is then refused as during any running turn, not as an answer
+the turn (decided 2026-11-28 with queued messages, below). Within that moment the draft is held,
+and goes into the turn by itself, under Send now's checks, once the call counts as running (or as
+an ordinary send if the turn ends first). While a call is pending a message that a prompt drawn in
+the same instant would take as its answer (one character, or a number of up to three digits) is
+held until no call is pending. A command or the override is then refused as during any running turn, not as an answer
 Claude Code may wait for: a permission question has no input box and is read first.
 While messages wait in Claude Code's queue its input reads empty ("Press up to edit queued
 messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332).
@@ -1226,8 +1229,9 @@ turn"), or sends it as the next prompt when the turn ends or is stopped. Until t
 shows it, Chat shows each such message as a quiet bubble at the end of the conversation, in the
 order it was sent, with "Queued — waiting for its turn" under it (`chat/queued.rs`). A bubble goes
 with the first prompt after its Enter (the transcript's length then) that reads the same,
-spacing aside, each prompt taken by one bubble in order; at an idle input Claude Code's queue is
-empty and what is left goes; another session's transcript forgets them. Under the bubbles,
+spacing aside (or the same after attached paths or a picture's marker), each prompt taken by one
+bubble in order; at an idle input Claude Code's queue is empty and what is left goes; another
+session's transcript or an ended program forgets them. Under the bubbles,
 **Send now** (Send all now for several: Claude Code hands its whole queue in at once) writes
 Claude Code's own `chat:sendNow` key, Ctrl+X Ctrl+S, the key the screen names. With its input
 empty it hands every queued message to the running turn at once, moving a running command to the
@@ -1303,7 +1307,13 @@ idle input only, one line and no attachments, and Enter only once the cursor's r
 `! command`: Claude Code 2.1.332's source switches an empty input to shell mode when text starting
 with `!` reaches it, but how the screen shows that is not recorded yet (`recorder compat` script
 `shell-paste`). Without that row nothing more goes and the text-on-the-input notice shows
-(`chat/shell.rs`). The mode ends with the send.
+(`chat/shell.rs`). The mode ends with the send. A command that wraps is read over its rows, from
+the `!` row down to the cursor's (no rule between), spacing aside. A draft whose text starts with
+`!` (pasted, recalled, set by code) turns the box to shell mode with the `!` as its mark, as Claude
+Code would take it; one sent that way is first shown so, with a notice, and goes on the next Send.
+Shell mode with no command yet counts as a draft: the in-place handover, text a card leaves for
+the box and a message given back after a stop wait for it; the suggested next prompt and a start
+under a new session's box (clicks of the user's) leave it.
 **Slash commands.** An initial `/` opens Switch’s list, never writes a bare slash to the PTY.
 The list filters a reference catalog of built-ins and read-only names and frontmatter descriptions
 from the selected account, the launch folder’s `.claude` directory, and installed plugin caches.

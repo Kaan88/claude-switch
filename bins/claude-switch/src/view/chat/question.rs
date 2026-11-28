@@ -1093,7 +1093,7 @@ impl Chat {
 
     /// Puts the held text in the composer once it is empty and nothing is being sent.
     fn land_held(&mut self) -> bool {
-        if self.question.held.is_none() || !self.editor.text.trim().is_empty() || self.locked() {
+        if self.question.held.is_none() || self.has_draft() || self.locked() {
             return false;
         }
         self.editor.set(self.question.held.take().unwrap_or_default());

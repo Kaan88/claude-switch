@@ -259,6 +259,8 @@ impl AppState {
             chat.settle(idle);
             let queued = chat.reconcile_queued(&pane.model, idle, now);
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
+            // An ended program has no queue left: its bubbles (and the poll for them) end too.
+            let queued = queued | (decision.0 == super::Gate::Ended && chat.forget_queued());
             let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
             chat.set_selection(pane.ui.has_selection());
             let changed =
@@ -277,7 +279,7 @@ impl AppState {
         redraw
     }
 
-    fn has_chat_work(tab: &Tab) -> bool {
+    pub(super) fn has_chat_work(tab: &Tab) -> bool {
         tab.pane.as_ref().is_some_and(|pane| {
             pane.chat.enabled
                 && (pane.chat.queue.is_some() || pane.chat.waiting().is_some() || !pane.chat.queued.is_empty())

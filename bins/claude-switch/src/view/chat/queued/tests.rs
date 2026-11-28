@@ -210,3 +210,65 @@ fn send_now_never_sends_text_on_claude_codes_input() {
     assert!(f.writes().is_empty());
     assert_eq!(f.chat().error, Some(INPUT_BUSY));
 }
+
+/// A queued "ok" is not taken off by a later prompt that only contains the word.
+#[test]
+fn a_bubble_goes_only_with_its_own_text() {
+    let queued = Queued::new("ok".into(), false, 0, 0);
+    assert!(same("ok", 0, &queued));
+    assert!(same("  ok \n", 0, &queued), "spacing aside");
+    assert!(same("\"C:\\notes\\a b.md\" ok", 0, &queued), "after an attached path");
+    assert!(same("[Image #1] ok", 1, &queued), "after a picture's marker");
+    assert!(!same("is it ok to delete the cache?", 0, &queued));
+    assert!(!same("that is ok", 0, &queued), "the word at the end of another message");
+}
+
+/// An ended program has no queue: its bubbles go, and with them the tab's poll.
+#[test]
+fn an_ended_program_has_no_queue_left() {
+    let mut f = running_call();
+    queue(&mut f, TYPED_WHILE_BUSY, PLAIN_WORKING_TYPED);
+    f.tab().term.ended = Some(mdshared_pty::Exit { code: Some(0), signal: None });
+    f.pass(SECOND / 10);
+    assert!(shown(&mut f).is_empty());
+    assert!(!crate::state::AppState::has_chat_work(f.tab()));
+}
+
+/// A message sent in the first moment of a call is held; once the call counts as running it goes
+/// into Claude Code's queue by itself, instead of waiting for the turn's end.
+#[test]
+fn a_message_held_for_a_call_just_written_joins_the_queue_once_the_call_runs() {
+    let mut f = Live::new();
+    f.turn();
+    f.show(WORKING_TOOL);
+    f.pass(SECOND);
+    let pane = f.tab().pane.as_mut().unwrap();
+    let call = pane.model.chat.prompt.map(|p| p + 5);
+    pane.model.chat.pending = call;
+    let since = f.now;
+    f.chat().pending = call.map(|call| (call, since));
+    f.pass(SECOND / 10);
+    f.send(TYPED_WHILE_BUSY);
+    assert!(f.writes().is_empty() && f.chat().queue.is_some(), "held while the call is young");
+    f.pass(SECOND);
+    assert_eq!(f.writes(), paste(TYPED_WHILE_BUSY), "into the turn once the call runs");
+    f.show(PLAIN_WORKING_TYPED);
+    f.pass(SECOND / 10);
+    assert_eq!(f.writes(), [b"\r".to_vec()]);
+    assert_eq!(shown(&mut f), [TYPED_WHILE_BUSY]);
+}
+
+/// A lone `1`, `2` or `y` while a call is pending could answer a prompt drawn the same instant:
+/// it waits for the call; a longer message goes.
+#[test]
+fn a_message_that_could_answer_a_prompt_waits_while_a_call_is_pending() {
+    for short in ["1", "y", "12"] {
+        let mut f = running_call();
+        f.send(short);
+        assert!(f.writes().is_empty(), "{short}");
+        assert!(f.chat().queue.is_some(), "{short}: held, not refused");
+    }
+    let mut f = running_call();
+    f.send("yes, and also the docs");
+    assert_eq!(f.writes().len(), 1);
+}

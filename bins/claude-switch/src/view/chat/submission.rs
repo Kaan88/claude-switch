@@ -47,6 +47,8 @@ pub(super) const NOT_EMPTY: &str = "The CLI input line is not visibly empty. Wai
 pub(super) const INPUT_HAS_TEXT: &str =
     "The CLI input line already contains text or an attachment. Check the terminal.";
 pub(super) const MENU_OPEN: &str = "Close the CLI menu in the terminal before sending.";
+pub(super) const ANSWER_LIKE: &str =
+    "A message this short could answer a prompt of the running call: it waits for the call to end.";
 pub(super) const BAD_TEXT: &str = "The draft has unsupported control characters.";
 pub(super) const CHANGED_CLIPBOARD: &str = "The clipboard changed. Paste the picture into Chat again.";
 const IMAGE_TIMEOUT_NOTICE: &str = "No image marker yet. The CLI may hold a picture; check the terminal. Draft kept.";
@@ -212,6 +214,13 @@ impl Chat {
     }
 }
 
+/// A message a permission prompt or menu would take as its answer: one character, or a short
+/// number (digits pick choices).
+fn answer_like(text: &str) -> bool {
+    let text = text.trim();
+    text.chars().count() == 1 || !text.is_empty() && text.len() <= 3 && text.chars().all(|c| c.is_ascii_digit())
+}
+
 /// Why a send of this kind cannot go now; `None` when it can.
 pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'static str> {
     let pane = tab.pane.as_ref().unwrap();
@@ -262,6 +271,8 @@ pub(super) fn blocked(tab: &Tab, now: Instant, intent: Intent) -> Option<&'stati
         // moment, waits for no answer: a message goes into Claude Code's queue as at any other
         // time of the turn. One just written may still ask for permission, and Override is for
         // an input no turn holds.
+        // A prompt drawn the same instant would take a lone `1`, `2` or `y` as its answer.
+        Intent::Now if pane.model.chat.pending.is_some() && answer_like(&chat.editor.text) => Some(ANSWER_LIKE),
         Intent::Now if pane.model.chat.pending.is_some() && !chat.call_running(&tab.term, now) => {
             Some(Reason::Tool.label())
         }
@@ -322,6 +333,18 @@ impl AppState {
             let pane = tab.pane.as_ref().unwrap();
             pane.chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running
         };
+        // Held only because the running turn's call has just started (a permission prompt may
+        // still be drawn for it): it goes into the turn by itself, under Send now's checks, once
+        // the call counts as running, instead of waiting for the turn's end.
+        let young_call = intent == Intent::Draft && {
+            let pane = tab.pane.as_ref().unwrap();
+            let chat = &pane.chat;
+            chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running
+                && pane.model.chat.pending.is_some()
+                && !chat.call_running(&tab.term, now)
+                && !chat.shell_mode
+                && clean_prompt(&tab.term.screen)
+        };
         let pane = tab.pane.as_mut().unwrap();
         let chat = &mut pane.chat;
         if chat.waiting().is_some() || chat.enter_only() || chat.queue.is_some() && intent == Intent::Draft {
@@ -331,6 +354,12 @@ impl AppState {
             return;
         }
         chat.recall.end();
+        // Text set by code that starts with `!` would reach Claude Code as a shell command: say
+        // so in the box first rather than send it as either.
+        if chat.shell_from_text() {
+            chat.refused(super::shell::BANG, None);
+            return;
+        }
         let shell_text;
         let text = if chat.shell_mode {
             if chat.editor.text.trim().contains('\n') {
@@ -365,7 +394,7 @@ impl AppState {
                 latest: pane.model.chat.latest.map(|x| x.0),
                 stop: None,
                 awaiting: chat.awaiting_transcript,
-                now: false,
+                now: young_call,
             });
             chat.error = None;
             chat.retry = None;
@@ -727,7 +756,7 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
             chat.refused(TAKEBACK_OTHER, None);
             return true;
         };
-        let box_free = chat.editor.text.trim().is_empty() && chat.chips.is_empty() && chat.queue.is_none();
+        let box_free = !chat.has_draft() && chat.queue.is_none();
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         if box_free {
             let epoch = chat.output_epoch.wrapping_sub(1);

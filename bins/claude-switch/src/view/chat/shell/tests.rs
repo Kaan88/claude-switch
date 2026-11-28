@@ -92,3 +92,50 @@ fn a_shell_command_is_one_line_and_never_goes_into_a_running_turn() {
     AppState::chat_send(f.tab(), now, true);
     assert!(f.writes().is_empty(), "Send now does not push it into the turn either");
 }
+
+#[test]
+fn shell_mode_with_no_command_yet_is_a_draft_and_a_suggestion_leaves_it() {
+    let mut chat = Chat { shell_mode: true, ..Chat::default() };
+    assert!(chat.has_draft(), "code that fills the box waits for it");
+    chat.popups.next_prompt = Some("Run the tests".into());
+    assert!(chat.fill_next_prompt());
+    assert!(!chat.shell_mode && chat.editor.text == "Run the tests", "the suggestion is a message");
+}
+
+/// A draft that starts with `!` would reach Claude Code as a shell command: the box shows it in
+/// shell mode (its mark) before it goes, rather than sending it as a message.
+#[test]
+fn a_draft_starting_with_bang_shows_as_shell_mode_before_it_goes() {
+    let mut chat = Chat::default();
+    chat.editor.set("!important: read this first".into());
+    assert!(chat.shell_from_text());
+    assert!(chat.shell_mode && chat.editor.text == "important: read this first");
+    // Set by code and sent at once: said, not sent.
+    let mut f = Live::new();
+    f.show(PLAIN_IDLE);
+    f.pass(SECOND);
+    f.send("!rm -rf build");
+    assert!(f.writes().is_empty());
+    assert_eq!(f.chat().error, Some(BANG));
+    assert!(f.chat().shell_mode && f.chat().editor.text == "rm -rf build");
+    // Sent again: as the shell command the user now sees.
+    let now = f.now;
+    AppState::chat_send(f.tab(), now, false);
+    assert_eq!(f.writes(), [b"\x1b[200~!rm -rf build\x1b[201~".to_vec()]);
+}
+
+/// A long command wraps onto several rows of Claude Code's input; Enter goes once they read it.
+#[test]
+fn a_long_shell_command_is_read_over_the_rows_it_wraps_onto() {
+    let rule = "─".repeat(40);
+    let screen = format!(
+        "cursor 3 22\n@size 40 7\n\n{rule}\n! cargo test -p claude-switch --\n  --ignored chat_shots\n{rule}\n"
+    );
+    let shown = recorded(&screen);
+    assert_eq!(shell_input(&shown).as_deref(), Some("cargo test -p claude-switch -- --ignored chat_shots"));
+    assert!(shows(&shown, "!cargo test -p claude-switch -- --ignored chat_shots"));
+    assert!(!shows(&shown, "!cargo test -p claude-switch"));
+    // A rule between the cursor and a `!` above: not the input.
+    let other = format!("cursor 3 2\n@size 40 6\n! echo earlier\n{rule}\n\n> \n{rule}\n");
+    assert_eq!(shell_input(&recorded(&other)), None);
+}
