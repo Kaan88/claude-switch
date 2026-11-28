@@ -16,7 +16,7 @@ use screen::{clean_prompt, idle_slash_prompt, is_image_marker, prompt};
 pub(super) use stages::Staging;
 use stages::{
     CommandWait, Completion, EchoWait, EnterOnly, LinesWait, Recovery, Sent, Stamp, Takeback, can_confirm,
-    recovery_ready, shown_exactly,
+    recovery_ready, shown_exactly, shows_sent,
 };
 
 /// Claude Code reads the clipboard's picture through a helper process on Windows, which can take
@@ -36,6 +36,8 @@ const TAKEBACK_FAILED: &str =
     "Claude Code put your last message back on its input and Chat could not clear it. Clear it in the terminal.";
 const TAKEBACK_HELD: &str = "Claude Code put your last message back on its input. Chat left it there, as the message \
      box holds a draft: send or clear it in the terminal, then send the draft.";
+const TAKEBACK_OTHER: &str = "After the stop, Claude Code's input holds text that is not a message Chat sent. Send or \
+     clear it in the terminal; a held draft goes once the input is empty.";
 const TAKEBACK_UNSURE: &str = "Stopped before Claude answered. Your message is back in the box, but Claude Code kept \
      drawing: check that its input is empty before you send.";
 const IMAGE_KEY: &[u8] = b"\x1bv";
@@ -122,7 +124,7 @@ pub(super) struct ImageWait {
     seq: u32,
     bytes: Vec<u8>,
     demo_text: String,
-    allow_working: bool,
+    into_turn: bool,
 }
 
 fn busy_title(title: &str) -> bool {
@@ -149,7 +151,9 @@ impl Chat {
     /// send no longer knows the screen.
     pub(super) fn interrupt_staging(&mut self) {
         // Whatever the CLI's input holds now may be the user's own.
-        (self.staging.sent, self.staging.takeback, self.staging.command) = (None, None, None);
+        (self.staging.takeback, self.staging.command) = (None, None);
+        self.staging.sent.clear();
+        self.staging.stopped = false;
         if let Some(wait) = self.image_wait.take() {
             self.staging.recovery = Some(Recovery::Picture(Stamp { epoch: self.output_epoch, ..wait.stamp }));
             self.error = Some(IMAGE_INTERRUPTED);
@@ -266,13 +270,18 @@ impl AppState {
     pub(super) fn chat_send(tab: &mut Tab, now: Instant, force: bool) {
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
+        let running = || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running;
         let intent = if !force {
-            Intent::Draft
-        } else if chat.queue.is_some()
-            && (chat.demo
-                || clean_prompt(&tab.term.screen)
-                || chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running)
-        {
+            // While a turn runs, a message goes into Claude Code's visibly empty input at once, as
+            // Send now does and as typing in the terminal would: Claude Code hands it to the
+            // running turn, and the box is free for the next one. Otherwise it is held.
+            let empty = clean_prompt(&tab.term.screen);
+            if chat.queue.is_none() && empty && running() && blocked(tab, now, Intent::Now).is_none() {
+                Intent::Now
+            } else {
+                Intent::Draft
+            }
+        } else if chat.queue.is_some() && (chat.demo || clean_prompt(&tab.term.screen) || running()) {
             // Into the visibly empty input, also while a turn runs.
             Intent::Now
         } else {
@@ -291,6 +300,12 @@ impl AppState {
             super::screen_report::save(tab, now, error);
         }
         let stamp = Stamp::at(tab);
+        // Into a running turn, as the gate reads it now: Send now also goes into an idle input (no
+        // turn, or one that ended while the draft waited), which is an ordinary send.
+        let into_turn = intent == Intent::Now && {
+            let pane = tab.pane.as_ref().unwrap();
+            pane.chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now).0 == Gate::Running
+        };
         let pane = tab.pane.as_mut().unwrap();
         let chat = &mut pane.chat;
         if chat.waiting().is_some() || chat.enter_only() || chat.queue.is_some() && intent == Intent::Draft {
@@ -348,14 +363,7 @@ impl AppState {
                 return;
             }
             // The guard is armed before the first write but no Enter is present in that write.
-            let wait = ImageWait {
-                due: now + IMAGE_TIMEOUT,
-                stamp,
-                seq,
-                bytes,
-                demo_text,
-                allow_working: intent == Intent::Now,
-            };
+            let wait = ImageWait { due: now + IMAGE_TIMEOUT, stamp, seq, bytes, demo_text, into_turn };
             chat.queue = None;
             chat.error = None;
             chat.retry = None;
@@ -366,9 +374,9 @@ impl AppState {
                 chat.staging.recovery = Some(Recovery::Picture(stamp));
                 chat.refused(error, None);
             }
-            tab.pane.as_mut().unwrap().note_composer_input();
+            tab.pane.as_mut().unwrap().note_composer_input_into_turn(into_turn);
         } else {
-            finish(tab, now, &bytes, Completion::Message(demo_text), None, intent == Intent::Now);
+            finish(tab, now, &bytes, Completion::Message(demo_text), None, into_turn);
         }
     }
 
@@ -389,7 +397,9 @@ impl AppState {
         chat.stopped = pane.model.chat.prompt.map(|p| (pane.model.chat.generation, p));
         match write(tab, b"\x1b", "Stopped") {
             Ok(()) => {
-                if let Some(queue) = &mut tab.pane.as_mut().unwrap().chat.queue {
+                let chat = &mut tab.pane.as_mut().unwrap().chat;
+                chat.staging.stopped = true;
+                if let Some(queue) = &mut chat.queue {
                     queue.stop = Some(stop);
                 }
             }
@@ -403,7 +413,7 @@ impl AppState {
         let pane = tab.pane.as_ref().unwrap();
         let chat = &pane.chat;
         if let Some(wait) = &chat.image_wait {
-            let veto = !can_confirm(tab, now, wait.stamp, wait.allow_working)
+            let veto = !can_confirm(tab, now, wait.stamp, wait.into_turn)
                 || !chat.demo && clipboard::sequence() != Some(wait.seq);
             let result = if veto {
                 Some(Err(IMAGE_INTERRUPTED))
@@ -425,18 +435,21 @@ impl AppState {
                     }
                     Ok(marker) => {
                         let text = if wait.demo_text.is_empty() { "[Picture]".into() } else { wait.demo_text };
-                        finish(tab, now, &wait.bytes, Completion::Message(text), Some(marker), wait.allow_working);
+                        finish(tab, now, &wait.bytes, Completion::Message(text), Some(marker), wait.into_turn);
                     }
                 }
                 return true;
             }
         }
         if let Some(wait) = &chat.staging.lines {
-            let result = if !can_confirm(tab, now, wait.stamp, wait.allow_working) {
+            let result = if !can_confirm(tab, now, wait.stamp, wait.into_turn) {
                 Some(Err(LINES_INTERRUPTED))
             } else if now >= wait.due {
                 Some(Err(LINES_TIMEOUT))
-            } else if may_write && chat.output_epoch != wait.stamp.epoch && shown_exactly(tab, &wait.expected) {
+            } else if may_write
+                && chat.output_epoch != wait.stamp.epoch
+                && shows_sent(tab, &wait.expected, wait.into_turn)
+            {
                 Some(Ok(()))
             } else {
                 None
@@ -457,7 +470,7 @@ impl AppState {
                             expected: wait.expected,
                             completion: Completion::Message(wait.text),
                             picture: wait.picture,
-                            allow_working: wait.allow_working,
+                            into_turn: wait.into_turn,
                         },
                     ),
                 }
@@ -490,7 +503,7 @@ impl AppState {
                             expected: wait.line.clone(),
                             completion: Completion::Command { line: wait.line, from_editor: wait.from_editor },
                             picture: false,
-                            allow_working: false,
+                            into_turn: false,
                         },
                     ),
                 }
@@ -638,7 +651,7 @@ impl AppState {
     pub(super) fn retry_enter(tab: &mut Tab, now: Instant) {
         let chat = &tab.pane.as_ref().unwrap().chat;
         let Some(retry) = &chat.staging.retry else { return };
-        if !can_confirm(tab, now, retry.stamp, retry.allow_working) || !shown_exactly(tab, &retry.expected) {
+        if !can_confirm(tab, now, retry.stamp, retry.into_turn) || !shown_exactly(tab, &retry.expected) {
             tab.pane.as_mut().unwrap().chat.refused(ENTER_WAIT, None);
             return;
         }
@@ -658,27 +671,37 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
     let chat = &pane.chat;
     let screen = &tab.term.screen;
-    let Some(sent) = &chat.staging.sent else { return false };
+    if chat.staging.sent.is_empty() {
+        return false;
+    }
     let resting = chat.screen_resting(&tab.term, now);
     let Some(step) = &chat.staging.takeback else {
-        let put_back = may_write
-            && chat.waiting().is_none()
-            && !chat.enter_only()
-            && resting
-            && !clean_prompt(screen)
-            && shown_exactly(tab, &sent.expected);
-        if !put_back {
+        let settled = may_write && chat.waiting().is_none() && !chat.enter_only() && resting && !clean_prompt(screen);
+        if !settled {
             return false;
         }
+        let Some(index) = chat.staging.sent.iter().position(|sent| shown_exactly(tab, &sent.expected)) else {
+            // Something else rests on the input after a stop: the next send would wait for it
+            // without a word.
+            if !chat.staging.stopped {
+                return false;
+            }
+            let chat = &mut tab.pane.as_mut().unwrap().chat;
+            chat.staging.sent.clear();
+            chat.staging.stopped = false;
+            chat.refused(TAKEBACK_OTHER, None);
+            return true;
+        };
         let box_free = chat.editor.text.trim().is_empty() && chat.chips.is_empty() && chat.queue.is_none();
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         if box_free {
             let epoch = chat.output_epoch.wrapping_sub(1);
-            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP, clean: None });
+            chat.staging.takeback = Some(Takeback { epoch, presses: 0, due: now + TAKEBACK_STEP, clean: None, index });
         } else {
             // The message stays where the user can see it, and the box keeps its draft (a held
             // one is let go when the user types in the terminal, and stays in the box).
-            chat.staging.sent = None;
+            chat.staging.sent.clear();
+            chat.staging.stopped = false;
             chat.refused(TAKEBACK_HELD, None);
         }
         return true;
@@ -715,24 +738,26 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
     let input = prompt(screen).is_some() || screen::shows_some_input(screen);
     if step.presses >= TAKEBACK_KEYS || now >= step.due || screen::working(screen) || !input {
         let chat = &mut tab.pane.as_mut().unwrap().chat;
-        (chat.staging.sent, chat.staging.takeback) = (None, None);
+        chat.staging.takeback = None;
+        chat.staging.sent.clear();
         chat.refused(TAKEBACK_FAILED, None);
         return true;
     }
     if !may_write || chat.output_epoch == step.epoch {
         return false;
     }
-    let presses = step.presses + 1;
+    let (presses, index) = (step.presses + 1, step.index);
     tab.pane.as_mut().unwrap().note_composer_input();
     let written = write(tab, CLEAR_LINE, "");
     let chat = &mut tab.pane.as_mut().unwrap().chat;
     match written {
         Ok(()) => {
             chat.staging.takeback =
-                Some(Takeback { epoch: chat.output_epoch, presses, due: now + TAKEBACK_STEP, clean: None })
+                Some(Takeback { epoch: chat.output_epoch, presses, due: now + TAKEBACK_STEP, clean: None, index })
         }
         Err(error) => {
-            (chat.staging.sent, chat.staging.takeback) = (None, None);
+            chat.staging.takeback = None;
+            chat.staging.sent.clear();
             chat.refused(error, None);
         }
     }
@@ -743,8 +768,10 @@ fn take_back(tab: &mut Tab, now: Instant, may_write: bool) -> bool {
 /// the locked composer should never hold), with a word to check the terminal when the CLI input
 /// could not be read as empty for sure.
 fn give_back(chat: &mut Chat, unsure: bool) {
-    let sent = chat.staging.sent.take().unwrap();
-    chat.staging.takeback = None;
+    let index = chat.staging.takeback.take().map_or(0, |step| step.index);
+    let sent = chat.staging.sent.swap_remove(index);
+    chat.staging.sent.clear();
+    chat.staging.stopped = false;
     chat.queue = None;
     let text = match chat.editor.text.trim().is_empty() {
         true => sent.text,
@@ -841,14 +868,7 @@ pub(super) fn send_bytes(chips: &[Chip], text: &str) -> Option<Vec<u8>> {
     Some(if payload.is_empty() { Vec::new() } else { mdshared_term::input::encode_paste(&payload, true) })
 }
 
-fn finish(
-    tab: &mut Tab,
-    now: Instant,
-    paste: &[u8],
-    completion: Completion,
-    marker: Option<String>,
-    allow_working: bool,
-) {
+fn finish(tab: &mut Tab, now: Instant, paste: &[u8], completion: Completion, marker: Option<String>, into_turn: bool) {
     let stamp = Stamp::at(tab);
     let picture = marker.is_some();
     let payload = std::str::from_utf8(paste)
@@ -864,7 +884,7 @@ fn finish(
         Some(marker) => marker,
         None => payload,
     };
-    tab.pane.as_mut().unwrap().note_composer_input();
+    tab.pane.as_mut().unwrap().note_composer_input_into_turn(into_turn);
     if !paste.is_empty()
         && let Err(error) = write(tab, paste, "")
     {
@@ -875,16 +895,19 @@ fn finish(
         return;
     }
     let chat = &mut tab.pane.as_mut().unwrap().chat;
-    if expected.contains('\n') {
-        // Several lines: Enter only once the input line shows them (or the CLI's paste marker).
+    // Into a running turn, a permission prompt or a menu may be drawn between the paste and Enter
+    // (its default is Yes): Enter goes only once the input line shows the text. So it does for
+    // several lines (or the CLI's paste marker). The demo has no CLI to show it.
+    let into_turn = into_turn && !chat.demo;
+    if expected.contains('\n') || into_turn && matches!(completion, Completion::Message(_)) {
         let Completion::Message(text) = completion else { unreachable!("commands are one line") };
         chat.error = None;
         chat.retry = None;
         let due = now + ECHO_TIMEOUT;
-        chat.staging.lines = Some(LinesWait { stamp, due, expected, text, picture, allow_working });
+        chat.staging.lines = Some(LinesWait { stamp, due, expected, text, picture, into_turn });
         return;
     }
-    submit_enter(tab, EnterOnly { stamp, expected, completion, picture, allow_working });
+    submit_enter(tab, EnterOnly { stamp, expected, completion, picture, into_turn });
 }
 
 fn submit_enter(tab: &mut Tab, input: EnterOnly) {
@@ -893,7 +916,7 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
         Completion::Command { line, .. } => (line.as_str(), Some(line.as_str())),
     };
     let baseline = command.map(|_| local_reports(&tab.term.screen));
-    tab.pane.as_mut().unwrap().note_composer_input();
+    tab.pane.as_mut().unwrap().note_composer_input_into_turn(input.into_turn);
     if write(tab, b"\r", demo_text).is_err() {
         let chat = &mut tab.pane.as_mut().unwrap().chat;
         chat.queue = None;
@@ -908,7 +931,12 @@ fn submit_enter(tab: &mut Tab, input: EnterOnly) {
         Completion::Message(_) => {
             chat.first_sent |= chat.awaiting_transcript;
             let (expected, text, picture) = (input.expected, chat.editor.text.clone(), input.picture);
-            chat.staging.sent = Some(Sent { expected, text, picture });
+            // One sent at an idle input starts a turn: those before it are done with.
+            if !input.into_turn {
+                chat.staging.sent.clear();
+            }
+            chat.staging.sent.push(Sent { expected, text, picture });
+            chat.staging.stopped = false;
             chat.submitted();
         }
         Completion::Command { line, from_editor } => {

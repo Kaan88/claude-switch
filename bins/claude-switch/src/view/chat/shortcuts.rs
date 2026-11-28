@@ -43,6 +43,7 @@ impl AppState {
         }
         chat.drawer_focus = false;
         chat.editor_drag = false;
+        chat.editor_words = None;
         let (fx, fy) = chat.editor_point(x, y);
         let at = chat.editor.hit(fx, fy);
         if !chat.editor.selection().contains(&at) && chat.editor.selection().end != at {

@@ -91,8 +91,36 @@ impl Calendar {
     }
 }
 
+/// What a session found by its id scores: above any match of the words.
+const BY_ID: i32 = i32::MAX / 2;
+/// The fewest hex digits a pasted id prefix needs; a shorter one is an ordinary search.
+const ID_PREFIX: usize = 8;
+
+/// The session id a query names: the query itself when it is a whole id or a prefix of at least
+/// eight hex digits, or the id after `--resume` in a pasted command line (`claude --resume <id>`,
+/// as hand-overs give it). Lowercase.
+fn queried_id(query: &str) -> Option<String> {
+    let words: Vec<&str> = query.split_whitespace().collect();
+    let id = match words.iter().position(|w| *w == "--resume" || w.starts_with("--resume=")) {
+        Some(at) => words[at].strip_prefix("--resume=").or_else(|| words.get(at + 1).copied())?,
+        None if words.len() == 1 => words[0],
+        None => return None,
+    };
+    let id = id.trim_matches(['"', '\'']);
+    let hex = id.chars().filter(char::is_ascii_hexdigit).count();
+    let shape =
+        id.starts_with(|c: char| c.is_ascii_hexdigit()) && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    (shape && hex >= ID_PREFIX).then(|| id.to_ascii_lowercase())
+}
+
+/// The query names this session by its id (whole, a prefix, or in a pasted `--resume` line).
+pub fn id_matches(query: &str, s: &Session) -> bool {
+    queried_id(query).is_some_and(|id| s.id.to_ascii_lowercase().starts_with(id.as_str()))
+}
+
 pub fn score(query: &str, name: Option<&str>, s: &Session, folder: &str) -> Option<i32> {
-    [name, Some(&s.title), Some(&s.last_prompt), Some(folder), s.cwd.to_str()]
+    let by_id = id_matches(query, s).then_some(BY_ID);
+    let words = [name, Some(&s.title), Some(&s.last_prompt), Some(folder), s.cwd.to_str()]
         .into_iter()
         .flatten()
         .flat_map(|text| {
@@ -102,7 +130,8 @@ pub fn score(query: &str, name: Option<&str>, s: &Session, folder: &str) -> Opti
                 .map(move |(i, _)| fuzzy::score(query, &text[i..]).map(|m| m.score - if i == 0 { 0 } else { 5 }))
         })
         .flatten()
-        .max()
+        .max();
+    by_id.max(words)
 }
 
 pub fn rank<'a>(query: &str, candidates: impl IntoIterator<Item = (usize, SessionFields<'a>)>) -> Vec<usize> {
@@ -169,5 +198,35 @@ mod tests {
         assert_eq!(rank("renamed", candidates()), [3]);
         assert_eq!(rank("needle in the end", candidates()), [3]);
         assert_eq!(rank("", candidates()), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_session_is_found_by_its_id_a_prefix_or_a_pasted_resume_line() {
+        let mut list = crate::demo::scan(&crate::demo::config()).sessions;
+        list.truncate(3);
+        list[0].id = "0a1b2c3d-1111-4222-8333-444455556666".into();
+        list[1].id = "0a1b2c3d-9999-4222-8333-444455556666".into();
+        list[2].id = "7f00e2aa-1111-4222-8333-444455556666".into();
+        // An older title that names the id's start word for word still comes after the id.
+        list[2].title = "notes on 7f00e2aa".into();
+        list[0].title = "Fix the parser".into();
+        let candidates =
+            || list.iter().enumerate().map(|(i, session)| (i, SessionFields { session, folder: "", name: None }));
+        assert_eq!(rank("0a1b2c3d-1111-4222-8333-444455556666", candidates()), [0]);
+        assert_eq!(rank("0A1B2C3D-1111-4222-8333-444455556666", candidates()), [0], "any case");
+        assert_eq!(rank("0a1b2c3d-1111", candidates()), [0]);
+        let both = rank("0a1b2c3d", candidates());
+        assert!(both.len() == 2 && both.contains(&0) && both.contains(&1), "a prefix both share: both");
+        assert_eq!(rank("claude --resume 0a1b2c3d-9999-4222-8333-444455556666", candidates()), [1]);
+        assert_eq!(rank("  claude  --resume \"0a1b2c3d-9999-4222-8333-444455556666\" --model x", candidates()), [1]);
+        assert_eq!(rank("--resume=7f00e2aa-1111-4222-8333-444455556666", candidates()), [2]);
+        assert_eq!(rank("cd x && claude --resume 7f00e2aa", candidates()), [2]);
+        // Fewer than eight hex digits, or other words around an id: ordinary search, as before.
+        assert_eq!(queried_id("0a1b2c3"), None);
+        assert_eq!(queried_id("7f00e2aa parser"), None);
+        assert_eq!(queried_id("deadline-2026"), None);
+        assert_eq!(queried_id("--resume"), None);
+        assert_eq!(rank("7f00e2aa", candidates()), [2]);
+        assert_eq!(rank("Fix the parser", candidates())[0], 0);
     }
 }

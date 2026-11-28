@@ -55,6 +55,8 @@ pub enum Msg {
     /// A handover from another process failed (a background `/switch-compact`'s reason, or a
     /// request the pipe thread could not load), or opened with a note. Shown as a notice only.
     HandoverNotice(crate::compact_cli::Notice),
+    /// A branch's transcript copy was written (or not) off the window's thread.
+    BranchWritten(Box<crate::actions::BranchJob>, Result<(), String>),
 }
 
 /// The height of a folder heading and of a session row in the list.

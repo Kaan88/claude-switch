@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+- Chat: a long message (pasted or typed) is shown as its text; Claude Code records it inside
+  `<pasted_content>` tags, and Chat used to leave it out.
+- Chat: a message into a running turn is no longer stopped when the turn records a tool call
+  while Chat waits to see it on the input, and a long one-line message (which Claude Code shows
+  as "[Pasted text #1]") goes too instead of waiting five seconds and staying on the input. Send
+  now into an idle input (the turn ended while the message waited) is an ordinary send.
+- Chat: "Rewind to here…" in the right-click menu is not offered over a subagent's transcript, and
+  is refused there with a word; it would have rewound to a prompt of the agent's.
+- Chat and the Session view: Claude Code's "[Request interrupted by user]" after an Esc is shown
+  as a quiet "Interrupted" line, no longer as a message of yours; it starts no new turn, so Stop
+  is not offered again for the turn you stopped, and it is not offered for Rewind or prompt recall.
+- Chat: Branch is not offered where the copy would hold a tool call without its result.
+- Chat: a message with a picture that Claude Code put back on its input after an early Stop is
+  recognised (and Press Enter's check finds it): Claude Code shows the text right after the
+  picture's marker, without the space Chat looked for.
+- Tools: the Claude Code compatibility check (`tools/cli-compat.ps1`) also checks what Chat now
+  relies on in Claude Code's files: messages sent while a turn runs (with a picture, one line, two
+  lines, two in a row) and how the transcript and the rewind list show them, what Esc does with
+  messages waiting in Claude Code's queue, thinking shown as updates, and that a branch's cut copy
+  resumes under its new id, in print mode and in the terminal. Its picture step refuses to run
+  when the clipboard holds more than plain text, and leaves the clipboard alone when something was
+  copied during the run.
+- Chat: the round "jump to latest" button no longer covers the last line of text while you are
+  scrolled back; the text ends above it.
+- Chat: buttons under your messages and under Claude's answer to each turn, shown while you point
+  at the message and always under the newest answer: Copy (the message as shown), Rewind (the
+  same as the right-click "Rewind to here…") under your own messages, and Branch, which starts a
+  new session that continues from a copy of the conversation up to the end of that message's turn
+  (with Claude's whole answer). Branch is offered once that turn has ended, and not in a
+  subagent's transcript. The original session is not changed; a branch has no file backups, so
+  it cannot rewind code changes made before its cut.
+- Sessions: the search finds a session by its id: the whole id, its first eight characters or
+  more, or a pasted line such as `claude --resume <id>` from a hand-over. It is listed first, under
+  "Session id", also when it is hidden, archived or a worker's session (its row says Hidden or
+  Archived, or its title is grey when the desktop app archived it). Other searches are as before.
+- Chat: when the terminal opens for a question Chat cannot answer itself (Claude Code may be
+  waiting, a permission prompt Chat cannot read whole, or a card's answer that could not go), the
+  terminal takes the keyboard, so the answer can be typed at once; not while you are typing in the
+  message box, the box or a card's field holds text, or text is selected in the conversation (so
+  Ctrl+C copies it and never reaches Claude Code). "Open terminal" on a card already did so.
+- Chat and the Session view: a drag after a double click selects on by whole words, and after
+  a triple click by whole paragraphs, in the conversation; in the message box a drag after a
+  double click goes by whole words. A drag after a double or triple click used to do nothing.
+- Chat: Ctrl+C copies the text selected in the conversation when the message box has no
+  selection of its own; it used to do nothing there.
+- Chat: a message typed while Claude works (in Chat or in the terminal) is shown as your message
+  where Claude Code handed it in; it used to be missing, with its picture.
+- Chat: with thinking shown as updates, the text Claude writes there is shown as its answer, as
+  the terminal shows it; it used to be folded away among the steps as a thought.
+- Chat: Send while a turn runs types the message into Claude Code's input at once, as Send now
+  does, when that input reads empty; Claude Code hands it to the running turn, and the box is free
+  for the next message. When the input holds something, the message waits for the turn as before.
+  The empty box then reads "Message Claude while it works…". Into a running turn (also with Send
+  now) Enter goes only once Claude Code's input shows the message, so a prompt drawn meanwhile
+  never gets it, and Stop stays available after such a message.
+- Chat: after a Stop before any answer, the message Claude Code puts back on its input is taken
+  back into the box also when other messages went in during that turn; other text left on the
+  input after a Stop is said in the box's notice instead of holding the next message silently.
+
 ## 0.1.5 (2026-11-28)
 
 - Chat: a new session before its first message shows a greeting in place of the grey "Waiting

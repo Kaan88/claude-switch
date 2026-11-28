@@ -233,7 +233,9 @@ impl AppState {
             chat.settle(chat.screen_idle(&tab.term, now));
             let decision = chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
             let tool = decision.1 == Some(super::Reason::Tool) && chat.reason != Some(super::Reason::Tool);
-            let changed = card | chat.react(decision.1) | (chat.last_gate.replace(decision.0) != Some(decision.0));
+            chat.set_selection(pane.ui.has_selection());
+            let changed =
+                card | chat.react_at(decision.1, now) | (chat.last_gate.replace(decision.0) != Some(decision.0));
             let may_write = window_allows_writes && (!shown || !chat.drawer_focus);
             let recalled = !chat.locked()
                 && chat.recall.advance(&mut chat.editor, &pane.model, shown && may_write && !chat.commands.open);
@@ -277,11 +279,20 @@ impl AppState {
             return false;
         }
         self.clear_session_text_focus();
+        if let Some(pane) = self.tabs.shown_mut().and_then(|t| t.pane.as_mut()) {
+            pane.chat.typed_at = Some(cx.now());
+        }
         if let Some(name) = k.name.as_ref()
             && let Some(tab) = self.tabs.shown_mut()
             && super::question::key(tab, cx.now(), name, mods, k.text.as_deref())
         {
             self.arm_chat_tick(cx);
+            return true;
+        }
+        if let Some(name) = k.name.as_ref()
+            && let Some(pane) = self.tabs.shown().and_then(|t| t.pane.as_ref())
+            && pane.copy_conversation(name, mods, platform::set_clipboard_text)
+        {
             return true;
         }
         // A card stands where the composer is: the hidden draft takes no keys, and Enter sends
@@ -317,11 +328,12 @@ impl AppState {
         true
     }
 
-    pub fn chat_text(&mut self, _cx: &mut Cx<'_, Msg>, text: &str) -> bool {
+    pub fn chat_text(&mut self, cx: &mut Cx<'_, Msg>, text: &str) -> bool {
         if !self.chat_takes_input() {
             return false;
         }
         let chat = &mut self.tabs.shown_mut().unwrap().pane.as_mut().unwrap().chat;
+        chat.typed_at = Some(cx.now());
         if super::question::text(chat, text) || chat.question.docked() || chat.popup_text(text) {
             return true;
         }
@@ -372,10 +384,14 @@ impl AppState {
             }
             Some(Target::Chat(Control::Editor)) => {
                 let (x, y) = chat.editor_point(x, y);
+                chat.editor_words = None;
                 if clicks >= 3 {
+                    // The whole draft: a drag after it has nothing more to take.
                     chat.editor.select_all();
                 } else if clicks == 2 {
                     chat.editor.word_at(x, y);
+                    chat.editor_words = Some(chat.editor.selection());
+                    chat.editor_drag = true;
                 } else {
                     chat.editor.point(x, y, cx.mods().shift);
                     chat.editor_drag = true;
@@ -400,9 +416,7 @@ impl AppState {
             return Some(true);
         }
         if chat.editor_drag {
-            let (x, y) = chat.editor_point(x, y);
-            let changed = chat.editor.point(x, y, true);
-            return Some(changed);
+            return Some(chat.editor_drag_to(x, y));
         }
         if chat.commands.open && chat.layout.suggestions.contains(x, y) {
             return Some(false);
@@ -604,6 +618,26 @@ impl AppState {
     }
 }
 
+impl crate::view::Pane {
+    /// Ctrl+C in Chat copies the conversation's selection when there is one and the message box
+    /// has none of its own (a hidden box, behind a card, has none): Chat's keys go to the box, so
+    /// the conversation's own Ctrl+C (`Ui::key`) is not reached. True when it copied; otherwise
+    /// the key goes on to the box as before.
+    pub(in crate::view) fn copy_conversation(
+        &self,
+        name: &KeyName,
+        mods: Mods,
+        set_clipboard: impl FnOnce(&str) -> bool,
+    ) -> bool {
+        let box_selection = !self.chat.question.docked() && !self.chat.editor.selection().is_empty();
+        matches!(name, KeyName::Char('c' | 'C'))
+            && mods.ctrl
+            && !mods.alt
+            && !box_selection
+            && self.ui.copy_selection_to(set_clipboard)
+    }
+}
+
 impl Chat {
     /// A key for the message box (Enter to send is the caller's). Modifiers reach the editor
     /// whole: Shift extends, Ctrl moves and deletes by word. Up and Down recall earlier prompts
@@ -670,11 +704,20 @@ impl Chat {
         if let Some((x, y)) = point {
             self.resize_drawer(y);
             if self.editor_drag {
-                let (x, y) = self.editor_point(x, y);
-                self.editor.point(x, y, true);
+                self.editor_drag_to(x, y);
             }
         }
+        self.editor_words = None;
         self.resizing.take().is_some() | std::mem::take(&mut self.editor_drag)
+    }
+
+    /// A drag in the message box: by characters, or by whole words after a double click.
+    fn editor_drag_to(&mut self, x: f32, y: f32) -> bool {
+        let (x, y) = self.editor_point(x, y);
+        match self.editor_words.clone() {
+            Some(first) => self.editor.extend_words(&first, x, y),
+            None => self.editor.point(x, y, true),
+        }
     }
 
     pub(super) fn paste_clipboard(&mut self, picture_only: bool) {

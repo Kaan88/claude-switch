@@ -245,6 +245,11 @@ pub(in crate::view::chat) fn shows_some_input(screen: &Screen) -> bool {
 /// `[Pasted text #n +m lines]`, as the whole input.
 fn paste_marker(text: &str) -> bool {
     let Some(rest) = text.strip_prefix(PASTE_MARKER) else { return false };
+    let digits = |s: &str| !s.is_empty() && s.len() <= 9 && s.bytes().all(|b| b.is_ascii_digit());
+    // A long single line: `[Pasted text #1]` (2.1.332, `recorder compat`'s `queued-text`).
+    if rest.strip_suffix(']').is_some_and(digits) {
+        return true;
+    }
     let Some((n, rest)) = rest.split_once(" +") else { return false };
     let lines = rest.strip_suffix(" lines]").or_else(|| rest.strip_suffix(" line]"));
     let digits = |s: &str| !s.is_empty() && s.len() <= 9 && s.bytes().all(|b| b.is_ascii_digit());

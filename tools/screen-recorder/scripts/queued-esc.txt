@@ -1,0 +1,26 @@
+# Two messages waiting in Claude Code's queue (sent while a tool runs), then Esc, as Chat's Stop
+# sends it. Claude Code 2.1.332 does not put them back on its input: it sends them as the next
+# turn, so Chat has nothing to take back and its input reads empty. Two model requests.
+#: args --permission-mode default --settings {scripts}/allow-ping.json
+#: seconds 50
+start
+send Run exactly this with the Bash tool and nothing else: ping -n 21 127.0.0.1
+sleep 800
+send \r
+wait ctrl+b to run in background 60000
+sleep 1500
+send \e[200~Also reply with the word echo.\e[201~
+sleep 1000
+send \r
+sleep 1500
+send \e[200~Then reply with the word foxtrot.\rOn one line.\e[201~
+sleep 1000
+send \r
+sleep 1500
+snap waiting
+send \e
+sleep 2500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap after_esc
+tscopy transcript

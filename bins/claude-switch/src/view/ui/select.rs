@@ -119,6 +119,28 @@ impl Ui {
         (!text.is_empty()).then_some(text)
     }
 
+    /// Something is selected in the conversation.
+    pub(in crate::view) fn has_selection(&self) -> bool {
+        self.selection.as_ref().is_some_and(|s| s.anchor != s.focus)
+    }
+
+    /// Copies the selection through `set_clipboard`; false when there is none to copy.
+    pub fn copy_selection_to(&self, set_clipboard: impl FnOnce(&str) -> bool) -> bool {
+        self.selected_text().is_some_and(|text| set_clipboard(&text))
+    }
+
+    /// A point over the first prompt shown, for pictures of pointing at it.
+    #[cfg(test)]
+    pub(in crate::view) fn prompt_point(&self) -> Option<(f32, f32)> {
+        let row = self.rows.iter().find(|r| r.style == super::rows::Style::Prompt && r.top + r.h > self.offset)?;
+        Some((self.body.x + row.geo.x + 20.0, self.body.y + row.top - self.offset + row.h / 2.0))
+    }
+
+    #[cfg(test)]
+    pub(in crate::view) fn select_everything(&mut self) -> bool {
+        self.select_all()
+    }
+
     pub(super) fn select_all(&mut self) -> bool {
         self.selection = Selection::all(&self.rows);
         self.selection.is_some()
@@ -229,7 +251,8 @@ impl AppState {
             matches!(&item.kind, claude_switch_core::transcript::ItemKind::Prompt { synthetic: false, text, .. }
                 if crate::view::chat::question::rewind::listed(text))
         });
-        if prompt && pane.chat.enabled {
+        // Not in a subagent's transcript: its prompts are not the session's.
+        if prompt && pane.chat.enabled && pane.model.agent.is_none() {
             items.push(Item::new(REWIND, "Rewind to here…").sep());
         }
         self.session_view.text_focus = true;
@@ -272,6 +295,10 @@ impl AppState {
         }
         let chat_on = |t: &&mut crate::tabs::Tab| t.pane.as_ref().is_some_and(|p| p.chat.enabled);
         let Some(t) = self.tabs.get_mut(tab).filter(chat_on) else { return false };
+        if t.pane.as_ref().is_some_and(|p| p.model.agent.is_some()) {
+            crate::view::chat::question::rewind::refuse_in_agent(t);
+            return true;
+        }
         crate::view::chat::question::rewind::start(t, now, item);
         true
     }

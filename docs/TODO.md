@@ -38,7 +38,6 @@ built by one agent (merge `d2deea0`) and released at the owner's word before a r
 
 - A correctness review of the branch (`main` b71f1a4 to `ee3500a`) for behaviour that changed beyond
   the look: sending, queueing, Send now, card answering, Stop, undo, prompt recall.
-- The round "jump to latest" button covers the last line of text while scrolled up.
 - Never tried in the running app or in a real session: the banner read on the empty state, the
   patch on real edits (diff line numbers), "Run in background" on the working line.
 - Never drawn: a multi-question form, a plain CLI menu, a read-only panel, the rewind and
@@ -83,40 +82,11 @@ as the second account, Windows Terminal, the desktop hand-over.
 
 ## Defects noticed
 
-- **Chat: Ctrl+C does not copy selected conversation text** (owner, 2026-11-28; cause read from the
-  code, not tried). `ChatPane::key` (`view/ui/input.rs`) copies the conversation's selection on Ctrl+C,
-  but in a Chat tab every key goes through `chat_key` (`view/chat/input.rs`) to the message box
-  (`editor_key`) and never reaches it. Ctrl+C should copy the conversation's selection when there is
-  one and the box has none; the right-click menu's Copy works meanwhile.
-- **Chat: a double-click selects a word, but dragging on does not extend it** (owner, 2026-11-28; cause
-  read from the code). `press` in `view/ui/input.rs` sets `dragging = clicks == 1`, so a drag after a
-  double- (or triple-) click is ignored. Expected, as in other apps: the drag extends word by word (line
-  by line after a triple-click). The message box has the same gap: `chat_press` sets `editor_drag` only
-  for a single click.
-- **Chat loses messages sent while a turn runs, and their answers** (owner, 2026-11-28, seen in 0.1.4
-  and 0.1.5; cause found, not fixed). Three parts:
-  1. *The user's message is not shown.* Claude Code (2.1.332) records a message typed while a turn
-     runs only as `{"type":"attachment","attachment":{"type":"queued_command","prompt":…,
-     "commandMode":"prompt","origin":{"kind":"human"}}}`, never as a `user` record. `prompt` is a
-     string, or the usual text and image blocks when a picture was pasted. The reader skips every
-     attachment except three notice kinds (`notices::shown_attachment`, `View::line`'s
-     `LineKind::Attachment` arm). Show it as a prompt; it starts no new turn, so it must not move
-     `ChatInfo::prompt` (attention). Leave out the same record with `commandMode:
-     "task-notification"` or `origin.kind: "peer"`. A picture's blocks then sit under
-     `attachment.prompt`, not `message.content` (`Reader::load_picture`). In the newest 60
-     transcripts: 26 such messages, none also recorded as a `user` record.
-  2. *The answer is folded away.* With thinking shown as updates (`"thinkingDisplay":"updates"` on
-     the assistant record), Claude often answers through a thinking block's text. The terminal shows
-     it as an answer line ("● … · summary"); Chat files every thinking block as a `Thought` notice, so
-     the answer sits inside a run of steps. In the newest 40 transcripts all 277 thinking blocks with
-     text had `updates` and read as messages to the user. Show those as answer text; keep other
-     thinking as Thought.
-  3. *Only one message can wait.* A draft queued behind a running turn locks the box
-     (`Chat::locked`, `chat.queue` holds one); the terminal lets the user type several messages,
-     which Claude Code hands in mid-turn. To decide: let Send type a message straight into the CLI's
-     input while a turn runs (as the terminal does), or keep a list of queued drafts.
-  A started fix for 1 and 2 with reader tests is on the local branch `fix/chat-queued-and-updates`
-  (`ed19614`, not pushed, only the core transcript tests run; nothing for 3).
+- Try Branch from the running app (2026-11-28: `recorder compat` resumes the app's cut copies in
+  print mode and in the terminal, but the app's own button, tab and mark were not used for real).
+- Try in the running app (built 2026-11-28; Claude Code's side is recorded by `recorder compat`,
+  script `queued`): Send while a turn runs goes into Claude Code's empty input and is handed in
+  mid-turn, and the message shows where the transcript has it.
 - Recheck the historical Claude Code white selection bar in a real session. The app now sets both
   selection colours. If Claude Code enables mouse reporting, use Shift+drag to test the terminal's own
   selection; a plain drag goes to the program. In the 760×480 `cmd.exe` demo, the same selection tint
@@ -136,18 +106,6 @@ as the second account, Windows Terminal, the desktop hand-over.
 - The account selector's drop-down shows each account's colour dot before its name, as the selector
   itself does (owner, 2026-11-28). Blocked on the toolkit: drop-down items cannot carry a colour
   swatch ("For the toolkit", item 1).
-- Buttons under each message, as in the desktop app (owner, 2026-11-28): under the user's bubble and
-  under Claude's answer, shown on pointing (and under the newest answer always), at least Copy and
-  Branch (continue a copy of the conversation from that message), plus Rewind to here under the
-  user's own message. Today these are only in the right-click menu (Copy message, Copy as Markdown,
-  Rewind to here…) and Branch does not exist per message (Open a copy forks the whole session with
-  `--fork-session`). Item 12 of the redesign study (`docs/chat-redesign.md` on `design/chat-redesign`)
-  drew the row; how Branch cuts the transcript at a message must be tried against Claude Code first.
-- Find a session by its id: a pasted session id (or a `claude --resume <id>` line, as handovers give
-  it) in the Sessions search matches that session, so it can be opened at once (owner, 2026-11-28).
-- When the terminal opens for a question (a card's "Open terminal", or Chat handing a question it
-  cannot answer to the terminal), give the terminal keyboard focus so the answer can be typed at
-  once (owner, 2026-11-28).
 - Multiple terminal splits, search in scrollback, font-family settings, tab reordering, restoring tabs.
 - Reuse Conversation in Sessions details later. That view is currently a short read-only preview
   and has no independently scrollable transcript region.

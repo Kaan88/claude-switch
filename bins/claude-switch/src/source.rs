@@ -160,6 +160,15 @@ impl Source {
         }
     }
 
+    /// What resumes a branch of `s` under `new_id` once its transcript copy is written
+    /// (`claude_switch_core::branch`; the demo has no transcripts to copy).
+    pub fn branch(&self, c: &Config, s: &Session, account: &str, new_id: &str) -> Result<Launch, Refusal> {
+        match self {
+            Source::Real(roots) => launch::branch(roots, c, s, account, new_id),
+            Source::Demo => Ok(demo::branch(new_id, account)),
+        }
+    }
+
     pub fn new_session(&self, c: &Config, account: &str, app: App, cwd: &std::path::Path) -> Result<Launch, Refusal> {
         match self {
             Source::Real(roots) => launch::new_session(roots, c, account, app, cwd),

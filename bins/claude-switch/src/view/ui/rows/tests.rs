@@ -30,7 +30,8 @@ fn tool(name: &str, state: ToolState, card: Option<ToolCard>) -> Item {
 fn tool_only_outputs_follow_the_next_answer_and_repeated_links_use_its_label() {
     use crate::view::outputs::collect;
     use claude_switch_core::transcript::ResultDetails;
-    let prompt = || item(ItemKind::Prompt { text: "show outputs".into(), pictures: vec![], synthetic: false });
+    let prompt =
+        || item(ItemKind::Prompt { text: "show outputs".into(), pictures: vec![], synthetic: false, queued: false });
     let answer = item(ItemKind::Assistant { markdown: "[Named artifact](https://claude.ai/artifacts/1)".into() });
     let call = tool("Bash", ToolState::Ok, None);
     let result =
@@ -80,7 +81,7 @@ fn both_views_say_runs_in_words_show_edits_as_rows_and_put_only_successful_named
         patch: None,
     };
     let shell = ToolCard::Shell { command: "echo enter/leave".into(), result: vec!["enter/leave".into()] };
-    let prompt = || item(ItemKind::Prompt { text: "short".into(), pictures: vec![], synthetic: false });
+    let prompt = || item(ItemKind::Prompt { text: "short".into(), pictures: vec![], synthetic: false, queued: false });
     model.items = [
         prompt(),
         item(ItemKind::Assistant { markdown: "Here is the answer.".into() }),
@@ -119,6 +120,7 @@ fn both_views_say_runs_in_words_show_edits_as_rows_and_put_only_successful_named
             chat,
             offer: None,
             awaiting: None,
+            actions: Default::default(),
         };
         rows.conversation(
             &model,
@@ -244,7 +246,7 @@ fn a_run_reads_in_words_by_kind_and_a_call_a_card_asks_about_waits() {
         call
     };
     model.items = [
-        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false, queued: false }),
         call("Bash", "cargo test -p tiles", ToolState::Ok, Some(shell("cargo test -p tiles"))),
         item(ItemKind::Assistant { markdown: "Now the benchmark.".into() }),
         call("Bash", "cargo bench", ToolState::Running, Some(shell("cargo bench"))),
@@ -266,6 +268,7 @@ fn a_run_reads_in_words_by_kind_and_a_call_a_card_asks_about_waits() {
             chat: true,
             offer: None,
             awaiting,
+            actions: Default::default(),
         };
         rows.conversation(&model, &BTreeSet::new(), &if open { [id(1)].into() } else { BTreeSet::new() });
         rows.list
@@ -295,7 +298,7 @@ fn notices_are_compact_rows_that_expand_and_thoughts_are_steps_that_do_not_split
     let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
     let notice = |kind, text: &str| item(ItemKind::Notice { kind, text: text.into() });
     model.items = [
-        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false, queued: false }),
         notice(NoticeKind::Thought, "First I **read** the file.\nThen I edit it."),
         tool("Read", ToolState::Ok, None),
         notice(NoticeKind::Thought, "Now the edit."),
@@ -323,6 +326,7 @@ fn notices_are_compact_rows_that_expand_and_thoughts_are_steps_that_do_not_split
             chat: true,
             offer: None,
             awaiting: None,
+            actions: Default::default(),
         };
         rows.conversation(&model, &open, &tools);
         rows.list
@@ -367,13 +371,13 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
         })
     };
     model.items = [
-        item(ItemKind::Prompt { text: "/model".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "/model".into(), pictures: vec![], synthetic: false, queued: false }),
         local("/model", "", "Set model to Opus 5.5", ToolState::Ok),
-        item(ItemKind::Prompt { text: "/context".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "/context".into(), pictures: vec![], synthetic: false, queued: false }),
         local("/context", "", "Context Usage\n⛁ ⛁ ⛀ 12k / 200k", ToolState::Ok),
         local("Shell", "! git status", "On branch main", ToolState::Ok),
         local("Shell", "! git lg", "git: 'lg' is not a git command.", ToolState::Failed),
-        item(ItemKind::Prompt { text: "next".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "next".into(), pictures: vec![], synthetic: false, queued: false }),
         local("Shell", "! true", "", ToolState::Ok),
     ]
     .into_iter()
@@ -393,6 +397,7 @@ fn command_replies_read_on_their_row_and_longer_output_is_a_mono_card() {
             chat: true,
             offer: None,
             awaiting: None,
+            actions: Default::default(),
         };
         rows.conversation(&model, &BTreeSet::new(), &tools);
         rows.list
@@ -436,7 +441,7 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         call
     };
     model.items = [
-        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false }),
+        item(ItemKind::Prompt { text: "go".into(), pictures: vec![], synthetic: false, queued: false }),
         denied(DenialKind::AutoMode, "Too risky."),
         denied(DenialKind::User, "The user doesn't want to proceed with this tool use."),
         tool("Read", ToolState::Failed, None),
@@ -458,6 +463,7 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         chat: true,
         offer: None,
         awaiting: None,
+        actions: Default::default(),
     };
     rows.conversation(&model, &[id(1)].into(), &[id(1)].into());
     let row = |i| rows.list.iter().find(|r| r.id == Id::Tool(id(i))).unwrap();
@@ -474,4 +480,70 @@ fn a_denied_call_says_who_refused_it_instead_of_failed() {
         body.starts_with("mkdir probe") && body.ends_with("Auto mode's classifier blocked it: Too risky."),
         "{body}"
     );
+}
+
+#[test]
+fn chat_keeps_room_for_buttons_under_each_prompt_and_each_turns_last_answer() {
+    let demo = crate::demo::Transcript::new().unwrap();
+    let mut model = Model::new(super::super::super::model::Source::File(demo.path().into()), demo.cwd().into(), || {});
+    let prompt =
+        |text: &str, queued| item(ItemKind::Prompt { text: text.into(), pictures: vec![], synthetic: false, queued });
+    let answer = |text: &str| item(ItemKind::Assistant { markdown: text.into() });
+    model.items = [
+        prompt("first", false),
+        answer("looking"),
+        tool("Read", ToolState::Ok, None),
+        answer("done with the first"),
+        prompt("also this", true),
+        answer("done with that too"),
+        prompt("/context", false),
+        answer("the newest"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, item)| (id(i as u64), item))
+    .collect();
+    model.groups = super::super::super::model::group(&model.items);
+    let pal = &mdshared_ui::theme::DARK;
+    for (chat, agent) in [(true, false), (false, false), (true, true)] {
+        model.agent = agent.then(|| "agent-1".to_owned());
+        let mut rows = Rows {
+            list: vec![],
+            previous: BTreeMap::new(),
+            end: 0.0,
+            width: 700.0,
+            scale: 1.0,
+            pal,
+            chat,
+            offer: None,
+            awaiting: None,
+            actions: MessageActions::of(&model, chat),
+        };
+        rows.conversation(&model, &BTreeSet::new(), &BTreeSet::new());
+        let actions = |i| rows.list.iter().find(|r| r.id == Id::Message(id(i))).unwrap().actions;
+        if !chat || agent {
+            // The Session view is as it was; a subagent's transcript has no buttons (its items are
+            // not the session's).
+            assert!(rows.list.iter().all(|r| r.actions.is_none()));
+            continue;
+        }
+        // Rewind only where the CLI's rewind list has the prompt: not a slash command. A message
+        // sent while a turn ran is listed there too.
+        assert_eq!(actions(0), Some(Actions { rewind: true, newest: false, branch: true }));
+        assert_eq!(actions(4), Some(Actions { rewind: true, newest: false, branch: true }));
+        assert_eq!(actions(6), Some(Actions { rewind: false, newest: false, branch: false }));
+        // Branch only where a turn ended, before the next prompt typed at an idle input: not under
+        // an answer the turn went on after (3, before a message sent during it), nor in the newest
+        // turn while it has not ended (6, 7).
+        // An answer that goes on into tool calls has none; each turn's last has them.
+        assert_eq!(actions(1), None);
+        assert_eq!(actions(3), Some(Actions { rewind: false, newest: false, branch: false }));
+        assert_eq!(actions(5), Some(Actions { rewind: false, newest: false, branch: true }));
+        assert_eq!(actions(7), Some(Actions { rewind: false, newest: true, branch: false }));
+        // Their room is kept under the message, shown or not.
+        let row = |i| rows.list.iter().find(|r| r.id == Id::Message(id(i))).unwrap();
+        let next = |i: u64| rows.list.iter().find(|r| r.id == Id::Message(id(i + 1))).unwrap();
+        assert!(next(0).top - (row(0).top + row(0).h) >= ACTIONS_ROOM);
+        assert!(next(4).top - (row(4).top + row(4).h) >= ACTIONS_ROOM);
+    }
 }

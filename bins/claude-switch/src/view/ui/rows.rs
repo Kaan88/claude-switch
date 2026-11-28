@@ -298,6 +298,53 @@ const BUBBLE_TOP: f32 = 10.0;
 const AFTER_TOOLS: f32 = 8.0;
 /// A little more air between an answer and the tool lines under it.
 const UNDER_ANSWER: f32 = 3.0;
+/// The row of buttons under a message in Chat (Copy, Rewind, Branch): its buttons' height, and
+/// the room kept for it under the message, shown or not, so pointing moves nothing.
+pub(super) const ACTION_H: f32 = 24.0;
+pub(super) const ACTIONS_ROOM: f32 = ACTION_H + 8.0;
+
+/// The buttons under a message in Chat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Actions {
+    /// "Rewind to here", as the right-click menu offers it: a prompt the CLI's rewind list shows.
+    pub rewind: bool,
+    /// The newest answer: its buttons always show; the others' while the pointer is over them.
+    pub newest: bool,
+    /// Branch: the message's turn has ended, so a copy cut there can go on
+    /// (`Model::branch_cut`).
+    pub branch: bool,
+}
+
+/// Which messages carry buttons in Chat, worked out once per layout.
+#[derive(Default)]
+pub(super) struct MessageActions {
+    /// Off in the Session view and in a subagent's transcript (its items are not the session's).
+    pub on: bool,
+    /// The answers with buttons under them (each turn's last), and the newest of them.
+    pub answers: BTreeSet<ItemId>,
+    pub newest: Option<ItemId>,
+    /// The messages a branch can be made at.
+    pub branch: BTreeSet<ItemId>,
+}
+
+impl MessageActions {
+    pub fn of(m: &Model, chat: bool) -> Self {
+        if !chat || m.agent.is_some() {
+            return Self::default();
+        }
+        let (answers, newest) = answer_actions(&m.items);
+        let branch = m
+            .items
+            .iter()
+            .filter(|(_, item)| {
+                matches!(item.kind, ItemKind::Prompt { synthetic: false, .. } | ItemKind::Assistant { .. })
+            })
+            .filter(|(id, _)| m.branch_cut(**id).is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        Self { on: true, answers, newest, branch }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Geometry {
@@ -419,6 +466,8 @@ pub(super) struct Row {
     /// An edit's lines added and removed, and its diff when open.
     pub counts: (usize, usize),
     pub diff: Diff,
+    /// The buttons under a message (Chat only).
+    pub actions: Option<Actions>,
 }
 
 /// Reuse unchanged shaping across appends and prepended history.
@@ -537,6 +586,24 @@ pub(super) struct Rows<'a> {
     pub offer: Option<ItemId>,
     /// The pending call a card asks about: it has not started, it waits for the answer.
     pub awaiting: Option<ItemId>,
+    /// Which messages carry buttons (Chat only).
+    pub actions: MessageActions,
+}
+
+/// The answers that carry the buttons in Chat: the last answer before each prompt and the last of
+/// all, which is the newest.
+pub(super) fn answer_actions(items: &BTreeMap<ItemId, Item>) -> (BTreeSet<ItemId>, Option<ItemId>) {
+    let mut set = BTreeSet::new();
+    let mut last = None;
+    for (&id, item) in items {
+        match item.kind {
+            ItemKind::Prompt { synthetic: false, .. } => set.extend(last.take()),
+            ItemKind::Assistant { .. } => last = Some(id),
+            _ => {}
+        }
+    }
+    set.extend(last);
+    (set, last)
 }
 
 impl Rows<'_> {
@@ -619,6 +686,7 @@ impl Rows<'_> {
             head: 0.0,
             counts: (0, 0),
             diff: Diff::default(),
+            actions: None,
         }
     }
 
@@ -655,6 +723,8 @@ impl Rows<'_> {
             Style::Card => (HEAD + content + 12.0, 7.0),
         };
         row.h = h;
+        // The buttons under a message keep their room, so that pointing at it moves nothing.
+        let gap = if row.actions.is_some() { f32::min(gap, 10.0) + ACTIONS_ROOM } else { gap };
         self.end += h + gap;
         self.list.push(row);
     }
@@ -684,7 +754,7 @@ impl Rows<'_> {
             };
             for &id in ids {
                 let Some(item) = m.items.get(&id) else { continue };
-                if matches!(item.kind, ItemKind::Prompt { synthetic: false, .. }) {
+                if matches!(item.kind, ItemKind::Prompt { synthetic: false, queued: false, .. }) {
                     self.put_files(&mut writes);
                 }
                 writes.observe(id, item, m.files.get(&id));
@@ -814,8 +884,11 @@ impl Rows<'_> {
     fn item(&mut self, id: ItemId, item: &Item, line: Line, files: Option<&Files>) {
         let open = line.open;
         let row = match &item.kind {
-            ItemKind::Prompt { text, pictures, .. } => {
+            ItemKind::Prompt { text, pictures, synthetic, .. } => {
                 let mut row = self.row(Id::Message(id), Style::Prompt);
+                let rewind = crate::view::chat::question::rewind::listed(text);
+                let branch = self.actions.branch.contains(&id);
+                row.actions = (self.actions.on && !synthetic).then_some(Actions { rewind, newest: false, branch });
                 row.body = (!text.is_empty()).then(|| self.shape(&row.id, text, row.geo.tw, BodyKind::Prompt, files));
                 let count = pictures.len();
                 row.pictures.extend(thumbs(id, count, move |i| {
@@ -825,6 +898,12 @@ impl Rows<'_> {
             }
             ItemKind::Assistant { markdown } => {
                 let mut row = self.row(Id::Message(id), Style::Answer);
+                let (newest, branch) = (self.actions.newest == Some(id), self.actions.branch.contains(&id));
+                row.actions = (self.actions.on && self.actions.answers.contains(&id)).then_some(Actions {
+                    rewind: false,
+                    newest,
+                    branch,
+                });
                 row.body = Some(self.shape(&row.id, markdown, row.geo.tw, BodyKind::Markdown, files));
                 row
             }
@@ -1030,7 +1109,7 @@ fn output_cards(
     // Tool-only results sit under the next answer in the same turn, or their tool group
     // if the turn has not produced another answer. Prefer the assistant's link label.
     for (&id, item) in items.iter().rev() {
-        if matches!(item.kind, ItemKind::Prompt { synthetic: false, .. }) {
+        if matches!(item.kind, ItemKind::Prompt { synthetic: false, queued: false, .. }) {
             next_answer = None;
             current_turn = Some(id);
         }
@@ -1066,6 +1145,7 @@ fn notice_look(kind: NoticeKind) -> (&'static str, Tone, BodyKind) {
         NoticeKind::Memory => ("Memory", Tone::Muted, BodyKind::Plain),
         NoticeKind::Recap => ("Recap", Tone::Muted, BodyKind::Markdown),
         NoticeKind::Info => ("Notice", Tone::Warning, BodyKind::Plain),
+        NoticeKind::Interrupted => ("Interrupted", Tone::Muted, BodyKind::Plain),
         NoticeKind::Compaction => ("Context compacted", Tone::Muted, BodyKind::Plain),
         NoticeKind::ApiError => ("API error", Tone::Warning, BodyKind::Plain),
     }

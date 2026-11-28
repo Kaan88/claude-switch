@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use claude_switch_core::Launch;
+use claude_switch_core::transcript::ItemId;
 use mdshared_ui::cursor::Cursor;
 use mdshared_ui::gfx::{Painter, Rect};
 use mdshared_ui::host::Cx;
@@ -96,6 +97,25 @@ pub struct Pane {
 }
 
 impl Pane {
+    /// What a branch at the message `item` copies: the transcript the reader reads (its file and
+    /// the session id it verified) and where to cut it (`Model::branch_cut`). Why not, otherwise.
+    pub(crate) fn branch_plan(
+        &self,
+        item: ItemId,
+    ) -> Result<(PathBuf, String, claude_switch_core::branch::Cut), &'static str> {
+        if self.model.agent.is_some() {
+            return Err("Branch works in the session's own conversation, not in a subagent's.");
+        }
+        let cut = self.model.branch_cut(item).ok_or("Branch works at the end of a turn that has ended.")?;
+        let id = self.model.session_id().ok_or("The session is not verified yet. Try again in a moment.")?;
+        let path = self.verified_path.clone().ok_or("The session's transcript is not read yet.")?;
+        let named = path.file_stem().is_some_and(|stem| stem.to_string_lossy().eq_ignore_ascii_case(id));
+        if !named {
+            return Err("The transcript Chat reads is not this session's.");
+        }
+        Ok((path, id.to_owned(), cut))
+    }
+
     fn transcript_end(&self) -> Option<u64> {
         if self.chat.awaiting_transcript {
             // No file yet: everything the CLI writes to it later is newer than this input.
@@ -116,6 +136,17 @@ impl Pane {
 
     fn note_composer_input(&mut self) {
         self.chat.watermark_input(&self.model.chat, self.transcript_end());
+    }
+
+    /// Keys of a message going into the running turn: Claude Code records it as part of that turn
+    /// (a `queued_command`), never as a new prompt, so the turn stays the one the transcript shows
+    /// (Stop, the gate); only the input's time is noted.
+    fn note_composer_input_into_turn(&mut self, into_turn: bool) {
+        if into_turn {
+            self.chat.note_input();
+        } else {
+            self.note_composer_input();
+        }
     }
     pub fn restore_chat_layout(&mut self, chat: bool) {
         self.chat.enabled = chat;
@@ -591,6 +622,21 @@ impl AppState {
             }
             ui::Release::ShellList => {
                 self.select_shell(None);
+                true
+            }
+            ui::Release::Rewind(item) => {
+                // The right-click menu's "Rewind to here…": the same start and checks.
+                if let Some(tab) = self.tabs.active {
+                    self.term_woke(cx);
+                    self.rewind_from_menu(tab, item, cx.now());
+                    self.arm_chat_tick(cx);
+                }
+                true
+            }
+            ui::Release::Branch(item) => {
+                if let Some(tab) = self.tabs.active {
+                    self.branch_at(cx.now(), tab, item);
+                }
                 true
             }
         }

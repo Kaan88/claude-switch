@@ -451,6 +451,14 @@ pub(super) fn running(tab: &mut crate::tabs::Tab, now: Instant) {
     pane.chat.editor.insert("next");
 }
 
+/// Send while the turn runs and Claude Code's input does not read empty, so the draft is held
+/// (into an empty input it would go into the turn at once); then the input reads empty again.
+pub(super) fn send_held(tab: &mut crate::tabs::Tab, now: Instant) {
+    tab.term.feed("\r\x1b[K❯ typed".as_bytes());
+    crate::state::AppState::chat_send(tab, now, false);
+    tab.term.feed("\r\x1b[K❯ ".as_bytes());
+}
+
 #[test]
 fn queue_waits_for_a_newer_completion_then_sends_once_and_cancel_keeps_the_draft() {
     use crate::state::AppState;
@@ -459,7 +467,7 @@ fn queue_waits_for_a_newer_completion_then_sends_once_and_cancel_keeps_the_draft
         let tab = app.tabs.shown_mut().unwrap();
         let now = Instant::now();
         running(tab, now);
-        AppState::chat_send(tab, now, false);
+        send_held(tab, now);
         let pane = tab.pane.as_mut().unwrap();
         assert!(pane.chat.locked() && pane.chat.writes.is_empty());
         assert_eq!(pane.chat.notice(&pane.model.chat), Some("A turn is running. This will be sent when it ends."));
@@ -486,7 +494,7 @@ fn send_now_never_overrides_a_live_permission_question() {
     let tab = app.tabs.shown_mut().unwrap();
     let now = Instant::now();
     running(tab, now);
-    AppState::chat_send(tab, now, false);
+    send_held(tab, now);
     tab.term.feed(b"\r\nDo you want to proceed?\r\n1. Yes\r\n2. No\r\nEsc to cancel");
     AppState::chat_send(tab, now, true);
     let chat = &tab.pane.as_ref().unwrap().chat;
@@ -621,7 +629,8 @@ fn undo_and_redo_walk_every_kind_of_draft_edit_with_its_caret_and_selection() {
     // A recalled prompt is a step too, and so is leaving it.
     let mut model =
         crate::view::model::Model::new(crate::view::model::Source::File(Default::default()), Default::default(), || {});
-    let kind = ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false };
+    let kind =
+        ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false, queued: false };
     model.items.insert(ItemId { offset: 1, block: 0 }, Item { timestamp: None, kind });
     assert!(chat.recall_key(&model, &KeyName::Up));
     assert_eq!(chat.editor.text, "an earlier prompt");
@@ -685,7 +694,8 @@ fn caret_keys_move_and_select_by_character_word_line_and_draft_like_a_windows_te
     let ctrl = Mods { ctrl: true, ..plain };
     let both = Mods { ctrl: true, shift: true, ..plain };
     let mut model = model::Model::new(model::Source::File(Default::default()), Default::default(), || {});
-    let kind = ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false };
+    let kind =
+        ItemKind::Prompt { text: "an earlier prompt".into(), pictures: Vec::new(), synthetic: false, queued: false };
     model.items.insert(ItemId { offset: 1, block: 0 }, Item { timestamp: None, kind });
     let mut chat = Chat::default();
     chat.editor.history.clock = Some(Instant::now());
@@ -791,4 +801,173 @@ fn the_details_panel_follows_what_it_has_to_show_until_the_user_chooses() {
     chat(&mut st, id).side_choice = Some(true);
     st.layout_chat(area);
     assert!(chat(&mut st, id).layout.side.w > 0.0, "opened by the user, it stays open");
+}
+
+#[test]
+fn ctrl_c_copies_the_conversations_selection_unless_the_message_box_has_one() {
+    use mdshared_text::bitmap::Bitmap;
+    use mdshared_ui::gfx::{Gfx, Painter};
+    use mdshared_ui::keys::{KeyName, Mods};
+    let demo = crate::demo::Transcript::new_chat().unwrap();
+    let source = model::Source::File(demo.path().into());
+    let (wake, events) = std::sync::mpsc::channel();
+    let mut model = model::Model::new(source.clone(), demo.cwd().into(), move || {
+        let _ = wake.send(());
+    });
+    model.poll();
+    events.recv_timeout(Duration::from_secs(5)).expect("the transcript was read");
+    assert!(model.collect());
+    let mut app = demo_app_with_pane(source, demo.cwd().into());
+    let pane = app.tabs.shown_mut().unwrap().pane.as_mut().unwrap();
+    let (mut gfx, mut bmp) = (Gfx::new(), Bitmap::new(700, 500));
+    let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+    pane.ui.set_chat(true);
+    let area = Rect::new(0.0, 0.0, 700.0, 500.0);
+    pane.ui.draw(&mut p, &mdshared_ui::theme::DARK, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+    let ctrl = Mods { ctrl: true, ..Mods::default() };
+    let copy = |pane: &crate::view::Pane, name: char, mods: Mods| {
+        let mut copied = None;
+        let done = pane.copy_conversation(&KeyName::Char(name), mods, |text| {
+            copied = Some(text.to_owned());
+            true
+        });
+        (done, copied)
+    };
+    // Nothing selected in the conversation: the key is the box's, as before.
+    assert_eq!(copy(pane, 'c', ctrl), (false, None));
+    assert!(pane.ui.select_everything());
+    let (done, copied) = copy(pane, 'c', ctrl);
+    assert!(done && copied.is_some_and(|text| !text.is_empty()));
+    assert!(copy(pane, 'C', Mods { shift: true, ..ctrl }).0, "Ctrl+Shift+C too, as in the box");
+    assert_eq!(copy(pane, 'c', Mods { alt: true, ..ctrl }), (false, None));
+    assert_eq!(copy(pane, 'c', Mods::default()), (false, None));
+    assert_eq!(copy(pane, 'v', ctrl), (false, None));
+    // The box's own selection comes first.
+    pane.chat.editor.set("draft".into());
+    pane.chat.editor.select_all();
+    assert_eq!(copy(pane, 'c', ctrl), (false, None));
+    pane.chat.editor.set("draft".into());
+    assert!(pane.chat.editor.selection().is_empty());
+    assert!(copy(pane, 'c', ctrl).0, "a caret is no selection");
+}
+
+/// The demo window with a Chat pane over `source`.
+fn demo_app_with_pane(source: model::Source, cwd: std::path::PathBuf) -> crate::state::AppState {
+    let mut app = demo();
+    let pane = app.new_session_pane(source, cwd);
+    app.tabs.shown_mut().unwrap().pane = Some(pane);
+    app
+}
+
+#[test]
+fn the_terminal_takes_the_keyboard_when_it_opens_for_a_question_chat_cannot_answer() {
+    let now = Instant::now();
+    let typed = |ago: u64| Some(now - Duration::from_millis(ago));
+    for (reason, typed_at, focus) in [
+        (Reason::Permission, None, true),
+        (Reason::Tool, None, true),
+        (Reason::Tool, typed(3000), true),
+        // Someone typing in the box keeps it: the next key would land on Claude Code's prompt.
+        (Reason::Permission, typed(300), false),
+        (Reason::Bell, None, false),
+        (Reason::Identity, None, false),
+    ] {
+        let mut chat = Chat { typed_at, ..Chat::default() };
+        chat.react_at(Some(reason), now);
+        assert_eq!(chat.drawer, Drawer::Auto(reason));
+        assert_eq!(chat.drawer_focus, focus, "{reason:?} {typed_at:?}");
+        // Gone again, the drawer closes and the box has the keyboard.
+        chat.react_at(None, now);
+        assert!(chat.drawer == Drawer::Closed && !chat.drawer_focus);
+    }
+    // Nor while the keyboard is in use here: text in the box, an attachment, text in a card's
+    // field, or a selection in the conversation (Ctrl+C is meant for it, never for the CLI).
+    let draft = |chat: &mut Chat| chat.editor.set("half a sentence".into());
+    let field = |chat: &mut Chat| chat.question.field.set_text("my own answer");
+    let selected = |chat: &mut Chat| chat.set_selection(true);
+    for (what, keep) in [("draft", draft as fn(&mut Chat)), ("field", field), ("selection", selected)] {
+        let mut chat = Chat::default();
+        keep(&mut chat);
+        assert!(chat.keeps_keyboard(now), "{what}");
+        chat.react_at(Some(Reason::Permission), now);
+        assert!(chat.drawer == Drawer::Auto(Reason::Permission) && !chat.drawer_focus, "{what}");
+    }
+    // A drawer the user opened keeps its focus as it was.
+    let mut chat = Chat { drawer: Drawer::Manual, ..Chat::default() };
+    chat.react_at(Some(Reason::Permission), now);
+    assert!(!chat.drawer_focus);
+}
+
+#[test]
+fn a_branch_is_cut_only_where_a_turn_ended_and_never_in_a_subagents_transcript() {
+    use claude_switch_core::branch::Cut;
+    use claude_switch_core::transcript::{ChatPhase, Item, ItemId, ItemKind, NoticeKind};
+    let mut app = demo();
+    let pane = app.tabs.shown_mut().unwrap().pane.as_mut().unwrap();
+    let at = |offset| ItemId { offset, block: 0 };
+    let prompt =
+        |text: &str, queued| ItemKind::Prompt { text: text.into(), pictures: vec![], synthetic: false, queued };
+    let answer = |text: &str| ItemKind::Assistant { markdown: text.into() };
+    pane.model.items = [
+        (at(10), prompt("first", false)),
+        (at(20), answer("working on it")),
+        (at(30), prompt("also this", true)),
+        (at(40), answer("done")),
+        (at(50), prompt("second", false)),
+        (at(60), answer("thinking aloud")),
+        (at(65), answer("the newest")),
+        (at(70), ItemKind::Notice { kind: NoticeKind::Info, text: "x".into() }),
+    ]
+    .into_iter()
+    .map(|(id, kind)| (id, Item { timestamp: None, kind }))
+    .collect();
+    let model = &mut pane.model;
+    // The newest turn still runs: nothing in it is a place to branch.
+    model.chat.latest = Some((65, ChatPhase::Active));
+    // A turn that ended before the next prompt typed at an idle input: cut right before that
+    // prompt, from its prompt, from a message sent during it and from its last answer.
+    for item in [10, 30, 40] {
+        assert_eq!(model.branch_cut(at(item)), Some(Cut::Before(50)), "{item}");
+    }
+    // An answer the turn went on after is no end; nor a notice; nor the running turn.
+    for item in [20, 70, 50, 60, 65] {
+        assert_eq!(model.branch_cut(at(item)), None, "{item}");
+    }
+    // Once it has ended: cut after the record of its end, from its prompt and its last answer.
+    model.chat.latest = Some((65, ChatPhase::EndTurn));
+    assert_eq!(model.branch_cut(at(50)), Some(Cut::After(65)));
+    assert_eq!(model.branch_cut(at(65)), Some(Cut::After(65)));
+    assert_eq!(model.branch_cut(at(60)), None, "not mid-turn");
+    // A call still pending is no ended turn.
+    model.chat.pending = Some(64);
+    assert_eq!(model.branch_cut(at(65)), None);
+    model.chat.pending = None;
+    // A call without its result before the cut: Claude Code could not go on from the copy.
+    let running = ItemKind::Tool {
+        id: "toolu_lost".into(),
+        name: "Bash".into(),
+        summary: "ping".into(),
+        file_path: None,
+        state: claude_switch_core::transcript::ToolState::Running,
+        duration_ms: None,
+        pictures: vec![],
+        subagent: None,
+        denial: None,
+        card: None,
+    };
+    model.items.insert(at(15), Item { timestamp: None, kind: running });
+    for item in [10, 40, 50, 65] {
+        assert_eq!(model.branch_cut(at(item)), None, "{item}");
+    }
+    model.items.remove(&at(15));
+    // In a subagent's transcript the items are the agent's: no branch, no buttons, a refusal.
+    model.agent = Some("agent-1".into());
+    assert_eq!(model.branch_cut(at(10)), None);
+    assert_eq!(
+        pane.branch_plan(at(10)).unwrap_err(),
+        "Branch works in the session's own conversation, not in a subagent's."
+    );
+    let tab = app.tabs.shown().unwrap().id;
+    app.branch_at(Instant::now(), tab, at(10));
+    assert!(app.info.is_some(), "refused, with the reason");
 }

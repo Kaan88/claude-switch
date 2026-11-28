@@ -70,6 +70,8 @@ pub enum NoticeKind {
     Recap,
     /// Another banner Claude Code marked as a warning.
     Info,
+    /// Claude Code's own record of an Esc: "[Request interrupted by user]" (or "… for tool use").
+    Interrupted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,6 +80,9 @@ pub enum ItemKind {
         text: String,
         pictures: Vec<Picture>,
         synthetic: bool,
+        /// Sent while a turn ran (a `queued_command` record): Claude Code hands it to the running
+        /// turn, so it starts no turn (its rewind list shows it all the same).
+        queued: bool,
     },
     Assistant {
         markdown: String,
@@ -271,7 +276,10 @@ impl Reader {
         }
         let line = self.tail.read(picture.line_offset, picture.line_len as u64)?;
         let value: Value = serde_json::from_slice(&line).map_err(|_| invalid_picture("invalid picture line"))?;
-        let block = &value["message"]["content"][picture.block];
+        // A message sent while a turn ran keeps its blocks in its queued_command attachment.
+        let content =
+            if value["type"] == "attachment" { &value["attachment"]["prompt"] } else { &value["message"]["content"] };
+        let block = &content[picture.block];
         let block = match picture.result_block {
             Some(index) => &block["content"][index],
             None => block,
@@ -505,12 +513,12 @@ impl View {
                 let mut texts = Vec::new();
                 let mut pictures = Vec::new();
                 let mut results = Vec::new();
-                if let Some(text) = content.as_str().and_then(prompt_text) {
+                if let Some(text) = content.as_str().and_then(prompt_value) {
                     texts.push(text);
                 }
                 for (i, block) in blocks(content).enumerate() {
                     match block["type"].as_str() {
-                        Some("text") => texts.extend(block["text"].as_str().and_then(prompt_text)),
+                        Some("text") => texts.extend(block["text"].as_str().and_then(prompt_value)),
                         Some("image") => pictures.extend(picture(i, None, block)),
                         Some("tool_result") => {
                             if let Some(tool) = block["tool_use_id"].as_str() {
@@ -544,6 +552,15 @@ impl View {
                     self.plans_dirty |= known.is_some();
                     self.native_results.insert(outcome.tool.clone(), (id(0), outcome));
                 }
+                // Claude Code's own words for an Esc, written as a user text: not the user's prompt,
+                // and no new turn (Claude Code 2.1.332, `recorder compat`'s `queued-esc`).
+                if let Some(at) = texts.iter().position(|t| interrupted(t)) {
+                    let text = texts.remove(at).trim().trim_matches(['[', ']']).to_owned();
+                    self.add(id(0), timestamp, ItemKind::Notice { kind: NoticeKind::Interrupted, text }, changes);
+                    if texts.is_empty() && pictures.is_empty() {
+                        self.chat.observe(offset, ChatPhase::Active);
+                    }
+                }
                 if !texts.is_empty() || !pictures.is_empty() {
                     let synthetic = flag(&value, "isMeta");
                     if !synthetic {
@@ -553,7 +570,7 @@ impl View {
                     self.add(
                         id(0),
                         timestamp,
-                        ItemKind::Prompt { text: texts.join("\n"), pictures, synthetic },
+                        ItemKind::Prompt { text: texts.join("\n"), pictures, synthetic, queued: false },
                         changes,
                     );
                 }
@@ -592,9 +609,18 @@ impl View {
                 if let Some(markdown) = content.as_str().filter(|s| !s.is_empty()) {
                     self.add(id(0), timestamp, ItemKind::Assistant { markdown: markdown.into() }, changes);
                 }
+                // With thinking shown as updates, Claude Code shows a thinking block's text as an answer
+                // line ("· summary"): it is what Claude says to the user, often the only answer to a
+                // message sent while a turn ran.
+                let updates = value["thinkingDisplay"] == "updates";
                 for (i, block) in blocks(content).enumerate() {
                     if let Some(text) = notices::thought(block) {
-                        self.add(id(i), timestamp, ItemKind::Notice { kind: NoticeKind::Thought, text }, changes);
+                        let kind = if updates {
+                            ItemKind::Assistant { markdown: text }
+                        } else {
+                            ItemKind::Notice { kind: NoticeKind::Thought, text }
+                        };
+                        self.add(id(i), timestamp, kind, changes);
                     } else if block["type"] == "text" {
                         if let Some(text) = block["text"].as_str().filter(|s| !s.is_empty()) {
                             self.add(id(i), timestamp, ItemKind::Assistant { markdown: text.into() }, changes);
@@ -633,7 +659,27 @@ impl View {
                 }
             }
             LineKind::Attachment => {
-                if let Some((kind, text)) = notices::attachment(&value["attachment"]) {
+                let attachment = &value["attachment"];
+                if let Some(prompt) = queued_prompt(attachment) {
+                    // A message the user sent while a turn ran: Claude Code records it only here and
+                    // hands it to Claude inside the running turn, so it starts no turn of its own.
+                    let mut texts = Vec::new();
+                    let mut pictures = Vec::new();
+                    texts.extend(prompt.as_str().and_then(prompt_value));
+                    for (i, block) in blocks(prompt).enumerate() {
+                        match block["type"].as_str() {
+                            Some("text") => texts.extend(block["text"].as_str().and_then(prompt_value)),
+                            Some("image") => pictures.extend(picture(i, None, block)),
+                            _ => (),
+                        }
+                    }
+                    if !texts.is_empty() || !pictures.is_empty() {
+                        self.chat.observe(offset, ChatPhase::Active);
+                        let item =
+                            ItemKind::Prompt { text: texts.join("\n"), pictures, synthetic: false, queued: true };
+                        self.add(id(0), timestamp, item, changes);
+                    }
+                } else if let Some((kind, text)) = notices::attachment(attachment) {
                     self.add(id(0), timestamp, ItemKind::Notice { kind, text }, changes);
                 }
             }
@@ -848,6 +894,56 @@ fn message_text(value: &Value) -> String {
         .filter_map(|block| block["text"].as_str())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The content of a message the user typed while a turn ran (`queued_command`, `commandMode:
+/// "prompt"`, `origin.kind: "human"`; recorded from Claude Code 2.1.332). Background task
+/// notifications and messages from other sessions use the same record and are not prompts.
+fn queued_prompt(attachment: &Value) -> Option<&Value> {
+    (attachment["type"] == "queued_command"
+        && attachment["commandMode"] == "prompt"
+        && attachment["origin"]["kind"] == "human")
+        .then(|| &attachment["prompt"])
+}
+
+/// A prompt's text as Claude Code showed it: a long paste is recorded wrapped as
+/// `<pasted_content id="N">\n…\n</pasted_content id="N">` (2.1.332, `recorder compat`'s
+/// `queued-text`); the tags go, the text stays. `None` for what is no prompt (see `prompt_text`).
+fn prompt_value(text: &str) -> Option<std::borrow::Cow<'_, str>> {
+    use std::borrow::Cow;
+    match unwrap_pastes(text) {
+        Cow::Borrowed(text) => prompt_text(text).map(Cow::Borrowed),
+        Cow::Owned(text) => prompt_text(&text).is_some().then_some(Cow::Owned(text)),
+    }
+}
+
+/// The text with every `<pasted_content …>` tag pair taken out around what it holds.
+fn unwrap_pastes(text: &str) -> std::borrow::Cow<'_, str> {
+    const OPEN: &str = "<pasted_content";
+    const CLOSE: &str = "</pasted_content";
+    if !text.contains(OPEN) {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(OPEN) {
+        let after = &rest[at..];
+        let Some(open_end) = after.find('>') else { break };
+        let inner = &after[open_end + 1..];
+        let Some(close) = inner.find(CLOSE) else { break };
+        let Some(close_end) = inner[close..].find('>') else { break };
+        out.push_str(&rest[..at]);
+        let body = inner[..close].strip_prefix('\n').unwrap_or(&inner[..close]);
+        out.push_str(body.strip_suffix('\n').unwrap_or(body));
+        rest = &inner[close + close_end + 1..];
+    }
+    out.push_str(rest);
+    out.into()
+}
+
+/// Claude Code's record of an Esc: `[Request interrupted by user]`, `… for tool use]`.
+fn interrupted(text: &str) -> bool {
+    matches!(text.trim(), "[Request interrupted by user]" | "[Request interrupted by user for tool use]")
 }
 
 pub(crate) fn prompt_text(text: &str) -> Option<&str> {

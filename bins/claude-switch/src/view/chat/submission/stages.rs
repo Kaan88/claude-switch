@@ -40,7 +40,7 @@ pub(super) struct LinesWait {
     pub expected: String,
     pub text: String,
     pub picture: bool,
-    pub allow_working: bool,
+    pub into_turn: bool,
 }
 
 pub(super) struct EnterOnly {
@@ -48,7 +48,7 @@ pub(super) struct EnterOnly {
     pub expected: String,
     pub completion: Completion,
     pub picture: bool,
-    pub allow_working: bool,
+    pub into_turn: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -100,6 +100,8 @@ pub(super) struct Takeback {
     pub epoch: u64,
     pub presses: u8,
     pub due: Instant,
+    /// Which of the sent messages the input shows.
+    pub index: usize,
     /// The output epoch of a first reading of the input as empty while output still came: a
     /// second one of newer output confirms it.
     pub clean: Option<u64>,
@@ -118,7 +120,11 @@ pub(in crate::view::chat) struct Staging {
     pub(super) lines: Option<LinesWait>,
     pub(super) retry: Option<EnterOnly>,
     pub(super) recovery: Option<Recovery>,
-    pub(super) sent: Option<Sent>,
+    /// The messages Chat submitted since the last one sent at an idle input (those sent while
+    /// its turn ran follow it): any of them may be the one Claude Code puts back after a Stop.
+    pub(super) sent: Vec<Sent>,
+    /// Stop went since the last of them: text left on the input that is none of them is said.
+    pub(super) stopped: bool,
     pub(super) takeback: Option<Takeback>,
     pub(super) command: Option<CommandWait>,
 }
@@ -146,7 +152,8 @@ impl Chat {
     /// The last message's turn is over or under way for good: nothing to take back.
     pub(in crate::view::chat) fn forget_sent(&mut self) {
         if self.staging.takeback.is_none() {
-            self.staging.sent = None;
+            self.staging.sent.clear();
+            self.staging.stopped = false;
         }
     }
 
@@ -178,7 +185,7 @@ pub(super) fn recovery_ready(tab: &Tab, now: Instant, recovery: Recovery) -> boo
         && !chat.slash
 }
 
-pub(super) fn can_confirm(tab: &Tab, now: Instant, stamp: Stamp, allow_working: bool) -> bool {
+pub(super) fn can_confirm(tab: &Tab, now: Instant, stamp: Stamp, into_turn: bool) -> bool {
     let pane = tab.pane.as_ref().unwrap();
     let modes = tab.term.screen.modes();
     let (gate, reason) = pane.chat.decision(&pane.model.chat, &tab.term, &tab.program_title, now);
@@ -188,9 +195,18 @@ pub(super) fn can_confirm(tab: &Tab, now: Instant, stamp: Stamp, allow_working: 
         && gate != super::Gate::Ended
         && !modes.alt_screen
         && (pane.chat.demo || modes.bracketed_paste)
-        && pane.model.chat.pending.is_none()
+        // A call the running turn records meanwhile is the turn's: it does not stop a message
+        // going into it (a permission prompt, a menu or the alternate screen still do).
+        && (into_turn || pane.model.chat.pending.is_none())
         && !screen::menu(&tab.term.screen)
-        && (allow_working || !(busy_title(&tab.program_title) || screen::working(&tab.term.screen)))
+        && (into_turn || !(busy_title(&tab.program_title) || screen::working(&tab.term.screen)))
+}
+
+/// The input shows a message Chat pasted, before its Enter: as typed, or (into a running turn,
+/// where the input was empty) collapsed to Claude Code's paste marker, as `shows_lines` reads it
+/// for several lines. A long single line is collapsed too.
+pub(super) fn shows_sent(tab: &Tab, expected: &str, into_turn: bool) -> bool {
+    shown_exactly(tab, expected) || into_turn && screen::shows_lines(&tab.term.screen, expected)
 }
 
 pub(super) fn shown_exactly(tab: &Tab, expected: &str) -> bool {
@@ -198,5 +214,26 @@ pub(super) fn shown_exactly(tab: &Tab, expected: &str) -> bool {
         return screen::shows_lines(&tab.term.screen, expected);
     }
     // A command line longer than the terminal is wide wraps onto more rows.
-    prompt(&tab.term.screen).as_deref() == Some(expected) || screen::shows_wrapped(&tab.term.screen, expected)
+    let shows = |expected: &str| {
+        prompt(&tab.term.screen).as_deref() == Some(expected) || screen::shows_wrapped(&tab.term.screen, expected)
+    };
+    // Text pasted after a picture's marker follows it without a space (recorded from Claude Code
+    // 2.1.332, `recorder compat`'s `queued` script); a space there is taken too.
+    shows(expected) || without_marker_space(expected).is_some_and(|joined| shows(&joined))
+}
+
+/// `[Image #1] text` as `[Image #1]text`; `None` when it does not start with a picture's marker.
+fn without_marker_space(text: &str) -> Option<String> {
+    let (marker, rest) = text.split_once("] ")?;
+    let marker = format!("{marker}]");
+    screen::is_image_marker(&marker).then(|| format!("{marker}{rest}"))
+}
+
+#[cfg(test)]
+#[test]
+fn a_pictures_marker_may_be_followed_by_its_text_without_a_space() {
+    assert_eq!(without_marker_space("[Image #1] look at this").as_deref(), Some("[Image #1]look at this"));
+    assert_eq!(without_marker_space("[Image #12] a] b").as_deref(), Some("[Image #12]a] b"));
+    assert_eq!(without_marker_space("[Pasted text #1] a"), None);
+    assert_eq!(without_marker_space("no marker"), None);
 }

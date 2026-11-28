@@ -44,6 +44,8 @@ const TOOL_WAIT: Duration = Duration::from_secs(4);
 /// How long a submitted message may take to show on the screen before the screen as it stands
 /// counts again (the CLI normally redraws within milliseconds).
 const SENT_WAIT: Duration = Duration::from_secs(5);
+/// A key in the message box this recently: the user is typing there.
+const TYPING: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
@@ -194,6 +196,12 @@ pub struct Chat {
     drawer_height: Option<f32>,
     resizing: Option<(f32, f32)>,
     drawer_focus: bool,
+    /// When a key last went to the message box: the terminal does not take the keyboard from
+    /// someone typing there.
+    typed_at: Option<Instant>,
+    /// The conversation has a selection (set each tick from the pane): Ctrl+C is meant for it, so
+    /// the terminal does not take the keyboard by itself.
+    selection: bool,
     reason: Option<Reason>,
     suppressed: Option<Reason>,
     /// The Details panel is closed: by the user's own choice, else because it has no section.
@@ -205,6 +213,8 @@ pub struct Chat {
     shell_count: usize,
     editor: ComposerEditor,
     editor_drag: bool,
+    /// The word a double click took: a drag from it goes by whole words.
+    editor_words: Option<std::ops::Range<usize>>,
     chips: Vec<Chip>,
     chip_page: usize,
     recall: recall::Recall,
@@ -283,6 +293,11 @@ impl Chat {
     pub(super) fn invalidate_pointer_input(&mut self, info: &ChatInfo, end: Option<u64>) {
         self.interrupt_staging();
         self.watermark_input(info, end);
+    }
+
+    /// A key went to the CLI that leaves the turn as it is.
+    pub(super) fn note_input(&mut self) {
+        self.last_input = Some(Instant::now());
     }
 
     pub(super) fn watermark_input(&mut self, info: &ChatInfo, end: Option<u64>) {
@@ -486,6 +501,36 @@ impl Chat {
         self.pending = None;
         self.watermark_input(info, Some(end));
         self.next_floor = Some(end);
+    }
+
+    /// As `react`, and when the terminal opens for a question Chat cannot answer (Claude Code may
+    /// be waiting, a permission prompt Chat cannot read whole), it takes the keyboard so the answer
+    /// can be typed at once; not while someone types in the message box, whose next keys would
+    /// land on that prompt.
+    fn react_at(&mut self, reason: Option<Reason>, now: Instant) -> bool {
+        let closed = self.drawer == Drawer::Closed;
+        let changed = self.react(reason);
+        if closed && matches!(self.drawer, Drawer::Auto(Reason::Tool | Reason::Permission)) && !self.keeps_keyboard(now)
+        {
+            self.drawer_focus = true;
+        }
+        changed
+    }
+
+    /// The keyboard stays with Chat rather than going to the terminal by itself: a key went to the
+    /// message box a moment ago, the box or a card's field holds text, or the conversation has a
+    /// selection. The next key (Enter, a digit, Ctrl+C) would otherwise land on Claude Code's prompt.
+    pub(super) fn keeps_keyboard(&self, now: Instant) -> bool {
+        self.typed_at.is_some_and(|at| now.saturating_duration_since(at) < TYPING)
+            || !self.editor.text.trim().is_empty()
+            || !self.chips.is_empty()
+            || !self.question.field.text().is_empty()
+            || self.selection
+    }
+
+    /// Whether the conversation has a selection, from the pane, each tick.
+    pub(super) fn set_selection(&mut self, selection: bool) {
+        self.selection = selection;
     }
 
     fn react(&mut self, reason: Option<Reason>) -> bool {

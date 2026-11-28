@@ -360,7 +360,9 @@ not yet routed, marked seen or restored.
 Session view has six pages over the incremental transcript reader: Conversation, Tasks, Agents,
 Shells, Files and Outputs. Chat shows the same five beside the conversation in its Details panel. Conversation
 opens on the newest messages and follows appends until the user scrolls back; Jump to latest resumes
-following. Both Chat and Session view support wheel scrolling, thumb drag, and track clicks that page
+following. In Chat that is a round button at the foot of the conversation while it is scrolled back,
+in a strip of its own: no text is drawn (or taken by the pointer) under it, and the rows below the
+strip come into view as the conversation reaches its end, where it follows again and the strip goes. Both Chat and Session view support wheel scrolling, thumb drag, and track clicks that page
 by a viewport. Earlier history is loaded on request. Agent transcripts are reachable from expanded
 tool details and the Agents page. A cursor checkpoint detects a replacement or truncate-and-regrow near the
 read position. Transcript lines over 48 MiB are skipped, picture reads respect the same containing-line
@@ -383,10 +385,36 @@ pictures; a group can be expanded independently of its rows.
 **Selecting and copying.** A selection runs from an anchor to a focus, each a row (by its stable
 identity, so it survives an appended message) and a byte in that row's shown text, so a drag or
 Shift+click can cross messages; dragging past the top or bottom scrolls. A double click takes a
-word, a triple click the message. Ctrl+C copies the selection, the rows' parts joined by a blank
-line; Ctrl+A selects the whole loaded conversation. The right-click menu has Copy and Select all,
+word, a triple click the message; a drag after either goes on by whole words or whole rows, from
+the first one in either direction (the message box's drag after a double click goes by words too). Ctrl+C copies the selection, the rows' parts joined by a blank
+line (in Chat, where keys go to the message box, when the box has no selection of its own); Ctrl+A selects the whole loaded conversation. The right-click menu has Copy and Select all,
 and over a message Copy message (its text as shown) and Copy as Markdown (its source). Each
-top-level code block of an answer has a **Copy** button for its code alone. The toolkit's
+top-level code block of an answer has a **Copy** button for its code alone.
+In Chat a row of buttons sits under each of your messages and under each turn's last answer,
+shown while the pointer is over the message (or the buttons) and always under the newest answer;
+its room is kept whether it shows or not, so pointing moves nothing. **Copy** copies the message
+as shown (as Copy message does). **Rewind** is "Rewind to here…" of the menu, through the same
+start and checks, under a prompt the CLI's rewind list shows. **Branch** starts a new session,
+as the tab's account, that continues from a copy of the conversation cut at the end of that
+message's turn, so that the copy ends where Claude Code can go on (`view::model::branch_cut`): a
+turn ends right before the next prompt typed at an idle input (a message sent while it ran goes
+on in it), the newest one at the record of its end (`end_turn`, no call pending). It is offered
+under your prompts and under a turn's last answer once that turn has ended; never mid-turn, right
+before a message sent during the turn, or in a subagent's transcript (whose items are not the
+session's). Claude Code 2.1.332 cannot resume a session up to a message interactively (its hidden
+`--resume-session-at` is for print mode), so `core::branch` writes the copy, off the window's
+thread: the transcript Chat reads (its own file, which must be the one the Sessions list names
+for the session, compared as resolved paths: a further account reads it through its `projects`
+junction) up to the cut, under a temporary name and then linked to `<new id>.jsonl` beside the
+original, or on a volume without hard links created new there and filled; neither ever replaces
+a file, a temporary name someone else holds is left alone, and temporary copies older than ten
+minutes that a failed branch left are swept; each record's own `sessionId` is set to the new id, in
+place where it has the usual `"sessionId":"<id>"` form, else by reading the record. A cut that is
+not at a line's start is refused. Then `claude --resume <new id>` (`launch::branch`). The original
+is not touched; the branch is marked as a copy of it, as Open a copy's is. File backups
+(`file-history/<id>`) are not copied, so the branch cannot rewind code changes made before its
+cut. Checked by `recorder compat` (script `branch`): cut copies resumed in print mode and in the
+terminal show the turns before the cut only. The toolkit's
 `richtext` manages no selection, so this is the app's (`view/ui/select.rs`) over the renderer's
 selection rectangles and block boxes.
 Notices are rows like a tool row (their kind and the first line) that expand to the whole text,
@@ -396,13 +424,15 @@ hidden rather than shown wrongly:
 
 | Shown as | Record |
 | --- | --- |
-| Thought | an assistant `thinking` block `{thinking, signature}` with text; about half have none (omitted thinking) and are not shown; thoughts sit inside a tool group without counting as calls |
+| Thought | an assistant `thinking` block `{thinking, signature}` with text; about half have none (omitted thinking) and are not shown; thoughts sit inside a tool group without counting as calls. With `"thinkingDisplay":"updates"` on the record, the terminal shows the block's text as an answer line ("· …"), so Chat shows it as answer text |
+| Prompt | a long paste is recorded inside `<pasted_content id="N">` tags, which are taken out (2.1.332); also an `attachment` `queued_command` with `commandMode: "prompt"` and `origin.kind: "human"`: a message typed while a turn ran, which Claude Code records only there (its `prompt` a string, or text and image blocks). It starts no turn and splits no turn's changed files; Claude Code's rewind list shows it where the transcript has it, so Rewind offers it as any prompt (recorded from 2.1.332 by `recorder compat`, script `queued`); the same record from a task notification or another session is not shown |
 | Hook error | `system` `stop_hook_summary` with `hookErrors` (strings); an `attachment` `hook_non_blocking_error` (`hookName`, `stderr`) except for Stop hooks, whose summary already lists it |
 | Hook | an `attachment` `hook_system_message` (`hookName`, `content`), the hook's `systemMessage` |
 | Stop hook feedback | Claude Code's own user record starting "Stop hook feedback:"; a summary with `preventedContinuation` |
 | Memory | an `attachment` `nested_memory`: "Loaded" and its `displayPath` |
 | Recap | `system` `away_summary` with `content` |
 | Notice | `system` `informational` at `level: "warning"` (such as the Stop-hook block cap) |
+| Interrupted | Claude Code's own user text for an Esc, `[Request interrupted by user]` or `… for tool use]` (2.1.332): not the user's prompt, so no bubble, no new turn (it does not move the newest prompt), nothing for Rewind, recall or a Branch cut |
 | Prompt blocked by a hook | not seen yet; a text with "Original prompt:", as the docs quote |
 
 Not shown: informational records below warning (usage-limit and goal notices), `turn_duration`,
@@ -901,7 +931,10 @@ Only the visible rows and sticky heading are drawn. Mode and Show hidden are con
 
 Rows show the latest `last-prompt` record (`lastPrompt`) or real user message found in the
 bounded transcript tail. Search and the quick switcher match the local name, original title,
-last prompt and folder; the switcher orders by fuzzy match quality, then recency. Opening from
+last prompt and folder, and a session id: the whole id or a prefix of at least eight hex digits,
+alone, or after `--resume` in a pasted line (`claude --resume <id>`), which ranks that session
+first; in the Sessions list it goes into a first group, "Session id", also when hidden, archived or
+a worker's (with the All or Hidden filter), its row showing that state as usual; the switcher orders by fuzzy match quality, then recency. Opening from
 it uses the existing resume checks, and Ctrl+Enter opens the other-account menu.
 
 The Waiting filter is a hint, not a process signal. A live session is waiting if its newest
@@ -1168,7 +1201,19 @@ does not show an input at rest, and a newly observed `end_turn` still makes a qu
 screen ready. The OSC title is no protocol: explicit busy labels only veto a send. A successful
 write only means input was handed to the terminal, and there is still a race between observing the
 PTY and writing it.
-A draft that only has to wait is held, not refused: a running turn, a prompt the CLI is still
+While a turn runs and the CLI's input reads visibly empty, Send types the message into it as
+**Send now** does (below), and Claude Code hands it to the running turn as when typed in the
+terminal; the box is free for the next message once it went. Into a running turn Enter goes only
+once the input row shows the message (as for several lines), so a permission prompt or menu drawn
+between the paste and Enter never gets it; the input may show the text or Claude Code's paste
+marker (`[Pasted text #1]` for a long single line), and a call the turn records meanwhile does not
+stop it. Such a send leaves the turn as the transcript shows it (Claude Code records the message in
+that turn, never as a new prompt), so Stop stays available. Whether a send goes into a running turn
+is read from the gate when its first key is written, not from the button: Send now into an idle
+input (no turn, or one that ended while the draft waited) is an ordinary send.
+While messages wait in Claude Code's queue its input reads empty ("Press up to edit queued
+messages" is faint); Esc then sends them at once as the next turn (recorded from 2.1.332). A draft that only has to wait is held, not
+refused: a running turn whose input does not read empty, a prompt the CLI is still
 drawing, a command's output, a new chat's transcript, a picture while the input is not empty. It is
 locked (text and attachments) until it sends or is cancelled, and goes out by itself, also in a
 hidden tab, once the input is idle (or a newer completion shows, where no screen can be read).
@@ -1186,7 +1231,10 @@ the input reads empty the text comes back when the screen goes quiet. While outp
 (a turn starting by itself, a redraw) one empty reading may be a screen caught half way, so it
 takes two in a row, each of newer output than the last Ctrl+U's; without them by the key's
 deadline the text still comes back (no Enter went, so it was not sent), with a notice to check
-that the CLI input is empty before sending. The take-back starts only when the message box is empty, with no
+that the CLI input is empty before sending. Every message Chat sent since the last one at an idle
+input counts for the match (one sent during the turn does not hide the turn's own prompt), and
+other text resting on the input after a Stop is said in a notice rather than left to hold the next
+send silently. The take-back starts only when the message box is empty, with no
 attachments and no held draft: otherwise the message stays on the CLI input, with a notice to send
 or clear it in the terminal (which lets a held draft go, back to the box) and then send the draft.
 Text the user typed in the terminal is never cleared, and no text is cleared without a place to go.
@@ -1201,7 +1249,12 @@ four seconds, with no working line on the screen, no text on the input and no ca
 the CLI may be waiting for an answer ("Claude Code may be waiting for your answer in the
 terminal."). Under the working line the same silence is a slow tool and opens nothing. A BEL opens
 it only while the screen shows neither the working line nor an idle input (an idle input clears the
-bell), and a process exit does. Only an automatically
+bell), and a process exit does. When it opens for a question Chat cannot answer (that wait, or a
+permission prompt Chat cannot read whole), or a card's answer could not go, or "Open terminal" on a
+card is clicked, the terminal takes the keyboard, so the answer can be typed at once; an automatic
+opening, or a card's answer that could not go, leaves it with Chat while a key went to the message
+box within the last second, the box or a card's field holds text, or the conversation has a
+selection (Ctrl+C is meant for it and never reaches the CLI that way). Only an automatically
 opened drawer closes on observable turn progress; a manually opened one stays open. Chat
 never answers a dialog by itself; the only dialog keys are a card's, after a click (see Questions and
 Permission prompts). Stop sends Escape at most once per freshly
@@ -1513,7 +1566,7 @@ the hint row reads "↓ to resume subagent" and other agents are no longer offer
 "↓ to manage" again. Recorded from Claude Code 2.1.332 (`bg_*`, `agents_*`).
 
 **Rewind.** The conversation's right-click menu offers "Rewind to here…" over a prompt the user
-typed, in a tab with Chat. It goes through the CLI's own rewind list and never edits the transcript.
+typed, in a tab with Chat, never over a subagent's transcript (refused there with a word). It goes through the CLI's own rewind list and never edits the transcript.
 The first Esc only at an idle, quiet, empty prompt with no turn, pending call or menu (the checks of
 a direct slash command); it shows nothing, so the second follows 150 ms later only while the screen
 still shows that same prompt. The list ("Rewind", "Restore the code and/or conversation to the point
@@ -1565,8 +1618,9 @@ subagent's with the highlight on each kind of choice and after Esc, and the two 
 calls made in one message), a call blocked by auto mode and the /permissions list of blocked calls
 in each of its states, plan approval, the
 rewind list and the panels of `/model`, `/effort`, `/config` (which takes two Esc to close),
-`/status`, `/help`, `/mcp`, `/permissions`, `/resume` and `/theme`. Not recorded: a pasted
-picture's marker (the recorder does not touch the clipboard).
+`/status`, `/help`, `/mcp`, `/permissions`, `/resume` and `/theme`. A pasted picture's marker
+is recorded only by `recorder compat` (script `queued`, which puts a picture on the clipboard): the
+text pasted after it follows without a space.
 
 The fixtures prove the readers against the version they were recorded from. For each new Claude
 Code version `recorder compat` records these states again from the installed CLI and the readers
@@ -1575,7 +1629,11 @@ are asked what each screen is (`screens/compat.rs`, the expectations in
 `.github/workflows/cli-compat.yml`, which opens an issue naming the states that no longer read as
 expected. `tools/screen-recorder/README.md` ("After a Claude Code update") says how to read a
 failure and what to do. Its first run found that the second of two prompts was not recognised,
-which the fixtures had not shown.
+which the fixtures had not shown. It also checks what Chat reads from Claude Code's files and
+flags: messages sent while a turn runs as the transcript records them, what Esc does with messages
+waiting in Claude Code's queue, thinking shown as updates, and branches cut at a turn's end resumed
+under their new ids in print mode and in the terminal (scripts `queued`, `queued-text`,
+`queued-esc` and `branch`).
 
 **What still needs the terminal.** Each for a reason a key could not be justified: text the user
 typed on the CLI's input (Chat will not delete it; the composer says so); a permission prompt Chat

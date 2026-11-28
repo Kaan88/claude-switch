@@ -63,7 +63,7 @@ pub(super) fn meta(value: &Value) -> Option<(NoticeKind, String)> {
 
 /// The attachment kinds that are shown, found without parsing the (often large) record.
 pub(super) fn shown_attachment(line: &[u8]) -> bool {
-    [&b"\"hook_non_blocking_error\""[..], b"\"hook_system_message\"", b"\"nested_memory\""]
+    [&b"\"hook_non_blocking_error\""[..], b"\"hook_system_message\"", b"\"nested_memory\"", b"\"queued_command\""]
         .iter()
         .any(|kind| line.windows(kind.len()).any(|w| w == *kind))
 }

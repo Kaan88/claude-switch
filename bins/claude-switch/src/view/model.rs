@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::SystemTime;
 
-use claude_switch_core::transcript::{Changes, Item, ItemId, ItemKind, NoticeKind, Picture, Reader, Subagent, Task};
+use claude_switch_core::transcript::{
+    Changes, Item, ItemId, ItemKind, NoticeKind, Picture, Reader, Subagent, Task, ToolState,
+};
 use mdshared_text::image::Image;
 use mdshared_ui::thumbs::MemoryCache;
 
@@ -443,6 +445,15 @@ impl Model {
     pub fn session_id(&self) -> Option<&str> {
         self.session.as_deref()
     }
+
+    /// Where a branch at the message `item` cuts the transcript ([`branch_cut`]); `None` in a
+    /// subagent's transcript, whose items are not the session's.
+    pub fn branch_cut(&self, item: ItemId) -> Option<claude_switch_core::branch::Cut> {
+        if self.agent.is_some() {
+            return None;
+        }
+        branch_cut(&self.items, &self.chat, item)
+    }
     pub fn earlier(&self) {
         let _ = self.tx.send(Command::Earlier(self.generation));
     }
@@ -699,6 +710,52 @@ impl Worker {
             || u.agents.is_some())
         .then(|| Event::Update(Box::new(u))))
     }
+}
+
+/// Where a branch at the message `item` cuts the transcript: at the end of that message's turn,
+/// once the turn has ended, so that the copy ends where Claude Code can go on. A turn ends before
+/// the next prompt typed at an idle input (a message sent while it ran goes on in it), and the
+/// newest one at the record of its end (`end_turn`, no call pending, no prompt after it). The
+/// message is a prompt of the user's or its turn's last answer. `None` for anything else, for a
+/// turn still running, and when the copy would hold a tool call without its result (Claude Code
+/// cannot go on from one).
+pub(crate) fn branch_cut(
+    items: &BTreeMap<ItemId, Item>,
+    chat: &claude_switch_core::transcript::ChatInfo,
+    item: ItemId,
+) -> Option<claude_switch_core::branch::Cut> {
+    use claude_switch_core::branch::Cut;
+    use claude_switch_core::transcript::ChatPhase;
+    use std::ops::Bound::{Excluded, Unbounded};
+    let answer = match &items.get(&item)?.kind {
+        ItemKind::Prompt { synthetic: false, .. } => false,
+        ItemKind::Assistant { .. } => true,
+        _ => return None,
+    };
+    // Every call the copy holds has its result.
+    let whole = |end: ItemId| {
+        !items.range(..end).any(|(_, i)| matches!(i.kind, ItemKind::Tool { state: ToolState::Running, .. }))
+    };
+    let mut answered = false;
+    for (id, next) in items.range((Excluded(item), Unbounded)) {
+        match next.kind {
+            ItemKind::Prompt { synthetic: false, queued: false, .. } => {
+                return (!(answer && answered) && whole(*id)).then_some(Cut::Before(id.offset));
+            }
+            ItemKind::Assistant { .. } => answered = true,
+            _ => {}
+        }
+    }
+    if answer && answered {
+        return None;
+    }
+    let (at, phase) = chat.latest?;
+    let prompt_after = items
+        .range(ItemId { offset: at.saturating_add(1), block: 0 }..)
+        .any(|(_, i)| matches!(i.kind, ItemKind::Prompt { synthetic: false, .. }));
+    let ended = phase == ChatPhase::EndTurn && chat.pending.is_none() && !prompt_after && at >= item.offset;
+    let end = ItemId { offset: at.saturating_add(1), block: 0 };
+    (ended && whole(end)).then_some(Cut::After(at))
 }
 
 #[cfg(test)]

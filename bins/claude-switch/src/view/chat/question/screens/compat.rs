@@ -27,6 +27,23 @@
 //!   row saying what Esc will do (`-` for none) and `esc-does` the footer's words for it.
 //! - `answer`: this text reads back exactly on the highlighted row ("Type something");
 //!   `lines` and `wrapped`: the input shows this text of several lines, or this long line.
+//! - `sent`: the input shows this message as Chat's echo check before Enter takes it into a
+//!   running turn (as typed, wrapped, or as Claude Code's paste marker).
+//! - `shows` and `hides`: every text of the value (` | ` between them) is somewhere on the screen,
+//!   or none is (a resumed branch shows the turns before its cut and none after).
+//!
+//! A state can also be a file the script wrote instead of a snapshot, and its keys are about that:
+//!
+//! - A transcript copy (`tscopy`, `<state>.jsonl`), as the app's transcript reader reads it:
+//!   `prompts` (each prompt, ` (during a turn)` after one sent while a turn ran, ` [N pictures]`),
+//!   `pictures` (`yes` when every picture of such a message loads, `none` when it has none),
+//!   `turn` (the prompt that started the newest turn: a message sent during a turn starts none),
+//!   `answers` (Claude's answers), `thinking` (the `thinkingDisplay` values of records with
+//!   thinking, `-` for none).
+//! - A branch (`branch`, `<state>.json` and `<state>.id`): `resumed` (`yes` when Claude Code
+//!   answered under the copy's id) and `words` (which of alpha, bravo and charlie the answer names).
+//! - `claude --help` (`help`, `<state>.help.txt`): `flags` (the text itself when every flag of it is
+//!   listed, else the missing ones).
 //!
 //! `cargo test -p claude-switch cli_compat -- --ignored --nocapture` with `CS_COMPAT_RECORDINGS`
 //! (a folder per script, `<script>/<state>.ansi`; absolute, as the test runs in the crate's
@@ -156,7 +173,21 @@ fn fact(s: &Screen, key: &str, want: &str) -> String {
             shown(shows, &row)
         }
         "lines" => shown(screen::shows_lines(s, want), "the input's rows do not read it"),
+        "shows" | "hides" => {
+            let all: String = (0..s.rows()).map(|r| s.row_text(r) + "\n").collect();
+            let wrong: Vec<&str> =
+                want.split(" | ").filter(|part| all.contains(part.trim()) != (key == "shows")).collect();
+            match (wrong.is_empty(), key) {
+                (true, _) => want.to_owned(),
+                (false, "shows") => format!("not shown: {}", wrong.join(" | ")),
+                _ => format!("shown: {}", wrong.join(" | ")),
+            }
+        }
         "wrapped" => shown(screen::shows_wrapped(s, want), "the input's rows do not read it"),
+        "sent" => {
+            let typed = screen::prompt(s).as_deref() == Some(want) || screen::shows_wrapped(s, want);
+            shown(typed || screen::shows_lines(s, want), "the input's rows do not read it")
+        }
         _ => format!("unknown key {key}"),
     }
 }
@@ -190,17 +221,173 @@ fn sections(text: &str) -> Vec<(String, Vec<(String, String)>)> {
     out
 }
 
-/// One state's result: the keys that did not match, each with what was expected and read.
-fn check(recording: &Path, wanted: &[(String, String)]) -> Result<Vec<(String, String, String)>, String> {
-    let text = std::fs::read_to_string(recording).map_err(|_| "no recording".to_owned())?;
-    let screen = recorded(&text.replace("\r\n", "\n"));
+/// What the app's transcript reader makes of a transcript copy.
+fn transcript_fact(path: &Path, key: &str) -> String {
+    use claude_switch_core::transcript::{ItemKind, Reader};
+    let Ok(mut reader) = Reader::open(path, 64 << 20) else { return "the transcript does not read".to_owned() };
+    let items: Vec<_> = reader.items().map(|(id, item)| (id, item.clone())).collect();
+    let joined = |parts: Vec<String>| if parts.is_empty() { NONE.to_owned() } else { parts.join(" | ") };
+    match key {
+        "prompts" => joined(
+            items
+                .iter()
+                .filter_map(|(_, item)| match &item.kind {
+                    ItemKind::Prompt { text, pictures, synthetic: false, queued } => {
+                        let mut line = text.replace('\n', " ");
+                        if *queued {
+                            line.push_str(" (during a turn)");
+                        }
+                        if !pictures.is_empty() {
+                            line.push_str(&format!(" [{} pictures]", pictures.len()));
+                        }
+                        Some(line)
+                    }
+                    _ => None,
+                })
+                .collect(),
+        ),
+        "pictures" => {
+            let pictures: Vec<_> = items
+                .iter()
+                .flat_map(|(_, item)| match &item.kind {
+                    ItemKind::Prompt { pictures, queued: true, .. } => pictures.clone(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            if pictures.is_empty() {
+                "none".to_owned()
+            } else {
+                yes(pictures.iter().all(|p| reader.load_picture(p).is_ok_and(|bytes| !bytes.is_empty())))
+            }
+        }
+        "turn" => {
+            let at = reader.chat().prompt;
+            items
+                .iter()
+                .find_map(|(id, item)| match &item.kind {
+                    ItemKind::Prompt { text, .. } if Some(id.offset) == at => Some(text.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| NONE.to_owned())
+        }
+        "answers" => joined(
+            items
+                .iter()
+                .filter_map(|(_, item)| match &item.kind {
+                    ItemKind::Assistant { markdown } => Some(markdown.trim().replace('\n', " ")),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        "thinking" => {
+            let mut seen: Vec<String> = Vec::new();
+            for line in std::fs::read_to_string(path).unwrap_or_default().lines() {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                let thinking = value["message"]["content"]
+                    .as_array()
+                    .is_some_and(|blocks| blocks.iter().any(|b| b["type"] == "thinking"));
+                if value["type"] == "assistant" && thinking {
+                    let display = value["thinkingDisplay"].as_str().unwrap_or("(none)").to_owned();
+                    if !seen.contains(&display) {
+                        seen.push(display);
+                    }
+                }
+            }
+            joined(seen)
+        }
+        _ => format!("unknown key {key}"),
+    }
+}
+
+/// What a branch's print-mode answer says: `resumed`, `words`.
+fn branch_fact(json: &Path, key: &str) -> String {
+    let id = std::fs::read_to_string(json.with_extension("id")).unwrap_or_default();
+    let Ok(text) = std::fs::read_to_string(json) else { return "no answer".to_owned() };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return format!("not JSON: {}", text.chars().take(200).collect::<String>());
+    };
+    match key {
+        "resumed" => yes(value["is_error"] == false && value["session_id"].as_str() == Some(id.trim())),
+        "words" => {
+            let answer = value["result"].as_str().unwrap_or_default().to_lowercase();
+            let words: Vec<&str> = ["alpha", "bravo", "charlie"].into_iter().filter(|w| answer.contains(w)).collect();
+            if words.is_empty() { NONE.to_owned() } else { words.join(", ") }
+        }
+        _ => format!("unknown key {key}"),
+    }
+}
+
+/// Whether `claude --help` lists every flag in `want`.
+fn help_fact(help: &Path, key: &str, want: &str) -> String {
+    let text = std::fs::read_to_string(help).unwrap_or_default();
+    match key {
+        "flags" => {
+            let missing: Vec<&str> = want.split_whitespace().filter(|flag| !text.contains(flag)).collect();
+            if missing.is_empty() { want.to_owned() } else { format!("missing {}", missing.join(" ")) }
+        }
+        _ => format!("unknown key {key}"),
+    }
+}
+
+/// What a state's file says for a key, given the expected value.
+type Reads = dyn Fn(&str, &str) -> String;
+
+/// One state's result: the keys that did not match, each with what was expected and read. The
+/// state is a snapshot (`<state>.ansi`) or a file the script wrote instead (see the module).
+fn check(folder: &Path, state: &str, wanted: &[(String, String)]) -> Result<Vec<(String, String, String)>, String> {
+    let file = |extension: &str| Some(folder.join(format!("{state}.{extension}"))).filter(|p| p.is_file());
+    let read: Box<Reads> = if let Some(path) = file("ansi") {
+        let text = std::fs::read_to_string(&path).map_err(|_| "no recording".to_owned())?;
+        let screen = recorded(&text.replace("\r\n", "\n"));
+        Box::new(move |key, want| fact(&screen, key, want))
+    } else if let Some(path) = file("jsonl") {
+        Box::new(move |key, _| transcript_fact(&path, key))
+    } else if let Some(path) = file("json") {
+        Box::new(move |key, _| branch_fact(&path, key))
+    } else if let Some(path) = file("help.txt") {
+        Box::new(move |key, want| help_fact(&path, key, want))
+    } else {
+        return Err("no recording".to_owned());
+    };
     Ok(wanted
         .iter()
         .filter_map(|(key, want)| {
-            let got = fact(&screen, key, want);
+            let got = read(key, want);
             (!matches(want, &got)).then(|| (key.clone(), want.clone(), got))
         })
         .collect())
+}
+
+/// For `recorder compat`'s `branch`: writes a branch of the transcript `CS_BRANCH_SOURCE` with the
+/// app's own code, as Branch under a message does: `CS_BRANCH_AT` is `prompt TEXT` or
+/// `answer TEXT` (the first prompt, or the last answer, whose text contains TEXT), cut where the
+/// app cuts (`view::model::branch_cut`); the new id goes to `CS_BRANCH_OUT`.
+#[test]
+#[ignore = "a tool for recorder compat: writes a transcript copy"]
+fn cli_branch_write() {
+    use claude_switch_core::branch::write;
+    use claude_switch_core::transcript::{ItemKind, Reader};
+    let source = std::path::PathBuf::from(std::env::var("CS_BRANCH_SOURCE").expect("CS_BRANCH_SOURCE"));
+    let at = std::env::var("CS_BRANCH_AT").expect("CS_BRANCH_AT");
+    let (kind, text) = at.split_once(' ').expect("prompt TEXT or answer TEXT");
+    let text = text.to_lowercase();
+    let reader = Reader::open(&source, 64 << 20).expect("the transcript");
+    let items: std::collections::BTreeMap<_, _> = reader.items().map(|(id, item)| (id, item.clone())).collect();
+    let found = |(id, item): (&claude_switch_core::transcript::ItemId, &claude_switch_core::transcript::Item)| {
+        let shown = match (&item.kind, kind) {
+            (ItemKind::Prompt { text, .. }, "prompt") => text,
+            (ItemKind::Assistant { markdown }, "answer") => markdown,
+            _ => return None,
+        };
+        shown.to_lowercase().contains(&text).then_some(*id)
+    };
+    let item = if kind == "prompt" { items.iter().find_map(found) } else { items.iter().rev().find_map(found) };
+    let item = item.expect("a message with the text");
+    let cut = crate::view::model::branch_cut(&items, &reader.chat(), item).expect("a place a branch can be made");
+    let old = source.file_stem().unwrap().to_string_lossy().into_owned();
+    let new = crate::compact_open::session_id().expect("a new id");
+    write(&source, &old, &new, cut).expect("the copy");
+    std::fs::write(std::env::var("CS_BRANCH_OUT").expect("CS_BRANCH_OUT"), &new).expect("the id");
 }
 
 #[test]
@@ -228,7 +415,7 @@ fn cli_compat() {
         }
         for (state, wanted) in sections(&std::fs::read_to_string(&file).unwrap()) {
             let name = format!("{script}/{state}");
-            let result = check(&recordings.join(&script).join(format!("{state}.ansi")), &wanted);
+            let result = check(&recordings.join(&script), &state, &wanted);
             let (word, diffs) = match &result {
                 Ok(diffs) if diffs.is_empty() => ("ok", Vec::new()),
                 Ok(diffs) => ("mismatch", diffs.clone()),
@@ -354,6 +541,51 @@ fn the_fixtures_read_as_the_states_the_check_names() {
             assert!(matches(&want, &got), "{key}: expected {want:?}, got {got:?}");
         }
     }
+    let idle = recorded(PROMPT_IDLE);
+    let row = (0..idle.rows()).map(|r| idle.row_text(r)).find(|t| t.trim().len() > 3).unwrap();
+    let some = row.trim().to_owned();
+    assert_eq!(fact(&idle, "shows", &some), some);
+    assert_eq!(fact(&idle, "hides", "no such words here"), "no such words here");
+    assert_eq!(fact(&idle, "hides", &some), format!("shown: {some}"));
+    assert_eq!(fact(&idle, "shows", "no such words here"), "not shown: no such words here");
     // A text that is not there is a mismatch that says what the row holds.
     assert_eq!(fact(&recorded(ASK_OTHER_TYPED), "answer", "something else"), "not shown (my own answer)");
+}
+
+#[test]
+fn transcripts_branches_and_help_read_as_the_check_names_them() {
+    use serde_json::json;
+    let dir = crate::testing::Scratch::created("cs-compat-files");
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mO4WR6OFTEMLQkAcq9pwfhQlf4AAAAASUVORK5CYII=";
+    let lines = [
+        json!({"type":"user","uuid":"u1","message":{"role":"user","content":"ping it"}}),
+        json!({"type":"assistant","thinkingDisplay":"updates","message":{"role":"assistant","stop_reason":"tool_use",
+            "content":[{"type":"thinking","thinking":"","signature":"s"}]}}),
+        json!({"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},
+            "prompt":[{"type":"text","text":"[Image #1] Also say delta."},
+                {"type":"image","source":{"type":"base64","media_type":"image/png","data":png}}]}}),
+        json!({"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn",
+            "content":[{"type":"text","text":"delta"}]}}),
+    ];
+    let transcript = dir.join("transcript.jsonl");
+    std::fs::write(&transcript, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    let read = |key| transcript_fact(&transcript, key);
+    assert_eq!(read("prompts"), "ping it | [Image #1] Also say delta. (during a turn) [1 pictures]");
+    assert_eq!(read("pictures"), "yes");
+    assert_eq!(read("turn"), "ping it");
+    assert_eq!(read("answers"), "delta");
+    assert_eq!(read("thinking"), "updates");
+    let branch = dir.join("branched.json");
+    std::fs::write(dir.join("branched.id"), "0a1b2c3d-1111-4222-8333-444455556666\n").unwrap();
+    let answer = json!({"is_error":false,"session_id":"0a1b2c3d-1111-4222-8333-444455556666","result":"Alpha"});
+    std::fs::write(&branch, answer.to_string()).unwrap();
+    assert_eq!((branch_fact(&branch, "resumed"), branch_fact(&branch, "words")), ("yes".into(), "alpha".into()));
+    let help = dir.join("cli.help.txt");
+    std::fs::write(&help, "  -r, --resume [value]\n  --fork-session\n").unwrap();
+    assert_eq!(help_fact(&help, "flags", "--resume --fork-session"), "--resume --fork-session");
+    assert_eq!(help_fact(&help, "flags", "--resume --gone"), "missing --gone");
+    // The check finds a state's file by its name, a snapshot first.
+    let wanted = vec![("pictures".to_owned(), "yes".to_owned())];
+    assert_eq!(check(&dir, "transcript", &wanted), Ok(Vec::new()));
+    assert!(check(&dir, "nothing", &wanted).is_err());
 }

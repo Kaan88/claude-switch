@@ -70,7 +70,7 @@ pub(super) fn left_group(chips: &[Control]) -> f32 {
 }
 
 /// The message box's placeholder while a turn runs.
-pub(super) const QUEUE_HINT: &str = "Queue the next message…";
+pub(super) const QUEUE_HINT: &str = "Message Claude while it works…";
 /// The centre of the editor's first row, from its top.
 const FIRST_ROW: f32 = 15.0;
 /// The round Send button.
@@ -341,7 +341,7 @@ impl Draw<'_> {
         let x = e.x + 8.0;
         let width = editor_text_width(e);
         let next_chip = chat.popups.next_prompt.clone().filter(|_| !chat.locked());
-        // While a turn runs a message is queued, and the box says so.
+        // While a turn runs a message goes into it (or waits for it), and the box says so.
         let hint = match () {
             _ if self.stop.is_some() && !chat.locked() => QUEUE_HINT,
             _ if self.welcome => super::welcome::HINT,

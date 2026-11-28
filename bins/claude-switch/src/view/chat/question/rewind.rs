@@ -23,6 +23,14 @@ use super::*;
 const ESC_GAP: Duration = Duration::from_millis(150);
 const ESC_LATEST: Duration = Duration::from_millis(600);
 
+/// The menu was opened over a subagent's transcript: its prompts are not the session's.
+pub(super) const IN_AGENT: &str =
+    "Rewind works in the session's own conversation, not in a subagent's: go back to it first.";
+
+/// Rewind asked for from a subagent's transcript: nothing is written, and the box says why.
+pub(in crate::view) fn refuse_in_agent(tab: &mut Tab) {
+    tab.pane.as_mut().expect("Chat pane").chat.error = Some(IN_AGENT);
+}
 pub(super) const NOT_IDLE: &str =
     "Claude Code is not at an idle, empty prompt, so nothing was sent. Rewind once the turn has ended.";
 pub(super) const NOT_PROMPT: &str =
@@ -136,6 +144,8 @@ pub(in crate::view) fn start(tab: &mut Tab, now: Instant, item: ItemId) {
         return;
     }
     let items = &pane.model.items;
+    // A message sent while a turn ran is listed too (recorded from 2.1.332, `recorder compat`'s
+    // `queued` script), where the transcript has it.
     let prompt =
         items.get(&item).and_then(crate::view::chat::recall::prompt_text).filter(|p| listed(p)).map(str::to_owned);
     let later: Vec<String> = items

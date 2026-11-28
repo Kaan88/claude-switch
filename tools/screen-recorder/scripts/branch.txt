@@ -1,0 +1,27 @@
+# Branch (`view::model::branch_cut`, `core::branch`): two turns, then copies of the transcript
+# written by the app's own code under new ids. One is cut at the end of the first turn (right
+# before the second prompt), one at the end of the newest; both are resumed in print mode with a
+# question about what they remember, and the first is opened in the terminal as Branch opens it.
+# Also that `claude --help` still lists the flags Open a copy and Branch use. Four model requests.
+#: args --permission-mode default
+#: seconds 70
+start
+send Reply with just the word: alpha
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+send Reply with just the word: bravo
+sleep 800
+send \r
+sleep 1500
+gone esc to interrupt 60000
+quiet 1500 30000
+snap idle
+help cli
+branch branched answer alpha
+branch newest prompt bravo
+reopen branched
+quiet 1500 30000
+snap resumed

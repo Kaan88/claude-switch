@@ -13,7 +13,7 @@ impl Ui {
     }
 
     fn text_at(&self, x: f32, y: f32) -> Option<(&Row, usize, Option<&str>)> {
-        if self.overlay_open() || !self.body.contains(x, y) {
+        if self.overlay_open() || !self.shown_body().contains(x, y) {
             return None;
         }
         let yy = y - self.body.y + self.offset;
@@ -85,6 +85,7 @@ impl Ui {
     }
 
     pub fn pointer_left(&mut self) {
+        self.pointed = None;
         self.hot = None;
         self.scroll_hot = None;
         self.scroll_drag = None;
@@ -105,6 +106,7 @@ impl Ui {
         self.focused = true;
         self.start = None;
         self.dragging = false;
+        self.snap = None;
         self.scroll_drag = None;
         if self.divider_press(x, y) {
             self.pressed = None;
@@ -130,6 +132,7 @@ impl Ui {
         }
         if let Some((row, at, link)) = self.text_at(x, y) {
             let id = row.id.clone();
+            let row_id = row.id.clone();
             let link = link.map(str::to_owned);
             let text = row.body.as_ref().unwrap().text();
             let (a, b) = if clicks >= 3 {
@@ -145,7 +148,9 @@ impl Ui {
                 Some(old) if mods.shift && clicks == 1 => Selection { anchor: old.anchor, focus: (id, at) },
                 _ => Selection::within(id, a, b),
             });
-            self.dragging = clicks == 1;
+            // A drag after a double or triple click goes on by whole words or whole rows.
+            self.snap = (clicks >= 2).then(|| (Selection::within(row_id, a, b), clicks >= 3));
+            self.dragging = true;
         } else if mods.shift
             && self.selection.is_some()
             && let Some(end) = self.point_anywhere(x, y)
@@ -167,7 +172,9 @@ impl Ui {
         }
         let track = self.scroll_surface(x, y);
         let hot = self.hit(x, y);
-        let mut changed = self.hot != hot || self.scroll_hot != track;
+        let pointed = self.pointed_message(x, y);
+        let mut changed = self.hot != hot || self.scroll_hot != track || self.pointed != pointed;
+        self.pointed = pointed;
         self.hot = hot;
         self.scroll_hot = track;
         if self.dragging {
@@ -186,16 +193,46 @@ impl Ui {
                 changed |= self.scroll_to(Surface::Conversation, self.offset + beyond * 0.5);
             }
             if let Some(next) = self.point_anywhere(x, y)
-                && let Some(selection) = &mut self.selection
-                && selection.focus != next
+                && let Some(next) = self.snapped(next)
+                && self.selection.as_ref().is_some_and(|selection| *selection != next)
             {
-                selection.focus = next;
+                self.selection = Some(next);
                 changed = true;
                 self.start = None;
                 self.pressed = None;
             }
         }
         changed
+    }
+
+    /// The message with buttons under it that `(x, y)` is over, with the room for its buttons.
+    fn pointed_message(&self, x: f32, y: f32) -> Option<ItemId> {
+        if self.overlay_open() || !self.shown_body().contains(x, y) {
+            return None;
+        }
+        let yy = y - self.body.y + self.offset;
+        let row = self.rows.iter().find(|r| yy >= r.top && yy < r.top + r.h + super::rows::ACTIONS_ROOM)?;
+        match (row.actions, &row.id) {
+            (Some(_), Id::Message(id)) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// The selection a drag to `end` makes: from the anchor to `end`, or after a double or triple
+    /// click from what it took to the whole word or row at `end`, whichever way the drag goes.
+    fn snapped(&self, end: select::End) -> Option<Selection> {
+        let anchor = self.selection.as_ref()?.anchor.clone();
+        let Some((first, rows)) = &self.snap else { return Some(Selection { anchor, focus: end }) };
+        let (id, at) = end;
+        let index = |id: &Id| self.rows.iter().position(|row| row.id == *id);
+        let text = self.rows.get(index(&id)?)?.body.as_ref()?.text();
+        let (a, b) = if *rows { (0, text.len()) } else { word(text, at) };
+        let before = (index(&id)?, a) < (index(&first.anchor.0)?, first.anchor.1);
+        Some(if before {
+            Selection { anchor: first.focus.clone(), focus: (id, a) }
+        } else {
+            Selection { anchor: first.anchor.clone(), focus: (id, b) }
+        })
     }
 
     pub fn owns_pointer(&self, x: f32, y: f32) -> bool {
@@ -324,6 +361,17 @@ impl Ui {
                     self.copied = Some(code);
                 }
             }
+            Action::CopyMessage(id) => {
+                // As the right-click menu's Copy message: the text as shown.
+                let text = self.rows.iter().find(|r| r.id == Id::Message(id)).and_then(|r| r.body.as_ref());
+                if let Some(text) = text.map(|b| b.text().to_owned())
+                    && platform::set_clipboard_text(&text)
+                {
+                    self.copied = Some(text);
+                }
+            }
+            Action::Rewind(id) => return Release::Rewind(id),
+            Action::Branch(id) => return Release::Branch(id),
         }
         Release::Handled
     }
@@ -757,5 +805,193 @@ mod tests {
         let row = ui.rows.iter().find(|row| row.id == Id::Tool(id)).unwrap();
         assert!(row.open && row.step == Some((false, true)));
         assert_eq!(ui.tool_jump, Some((id, false)));
+    }
+
+    #[test]
+    fn a_drag_after_a_double_or_triple_click_goes_by_whole_words_or_rows() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(model.collect());
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(700, 900);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        for chat in [true, false] {
+            let mut ui = Ui::default();
+            ui.set_chat(chat);
+            let width = if chat { 700.0 } else { 380.0 };
+            ui.draw(
+                &mut p,
+                &mdshared_ui::theme::DARK,
+                Rect::new(0.0, 0.0, width, 900.0),
+                &mut model,
+                (-1.0, -1.0),
+                Instant::now(),
+                false,
+            );
+            ui.follow.scrolled(0.0, ui.max.max(1.0));
+            ui.offset = 0.0;
+            // Two points on the text of two different rows, the first above.
+            let x = ui.body.x + 24.0;
+            let on_text = |ui: &Ui, from: f32| {
+                (from as u32..ui.body.bottom() as u32)
+                    .map(|y| y as f32)
+                    .find_map(|y| ui.text_at(x, y).map(|(row, at, _)| (y, row.id.clone(), at)))
+                    .unwrap()
+            };
+            let (y1, row1, _) = on_text(&ui, ui.body.y);
+            let below = ui.rows.iter().find(|r| r.id == row1).map(|r| r.top + r.h - ui.offset + ui.body.y).unwrap();
+            let (y2, row2, _) = on_text(&ui, below + 1.0);
+            assert!(row1 != row2);
+            let text = |ui: &Ui, id: &Id| {
+                ui.rows.iter().find(|r| r.id == *id).unwrap().body.as_ref().unwrap().text().to_owned()
+            };
+            let (text1, text2) = (text(&ui, &row1), text(&ui, &row2));
+            let plain = Mods::default();
+
+            // A double click, then a drag down: from the word's start to the end of a word.
+            ui.press(x, y1, 2, plain, &mut model);
+            let first = ui.selection.clone().unwrap();
+            assert!(ui.dragging && first.anchor.1 < first.focus.1);
+            ui.moved(x, y1);
+            assert!(ui.selection.as_ref() == Some(&first), "within the word: the word");
+            ui.moved(x, y2);
+            let s = ui.selection.clone().unwrap();
+            assert!(s.anchor == first.anchor && s.focus.0 == row2);
+            assert_eq!(word(&text2, s.focus.1.saturating_sub(1)).1, s.focus.1, "ends a word");
+            ui.release(x, y2, plain, &mut model);
+
+            // From a lower word up: from that word's end to the start of a word above.
+            ui.press(x, y2, 2, plain, &mut model);
+            let first = ui.selection.clone().unwrap();
+            ui.moved(x, y1);
+            let s = ui.selection.clone().unwrap();
+            assert!(s.anchor == first.focus && s.focus.0 == row1);
+            assert_eq!(word(&text1, s.focus.1).0, s.focus.1, "starts a word");
+            ui.release(x, y1, plain, &mut model);
+
+            // A triple click takes the row, and a drag whole rows.
+            ui.press(x, y2, 3, plain, &mut model);
+            ui.moved(x, y1);
+            let s = ui.selection.clone().unwrap();
+            assert!(s.anchor == (row2.clone(), text2.len()) && s.focus == (row1.clone(), 0));
+            ui.release(x, y1, plain, &mut model);
+
+            // A single click drags by characters from where it was pressed, as before.
+            ui.press(x, y1, 1, plain, &mut model);
+            let at = ui.selection.clone().unwrap().anchor;
+            ui.moved(x, y2);
+            let s = ui.selection.clone().unwrap();
+            assert!(s.anchor == at && s.focus.0 == row2);
+            ui.release(x, y2, plain, &mut model);
+        }
+    }
+
+    #[test]
+    fn the_buttons_under_a_message_show_on_pointing_and_rewind_and_branch_go_to_the_app() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(model.collect());
+        // The demo's newest turn as one that has ended: Branch is offered at its end.
+        use claude_switch_core::transcript::{ChatPhase, ItemKind};
+        let last =
+            model.items.iter().rev().find(|(_, i)| matches!(i.kind, ItemKind::Assistant { .. })).unwrap().0.offset;
+        (model.chat.latest, model.chat.pending) = (Some((last, ChatPhase::EndTurn)), None);
+        // An ended turn's calls have their results.
+        for item in model.items.values_mut() {
+            if let ItemKind::Tool { state, .. } = &mut item.kind {
+                *state = claude_switch_core::transcript::ToolState::Ok;
+            }
+        }
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(800, 2400);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        let area = Rect::new(0.0, 0.0, 800.0, 2400.0);
+        let pal = &mdshared_ui::theme::DARK;
+        for chat in [true, false] {
+            let mut ui = Ui::default();
+            ui.set_chat(chat);
+            ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+            let rewinds = |ui: &Ui| ui.hits.iter().filter(|(_, a)| matches!(a, Action::Rewind(_))).count();
+            let branches = |ui: &Ui| ui.hits.iter().filter(|(_, a)| matches!(a, Action::Branch(_))).count();
+            if !chat {
+                assert_eq!((rewinds(&ui), branches(&ui)), (0, 0), "not in the Session view");
+                continue;
+            }
+            // Away from every message: only the newest answer's buttons.
+            assert_eq!((rewinds(&ui), branches(&ui)), (0, 1));
+            let (x, y) = ui.prompt_point().unwrap();
+            ui.moved(x, y);
+            ui.draw(&mut p, pal, area, &mut model, (x, y), Instant::now(), false);
+            assert_eq!((rewinds(&ui), branches(&ui)), (1, 2), "the pointed prompt's too");
+            let (r, action) = ui.hits.iter().find(|(_, a)| matches!(a, Action::Rewind(_))).cloned().unwrap();
+            let Action::Rewind(prompt) = action else { unreachable!() };
+            assert!(matches!(model.items[&prompt].kind, ItemKind::Prompt { .. }));
+            // Moving onto the button keeps it: it is under the pointed message.
+            let (bx, by) = (r.cx(), r.cy());
+            assert_eq!(ui.pointed_message(bx, by), Some(prompt));
+            ui.draw(&mut p, pal, area, &mut model, (bx, by), Instant::now(), false);
+            ui.press(bx, by, 1, Mods::default(), &mut model);
+            assert_eq!(ui.release(bx, by, Mods::default(), &mut model), Release::Rewind(prompt));
+            let (r, action) =
+                ui.hits.iter().find(|(_, a)| matches!(a, Action::Branch(id) if *id == prompt)).cloned().unwrap();
+            ui.press(r.cx(), r.cy(), 1, Mods::default(), &mut model);
+            assert_eq!(ui.release(r.cx(), r.cy(), Mods::default(), &mut model), Release::Branch(prompt));
+            assert!(action == Action::Branch(prompt));
+            // While the newest turn runs, its answer has Copy and no Branch.
+            model.chat.latest = Some((last, ChatPhase::Active));
+            model.revision += 1;
+            ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+            let copies = ui.hits.iter().filter(|(_, a)| matches!(a, Action::CopyMessage(_))).count();
+            assert_eq!((copies, branches(&ui)), (1, 0));
+        }
+    }
+
+    #[test]
+    fn no_text_is_drawn_or_taken_under_the_jump_button() {
+        let demo = crate::demo::Transcript::new_chat().unwrap();
+        let source = crate::view::model::Source::File(demo.path().into());
+        let (wake, events) = std::sync::mpsc::channel();
+        let mut model = Model::new(source, demo.cwd().into(), move || {
+            let _ = wake.send(());
+        });
+        model.poll();
+        events.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+        assert!(model.collect());
+        let mut gfx = Gfx::new();
+        let mut bmp = Bitmap::new(700, 420);
+        let mut p = Painter::new(&mut bmp, &mut gfx, 1.0);
+        let area = Rect::new(0.0, 0.0, 700.0, 420.0);
+        let pal = &mdshared_ui::theme::DARK;
+        let mut ui = Ui::default();
+        ui.set_chat(true);
+        ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+        assert!(ui.max > 200.0, "a conversation longer than the window");
+        assert_eq!(ui.covered, 0.0, "following: no button, nothing kept");
+        ui.wheel(ui.body.cx(), ui.body.cy(), 150.0);
+        ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+        assert!(!ui.follow.active() && ui.covered > JUMP);
+        let button = ui.hits.iter().find(|(_, a)| *a == Action::Latest).map(|(r, _)| *r).unwrap();
+        let foot = ui.shown_body().bottom();
+        assert!(button.y >= foot, "the button stands in the kept foot");
+        // Nothing else is there to point at, and no text is found under it.
+        assert!(ui.hits.iter().filter(|(_, a)| *a != Action::Latest).all(|(r, _)| r.bottom() <= foot + 0.5));
+        let x = ui.body.x + 24.0;
+        assert!((foot as u32..ui.body.bottom() as u32).all(|y| ui.text_at(x, y as f32).is_none()));
+        // Back at the end it follows again: the foot is the conversation's once more.
+        ui.wheel(ui.body.cx(), ui.body.cy(), -10_000.0);
+        ui.draw(&mut p, pal, area, &mut model, (-1.0, -1.0), Instant::now(), false);
+        assert!(ui.follow.active() && ui.covered == 0.0);
     }
 }

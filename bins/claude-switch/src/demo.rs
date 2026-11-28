@@ -354,6 +354,12 @@ pub fn resume(s: &Session, account: &str, app: App, run: &[Running]) -> Result<L
     Ok(l)
 }
 
+pub fn branch(new_id: &str, account: &str) -> Launch {
+    let mut l = launch(account, "Branch");
+    l.args = vec!["--resume".into(), new_id.into()];
+    l
+}
+
 pub fn fork(s: &Session, account: &str) -> Launch {
     let mut l = launch(account, "Copy");
     l.args = vec!["--resume".into(), s.id.clone(), "--fork-session".into()];

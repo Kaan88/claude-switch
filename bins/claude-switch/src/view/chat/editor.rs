@@ -317,6 +317,29 @@ impl ComposerEditor {
         }
     }
 
+    /// A drag that began with a double click: the selection runs from the first word to the
+    /// whole word under the pointer, either way. Returns whether it changed.
+    pub fn extend_words(&mut self, first: &Range<usize>, x: f32, y: f32) -> bool {
+        let (at, row) = self.target(x, y, true);
+        let here = word(&self.inner.text, at);
+        let len = self.inner.text.len();
+        let (anchor, caret) = if here.start < first.start {
+            (first.end.min(len), here.start)
+        } else {
+            (first.start.min(len), here.end.max(first.end).min(len))
+        };
+        let before = (self.inner.anchor(), self.inner.caret);
+        self.history.close_step();
+        self.inner.move_to(anchor, false);
+        if self.inner.rows.get(row).is_some_and(|r| r.end == caret) {
+            self.place(caret, row, true);
+        } else {
+            self.row_hint = None;
+            self.inner.move_to(caret, true);
+        }
+        before != (self.inner.anchor(), self.inner.caret)
+    }
+
     pub fn select_all(&mut self) {
         self.history.close_step();
         self.row_hint = None;
@@ -471,5 +494,29 @@ mod tests {
         assert_eq!((e.caret, e.caret_row()), (2, 0));
         e.point(0., 4.0 + LINE + 3.0, false);
         assert_eq!((e.caret, e.caret_row()), (2, 1));
+    }
+
+    #[test]
+    fn a_drag_after_a_double_click_takes_whole_words_either_way() {
+        let mut e = ComposerEditor::default();
+        e.set("one two three four".into());
+        let n = e.text.len();
+        e.rows.push(0..n);
+        e.stops = vec![(0..n, (0..=n).map(|i| i as f32 * 10.0).collect())];
+        // A double click on "three", then a drag into "four": both words, whole.
+        e.word_at(95., 6.);
+        let first = e.selection();
+        assert_eq!(&e.text[first.clone()], "three");
+        assert!(e.extend_words(&first, 155., 6.));
+        assert_eq!(&e.text[e.selection()], "three four");
+        assert_eq!(e.caret, n);
+        // Back into "two": from the end of "three" to the start of "two".
+        assert!(e.extend_words(&first, 45., 6.));
+        assert_eq!(&e.text[e.selection()], "two three");
+        assert_eq!((e.anchor(), e.caret), (13, 4));
+        // Back over the first word: only it.
+        e.extend_words(&first, 92., 6.);
+        assert_eq!(&e.text[e.selection()], "three");
+        assert!(!e.extend_words(&first, 99., 6.), "nothing changed");
     }
 }

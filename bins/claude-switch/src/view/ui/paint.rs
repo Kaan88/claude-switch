@@ -31,7 +31,8 @@ impl Ui {
     }
 
     pub(super) fn paint_rows(&mut self, p: &mut Painter, pal: &Palette, m: &mut Model) {
-        let body = self.body;
+        // Rows are laid out in the whole body, and drawn above the jump button's foot.
+        let body = self.shown_body();
         let clip = p.clip(body);
         let start = self.rows.partition_point(|r| r.top + r.h < self.offset);
         let mouse = self.mouse;
@@ -227,6 +228,43 @@ impl Ui {
                 frame_hit(r, action);
             }
             py += thumbs_height(geo.tw, row.pictures.len());
+            if let (Some(actions), Id::Message(id)) = (row.actions, &row.id) {
+                // Under the message, on pointing at it (or its buttons), and always under the
+                // newest answer.
+                let band = Rect::new(body.x, y, body.w, row.h + super::rows::ACTIONS_ROOM);
+                if actions.newest || band.contains(mouse.0, mouse.1) {
+                    let text = row.body.as_ref().map(|b| b.text());
+                    let copied = text.is_some() && self.copied.as_deref() == text;
+                    let mut buttons = Vec::new();
+                    if text.is_some() {
+                        let word = if copied { "Copied" } else { "Copy" };
+                        buttons.push((mdshared_ui::glyph::COPY, word, Action::CopyMessage(*id)));
+                    }
+                    if actions.rewind {
+                        buttons.push((mdshared_ui::glyph::UNDO, "Rewind", Action::Rewind(*id)));
+                    }
+                    if actions.branch {
+                        buttons.push((crate::view::look::BRANCH, "Branch", Action::Branch(*id)));
+                    }
+                    let widths: Vec<f32> =
+                        buttons.iter().map(|(_, word, _)| p.measure(Face::Ui, 11.5, word) + 32.0).collect();
+                    let total = widths.iter().sum::<f32>() + 2.0 * (widths.len() as f32 - 1.0);
+                    // Your message's under its bubble, at the right; an answer's at the left.
+                    let mut x = if row.style == Style::Prompt { frame.right() - total } else { frame.x - 6.0 };
+                    let top = y + row.h + 3.0;
+                    for ((icon, word, action), w) in buttons.into_iter().zip(widths) {
+                        let r = Rect::new(x, top, w, super::rows::ACTION_H);
+                        x += w + 2.0;
+                        let hot = frame_hit(r, action);
+                        if hot {
+                            p.rbox(r, 5.0, pal.hover);
+                        }
+                        let ink = if hot { pal.text } else { pal.muted };
+                        p.icon(icon, 13.0, r.x + 13.0, r.cy(), ink);
+                        p.text(Face::Ui, 11.5, r.x + 24.0, r.cy(), word, ink, w);
+                    }
+                }
+            }
             if row.style == Style::Tool
                 && let Some(id) = &row.agent
             {

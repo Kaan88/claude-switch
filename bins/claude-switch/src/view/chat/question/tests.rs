@@ -1651,7 +1651,7 @@ impl Fixture {
         let mut ids = Vec::new();
         for (i, text) in texts.iter().enumerate() {
             let id = ItemId { offset: 10 * (i as u64 + 1), block: 0 };
-            let kind = ItemKind::Prompt { text: (*text).into(), pictures: vec![], synthetic: false };
+            let kind = ItemKind::Prompt { text: (*text).into(), pictures: vec![], synthetic: false, queued: false };
             pane.model.items.insert(id, Item { kind, timestamp: None });
             ids.push(id);
         }
@@ -1751,6 +1751,37 @@ fn rewind_walks_the_list_to_the_prompt_and_chooses_only_on_a_click() {
     advance(f.tab(), now, true);
     assert!(f.rewind().is_none());
     assert_eq!(f.chat().error, Some(rewind::REWOUND));
+}
+
+#[test]
+fn a_message_sent_while_a_turn_ran_is_in_the_rewind_list_as_any_prompt() {
+    use screens::recorded::*;
+    let now = Instant::now();
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO, CHARLIE]);
+    // Charlie went in while bravo's turn ran: Claude Code's rewind list shows it all the same
+    // (recorded from 2.1.332, `recorder compat`'s `queued` script).
+    let kind = ItemKind::Prompt { text: CHARLIE.into(), pictures: vec![], synthetic: false, queued: true };
+    f.tab().pane.as_mut().unwrap().model.items.insert(ids[2], Item { kind, timestamp: None });
+    f.show(REWIND_IDLE, now);
+    let now = now + QUIET;
+    rewind::start(f.tab(), now, ids[2]);
+    assert_eq!(f.writes(), [ESC.to_vec()], "it can be rewound to");
+    f.chat().question.rewind = None;
+    // An earlier prompt is found with it under it in the list.
+    rewind::start(f.tab(), now, ids[1]);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    let now = now + STEP / 10;
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [ESC.to_vec()]);
+    f.show(REWIND_OPEN, now);
+    advance(f.tab(), now, true);
+    f.show(REWIND_UP1, now);
+    advance(f.tab(), now, true);
+    f.show(REWIND_UP2, now);
+    f.writes();
+    advance(f.tab(), now, true);
+    assert_eq!(f.writes(), [b"\r".to_vec()], "bravo, with charlie under it");
 }
 
 #[test]
@@ -2295,4 +2326,43 @@ fn a_cancel_that_stops_sends_no_esc_on_top_of_its_own() {
     assert!(f.writes().is_empty(), "no third Esc");
     let r = f.rewind().unwrap();
     assert_eq!((r.error, r.note), (Some(rewind::NOT_CANCELLED), Some(rewind::LEFT_OPEN)));
+}
+
+#[test]
+fn open_terminal_on_a_card_gives_the_terminal_the_keyboard() {
+    let mut f = Fixture::new(vec![question(false)]);
+    let now = Instant::now();
+    f.sync();
+    assert!(f.app.chat_takes_input());
+    assert!(press(f.tab(), now, Hit::Open));
+    assert!(f.chat().drawer != Drawer::Closed && f.chat().drawer_focus);
+    assert!(!f.app.chat_takes_input(), "keys go to the terminal");
+    // A card's answer that could not go hands the question to the terminal, with the keyboard.
+    let mut chat = Chat::default();
+    chat.question_failed("The question changed.");
+    assert!(chat.drawer == Drawer::Manual && chat.drawer_focus);
+    // Not while a selection in the conversation waits for Ctrl+C (or the box holds text).
+    for keep in [true, false] {
+        let mut chat = Chat::default();
+        if keep {
+            chat.set_selection(true);
+        } else {
+            chat.editor.set("draft".into());
+        }
+        chat.question_failed("The question changed.");
+        assert!(chat.drawer == Drawer::Manual && !chat.drawer_focus);
+    }
+}
+
+#[test]
+fn rewind_is_refused_in_a_subagents_transcript() {
+    let mut f = Fixture::idle();
+    let ids = f.prompts(&[ALPHA, BRAVO]);
+    f.tab().pane.as_mut().unwrap().model.agent = Some("agent-1".into());
+    let tab = f.tab;
+    f.app.tabs.active = Some(tab);
+    assert!(f.app.rewind_from_menu(tab, ids[0], Instant::now()));
+    assert!(f.writes().is_empty(), "nothing is written");
+    assert_eq!(f.chat().error, Some(rewind::IN_AGENT));
+    assert!(f.rewind().is_none());
 }

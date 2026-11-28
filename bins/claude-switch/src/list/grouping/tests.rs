@@ -138,3 +138,29 @@ fn topic_mode_is_conditional_and_filtering_and_local_edits_preserve_hiding_and_a
     st.rebuild_view();
     assert_eq!(st.list_mode(), Mode::Recent);
 }
+
+#[test]
+fn a_session_named_by_its_id_comes_first_and_is_found_when_hidden() {
+    let mut st = demo();
+    st.config.show_hidden = false;
+    // The oldest session, hidden: an ordinary search does not list it.
+    let i = (0..st.sessions.len()).min_by_key(|&i| st.sessions[i].last_active_ms).unwrap();
+    let (id, file) = (st.sessions[i].id.clone(), st.sessions[i].file.clone());
+    st.marks.hide(&id, &file, true);
+    st.search.set_text(&st.sessions[i].title.clone());
+    st.rebuild_view();
+    assert!(st.groups.iter().flat_map(|g| &g.rows).all(|&r| r != i), "hidden from an ordinary search");
+    // Its id, a prefix of it, or a pasted resume line: first, in a group of its own.
+    for query in [id.clone(), id[..8].to_owned(), format!("claude --resume {id}")] {
+        st.search.set_text(&query);
+        st.rebuild_view();
+        let first = &st.groups[0];
+        assert_eq!((first.name.as_str(), first.rows.as_slice()), ("Session id", &[i][..]), "{query}");
+        assert!(st.groups[1..].iter().flat_map(|g| &g.rows).all(|&r| r != i), "listed once");
+        assert!(st.row_flags(&st.sessions[i]).hidden, "its row says it is hidden");
+    }
+    // Another filter than All or Hidden still applies.
+    st.filter = Filter::Running;
+    st.rebuild_view();
+    assert!(st.groups.iter().flat_map(|g| &g.rows).all(|&r| r != i));
+}

@@ -1,0 +1,41 @@
+# What Chat reads from scripts/queued.txt. The keys are explained in the README and in
+# bins/claude-switch/src/view/chat/question/screens/compat.rs.
+[running]
+kind = working
+input =
+working = yes
+
+# The picture's marker and the text on the input while the turn runs.
+[typed]
+kind = working
+# Claude Code puts the pasted text right after the marker, without a space (2.1.332); Chat takes
+# it with or without one.
+input = [Image #1]*Also reply with the word delta.
+
+# After Enter the input reads empty again and the turn still runs: Chat's Send goes in at once.
+[sent]
+kind = working
+input =
+working = yes
+send = no
+
+[after]
+kind = idle
+send = yes
+
+# Recorded as a queued_command: a prompt during the turn, with its picture under
+# attachment.prompt, that starts no turn. The records are written with thinking shown as updates
+# (Chat shows such thinking's text as the answer; Haiku leaves it empty).
+[transcript]
+prompts = Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1 | *Also reply with the word delta. (during a turn) [1 pictures]
+pictures = yes
+turn = Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1
+thinking = updates
+answers = *delta*
+
+# The rewind list shows the message sent during the turn, where the transcript has it: Chat offers
+# Rewind to it and counts it among the prompts after an earlier one.
+[rewind]
+kind = rewind
+count = 3
+choices = Run exactly this with the Bash tool and nothing else: ping -n 16 127.0.0.1 | *Also reply with the word delta. | (current)

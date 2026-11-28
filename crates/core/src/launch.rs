@@ -172,6 +172,33 @@ pub fn fork(roots: &Roots, config: &Config, session: &Session, account: &str, ne
     ))
 }
 
+/// A branch of `session` as `account`: `claude --resume <new_id>`, where `new_id` is the copy of
+/// its transcript cut at a message that [`crate::branch::write`] put beside the original. As
+/// [`fork`] otherwise: the session's folder, [`crate::Place::Terminal`], safe while the original
+/// runs, and [`Refusal::NotLoggedIn`] when the account's CLI has no login.
+pub fn branch(
+    roots: &Roots,
+    config: &Config,
+    session: &Session,
+    account: &str,
+    new_id: &str,
+) -> Result<Launch, Refusal> {
+    validate_session_id(&session.id)?;
+    validate_session_id(new_id)?;
+    if session.id.eq_ignore_ascii_case(new_id) {
+        return Err(Refusal::Invalid("A branch requires a different session ID.".into()));
+    }
+    let account = find_account(config, account)?;
+    if !crate::accounts::status(roots, account).cli_logged_in {
+        return Err(Refusal::NotLoggedIn(account.name.clone()));
+    }
+    crate::share::prepare_cli(roots, account, Some(session))?;
+    sync_settings(roots, config);
+    let cwd = if session.cwd.is_dir() { session.cwd.clone() } else { roots.home.clone() };
+    let label = format!("{} · {} · Branch", account.name, folder_name(&session.cwd));
+    Ok(cli_launch(account, &["--resume", new_id], cwd, Place::Terminal, label))
+}
+
 /// Settings shared between accounts are brought in line before Claude Code starts, as it reads
 /// them at start ([`crate::settings_sync`]). A failure never stops the launch: the account then
 /// starts with the settings it has.

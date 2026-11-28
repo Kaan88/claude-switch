@@ -152,3 +152,33 @@ fn a_session_open_in_a_tab_is_not_moved() {
     assert_eq!(app.sessions[app.by_id[&id]].cwd, old);
     assert_eq!(app.marks.folder(&id), None);
 }
+
+#[test]
+fn a_transcript_reached_through_a_junction_is_the_same_file() {
+    let root = std::env::temp_dir().join(format!("cs-same-file-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let real = root.join("primary").join("projects");
+    std::fs::create_dir_all(&real).unwrap();
+    let file = real.join("0a1b2c3d-1111-4222-8333-444455556666.jsonl");
+    std::fs::write(&file, b"{}\n").unwrap();
+    std::fs::write(real.join("other.jsonl"), b"{}\n").unwrap();
+    // A further account's `projects` folder, as `share::apply` links it.
+    let linked = root.join("further").join("projects");
+    std::fs::create_dir_all(linked.parent().unwrap()).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&linked)
+        .arg(&real)
+        .output()
+        .is_ok_and(|o| o.status.success());
+    assert!(made, "a junction can be made without elevation");
+    let through = linked.join("0a1b2c3d-1111-4222-8333-444455556666.jsonl");
+    assert_ne!(through.to_string_lossy().to_lowercase(), file.to_string_lossy().to_lowercase());
+    assert!(super::same_file(&through, &file));
+    assert!(!super::same_file(&linked.join("other.jsonl"), &file));
+    // Paths that do not resolve compare as written, in any case.
+    let gone = root.join("Gone.jsonl");
+    assert!(super::same_file(&gone, &root.join("gone.JSONL")));
+    std::fs::remove_dir(&linked).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
